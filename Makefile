@@ -1,4 +1,4 @@
-INCLUDE_FILES = ./*.v 
+INCLUDE_FILES = ./*.v ./*.hex
 TOP_LEVEL = top.v
 PCF_FILE = top.pcf
 TARGET_FREQ = 20
