@@ -27,7 +27,7 @@ module lcd_clk (input cin, output cout, output locked);
 endmodule
 
 module lcd(input cin, input reset, input [4:0] red, input [5:0] green, input [4:0] blue, output sda, output scl, output cs, output reg rs, output vsync, output hsync, output [VMSB-VLSB:0] vpos, output [VLSB-WORD:0] hpos);
-  localparam INIT_SIZE = 13;
+  localparam INIT_SIZE = 15;
   localparam WIDTH = 128;
   localparam HEIGHT = 160;
   localparam WORD = 2;
