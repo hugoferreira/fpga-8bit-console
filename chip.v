@@ -1,27 +1,16 @@
-module sprite(input [6:0] hpos, input [7:0] vpos, output pixel);
-  assign pixel = (hpos == 64) && (vpos > (80-4)) && (vpos < (80+4)); 
-endmodule
-
 module chip(input clk, input reset, output sda, output scl, output cs, output rs);
   wire vsync;
   wire hsync;
   wire [7:0] vpos;
-  wire [6:0] hpos;
+  wire [7:0] hpos;
 
-  wire pixel;
   wire grid_gfx = (((hpos&7)==0) && ((vpos&7)==0));
   
   wire [4:0] red   = (ball_gfx | ball_hgfx) ? 5'b11111 : 0; 
   wire [5:0] green = (ball_gfx | grid_gfx) ? 6'b111111 : 0; 
   wire [4:0] blue  = (ball_gfx | ball_vgfx) ? 5'b11111 : 0; 
-  
-  sprite s1(
-    .hpos,
-    .vpos,
-    .pixel
-  );
 
-  lcd lcd0(
+  rotatescreen lcd0(
     .cin(clk),
     .reset,
     .red,
@@ -32,7 +21,6 @@ module chip(input clk, input reset, output sda, output scl, output cs, output rs
     .cs,
     .rs,
     .vsync,
-    .hsync,
     .vpos,
     .hpos
   ); 
@@ -85,7 +73,7 @@ module chip(input clk, input reset, output sda, output scl, output cs, output rs
 
   // collide with vertical and horizontal boundaries
   // these are set when the ball touches a border
-  wire ball_vert_collide = ball_vpos >= 159 - BALL_SIZE;
-  wire ball_horiz_collide = ball_hpos >= 127 - BALL_SIZE;
+  wire ball_vert_collide = ball_vpos >= 127 - BALL_SIZE;
+  wire ball_horiz_collide = ball_hpos >= 159 - BALL_SIZE;
 
 endmodule

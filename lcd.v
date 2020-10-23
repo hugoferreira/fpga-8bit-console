@@ -26,19 +26,26 @@ module lcd_clk (input cin, output cout, output locked);
   );
 endmodule
 
-module lcd(input cin, input reset, input [4:0] red, input [5:0] green, input [4:0] blue, output sda, output scl, output cs, output reg rs, output vsync, output hsync, output [VMSB-VLSB:0] vpos, output [VLSB-WORD:0] hpos);
+module rotatescreen(input cin, input reset, input [4:0] red, input [5:0] green, input [4:0] blue, output sda, output scl, output cs, output reg rs, output vsync, output [$clog2(WIDTH)-1:0] vpos, output [$clog2(HEIGHT)-1:0] hpos);
+  parameter WIDTH = 128;
+  parameter HEIGHT = 160;
+
+  wire hsync;
+  lcd lcd0(.cin, .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(hpos), .hpos(vpos));
+endmodule
+
+module lcd(input cin, input reset, input [4:0] red, input [5:0] green, input [4:0] blue, output sda, output scl, output cs, output reg rs, output vsync, output hsync, output [$clog2(HEIGHT)-1:0] vpos, output [$clog2(WIDTH)-1:0] hpos);
+  parameter WIDTH = 128;
+  parameter HEIGHT = 160;
+
   localparam INIT_SIZE = 15;
-  localparam WIDTH = 128;
-  localparam HEIGHT = 160;
   localparam WORD = 2;
   localparam RESOLUTION = WIDTH*HEIGHT*WORD;
-  localparam VLSB = $clog2(WIDTH*WORD);
-  localparam VMSB = VLSB + $clog2(HEIGHT) - 1;
 
   // Scanlines and Pixels
-  reg [VMSB:0] pos;
-  assign vpos  = pos[VMSB:VLSB];
-  assign hpos  = pos[VLSB:WORD-1];
+  reg [$clog2(WIDTH*HEIGHT):0] pos;
+  assign vpos  = pos[$clog2(RESOLUTION):$clog2(WIDTH)+WORD-1];
+  assign hpos  = pos[$clog2(WIDTH)+WORD-2:WORD-1];
   assign hsync = hpos == 0;
   assign vsync = state == 2;
   
@@ -103,7 +110,7 @@ module lcd(input cin, input reset, input [4:0] red, input [5:0] green, input [4:
             end
             3: begin
               rs <= 1;
-              dataout <= pos[0] ? color[VLSB:0] : color[VMSB:VLSB];
+              dataout <= pos[0] ? color[7:0] : color[15:8];
 
               if (pos < RESOLUTION) pos <= pos + 1;
               else state <= 2;
