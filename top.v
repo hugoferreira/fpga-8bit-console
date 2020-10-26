@@ -1,7 +1,4 @@
-`include "clkdivider.v"
-`include "lcd.v"
 `include "chip.v"
-`include "uart_tx.v"
 
 module por(input clk, input reset, output reg user_reset);
   reg [20:0] counter = 21'h17D796;

@@ -1,6 +1,7 @@
-`include "textbuffer.v"
-`include "sprite.v"
-`include "palette.v"
+`include "textbuffer/textbuffer.v"
+`include "sprites/sprite.v"
+`include "lcd/palette.v"
+`include "lcd/lcd.v"
 
 module counter(input vsync, input reset, output reg [11:0] addr, inout [7:0] data);
   reg [7:0] counter;
@@ -49,4 +50,13 @@ module chip(input clk, input reset, output sda, output scl, output cs, output rs
 
   // Others
   counter c0(.vsync, .reset, .addr, .data);
+
+  // CPU
+  /* wire [7:0] DI;
+  wire [7:0] DO;
+
+  assign data =  rw ? DO : 8'hzzzzzzzz;
+  assign DI   = ~rw ? data : 8'hzzzzzzzz;
+
+  cpu6502 cpu(.clk, .reset, .AB(addr), .DI, .DO, .WE(rw), .IRQ(0), .NMI(0), .RDY(1)); */
 endmodule
