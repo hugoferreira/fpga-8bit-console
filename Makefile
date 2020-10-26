@@ -7,13 +7,13 @@ bin/toplevel.bin: bin/toplevel.asc
 	icepack bin/toplevel.asc bin/toplevel.bin
 
 bin/toplevel.asc: ${PCF_FILE} bin/toplevel.json
-	nextpnr-ice40 --freq ${TARGET_FREQ} --hx8k --package tq144:4k \
+	nextpnr-ice40 -q --freq ${TARGET_FREQ} --hx8k --package tq144:4k \
 				  --json bin/toplevel.json --pcf ${PCF_FILE} \
 				  --asc bin/toplevel.asc --opt-timing
 
 bin/toplevel.json: ${TOP_LEVEL} ${INCLUDE_FILES}
 	mkdir -p bin
-	yosys -q -p "synth_ice40 -top chip -json bin/toplevel.json" ${TOP_LEVEL} 
+	yosys -q -p "synth_ice40 -top top -json bin/toplevel.json" ${TOP_LEVEL} 
 
 .PHONY: stat
 stat: bin/toplevel.asc

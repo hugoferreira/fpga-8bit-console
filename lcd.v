@@ -1,3 +1,5 @@
+`include "serialize.v"
+
 /**
  * PLL configuration
  *
@@ -44,7 +46,7 @@ module lcd(input cin, input reset, input [4:0] red, input [5:0] green, input [4:
 
   // Scanlines and Pixels
   reg [$clog2(WIDTH*HEIGHT):0] pos;
-  assign vpos  = pos[$clog2(RESOLUTION):$clog2(WIDTH)+WORD-1];
+  assign vpos  = pos[$clog2(RESOLUTION)-1:$clog2(WIDTH)+WORD-1];
   assign hpos  = pos[$clog2(WIDTH)+WORD-2:WORD-1];
   assign hsync = hpos == 0;
   assign vsync = state == 2;
@@ -74,6 +76,7 @@ module lcd(input cin, input reset, input [4:0] red, input [5:0] green, input [4:
   reg [7:0] data [0:INIT_SIZE];
   reg       cmd  [0:INIT_SIZE];
   reg [3:0] counter;  
+  reg [15:0] waittimer;
 
   initial $readmemh("setup.hex", data);
   initial $readmemh("setup_type.hex", cmd);
@@ -94,7 +97,12 @@ module lcd(input cin, input reset, input [4:0] red, input [5:0] green, input [4:
             0: begin
               rs <= 0;
               dataout <= 8'h11;
-              state <= 1;
+              waittimer <= 16'hFFFF;
+              state <= 4;
+            end
+            4: begin
+              if (waittimer > 0) waittimer <= waittimer - 1;
+              else state <= 1;
             end
             1: begin 
               if (counter < INIT_SIZE) counter <= counter + 1;

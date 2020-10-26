@@ -1,9 +1,11 @@
 set_io clk 60
 
-set_io reset 52 -pullup yes
-
 set_io lcd_rst 135
 set_io rs 141
 set_io sda 142
 set_io scl 138
 set_io cs 139
+
+set_io tx 62
+
+set_io yellow_led 55

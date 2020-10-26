@@ -1,33 +1,45 @@
-`include "serialize.v"
 `include "clkdivider.v"
 `include "lcd.v"
-`include "sevensegment.v"
 `include "chip.v"
+`include "uart_tx.v"
 
-module resetcircuit(input clk, input reset, output reg user_reset);
-  reg [15:0] counter = 16'hFFFF;
-  reg user_reset = 1;
-  
+module por(input clk, input reset, output reg user_reset);
+  reg [20:0] counter = 21'h17D796;
+  reg user_reset = 0;
+
   always @(posedge clk or posedge reset)
   begin
     if (reset) begin 
-      counter <= 16'hFFFF;
-      user_reset <= 1;
-    end else if (user_reset) begin 
-      counter <= counter - 1;
-      if (counter == 0) user_reset <= 0;
+      counter <= 21'h17D796;    // 0.062s @ 25Mhz
+      user_reset <= 0;
+    end else if (~user_reset) begin 
+      if (counter != 0) counter <= counter - 1;
+      else user_reset <= 1;
     end
   end
 endmodule
 
-module top(input clk, input reset, output sda, output scl, output cs, output rs, output lcd_rst);
-  reg user_reset = 1;
+module top(input clk, output yellow_led, output sda, output scl, output cs, output rs, output lcd_rst, output tx);
+  wire user_reset;
+  assign lcd_rst = user_reset;
+  assign yellow_led = user_reset;
 
-  resetcircuit rst(
+  por u_por(
     .clk,
-    .reset,
-    .user_reset
+    .reset(1'b0),
+    .user_reset(user_reset)
   );
+
+  /* wire tx_ready;
+
+  uart_tx u_uart_tx (
+    .clk (clk),
+    .reset (~user_reset),
+    .tx_req (1'b1),
+    .tx_ready (tx_ready),
+    .tx_data (8'h55),
+    .uart_tx (tx)
+  ); */
 
   chip chip(
     .clk,
@@ -37,6 +49,4 @@ module top(input clk, input reset, output sda, output scl, output cs, output rs,
     .cs,
     .rs,
   );
-
-  assign lcd_rst = !user_reset;
 endmodule
