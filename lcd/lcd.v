@@ -1,16 +1,20 @@
 `include "serialize.v"
 
-module scalescreen(input cin, input reset, input [4:0] red, input [5:0] green, input [4:0] blue, output sda, output scl, output cs, output reg rs, output vsync, output [$clog2(WIDTH/2)-1:0] vpos, output [$clog2(HEIGHT/2)-1:0] hpos);
-  parameter WIDTH = 240;
-  parameter HEIGHT = 320;
+module scalescreen(input cin, input reset, 
+                   input [4:0] red, input [5:0] green, input [4:0] blue, 
+                   output sda, output scl, output cs, output reg rs, 
+                   output vsync, output hsync, 
+                   output [$clog2(HEIGHT/SCALE)-1:0] vpos, output [$clog2(WIDTH/SCALE)-1:0] hpos);
+  parameter SCALE = 2;
+  parameter WIDTH = 320;
+  parameter HEIGHT = 240;
 
-  wire hsync;
   wire [$clog2(WIDTH)-1:0] hp;
   wire [$clog2(HEIGHT)-1:0] vp;
-  assign vpos = hp >> 1;
-  assign hpos = vp >> 1;
+  assign vpos = vp >> (SCALE - 1);
+  assign hpos = hp >> (SCALE - 1);
 
-  lcd lcd0(.cin, .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
+  lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.cin, .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
 endmodule
 
 module lcd(input cin, input reset, 
@@ -19,8 +23,8 @@ module lcd(input cin, input reset,
            output vsync, output hsync, 
            output reg [$clog2(HEIGHT)-1:0] vpos, output reg [$clog2(WIDTH)-1:0] hpos);
 
-  parameter WIDTH = 240;
-  parameter HEIGHT = 320;
+  parameter WIDTH = 320;
+  parameter HEIGHT = 240;
 
   localparam INIT_SIZE = 15;
   localparam WORD = 2;

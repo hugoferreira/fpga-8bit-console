@@ -52,7 +52,7 @@ module chip(input cin, input reset, output sda, output scl, output cs, output rs
 
   // Basic Video Signals 
   wire vsync;
-  wire [8:0] vpos;
+  wire [6:0] vpos;
   wire [7:0] hpos;
   wire [4:0] red   = sr | txtr; 
   wire [5:0] green = sg | txtg; 
