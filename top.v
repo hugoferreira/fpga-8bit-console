@@ -39,7 +39,7 @@ module top(input clk, output yellow_led, output sda, output scl, output cs, outp
   ); */
 
   chip chip(
-    .clk,
+    .cin(clk),
     .reset(user_reset),
     .sda,
     .scl,
