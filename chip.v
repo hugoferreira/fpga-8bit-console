@@ -88,7 +88,7 @@ module chip(input cin, input reset, output sda, output scl, output cs, output rs
   wire [4:0] txtr; 
   wire [5:0] txtg; 
   wire [4:0] txtb; 
-  textbuffer tb(.clk, .reset, .addr, .we(tb_we), .oe(tb_oe), .di(tb_di), .do(tb_do), .hpos, .vpos, .vsync, .color(text_color));
+  textbuffer tb(.clk, .reset, .addr, .we(tb_we), .oe(tb_oe), .di(tb_di), .dout(tb_do), .hpos, .vpos, .vsync, .color(text_color));
   palette pal_text(.color(text_color), .r(txtr), .g(txtg), .b(txtb));
 
   // Video Sprites  

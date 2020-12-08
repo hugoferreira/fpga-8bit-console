@@ -4,15 +4,13 @@ module scalescreen(input cin, input reset,
                    input [4:0] red, input [5:0] green, input [4:0] blue, 
                    output sda, output scl, output cs, output reg rs, 
                    output vsync, output hsync, 
-                   output [$clog2(HEIGHT/SCALE)-1:0] vpos, output [$clog2(WIDTH/SCALE)-1:0] hpos);
-  parameter SCALE = 2;
-  parameter WIDTH = 320;
-  parameter HEIGHT = 240;
+                   output [$clog2(HEIGHT)-SCALE:0] vpos, output [$clog2(WIDTH)-SCALE:0] hpos);
+  parameter SCALE = 2, WIDTH = 320, HEIGHT = 240;
 
   wire [$clog2(WIDTH)-1:0] hp;
   wire [$clog2(HEIGHT)-1:0] vp;
-  assign vpos = vp >> (SCALE - 1);
-  assign hpos = hp >> (SCALE - 1);
+  assign vpos = vp[$clog2(HEIGHT)-1:SCALE-1];
+  assign hpos = hp[$clog2(WIDTH)-1:SCALE-1];
 
   lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.cin, .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
 endmodule
@@ -116,6 +114,7 @@ module lcd(input cin, input reset,
                 end 
               end else state <= 2;
             end
+            default: state <= 0;
           endcase
         end
     end

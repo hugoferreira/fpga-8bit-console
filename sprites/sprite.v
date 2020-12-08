@@ -1,4 +1,4 @@
-module sprite(input clk, input reset, input we, input [0:9] address, input data, input [7:0] hpos, input [6:0] vpos, input vsync, output pixel);
+module sprite(input clk, input reset, input we, input [3:0] address, input [7:0] data, input [7:0] hpos, input [6:0] vpos, input vsync, output pixel);
   reg [7:0] spriteram[0:9];
 
   wire [7:0] sprite_hpos = spriteram[8];  // X
