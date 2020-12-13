@@ -31,18 +31,40 @@ module master_clk (input cin, output cout, output locked);
   );
 endmodule
 
-module counter(input vsync, input reset, output reg [11:0] addr, output reg [7:0] data, output rw);
-  reg [7:0] counter = 0;
-  reg [2:0] delay   = 8'hFF;
+module counter(input clk, input vsync, input reset, output reg [15:0] addr, output reg [7:0] data, output reg rw);
+  reg [7:0] letter  = 0;
+  reg [3:0] color   = 0;
+  reg [7:0] pos     = 80;
+  reg [2:0] delay   = 3'b111;
   
-  assign data = counter;
-  assign rw   = delay == 0;
-
-  always @(posedge vsync)
+  always @(posedge clk)
   begin
-    addr <= 16'h400;
-    delay <= delay - 1;
-    if (delay == 0) counter <= counter + 1;
+    if (vsync) begin
+      delay <= delay - 1;
+
+      // Update Character RAM
+      case (delay) 
+        2'b00: begin
+          addr <= 16'hFC03 + (20*15);
+          color <= color + 1;
+          data <= { 4'b0000, color };
+          rw <= 1;
+        end 
+        2'b01: begin
+          addr <= 16'hFBF8;
+          pos <= pos - 2;
+          data <= pos;
+          rw <= 1;
+        end 
+        /* 2'b10: begin
+          addr <= 16'hFC05;
+          letter <= letter + 1;
+          data <= letter;
+          rw <= 1;
+        end */
+        default: rw <= 0;
+      endcase
+    end
   end  
 endmodule
 
@@ -52,34 +74,50 @@ module chip(input cin, input reset, output sda, output scl, output cs, output rs
 
   // Basic Video Signals 
   wire vsync;
+  wire hsync;
   wire [6:0] vpos;
   wire [7:0] hpos;
   wire [4:0] red   = sr | txtr; 
   wire [5:0] green = sg | txtg; 
   wire [4:0] blue  = sb | txtb; 
-  scalescreen lcd0(.cin(clk), .reset(~reset), .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .vpos, .hpos); 
+  scalescreen lcd0(.cin(clk), .reset(~reset), .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos, .hpos); 
 
   // Bus(es) and  Memory Mapping
-  wire [11:0] addr;
-  wire [7:0]  cpu_do;
-  wire [7:0]  cpu_di;
-  wire [7:0]  tb_di;
-  wire [7:0]  tb_do;
+  wire [15:0] addr;
+
   reg         rw;
+  wire [7:0]  cpu_do;
+  wire [7:0]  cpu_di = tb_oe ? tb_do : (sp_we ? sp_do : 8'b0);
+
   reg         tb_we;
   reg         tb_oe;
+  wire [7:0]  tb_di = cpu_do;
+  wire [7:0]  tb_do;
+
+  reg         sp_we;
+  reg         sp_oe;
+  wire [7:0]  sp_di = cpu_do;
+  wire [7:0]  sp_do;
   
   always @(*)
     casex (addr)
-      12'h4xx: begin
-        tb_we =  rw;
-        tb_oe = !rw;
-        tb_di = cpu_do;
-        cpu_di = tb_do;
+      16'b111111xxxxxxxxxx: begin
+        tb_we  =  rw;
+        tb_oe  = !rw;
+        sp_we  = 0;
+        sp_oe  = 0;
+      end
+      16'b111110111111xxxx: begin
+        tb_we  = 0;
+        tb_oe  = 0;
+        sp_we  =  rw;
+        sp_oe  = !rw;
       end
       default: begin
         tb_we = 0;
-        tb_oe = 0;        
+        tb_oe = 0;      
+        sp_we = 0;
+        sp_oe = 0;  
       end
     endcase
 
@@ -88,16 +126,16 @@ module chip(input cin, input reset, output sda, output scl, output cs, output rs
   wire [4:0] txtr; 
   wire [5:0] txtg; 
   wire [4:0] txtb; 
-  textbuffer tb(.clk, .reset, .addr, .we(tb_we), .oe(tb_oe), .di(tb_di), .dout(tb_do), .hpos, .vpos, .vsync, .color(text_color));
+  textbuffer tb(.clk, .reset, .addr(addr[9:0]), .we(tb_we), .oe(tb_oe), .di(tb_di), .dout(tb_do), .hpos, .vpos, .vsync, .hsync, .color(text_color));
   palette pal_text(.color(text_color), .r(txtr), .g(txtg), .b(txtb));
 
   // Video Sprites  
   wire [4:0] sr;
   wire [5:0] sg; 
   wire [4:0] sb; 
-  sprite s0(.clk, .reset, .hpos, .vpos, .vsync, .pixel(sprite_rgb));  
+  sprite s0(.clk, .reset, .addr(addr[3:0]), .we(sp_we), .oe(sp_oe), .di(sp_di), .dout(sp_do), .hpos, .vpos, .vsync, .pixel(sprite_rgb));  
   palette pal_sprite(.color(sprite_rgb ? 4'h9 : 4'h0), .r(sr), .g(sg), .b(sb));
 
   // Others
-  counter c0(.vsync, .reset, .addr, .data(cpu_do), .rw);
+  counter c0(.clk, .vsync, .reset, .addr, .data(cpu_do), .rw);
 endmodule
