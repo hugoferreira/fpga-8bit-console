@@ -51,19 +51,19 @@ module control(input clk, input reset, input vsync, output reg [15:0] addr, outp
       // Update Character RAM
       case (delay) 
         2'b00: begin
-          addr <= 16'hFC03 + 16'h200;
+          addr <= 16'hF003 + 16'h200;
           color <= color + 1;
           data <= { 4'b0000, color };
           rw <= 1;
         end 
         2'b10: begin
-          addr <= 16'hFBF8;
+          addr <= 16'hEFF8;
           pos <= pos - 2;
           data <= pos;
           rw <= 1;
         end
         2'b01: begin
-          addr <= 16'hFC05;
+          addr <= 16'hF005;
           letter <= letter + 1;
           data <= letter;
           rw <= 1;
@@ -95,11 +95,11 @@ module chip(input cin, input reset, output sda, output scl, output cs, output rs
   wire [7:0]  cpu_do;
   // wire [7:0]  cpu_di = tb_oe ? tb_do : (sp_oe ? sp_do : 8'h0);
 
-  wire        tb_cs = addr === 16'b111111xxxxxxxxxx;
+  wire        tb_cs = addr === 16'b1111_xxxx_xxxx_xxxx;
   wire        tb_oe = tb_cs & ~rw;
   wire [7:0]  tb_do;
 
-  wire        sp_cs = addr === 16'b111110111111xxxx;
+  wire        sp_cs = addr === 16'b1110_1111_1111_xxxx;
   wire        sp_oe = sp_cs & ~rw;
   wire [7:0]  sp_do;
   
@@ -108,7 +108,7 @@ module chip(input cin, input reset, output sda, output scl, output cs, output rs
   wire [4:0] txtr; 
   wire [5:0] txtg; 
   wire [4:0] txtb; 
-  textbuffer tb(.clk, .reset, .addr(addr[9:0]), .cs(tb_cs), .rw, .di(cpu_do), .dout(tb_do), .hpos, .vpos, .vsync, .hsync, .color(text_color));
+  textbuffer tb(.clk(~clk), .reset, .addr(addr[9:0]), .cs(tb_cs), .rw, .di(cpu_do), .dout(tb_do), .hpos, .vpos, .vsync, .hsync, .color(text_color));
   palette pal_text(.color(text_color), .r(txtr), .g(txtg), .b(txtb));
 
   // Video Sprites  

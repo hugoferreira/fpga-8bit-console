@@ -1,6 +1,6 @@
 module sprite(input clk, input reset, 
               input cs, input rw, input [3:0] addr, input [7:0] di, output reg [7:0] dout, 
-              input [7:0] hpos, input [6:0] vpos, input vsync, 
+              input [7:0] hpos, input [6:0] vpos, input vsync, input hsync, 
               output pixel);
 
   reg [7:0] spriteram[0:9];
@@ -13,9 +13,9 @@ module sprite(input clk, input reset,
   wire sprite_on = ((hpos - sprite_hpos)) < 8 & ((vpos - sprite_vpos) < 8);
   assign pixel = sprite_on & spriteram[(vpos - sprite_vpos)][(hpos - sprite_hpos)];
 
-  always @(negedge clk)
-    if (cs & rw) spriteram[addr] <= di;
-
-  always @(negedge clk)
+  always @(posedge clk)
+  begin
     if (cs & ~rw) dout <= spriteram[addr];
+    if (cs &  rw) spriteram[addr] <= di;
+  end
 endmodule
