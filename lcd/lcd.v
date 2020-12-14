@@ -1,6 +1,6 @@
 `include "serialize.v"
 
-module scalescreen(input cin, input reset, 
+module scalescreen(input clk, input reset, 
                    input [4:0] red, input [5:0] green, input [4:0] blue, 
                    output sda, output scl, output cs, output reg rs, 
                    output vsync, output hsync, 
@@ -12,10 +12,10 @@ module scalescreen(input cin, input reset,
   assign vpos = vp[$clog2(HEIGHT)-1:SCALE-1];
   assign hpos = hp[$clog2(WIDTH)-1:SCALE-1];
 
-  lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.cin, .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
+  lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk, .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
 endmodule
 
-module lcd(input cin, input reset, 
+module lcd(input clk, input reset, 
            input [4:0] red, input [5:0] green, input [4:0] blue, 
            output sda, output scl, output cs, output reg rs, 
            output vsync, output hsync, 
@@ -42,7 +42,7 @@ module lcd(input cin, input reset,
   reg [7:0] dataout;
     
   serialize #(.SCL_MODE(0), .WIDTH(8), .CLK_DIV(0)) ser(
-    .cin(!cin),
+    .cin(!clk),
     .reset,
     .data(dataout),
     .sda,
