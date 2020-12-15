@@ -1,6 +1,5 @@
 module serialize(input cin, input reset, input irdy, input [MSB:0] data, output sda, output scl, output reg ordy);
   parameter SCL_MODE = 1;
-  parameter CLK_DIV = 0;
   parameter WIDTH = 8;
 
   localparam MSB = WIDTH - 1;

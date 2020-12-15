@@ -18,10 +18,10 @@
 module master_clk (input cin, output cout, output locked);
   SB_PLL40_CORE #(
       .FEEDBACK_PATH("SIMPLE"),
-      .DIVR(4'b0000),		// DIVR =  0
-      .DIVF(7'b0011111),	// DIVF = 31
+      .DIVR(4'b0001),		// DIVR =  1
+      .DIVF(7'b1001100),	// DIVF = 76
       .DIVQ(3'b100),		// DIVQ =  4
-      .FILTER_RANGE(3'b010)	// FILTER_RANGE = 2
+      .FILTER_RANGE(3'b001)	// FILTER_RANGE = 1
     ) uut (
       .LOCK(locked),
       .RESETB(1'b1),
@@ -31,11 +31,21 @@ module master_clk (input cin, output cout, output locked);
   );
 endmodule
 
+module slower_clk (input cin, input reset, output cout);
+  reg [1:0] counter = 2'b00;
+  wire cout = counter == counter[1];
+  always @(posedge cin or posedge reset)
+  begin
+    if (reset) counter <= 2'b00;
+    else counter <= counter + 1;
+  end
+endmodule
+
 module control(input clk, input reset, input vsync, output reg [15:0] addr, output reg [7:0] data, output reg rw);
   reg [7:0] letter;
   reg [3:0] color;
   reg [7:0] pos;
-  reg [2:0] delay;
+  reg [1:0] delay;
   
   always @(posedge clk or posedge reset)
   begin
@@ -43,40 +53,44 @@ module control(input clk, input reset, input vsync, output reg [15:0] addr, outp
       letter  <= 0;
       color   <= 0;
       pos     <= 80;
-      delay   <= 3'b111;
+      delay   <= 2'b00;
     end
-    else if (vsync) begin
-      delay <= delay - 1;
+    else begin
+      if (vsync) begin
+        if (delay !== 2'b11) delay <= delay + 1;
 
-      // Update Character RAM
-      case (delay) 
-        2'b00: begin
-          addr <= 16'hF003 + 16'h200;
-          color <= color + 1;
-          data <= { 4'b0000, color };
-          rw <= 1;
-        end 
-        2'b10: begin
-          addr <= 16'hEFF8;
-          pos <= pos - 2;
-          data <= pos;
-          rw <= 1;
-        end
-        2'b01: begin
-          addr <= 16'hF005;
-          letter <= letter + 1;
-          data <= letter;
-          rw <= 1;
-        end
-        default: rw <= 0;
-      endcase
+        // Update Character RAM
+        case (delay) 
+          2'b00: begin
+            addr <= 16'hF003 + 16'h200;
+            color <= color + 1;
+            data <= { 4'b0000, color };
+            rw <= 1;
+          end 
+          2'b01: begin
+            addr <= 16'hEFF8;
+            pos <= pos - 1;
+            data <= pos;
+            rw <= 1;
+          end
+          2'b10: begin
+            addr <= 16'hF005;
+            letter <= letter + 1;
+            data <= letter;
+            rw <= 1;
+          end
+          default: rw <= 0;
+        endcase
+      end else delay <= 2'b00;
     end
   end  
 endmodule
 
 module chip(input cin, input reset, output sda, output scl, output cs, output rs);
   wire clk;
-  master_clk clk0(.cin, .cout(clk));
+  wire videoclk;
+  master_clk clk0(.cin, .cout(videoclk));
+  slower_clk clk1(.cin(videoclk), .cout(clk), .reset(~reset));
 
   // Basic Video Signals 
   wire vsync;
@@ -91,7 +105,7 @@ module chip(input cin, input reset, output sda, output scl, output cs, output rs
   // Bus(es) and  Memory Mapping
   wire [15:0] addr;
 
-  reg         rw;
+  wire        rw;
   wire [7:0]  cpu_do;
   // wire [7:0]  cpu_di = tb_oe ? tb_do : (sp_oe ? sp_do : 8'h0);
 
@@ -108,16 +122,16 @@ module chip(input cin, input reset, output sda, output scl, output cs, output rs
   wire [4:0] txtr; 
   wire [5:0] txtg; 
   wire [4:0] txtb; 
-  textbuffer tb(.clk(~clk), .reset, .addr(addr[9:0]), .cs(tb_cs), .rw, .di(cpu_do), .dout(tb_do), .hpos, .vpos, .vsync, .hsync, .color(text_color));
-  palette pal_text(.color(text_color), .r(txtr), .g(txtg), .b(txtb));
+  textbuffer tb(.clk(~videoclk), .reset(~reset), .addr(addr[9:0]), .cs(tb_cs), .rw, .di(cpu_do), .dout(tb_do), .hpos, .vpos, .vsync, .hsync, .color(text_color));
+  palette pal_text(.clk(videoclk), .color(text_color), .r(txtr), .g(txtg), .b(txtb));
 
   // Video Sprites  
   wire [4:0] sr;
   wire [5:0] sg; 
   wire [4:0] sb; 
   wire pixel;
-  sprite s0(.clk, .reset, .addr(addr[3:0]), .cs(sp_cs), .rw, .di(cpu_do), .dout(sp_do), .hpos, .vpos, .vsync, .pixel);  
-  palette pal_sprite(.color(pixel ? 4'h9 : 4'h0), .r(sr), .g(sg), .b(sb));
+  sprite s0(.clk(~videoclk), .reset(~reset), .addr(addr[3:0]), .cs(sp_cs), .rw, .di(cpu_do), .dout(sp_do), .hpos, .vpos, .vsync, .pixel);  
+  palette pal_sprite(.clk(videoclk), .color(pixel ? 4'h9 : 4'h0), .r(sr), .g(sg), .b(sb));
 
   // Others
   control c0(.clk, .reset(~reset), .vsync, .addr, .data(cpu_do), .rw);

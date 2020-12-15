@@ -31,7 +31,7 @@ module lcd(input clk, input reset,
   // Scanlines and Pixels
   reg [$clog2(WIDTH*HEIGHT):0] pos;
 
-  assign hsync = hpos == 0;
+  assign hsync = hpos == WIDTH-1;
   assign vsync = state == 2;
   
   wire [15:0] color = { red, green, blue };
@@ -41,7 +41,7 @@ module lcd(input clk, input reset,
   reg [2:0] state = 0;
   reg [7:0] dataout;
     
-  serialize #(.SCL_MODE(0), .WIDTH(8), .CLK_DIV(0)) ser(
+  serialize #(.SCL_MODE(0), .WIDTH(8)) ser(
     .cin(!clk),
     .reset,
     .data(dataout),

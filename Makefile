@@ -1,7 +1,7 @@
 INCLUDE_FILES = chip.v */*.v */*.hex 
 TOP_LEVEL = top.v
 PCF_FILE = top.pcf
-TARGET_FREQ = 20
+TARGET_FREQ = 60
 
 bin/toplevel.bin: bin/toplevel.asc
 	icepack bin/toplevel.asc bin/toplevel.bin
@@ -9,7 +9,7 @@ bin/toplevel.bin: bin/toplevel.asc
 bin/toplevel.asc: ${PCF_FILE} bin/toplevel.json
 	nextpnr-ice40 -q --freq ${TARGET_FREQ} --hx8k --package tq144:4k \
 				  --json bin/toplevel.json --pcf ${PCF_FILE} \
-				  --asc bin/toplevel.asc
+				  --asc bin/toplevel.asc --opt-timing
 
 bin/toplevel.json: ${TOP_LEVEL} ${INCLUDE_FILES}
 	mkdir -p bin
