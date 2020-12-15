@@ -10,8 +10,8 @@ module por(input clk, input reset, output reg user_reset);
       counter <= 21'h17D796;    // 0.062s @ 25Mhz
       user_reset <= 0;
     end else if (~user_reset) begin 
-      if (counter != 0) counter <= counter - 1;
-      else user_reset <= 1;
+      if (counter == 0) user_reset <= 1;
+      counter <= counter - 1;
     end
   end
 endmodule

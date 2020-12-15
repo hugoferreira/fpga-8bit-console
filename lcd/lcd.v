@@ -82,13 +82,13 @@ module lcd(input clk, input reset,
               state <= 4;
             end
             4: begin
-              if (waittimer > 0) waittimer <= waittimer - 1;
-              else state <= 1;
+              if (waittimer == 0) state <= 1;
+              waittimer <= waittimer - 1;
             end
             1: begin 
-              if (counter < INIT_SIZE) counter <= counter + 1;
-              else state <= 2;
-              rs <= cmd[counter] & 1'b1;
+              if (counter == INIT_SIZE) state <= 2;
+              counter <= counter + 1;
+              rs <= cmd[counter];
               dataout <= data[counter];
             end
             2: begin

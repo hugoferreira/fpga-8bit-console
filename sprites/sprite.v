@@ -4,10 +4,6 @@ module sprite(input clk, input reset,
               output reg pixel);
 
   reg [7:0] spriteram[0:9];
-
-  wire [7:0] sprite_hpos = spriteram[8];  // X
-  wire [7:0] sprite_vpos = spriteram[9];  // Y
-
   initial $readmemh("spriteram.hex", spriteram); 
 
   reg [1:0] state;
@@ -24,16 +20,16 @@ module sprite(input clk, input reset,
       state <= state + 1;
       case (state)
         2'b00: // Calculate if we are going to display the sprite
-        begin  
-          scanhpos <= hpos - sprite_hpos;
-          scanvpos <= vpos - sprite_vpos;
+          scanhpos <= hpos - spriteram[8];
+
+        2'b01: 
+        begin
+          scanvpos <= vpos - spriteram[9];
           sprite_on <= scanhpos < 8 & scanvpos < 8;
         end
 
-        2'b01: // Fetch the sprite scanline
+        2'b10: // Fetch the sprite scanline
           sprite <= spriteram[{1'b0, scanvpos[2:0]}];
-
-        2'b10: begin end
 
         2'b11: // Output pixel
           pixel <= sprite_on & sprite[scanhpos[2:0]];

@@ -5,7 +5,7 @@ module textbuffer(input clk, input reset,
   
   parameter WIDTH = 20;
   parameter HEIGHT = 15;
-
+  
   reg [7:0] charram [0:(1<<9)-1];
   reg [7:0] attrram [0:(1<<9)-1];
   reg [7:0] fontrom [0:(1<<11)-1];
