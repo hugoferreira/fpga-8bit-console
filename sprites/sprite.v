@@ -20,11 +20,11 @@ module sprite(input clk, input reset,
       state <= state + 1;
       case (state)
         2'b00: // Calculate if we are going to display the sprite
-          scanhpos <= hpos - spriteram[8];
+          scanvpos <= vpos - spriteram[9];
 
         2'b01: 
         begin
-          scanvpos <= vpos - spriteram[9];
+          scanhpos <= hpos - spriteram[8];
           sprite_on <= scanhpos < 8 & scanvpos < 8;
         end
 
@@ -40,6 +40,6 @@ module sprite(input clk, input reset,
   always @(posedge clk)
   begin
     if (cs & ~rw) dout <= spriteram[addr];
-    if (cs &  rw) spriteram[addr] <= di;
+    else if (cs & rw) spriteram[addr] <= di;
   end
 endmodule

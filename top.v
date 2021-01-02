@@ -21,11 +21,8 @@ module top(input clk, output yellow_led, output sda, output scl, output cs, outp
   assign lcd_rst = user_reset;
   assign yellow_led = user_reset;
 
-  por u_por(
-    .clk,
-    .reset(1'b0),
-    .user_reset(user_reset)
-  );
+  por u_por(.clk, .reset(1'b0), .user_reset(user_reset));
+  chip chip(.cin(clk), .reset(~user_reset), .sda, .scl, .cs, .rs);
 
   /* wire tx_ready;
 
@@ -38,12 +35,4 @@ module top(input clk, output yellow_led, output sda, output scl, output cs, outp
     .uart_tx (tx)
   ); */
 
-  chip chip(
-    .cin(clk),
-    .reset(user_reset),
-    .sda,
-    .scl,
-    .cs,
-    .rs,
-  );
 endmodule

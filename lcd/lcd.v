@@ -38,18 +38,10 @@ module lcd(input clk, input reset,
 
   // LCD Protocol
   reg irdy;
-  reg [2:0] state = 0;
+  reg [1:0] state = 0;
   reg [7:0] dataout;
     
-  serialize #(.SCL_MODE(0), .WIDTH(8)) ser(
-    .cin(!clk),
-    .reset,
-    .data(dataout),
-    .sda,
-    .scl,
-    .irdy,
-    .ordy(cs)
-  );
+  serialize #(.SCL_MODE(0), .WIDTH(8)) ser(.cin(!clk), .reset, .data(dataout), .sda, .scl, .irdy, .ordy(cs));
 
   // LCD INITIALISATION
   reg [7:0] data [0:INIT_SIZE];
@@ -63,27 +55,20 @@ module lcd(input clk, input reset,
   always @(posedge cs or posedge reset)
     begin
       if (reset) begin
+        dataout <= 0;
         counter <= 0;
         state <= 0;
-        rs <= 1;
-        dataout <= 0;
-        pos <= 0;
-        hpos <= 0;
-        vpos <= 0;
         irdy <= 1'b1;
+        waittimer <= 16'hFFFF;
       end
       else
         begin
           case (state)
             0: begin
               rs <= 0;
-              dataout <= 8'h11;
-              waittimer <= 16'hFFFF;
-              state <= 4;
-            end
-            4: begin
-              if (waittimer == 0) state <= 1;
+              dataout <= 8'h11;              
               waittimer <= waittimer - 1;
+              if (waittimer == 0) state <= 1;
             end
             1: begin 
               if (counter == INIT_SIZE) state <= 2;
@@ -103,7 +88,7 @@ module lcd(input clk, input reset,
               rs <= 1;
               dataout <= pos[0] ? color[7:0] : color[15:8];
 
-              if (pos < RESOLUTION) begin
+              if (pos != RESOLUTION) begin
                 pos <= pos + 1;
                 if (pos[1]) begin
                   hpos <= hpos + 1;
@@ -114,7 +99,6 @@ module lcd(input clk, input reset,
                 end 
               end else state <= 2;
             end
-            default: state <= 0;
           endcase
         end
     end
