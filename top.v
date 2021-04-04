@@ -1,5 +1,6 @@
 `include "chip.v"
 `include "lcd/lcd.v"
+`include "lcd/scalescreen.v"
 
 /**
  * PLL configuration
@@ -55,6 +56,8 @@ module por(input clk, input reset, output reg user_reset);
 endmodule
 
 module top(input clk, output yellow_led, output sda, output scl, output cs, output rs, output lcd_rst, output tx);
+  parameter SCALE = 2, WIDTH = 320, HEIGHT = 240;
+
   wire reset;
   wire clk_1;
   wire clk_2;
@@ -68,12 +71,17 @@ module top(input clk, output yellow_led, output sda, output scl, output cs, outp
 
   wire vsync;
   wire hsync;
-  wire [6:0] vpos;
-  wire [7:0] hpos;
   wire [4:0] red;
   wire [5:0] green;
   wire [4:0] blue;
-  scalescreen lcd0(.clk(clk_2), .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos, .hpos); 
+
+  wire [7:0] vp;
+  wire [8:0] hp;
+  wire [6:0] vpos;
+  wire [7:0] hpos;
+
+  scalescreen #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) scaler0(.clk(clk_2), .reset, .vp, .hp, .vpos, .hpos);
+  lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk(clk_2), .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
 
   chip chip(.clk_0(clk), .clk_1, .clk_2, .reset, .vsync, .hsync, .vpos, .hpos, .red, .green, .blue);
 

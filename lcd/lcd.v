@@ -1,31 +1,5 @@
 `include "serialize.v"
 
-module scalescreen(input clk, input reset, 
-                   input [4:0] red, input [5:0] green, input [4:0] blue, 
-                   output sda, output scl, output cs, output reg rs, 
-                   output vsync, output hsync, 
-                   output [$clog2(HEIGHT)-SCALE:0] vpos, output [$clog2(WIDTH)-SCALE:0] hpos);
-  parameter SCALE = 2, WIDTH = 320, HEIGHT = 240, SCANLINES = 0;
-
-  wire [$clog2(WIDTH)-1:0] hp;
-  wire [$clog2(HEIGHT)-1:0] vp;
-  assign vpos = vp[$clog2(HEIGHT)-1:SCALE-1];
-  assign hpos = hp[$clog2(WIDTH)-1:SCALE-1];
-  
-  generate 
-    if (SCANLINES == 0) begin
-      lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk, .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
-    end else begin
-      wire [4:0] nr = vp[0] ? red : 0;
-      wire [5:0] ng = vp[0] ? green : 0;
-      wire [4:0] nb = vp[0] ? blue : 0;
-
-      lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk, .reset, .red(nr), .green(ng), .blue(nb), .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
-    end
-  endgenerate
-
-endmodule
-
 module lcd(input clk, input reset, 
            input [4:0] red, input [5:0] green, input [4:0] blue, 
            output sda, output scl, output cs, output reg rs, 
