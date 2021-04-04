@@ -5,14 +5,25 @@ module scalescreen(input clk, input reset,
                    output sda, output scl, output cs, output reg rs, 
                    output vsync, output hsync, 
                    output [$clog2(HEIGHT)-SCALE:0] vpos, output [$clog2(WIDTH)-SCALE:0] hpos);
-  parameter SCALE = 2, WIDTH = 320, HEIGHT = 240;
+  parameter SCALE = 2, WIDTH = 320, HEIGHT = 240, SCANLINES = 0;
 
   wire [$clog2(WIDTH)-1:0] hp;
   wire [$clog2(HEIGHT)-1:0] vp;
   assign vpos = vp[$clog2(HEIGHT)-1:SCALE-1];
   assign hpos = hp[$clog2(WIDTH)-1:SCALE-1];
+  
+  generate 
+    if (SCANLINES == 0) begin
+      lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk, .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
+    end else begin
+      wire [4:0] nr = vp[0] ? red : 0;
+      wire [5:0] ng = vp[0] ? green : 0;
+      wire [4:0] nb = vp[0] ? blue : 0;
 
-  lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk, .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
+      lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk, .reset, .red(nr), .green(ng), .blue(nb), .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
+    end
+  endgenerate
+
 endmodule
 
 module lcd(input clk, input reset, 
@@ -44,13 +55,12 @@ module lcd(input clk, input reset,
   serialize #(.SCL_MODE(0), .WIDTH(8)) ser(.cin(!clk), .reset, .data(dataout), .sda, .scl, .irdy, .ordy(cs));
 
   // LCD INITIALISATION
-  reg [7:0] data [0:INIT_SIZE];
-  reg       cmd  [0:INIT_SIZE];
-  reg [3:0] counter;  
-  reg [15:0] waittimer;
-
-  initial $readmemh("setup.hex", data);
-  initial $readmemh("setup_type.hex", cmd);
+  reg  [3:0]  counter;  
+  reg  [15:0] waittimer;
+  reg  [8:0]  rom [0:INIT_SIZE];
+  wire [8:0]  command = rom[counter];
+  
+  initial $readmemh("setup.hex", rom);
   
   always @(posedge cs or posedge reset)
     begin
@@ -73,8 +83,8 @@ module lcd(input clk, input reset,
             1: begin 
               if (counter == INIT_SIZE) state <= 2;
               counter <= counter + 1;
-              rs <= cmd[counter];
-              dataout <= data[counter];
+              rs <= command[8];
+              dataout <= command[7:0];
             end
             2: begin
               pos <= 0;

@@ -1,7 +1,7 @@
-INCLUDE_FILES = chip.v */*.v */*.hex 
+INCLUDE_FILES = chip.v *.v */*.v */*.hex 
 TOP_LEVEL = top.v
 PCF_FILE = top.pcf
-TARGET_FREQ = 60
+TARGET_FREQ = 80
 
 bin/toplevel.bin: bin/toplevel.asc
 	icepack bin/toplevel.asc bin/toplevel.bin
@@ -13,7 +13,7 @@ bin/toplevel.asc: ${PCF_FILE} bin/toplevel.json
 
 bin/toplevel.json: ${TOP_LEVEL} ${INCLUDE_FILES}
 	mkdir -p bin
-	yosys -q -p "synth_ice40 -top top -json bin/toplevel.json" ${TOP_LEVEL} 
+	yosys -q -p "synth_ice40 -top top -json bin/toplevel.json -abc2" ${TOP_LEVEL} 
 
 .PHONY: stat
 stat: bin/toplevel.asc
