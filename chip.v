@@ -4,43 +4,7 @@
 `include "lcd/lcd.v"
 `include "ram.v"
 
-/**
- * PLL configuration
- *
- * This Verilog module was generated automatically
- * using the icepll tool from the IceStorm project.
- * Use at your own risk.
- *
- * Given input frequency:        25.000 MHz
- * Requested output frequency:   60.000 MHz
- * Achieved output frequency:    60.156 MHz
- */
 
-module master_clk (input cin, output cout, output locked);
-  SB_PLL40_CORE #(
-      .FEEDBACK_PATH("SIMPLE"),
-      .DIVR(4'b0001),		// DIVR =  1
-      .DIVF(7'b1001100),	// DIVF = 76
-      .DIVQ(3'b100),		// DIVQ =  4
-      .FILTER_RANGE(3'b001)	// FILTER_RANGE = 1
-    ) uut (
-      .LOCK(locked),
-      .RESETB(1'b1),
-      .BYPASS(1'b0),
-      .REFERENCECLK(cin),
-      .PLLOUTCORE(cout)
-  );
-endmodule
-
-module slower_clk (input cin, input reset, output cout);
-  reg [1:0] counter = 2'b00;
-  wire cout = counter == counter[1];
-  always @(posedge cin or posedge reset)
-  begin
-    if (reset) counter <= 2'b00;
-    else counter <= counter + 1;
-  end
-endmodule
 
 module control(input clk, input reset, input vsync, output reg [15:0] addr, output reg [7:0] data, input [7:0] din, output reg rw);
   reg [7:0] letter;
@@ -125,12 +89,7 @@ module addressdecoder(input [15:0] addr, input rw,
   wire ram_oe = ram_cs & ~rw;
 endmodule
 
-module chip(input cin, input reset, output sda, output scl, output cs, output rs);
-  wire clk;
-  wire videoclk;
-  master_clk clk0(.cin, .cout(videoclk));
-  slower_clk clk1(.cin(videoclk), .cout(clk), .reset);
-
+module chip(input clk_0, input clk_1, input clk_2, input reset, output sda, output scl, output cs, output rs);
   // Basic Video Signals 
   wire vsync;
   wire hsync;
@@ -139,7 +98,7 @@ module chip(input cin, input reset, output sda, output scl, output cs, output rs
   wire [4:0] red   = sr | txtr; 
   wire [5:0] green = sg | txtg; 
   wire [4:0] blue  = sb | txtb; 
-  scalescreen lcd0(.clk, .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos, .hpos); 
+  scalescreen lcd0(.clk(clk_2), .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos, .hpos); 
 
   // Addressing and Peripherals
   wire        rw;
@@ -160,20 +119,20 @@ module chip(input cin, input reset, output sda, output scl, output cs, output rs
   wire [4:0] txtr; 
   wire [5:0] txtg; 
   wire [4:0] txtb; 
-  textbuffer tb(.clk(~videoclk), .reset, .addr(addr[9:0]), .cs(tb_cs), .rw, .di(cpu_do), .dout(tb_do), .hpos, .vpos, .vsync, .hsync, .color(text_color));
-  palette pal_text(.clk(videoclk), .color(text_color), .r(txtr), .g(txtg), .b(txtb));
+  textbuffer tb(.clk(~clk_1), .reset, .addr(addr[9:0]), .cs(tb_cs), .rw, .di(cpu_do), .dout(tb_do), .hpos, .vpos, .vsync, .hsync, .color(text_color));
+  palette pal_text(.clk(clk_1), .color(text_color), .r(txtr), .g(txtg), .b(txtb));
 
   // Video Sprites  
   wire [4:0] sr;
   wire [5:0] sg; 
   wire [4:0] sb; 
   wire pixel;
-  sprite s0(.clk(~videoclk), .reset, .addr(addr[3:0]), .cs(sp_cs), .rw, .di(cpu_do), .dout(sp_do), .hpos, .vpos, .vsync, .pixel);  
-  palette pal_sprite(.clk(videoclk), .color(pixel ? 4'h9 : 4'h0), .r(sr), .g(sg), .b(sb));
+  sprite s0(.clk(~clk_1), .reset, .addr(addr[3:0]), .cs(sp_cs), .rw, .di(cpu_do), .dout(sp_do), .hpos, .vpos, .vsync, .pixel);  
+  palette pal_sprite(.clk(clk_1), .color(pixel ? 4'h9 : 4'h0), .r(sr), .g(sg), .b(sb));
 
   // 8x64kbit Async RAM, 
-  RAM_async #(.A(12), .D(8)) ram (.clk(~videoclk), .cs(ram_cs), .rw, .addr(addr[11:0]), .di(cpu_do), .dout(ram_do));
+  RAM_async #(.A(12), .D(8)) ram (.clk(~clk_1), .cs(ram_cs), .rw, .addr(addr[11:0]), .di(cpu_do), .dout(ram_do));
 
   // Others
-  control c0(.clk, .reset, .vsync, .addr, .data(cpu_do), .din(cpu_di), .rw);
+  control c0(.clk(clk_2), .reset, .vsync, .addr, .data(cpu_do), .din(cpu_di), .rw);
 endmodule
