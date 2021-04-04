@@ -1,4 +1,5 @@
 `include "chip.v"
+`include "lcd/lcd.v"
 
 /**
  * PLL configuration
@@ -11,7 +12,7 @@
  * Requested output frequency:   60.000 MHz
  * Achieved output frequency:    60.156 MHz
  */
-module master_clk (input cin, output cout, output locked);
+module master_clk(input cin, output cout, output locked);
   SB_PLL40_CORE #(
       .FEEDBACK_PATH("SIMPLE"),
       .DIVR(4'b0001),		// DIVR =  1
@@ -27,7 +28,7 @@ module master_clk (input cin, output cout, output locked);
   );
 endmodule
 
-module slower_clk (input cin, input reset, output cout);
+module slower_clk(input cin, input reset, output cout);
   reg [1:0] counter = 2'b00;
   assign cout = counter[1];
   always @(posedge cin or posedge reset)
@@ -39,32 +40,42 @@ endmodule
 
 module por(input clk, input reset, output reg user_reset);
   reg [20:0] counter = 21'h17D796;
-  reg user_reset = 0;
+  reg user_reset = 1;
 
   always @(posedge clk or posedge reset)
   begin
     if (reset) begin 
       counter <= 21'h17D796;    // 0.062s @ 25Mhz
-      user_reset <= 0;
-    end else if (~user_reset) begin 
-      if (counter == 0) user_reset <= 1;
+      user_reset <= 1;
+    end else if (user_reset) begin 
+      if (counter == 0) user_reset <= 0;
       counter <= counter - 1;
     end
   end
 endmodule
 
 module top(input clk, output yellow_led, output sda, output scl, output cs, output rs, output lcd_rst, output tx);
-  wire user_reset;
-  wire videoclk;
+  wire reset;
+  wire clk_1;
   wire clk_2;
 
-  assign lcd_rst = user_reset;
-  assign yellow_led = user_reset;
+  assign lcd_rst = ~reset;
+  assign yellow_led = ~reset;
 
-  por u_por(.clk, .reset(1'b0), .user_reset(user_reset));
-  master_clk clk0(.cin(clk), .cout(videoclk));
-  slower_clk clk1(.cin(videoclk), .cout(clk_2), .reset(~user_reset));
-  chip chip(.clk_0(clk), .clk_1(videoclk), .clk_2, .reset(~user_reset), .sda, .scl, .cs, .rs);
+  por u_por(.clk, .reset(1'b0), .user_reset(reset));
+  master_clk clk0(.cin(clk), .cout(clk_1));
+  slower_clk clk1(.cin(clk_1), .cout(clk_2), .reset);
+
+  wire vsync;
+  wire hsync;
+  wire [6:0] vpos;
+  wire [7:0] hpos;
+  wire [4:0] red;
+  wire [5:0] green;
+  wire [4:0] blue;
+  scalescreen lcd0(.clk(clk_2), .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos, .hpos); 
+
+  chip chip(.clk_0(clk), .clk_1, .clk_2, .reset, .vsync, .hsync, .vpos, .hpos, .red, .green, .blue);
 
   /* wire tx_ready;
 
@@ -76,5 +87,4 @@ module top(input clk, output yellow_led, output sda, output scl, output cs, outp
     .tx_data (8'h55),
     .uart_tx (tx)
   ); */
-
 endmodule

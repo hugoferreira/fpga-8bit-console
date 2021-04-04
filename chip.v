@@ -1,10 +1,7 @@
 `include "textbuffer/textbuffer.v"
 `include "sprites/sprite.v"
 `include "lcd/palette.v"
-`include "lcd/lcd.v"
 `include "ram.v"
-
-
 
 module control(input clk, input reset, input vsync, output reg [15:0] addr, output reg [7:0] data, input [7:0] din, output reg rw);
   reg [7:0] letter;
@@ -80,26 +77,16 @@ module addressdecoder(input [15:0] addr, input rw,
 
   assign cpu_di = p(peripheral);
 
-  wire tb_cs  = addr === 16'b1111_xxxx_xxxx_xxxx;
-  wire sp_cs  = addr === 16'b1110_1111_1111_xxxx;
-  wire ram_cs = addr === 16'b0000_xxxx_xxxx_xxxx;
+  assign tb_cs  = addr === 16'b1111_xxxx_xxxx_xxxx;
+  assign sp_cs  = addr === 16'b1110_1111_1111_xxxx;
+  assign ram_cs = addr === 16'b0000_xxxx_xxxx_xxxx;
 
   wire tb_oe  = tb_cs & ~rw;
   wire sp_oe  = sp_cs & ~rw;
   wire ram_oe = ram_cs & ~rw;
 endmodule
 
-module chip(input clk_0, input clk_1, input clk_2, input reset, output sda, output scl, output cs, output rs);
-  // Basic Video Signals 
-  wire vsync;
-  wire hsync;
-  wire [6:0] vpos;
-  wire [7:0] hpos;
-  wire [4:0] red   = sr | txtr; 
-  wire [5:0] green = sg | txtg; 
-  wire [4:0] blue  = sb | txtb; 
-  scalescreen lcd0(.clk(clk_2), .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos, .hpos); 
-
+module chip(input clk_0, input clk_1, input clk_2, input reset, input vsync, input hsync, input [6:0] vpos, input [7:0] hpos, output [4:0] red, output [5:0] green, output [4:0] blue);
   // Addressing and Peripherals
   wire        rw;
   wire [15:0] addr;
@@ -114,6 +101,12 @@ module chip(input clk_0, input clk_1, input clk_2, input reset, output sda, outp
 
   addressdecoder decoder(.addr, .rw, .cpu_di, .tb_do, .sp_do, .ram_do, .tb_cs, .sp_cs, .ram_cs);
 
+  // 8x64kbit Async RAM, 
+  RAM_async #(.A(12), .D(8)) ram (.clk(~clk_1), .cs(ram_cs), .rw, .addr(addr[11:0]), .di(cpu_do), .dout(ram_do));
+
+  // Control Unit
+  control c0(.clk(clk_2), .reset, .vsync, .addr, .data(cpu_do), .din(cpu_di), .rw);
+
   // Text Video Buffer  
   wire [3:0] text_color;
   wire [4:0] txtr; 
@@ -127,12 +120,11 @@ module chip(input clk_0, input clk_1, input clk_2, input reset, output sda, outp
   wire [5:0] sg; 
   wire [4:0] sb; 
   wire pixel;
-  sprite s0(.clk(~clk_1), .reset, .addr(addr[3:0]), .cs(sp_cs), .rw, .di(cpu_do), .dout(sp_do), .hpos, .vpos, .vsync, .pixel);  
+  sprite s0(.clk(~clk_1), .reset, .addr(addr[3:0]), .cs(sp_cs), .rw, .di(cpu_do), .dout(sp_do), .hpos, .vpos, .hsync, .vsync, .pixel);  
   palette pal_sprite(.clk(clk_1), .color(pixel ? 4'h9 : 4'h0), .r(sr), .g(sg), .b(sb));
 
-  // 8x64kbit Async RAM, 
-  RAM_async #(.A(12), .D(8)) ram (.clk(~clk_1), .cs(ram_cs), .rw, .addr(addr[11:0]), .di(cpu_do), .dout(ram_do));
-
-  // Others
-  control c0(.clk(clk_2), .reset, .vsync, .addr, .data(cpu_do), .din(cpu_di), .rw);
+  // Basic Video Signals 
+  assign red   = sr | txtr; 
+  assign green = sg | txtg; 
+  assign blue  = sb | txtb; 
 endmodule
