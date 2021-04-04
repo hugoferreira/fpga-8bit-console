@@ -10,15 +10,15 @@
  * Use at your own risk.
  *
  * Given input frequency:        25.000 MHz
- * Requested output frequency:   60.000 MHz
- * Achieved output frequency:    60.156 MHz
+ * Requested output frequency:   80.000 MHz
+ * Achieved output frequency:    79.688 MHz
  */
 module master_clk(input cin, output cout, output locked);
   SB_PLL40_CORE #(
       .FEEDBACK_PATH("SIMPLE"),
-      .DIVR(4'b0001),		// DIVR =  1
-      .DIVF(7'b1001100),	// DIVF = 76
-      .DIVQ(3'b100),		// DIVQ =  4
+      .DIVR(4'b0001),		    // DIVR =  1
+      .DIVF(7'b0110010),	  // DIVF = 50
+      .DIVQ(3'b011),		    // DIVQ =  3
       .FILTER_RANGE(3'b001)	// FILTER_RANGE = 1
     ) uut (
       .LOCK(locked),
@@ -29,14 +29,12 @@ module master_clk(input cin, output cout, output locked);
   );
 endmodule
 
-module slower_clk(input cin, input reset, output cout);
-  reg [1:0] counter = 2'b00;
-  assign cout = counter[1];
-  always @(posedge cin or posedge reset)
-  begin
-    if (reset) counter <= 2'b00;
-    else counter <= counter + 1;
-  end
+module slower_clk(input cin, input reset, output reg clk_div2, output reg clk_div4);
+  always @(posedge cin)
+    clk_div2 <= ~clk_div2;
+
+  always @(posedge clk_div2)
+    clk_div4 <= ~clk_div4;
 endmodule
 
 module por(input clk, input reset, output reg user_reset);
@@ -59,15 +57,16 @@ module top(input clk, output yellow_led, output sda, output scl, output cs, outp
   parameter SCALE = 2, WIDTH = 320, HEIGHT = 240;
 
   wire reset;
-  wire clk_1;
-  wire clk_2;
+  wire clk_locked;  // PLL generator is locked
+  wire clk_1;       // 80MHz
+  wire clk_2;       // 40MHz
 
   assign lcd_rst = ~reset;
   assign yellow_led = ~reset;
 
-  por u_por(.clk, .reset(1'b0), .user_reset(reset));
-  master_clk clk0(.cin(clk), .cout(clk_1));
-  slower_clk clk1(.cin(clk_1), .cout(clk_2), .reset);
+  por u_por(.clk, .reset(~clk_locked), .user_reset(reset));
+  master_clk clk0(.cin(clk), .cout(clk_1), .locked(clk_locked));
+  slower_clk clk1(.cin(clk_1), .clk_div2(clk_2), .reset);
 
   wire vsync;
   wire hsync;
