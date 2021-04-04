@@ -1,6 +1,6 @@
-`include "textbuffer/textbuffer.v"
-`include "sprites/sprite.v"
-`include "lcd/palette.v"
+`include "raster/textbuffer/textbuffer.v"
+`include "raster/sprites/sprite.v"
+`include "raster/palette.v"
 `include "ram.v"
 
 module control(input clk, input reset, input vsync, output reg [15:0] addr, output reg [7:0] data, input [7:0] din, output reg rw);

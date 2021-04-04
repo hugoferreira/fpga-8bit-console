@@ -1,6 +1,6 @@
 `include "chip.v"
 `include "lcd/lcd.v"
-`include "lcd/scalescreen.v"
+`include "raster/scalescreen.v"
 
 /**
  * PLL configuration
@@ -80,8 +80,8 @@ module top(input clk, output yellow_led, output sda, output scl, output cs, outp
   wire [6:0] vpos;
   wire [7:0] hpos;
 
-  scalescreen #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) scaler0(.clk(clk_2), .reset, .vp, .hp, .vpos, .hpos);
   lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk(clk_2), .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
+  scalescreen #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) scaler0(.clk(clk_2), .reset, .vp, .hp, .vpos, .hpos);
 
   chip chip(.clk_0(clk), .clk_1, .clk_2, .reset, .vsync, .hsync, .vpos, .hpos, .red, .green, .blue);
 
