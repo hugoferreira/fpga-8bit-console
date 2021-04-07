@@ -21,13 +21,24 @@ stat: bin/toplevel.asc
 
 .PHONY: timing
 timing: bin/toplevel.bin
-	icetime -tmd hx8k bin/toplevel.asc
+	icetime -tmd hx8k -c ${TARGET_FREQ} -p ${PCF_FILE} -P tq144:4k bin/toplevel.asc
 
 .PHONY: upload
 upload: bin/toplevel.bin
 	stty -f /dev/cu.usbmodem00000000001A1 raw 
 	cat bin/toplevel.bin >/dev/cu.usbmodem00000000001A1
 
+.PHONY: run
+run:
+	cp -R rtl rust/rtl
+	cp rtl/*.hex rust/
+	cp rtl/*.bin rust/
+	cd rust && cargo run
+
 .PHONY: clean
 clean:
 	rm -rf bin
+	rm -rf rust/rtl
+	rm rust/*.hex
+	rm rust/*.bin
+	cd rust && cargo clean

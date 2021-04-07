@@ -1,8 +1,8 @@
 `include "chip.sv"
 `include "por.sv"
 `include "slower_clk.sv"
-`include "lcd/lcd.sv"
-`include "raster/scalescreen.v"
+`include "lcd.sv"
+`include "scalescreen.v"
 
 /**
  * PLL configuration

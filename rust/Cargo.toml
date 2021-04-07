@@ -1,0 +1,18 @@
+[package]
+name = "verilog-screen-co-simulation"
+version = "0.1.0"
+authors = ["Hugo Sereno <bytter@gmail.com>"]
+publish = false
+
+build = "build.rs"
+
+[dependencies]
+verilated = "0.1"
+verilated-module = "0.1"
+minifb = "0.19"
+
+[build-dependencies]
+verilator = { version = "0.1", features = ["gen", "module"] }
+
+[profile.release]
+opt-level = "s"

@@ -1,3 +1,11 @@
 bin
 blackice-mx.pcf
 .vscode
+rust/obj_dir
+rust/target
+rust/*.vcd
+rust/*.lock
+rust/rtl
+rust/*.bin
+rust/*.hex
+
