@@ -41,7 +41,7 @@ module por(input clk, input reset, output reg user_reset);
   reg [20:0] counter = 21'h17D796;
   reg user_reset = 1;
 
-  always @(posedge clk or posedge reset)
+  always @(posedge clk)
   begin
     if (reset) begin 
       counter <= 21'h17D796;    // 0.062s @ 25Mhz
@@ -54,7 +54,8 @@ module por(input clk, input reset, output reg user_reset);
 endmodule
 
 module top(input clk, output yellow_led, output sda, output scl, output cs, output rs, output lcd_rst, output tx);
-  parameter SCALE = 2, WIDTH = 320, HEIGHT = 240;
+  localparam SCALE = 2, WIDTH = 320, HEIGHT = 240;
+  localparam RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
 
   wire reset;
   wire clk_locked;  // PLL generator is locked
@@ -66,23 +67,19 @@ module top(input clk, output yellow_led, output sda, output scl, output cs, outp
 
   por u_por(.clk, .reset(~clk_locked), .user_reset(reset));
   master_clk clk0(.cin(clk), .cout(clk_1), .locked(clk_locked));
-  slower_clk clk1(.cin(clk_1), .clk_div2(clk_2), .reset);
+  slower_clk clk1(.cin(clk_1), .clk_div4(clk_2), .reset);
 
   wire vsync;
   wire hsync;
-  wire [4:0] red;
-  wire [5:0] green;
-  wire [4:0] blue;
-
+  wire [RGB-1:0] rgb;
   wire [7:0] vp;
   wire [8:0] hp;
   wire [6:0] vpos;
   wire [7:0] hpos;
 
-  lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk(clk_2), .reset, .red, .green, .blue, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
+  lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk(clk_2), .reset, .rgb, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
   scalescreen #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) scaler0(.clk(clk_2), .reset, .vp, .hp, .vpos, .hpos);
-
-  chip chip(.clk_0(clk), .clk_1, .clk_2, .reset, .vsync, .hsync, .vpos, .hpos, .red, .green, .blue);
+  chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE)) chip(.clk_1, .clk_2, .reset, .vsync, .hsync, .vpos, .hpos, .rgb);
 
   /* wire tx_ready;
 

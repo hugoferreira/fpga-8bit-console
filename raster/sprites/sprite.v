@@ -12,7 +12,7 @@ module sprite(input clk, input reset,
   reg [7:0] scanvpos;
   reg sprite_on;
   
-  always @(posedge clk or posedge reset)
+  always @(posedge clk)
   begin
     if (reset) begin
       state <= 0;
@@ -38,8 +38,8 @@ module sprite(input clk, input reset,
   end
 
   always @(posedge clk)
-  begin
     if (cs & ~rw) dout <= spriteram[addr];
-    else if (cs & rw) spriteram[addr] <= di;
-  end
+
+  always @(posedge clk)
+    if (cs & rw) spriteram[addr] <= di;
 endmodule

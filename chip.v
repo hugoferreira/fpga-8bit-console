@@ -9,7 +9,7 @@ module control(input clk, input reset, input vsync, output reg [15:0] addr, outp
   reg [7:0] pos;
   reg [2:0] delay;
   
-  always @(posedge clk or posedge reset)
+  always @(posedge clk)
   begin
     if (reset) begin
       letter  <= 0;
@@ -77,16 +77,21 @@ module addressdecoder(input [15:0] addr, input rw,
 
   assign cpu_di = p(peripheral);
 
-  assign tb_cs  = addr === 16'b1111_xxxx_xxxx_xxxx;
-  assign sp_cs  = addr === 16'b1110_1111_1111_xxxx;
-  assign ram_cs = addr === 16'b0000_xxxx_xxxx_xxxx;
+  assign tb_cs  = addr[15:12] == 04'b1111;
+  assign sp_cs  = addr[15:04] == 12'b1110_1111_1111;
+  assign ram_cs = addr[15:12] == 04'b0000;
 
   wire tb_oe  = tb_cs & ~rw;
   wire sp_oe  = sp_cs & ~rw;
   wire ram_oe = ram_cs & ~rw;
 endmodule
 
-module chip(input clk_0, input clk_1, input clk_2, input reset, input vsync, input hsync, input [6:0] vpos, input [7:0] hpos, output [4:0] red, output [5:0] green, output [4:0] blue);
+module chip(input clk_1, input clk_2, input reset, 
+            input vsync, input hsync, input [6:0] vpos, input [7:0] hpos, 
+            output [RGB-1:0] rgb);
+
+  parameter RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
+
   // Addressing and Peripherals
   wire        rw;
   wire [15:0] addr;
@@ -101,30 +106,24 @@ module chip(input clk_0, input clk_1, input clk_2, input reset, input vsync, inp
 
   addressdecoder decoder(.addr, .rw, .cpu_di, .tb_do, .sp_do, .ram_do, .tb_cs, .sp_cs, .ram_cs);
 
-  // 8x64kbit Async RAM, 
+  // 8x64kbit Async RAM
   RAM_async #(.A(12), .D(8)) ram (.clk(~clk_1), .cs(ram_cs), .rw, .addr(addr[11:0]), .di(cpu_do), .dout(ram_do));
 
   // Control Unit
-  control c0(.clk(clk_2), .reset, .vsync, .addr, .data(cpu_do), .din(cpu_di), .rw);
+  control c0(.clk(clk_1), .reset, .vsync, .addr, .data(cpu_do), .din(cpu_di), .rw);
 
   // Text Video Buffer  
   wire [3:0] text_color;
-  wire [4:0] txtr; 
-  wire [5:0] txtg; 
-  wire [4:0] txtb; 
+  wire [RGB-1:0] trgb; 
   textbuffer tb(.clk(~clk_1), .reset, .addr(addr[9:0]), .cs(tb_cs), .rw, .di(cpu_do), .dout(tb_do), .hpos, .vpos, .vsync, .hsync, .color(text_color));
-  palette pal_text(.clk(clk_1), .color(text_color), .r(txtr), .g(txtg), .b(txtb));
+  palette #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE)) pal_text(.clk(clk_1), .color(text_color), .rgb(trgb));
 
   // Video Sprites  
-  wire [4:0] sr;
-  wire [5:0] sg; 
-  wire [4:0] sb; 
   wire pixel;
+  wire [RGB-1:0] srgb;
   sprite s0(.clk(~clk_1), .reset, .addr(addr[3:0]), .cs(sp_cs), .rw, .di(cpu_do), .dout(sp_do), .hpos, .vpos, .hsync, .vsync, .pixel);  
-  palette pal_sprite(.clk(clk_1), .color(pixel ? 4'h9 : 4'h0), .r(sr), .g(sg), .b(sb));
+  palette #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE)) pal_sprite(.clk(clk_1), .color(pixel ? 4'h9 : 4'h0), .rgb(srgb));
 
   // Basic Video Signals 
-  assign red   = sr | txtr; 
-  assign green = sg | txtg; 
-  assign blue  = sb | txtb; 
+  assign rgb = srgb | trgb; 
 endmodule

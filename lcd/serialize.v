@@ -11,7 +11,7 @@ module serialize(input cin, input reset, input irdy, input [MSB:0] data, output 
   assign sda = data[counter];
   assign scl = SCL_MODE ? (cin & ~ordy) : (~cin | ordy);
   
-  always @(posedge cin or posedge reset)
+  always @(posedge cin)
     begin
       if (reset) begin
         ordy <= 1;

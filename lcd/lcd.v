@@ -1,13 +1,14 @@
 `include "serialize.v"
 
 module lcd(input clk, input reset, 
-           input [4:0] red, input [5:0] green, input [4:0] blue, 
+           input [RGBSIZE-1:0] rgb, 
            output sda, output scl, output cs, output reg rs, 
            output vsync, output hsync, 
            output reg [$clog2(HEIGHT)-1:0] vpos, output reg [$clog2(WIDTH)-1:0] hpos);
 
   parameter WIDTH = 320;
   parameter HEIGHT = 240;
+  parameter RGBSIZE = 16;
 
   localparam INIT_SIZE = 15;
   localparam WORD = 2;
@@ -19,8 +20,6 @@ module lcd(input clk, input reset,
   assign hsync = hpos == WIDTH-1;
   assign vsync = state == 2;
   
-  wire [15:0] color = { red, green, blue };
-
   // LCD Protocol
   reg irdy;
   reg [1:0] state = 0;
@@ -34,9 +33,9 @@ module lcd(input clk, input reset,
   reg  [8:0]  rom [0:INIT_SIZE];
   wire [8:0]  command = rom[counter];
   
-  initial $readmemh("setup.hex", rom);
+  initial $readmemh("setup_st7789_565.hex", rom);
   
-  always @(posedge cs or posedge reset)
+  always @(posedge cs)
     begin
       if (reset) begin
         dataout <= 0;
@@ -70,7 +69,7 @@ module lcd(input clk, input reset,
             end
             3: begin
               rs <= 1;
-              dataout <= pos[0] ? color[7:0] : color[15:8];
+              dataout <= pos[0] ? rgb[7:0] : rgb[15:8];
 
               if (pos != RESOLUTION) begin
                 pos <= pos + 1;

@@ -15,20 +15,26 @@ module textbuffer(input clk, input reset,
   initial $readmemh("font_cp437_8x8.hex", fontrom);
 
   wire [8:0]  address = addr[8:0];
-  reg  [$clog2(WIDTH*HEIGHT)-1:0] pos = vpos[6:3] * WIDTH + { 4'b0000, hpos[7:3] };
+  reg  [$clog2(WIDTH*HEIGHT)-1:0] pos;
   reg  [10:0] char;
   reg  [7:0]  attr;
   reg  [1:0]  state;
   reg  [7:0]  bits;
 
-  always @(posedge clk or posedge reset)
+  always @(posedge clk)
   begin
     if (reset) begin
       state <= 0;
     end else begin
       state <= state + 1;
       case (state)  
-        2'b00: begin end // Reserved state
+        2'b00: 
+          pos <= ({ 5'b00000, vpos[6:3] } << 4)
+               + ({ 5'b00000, vpos[6:3] } << 2)
+               + ({ 4'b0000,  hpos[7:3] });
+
+          // pos <= vpos[6:3] * WIDTH + { 4'b0000, hpos[7:3] };
+
         2'b01: // Fetch from both display RAMs
         begin
           char <= { charram[pos], vpos[2:0] };
@@ -49,13 +55,14 @@ module textbuffer(input clk, input reset,
   assign dout = addr[9] ? read_char : read_attr;
   
   always @(posedge clk)
-    if (addr[9])
-      if (cs & ~rw) read_attr <= attrram[address];
-      else if (cs & rw) attrram[address] <= di;
+    if (addr[9] & cs & ~rw) read_attr <= attrram[address];
+      
+  always @(posedge clk)
+    if (addr[9] & cs & rw) attrram[address] <= di;
 
   always @(posedge clk)
-    if (~addr[9])
-      if (cs & ~rw) read_char <= charram[address];
-      else if (cs & rw) charram[address] <= di;
- 
+    if (~addr[9] & cs & ~rw) read_char <= charram[address];
+  
+  always @(posedge clk)
+    if (~addr[9] & cs & rw) charram[address] <= di;
 endmodule
