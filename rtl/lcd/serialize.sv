@@ -1,4 +1,6 @@
-module serialize(input cin, input reset, input irdy, input [MSB:0] data, output sda, output scl, output reg ordy);
+module serialize(input bit cin, input bit reset, input bit irdy, input logic [MSB:0] data, 
+                 output bit sda, output bit scl, output bit ordy);
+
   parameter SCL_MODE = 1;
   parameter WIDTH = 8;
 
@@ -6,12 +8,12 @@ module serialize(input cin, input reset, input irdy, input [MSB:0] data, output 
   localparam COUNTER_WIDTH = $clog2(WIDTH);
   localparam COUNTER_MAX = { COUNTER_WIDTH{1'b1} };
   
-  reg [COUNTER_WIDTH-1:0] counter = COUNTER_MAX;
+  logic [COUNTER_WIDTH-1:0] counter = COUNTER_MAX;
 
   assign sda = data[counter];
   assign scl = SCL_MODE ? (cin & ~ordy) : (~cin | ordy);
   
-  always @(posedge cin)
+  always_ff @(posedge cin)
     begin
       if (reset) begin
         ordy <= 1;
