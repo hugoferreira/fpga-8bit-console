@@ -24,6 +24,8 @@ fn main() {
     let mut module = ModuleGenerator::default();
     module.generate("src/main.rs");
 
+    println!("cargo:rerun-if-changed=rtl/*.sv");
+
     // Generate CPP from Verilog
     let mut verilator = Verilator::default();
     verilator

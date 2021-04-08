@@ -15,6 +15,9 @@ bin/toplevel.json: ${TOP_LEVEL} ${INCLUDE_FILES}
 	mkdir -p bin
 	yosys -q -p "read_verilog -Irtl -sv ${TOP_LEVEL}; synth_ice40 -top top -json bin/toplevel.json -abc2" 
 
+rust/rtl:
+	cd rust && ln -s ../rtl rtl 
+
 .PHONY: stat
 stat: bin/toplevel.asc
 	icebox_stat -v bin/toplevel.asc
@@ -29,16 +32,15 @@ upload: bin/toplevel.bin
 	cat bin/toplevel.bin >/dev/cu.usbmodem00000000001A1
 
 .PHONY: run
-run:
-	cp -R rtl rust/rtl
+run: rust/rtl
 	cp rtl/*.hex rust/
 	cp rtl/*.bin rust/
-	cd rust && cargo run
+	cd rust && cargo run --release
 
 .PHONY: clean
 clean:
 	rm -rf bin
-	rm -rf rust/rtl
+	rm -f rust/rtl
 	rm rust/*.hex
 	rm rust/*.bin
 	cd rust && cargo clean
