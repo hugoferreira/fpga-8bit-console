@@ -31,6 +31,7 @@ fn main() {
     verilator
         .with_coverage(false)
         .with_trace(true)
+        .with_performance_optimizations(true)
         .file_with_standard("rtl/top_simulator.sv", Standard::SystemVerilog2012)
         .module("rtl")
         .file(out_dir.join("top.cpp"))

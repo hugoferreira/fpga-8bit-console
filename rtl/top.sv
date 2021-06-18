@@ -42,13 +42,16 @@ module top(input  bit clk, output bit yellow_led,
   logic clk_locked;  // PLL generator is locked
   logic clk_1;       // 80MHz
   logic clk_2;       // 40MHz
+  logic clk_8;       // 10MHz
 
   assign lcd_rst = ~reset;
   assign yellow_led = ~reset;
 
   por u_por(.clk, .reset(~clk_locked), .user_reset(reset));
   master_clk clk0(.cin(clk), .cout(clk_1), .locked(clk_locked));
-  slower_clk clk1(.cin(clk_1), .clk_div4(clk_2), .reset);
+  /* verilator lint_off PINMISSING */
+  slower_clk clk1(.cin(clk_1), .clk_div2(clk_2), .reset);
+  slower_clk clk2(.cin(clk_2), .clk_div4(clk_8), .reset);
 
   logic vsync;
   logic hsync;
@@ -60,7 +63,7 @@ module top(input  bit clk, output bit yellow_led,
 
   lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk(clk_2), .reset, .rgb, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
   scalescreen #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) scaler0(.clk(clk_2), .reset, .vp, .hp, .vpos, .hpos);
-  chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE)) chip(.clk(clk_1), .reset, .vsync, .hsync, .vpos, .hpos, .rgb);
+  chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE)) chip(.clk(clk_1), .cpuclk(clk_2), .reset, .vsync, .hsync, .vpos, .hpos, .rgb);
 
   /* wire tx_ready;
 

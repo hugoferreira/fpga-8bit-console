@@ -7,12 +7,14 @@ publish = false
 build = "build.rs"
 
 [dependencies]
-verilated = "0.1"
-verilated-module = "0.1"
+verilated = "0.1.2"
+verilated-module = "0.1.1"
 minifb = "0.19"
 
 [build-dependencies]
-verilator = { version = "0.1", features = ["gen", "module"] }
+verilator = { version = "0.1.6", features = ["gen", "module"] }
 
 [profile.release]
-opt-level = "s"
+debug = false
+lto = true
+opt-level = 3
