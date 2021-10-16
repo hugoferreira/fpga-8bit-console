@@ -8,4 +8,4 @@ rust/*.lock
 rust/rtl
 rust/*.bin
 rust/*.hex
-
+rtl/pll.v
