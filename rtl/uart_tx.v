@@ -19,9 +19,9 @@ module uart_tx
 	input 		clk, 
 	input 		reset, 
 	input 		tx_req,
-	output 		tx_ready,
+	output 		reg tx_ready,
 	input [7:0]	tx_data,
-	output 		uart_tx
+	output 		reg uart_tx
 	);
 
 	parameter MAIN_CLK = 25000000;
@@ -46,9 +46,6 @@ module uart_tx
 			baud_cntr	<= baud_cntr - 1;
 		end
 	end
-
-	reg 	uart_tx;
-	reg	tx_ready;
 
 	reg [3:0] tx_bit_cntr;
 	reg [8:0] tx_shift_reg;

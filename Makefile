@@ -3,6 +3,8 @@ FPGA_PKG = tq144:4k
 FPGA_TYPE = hx8k
 FPGA_PCF = rtl/top.pcf
 TARGET_FREQ = 50
+# YOSYS_FLAGS = -noflatten -abc9 -dsp
+YOSYS_FLAGS = -dsp 
 
 # Project Specific Settings
 INCLUDE_FILES = rtl/**/*.v rtl/**/*.sv rtl/**/*.hex rtl/**/*.bin
@@ -26,7 +28,7 @@ bin/toplevel.asc: ${FPGA_PCF} bin/toplevel.json
 
 bin/toplevel.json: ${TOP_LEVEL} ${INCLUDE_FILES} ${PLL_FILE}
 	mkdir -p bin
-	yosys -q -p "read_verilog -Irtl -sv ${TOP_LEVEL}; synth_ice40 -abc9 -dsp -top top -json bin/toplevel.json" 
+	yosys -p "read_verilog -Irtl -sv ${TOP_LEVEL}; synth_ice40 ${YOSYS_FLAGS} -top top -json bin/toplevel.json" > synthesis.log
 
 rust/rtl:
 	cd rust && ln -s ../rtl rtl 
@@ -50,5 +52,5 @@ run: rust/rtl
 	cd rust && cargo run --release
 
 clean:
-	rm -rf ${PLL_FILE} bin rust/rtl rust/*.hex rust/*.bin
+	rm -rf ${PLL_FILE} bin rust/rtl rust/*.hex rust/*.bin *.log
 	cd rust && cargo clean

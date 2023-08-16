@@ -9,10 +9,11 @@ build = "build.rs"
 [dependencies]
 verilated = "0.1.2"
 verilated-module = "0.1.1"
-minifb = "0.19"
+minifb = "0.20.0"
 
-[build-dependencies]
-verilator = { version = "0.1.6", features = ["gen", "module"] }
+# [build-dependencies]
+# verilator = { path = "verilated-rs/verilator", version = "0.1.6", features = ["gen", "module"] }
+verilator = "0.1.6"
 
 [profile.release]
 debug = false
