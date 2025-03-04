@@ -44,7 +44,7 @@ module cpu6502(
   
   always_ff @(posedge clk)
     if (reset) begin
-      state <= 0;
+      state <= S_RESET;
       write <= 0;
       A <= 0;
       Y <= 0;

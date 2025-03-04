@@ -29,7 +29,13 @@ module textbuffer(input logic clk, input logic reset,
     if (reset) begin
       state <= ram_addr;
     end else begin
-      state <= state + 1;
+      case (state)
+        ram_addr: state <= fetch_ram;
+        fetch_ram: state <= fetch_rom;
+        fetch_rom: state <= display;
+        display: state <= ram_addr;
+      endcase
+      
       case (state)  
         ram_addr:  
           pos <= vpos[6:3] * 20 + { 4'b0000, hpos[7:3] };

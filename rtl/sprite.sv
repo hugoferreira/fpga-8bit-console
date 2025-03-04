@@ -17,7 +17,13 @@ module sprite(input bit clk, input bit reset,
     if (reset) begin
       state <= scanv;
     end else begin
-      state <= state + 1;
+      case (state)
+        scanv: state <= scanh;
+        scanh: state <= fetch;
+        fetch: state <= display;
+        display: state <= scanv;
+      endcase
+      
       case (state)
         scanv: scanvpos <= vpos - spriteram[9];
 
