@@ -12,3 +12,4 @@ rtl/pll.v
 .DS_Store
 *.log
 build/
+tools/target/
