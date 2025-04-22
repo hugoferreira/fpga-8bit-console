@@ -1,15 +1,26 @@
-bin
+# Build artifacts
+bin/
+build/
+*.log
+
+# IDE and editor files
+.vscode/
+.DS_Store
+
+# Generated files
+rtl/pll.v
+rtl/font_cp437_8x8.hex
+rtl/ram.hex
 blackice-mx.pcf
-.vscode
-rust/obj_dir
-rust/target
+
+# Rust specific
+rust/obj_dir/
+rust/target/
 rust/*.vcd
 rust/*.lock
-rust/rtl
+rust/rtl/
 rust/*.bin
 rust/*.hex
-rtl/pll.v
-.DS_Store
-*.log
-build/
+
+# Tools
 tools/target/

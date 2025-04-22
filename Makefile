@@ -38,6 +38,7 @@ ${FONT_CONVERT}:
 	cd tools && cargo build --release
 
 ${FONT_HEX}: ${FONT_SRC} ${FONT_CONVERT}
+	mkdir -p rtl
 	${FONT_CONVERT} text2hex ${FONT_SRC} ${FONT_HEX}
 
 # Assembly to Hex conversion
@@ -88,7 +89,7 @@ upload: bin/toplevel.bin
 	stty -f /dev/cu.usbmodem00000000001A1 raw 
 	cat bin/toplevel.bin >/dev/cu.usbmodem00000000001A1
 
-run: rust/rtl
+run: rust/rtl ${ASM_HEX} ${FONT_HEX}
 	cp rtl/*.hex rust/
 	cp rtl/*.bin rust/
 	cd rust && cargo run --release
