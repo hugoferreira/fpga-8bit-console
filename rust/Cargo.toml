@@ -3,17 +3,20 @@ name = "verilog-screen-co-simulation"
 version = "0.1.0"
 authors = ["Hugo Sereno <bytter@gmail.com>"]
 publish = false
+edition = "2015"
 
 build = "build.rs"
 
 [dependencies]
-verilated = "0.1.2"
-verilated-module = "0.1.1"
+verilated = { git = "https://github.com/ngildenhuys/verilated-rs", package = "verilated" }
+verilated-module = { git = "https://github.com/ngildenhuys/verilated-rs", package = "verilated-module" }
 minifb = "0.20.0"
 
-# [build-dependencies]
-# verilator = { path = "verilated-rs/verilator", version = "0.1.6", features = ["gen", "module"] }
-verilator = "0.1.6"
+[build-dependencies]
+verilator = { git = "https://github.com/ngildenhuys/verilated-rs", package = "verilator", features = ["gen", "module"] }
+cc = "1.0"
+glob = "0.3.1"
+# verilator = "0.1.6"
 
 [profile.release]
 debug = false
