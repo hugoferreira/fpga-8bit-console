@@ -9,3 +9,5 @@ rust/rtl
 rust/*.bin
 rust/*.hex
 rtl/pll.v
+.DS_Store
+*.log
