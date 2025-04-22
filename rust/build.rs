@@ -25,6 +25,7 @@ fn main() {
     module.generate("src/main.rs");
 
     println!("cargo:rerun-if-changed=rtl/*.sv");
+    println!("cargo:rerun-if-changed=rtl/*.v");
 
     // Generate CPP from Verilog
     let mut verilator = Verilator::default();
@@ -32,8 +33,8 @@ fn main() {
         .with_coverage(false)
         .with_trace(true)
         .with_performance_optimizations(false)
-        .file_with_standard("rtl/top_simulator.sv", Standard::SystemVerilog2012)
-        .module("rtl")
+        .file_with_standard("../rtl/top_simulator.sv", Standard::SystemVerilog2012)
+        .module("../rtl")
         .file(out_dir.join("top.cpp"))
         .build("top");
 }

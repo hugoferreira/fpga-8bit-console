@@ -11,6 +11,15 @@ INCLUDE_FILES = rtl/**/*.v rtl/**/*.sv rtl/**/*.bin
 TOP_LEVEL = rtl/top.sv
 PLL_FILE = rtl/pll.v
 
+# Simulation Settings
+SIM_TOP = cpu6502_tb
+SIM_FILES = rtl/cpu6502_tb.sv
+DEBUG_TEST = debug_test
+DEBUG_FILES = rtl/debug_test.sv
+IVERILOG = iverilog
+VVP = vvp
+IVERILOG_FLAGS = -g2012 -I. -y rtl
+
 # Assembly Settings
 ASM_SRC = src/main.asm
 ASM_OBJ = build/main.o
@@ -70,8 +79,33 @@ bin/toplevel.json: ${TOP_LEVEL} ${INCLUDE_FILES} ${PLL_FILE} ${ASM_HEX} ${FONT_H
 rust/rtl:
 	cd rust && ln -s ../rtl rtl 
 
+# Simulation targets
+bin/sim_${SIM_TOP}: ${SIM_FILES}
+	mkdir -p bin
+	${IVERILOG} ${IVERILOG_FLAGS} -o $@ ${SIM_FILES}
+
+bin/sim_debug_${SIM_TOP}: ${SIM_FILES}
+	mkdir -p bin
+	${IVERILOG} ${IVERILOG_FLAGS} -DSIMULATION -DDEBUG -o $@ ${SIM_FILES}
+
+bin/sim_${DEBUG_TEST}: ${DEBUG_FILES}
+	mkdir -p bin
+	${IVERILOG} ${IVERILOG_FLAGS} -DSIMULATION -DDEBUG -o $@ ${DEBUG_FILES}
+
+sim: bin/sim_${SIM_TOP}
+	${VVP} bin/sim_${SIM_TOP}
+
+debug: bin/sim_debug_${SIM_TOP}
+	${VVP} bin/sim_debug_${SIM_TOP}
+
+debug_custom: bin/sim_${DEBUG_TEST}
+	${VVP} bin/sim_${DEBUG_TEST}
+
 # Commands
-.PHONY: timing stat upload run clean all asm font tools
+.PHONY: timing stat upload run clean all asm font tools test sim debug debug_custom
+
+test:
+	iverilog -DSIMULATION -g2012 -y ./rtl -s cpu6502_tb rtl/cpu6502_defs.sv rtl/cpu6502_alu.sv rtl/cpu6502_wrapper.sv rtl/cpu6502_arlet.sv rtl/cpu6502_tb.sv && ./a.out
 
 tools: ${FONT_CONVERT}
 
@@ -90,9 +124,7 @@ upload: bin/toplevel.bin
 	cat bin/toplevel.bin >/dev/cu.usbmodem00000000001A1
 
 run: rust/rtl ${ASM_HEX} ${FONT_HEX}
-	cp rtl/*.hex rust/
-	cp rtl/*.bin rust/
-	cd rust && cargo run --release
+	cd rust && cd .. && cd rust && cargo run --release
 
 clean:
 	rm -rf bin build rust/rtl rust/*.hex rust/*.bin *.log

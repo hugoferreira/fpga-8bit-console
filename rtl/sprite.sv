@@ -4,13 +4,27 @@ module sprite(input bit clk, input bit reset,
               output bit pixel);
 
   logic [7:0] spriteram[0:9];
-  initial $readmemh("spriteram.hex", spriteram); 
+  initial $readmemb("./rtl/spriteram.bin", spriteram); 
 
   enum logic [1:0] { scanv, scanh, fetch, display } state;
   logic [7:0] sprite;
   logic [7:0] scanhpos;
   logic [7:0] scanvpos;
   logic       sprite_on;
+  
+  // Map the 4-bit address to sprite register index
+  // $4008 => X position (8)
+  // $4009 => Y position (9)
+  logic [3:0] sprite_reg_addr;
+  
+  // Properly decode the address to sprite register index
+  always_comb begin
+    case (addr)
+      4'h8: sprite_reg_addr = 4'd8;  // X position
+      4'h9: sprite_reg_addr = 4'd9;  // Y position
+      default: sprite_reg_addr = addr;
+    endcase
+  end
   
   always_ff @(posedge clk)
   begin
@@ -29,18 +43,24 @@ module sprite(input bit clk, input bit reset,
 
         scanh: begin
           scanhpos <= hpos - spriteram[8];
-          sprite_on <= scanhpos < 8 & scanvpos < 8;
         end
 
-        fetch: sprite <= spriteram[{1'b0, scanvpos[2:0]}];
+        fetch: begin
+          sprite <= spriteram[{1'b0, scanvpos[2:0]}];
+          sprite_on <= scanhpos < 8 & scanvpos < 8;
+        end
+        
         display: pixel <= sprite_on & sprite[scanhpos[2:0]];
       endcase
     end
   end
 
   always_ff @(posedge clk)
-    if (cs & ~rw) dout <= spriteram[addr];
+    if (cs & ~rw) dout <= spriteram[sprite_reg_addr];
 
+  // Handle writes to sprite registers
   always_ff @(posedge clk)
-    if (cs & rw) spriteram[addr] <= di;
+    if (cs & rw) begin
+      spriteram[sprite_reg_addr] <= di;      
+    end
 endmodule

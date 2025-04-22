@@ -9,9 +9,9 @@ module textbuffer(input logic clk, input logic reset,
   logic [7:0] attrram [0:(1<<9)-1];   // nomem2reg
   logic [7:0] fontrom [0:(1<<11)-1];  // nomem2reg
 
-  initial $readmemh("videoram.hex", charram);
-  initial $readmemh("attrram.hex",  attrram);
-  initial $readmemh("font_cp437_8x8.hex", fontrom);
+  initial $readmemh("./rtl/videoram.hex", charram);
+  initial $readmemh("./rtl/attrram.hex",  attrram);
+  initial $readmemh("./rtl/font_cp437_8x8.hex", fontrom);
 
   enum logic [1:0] { ram_addr, fetch_ram, fetch_rom, display } state;
 

@@ -1,6 +1,10 @@
+/* verilator lint_off UNOPTFLAT */
 `include "chip.sv"
 `include "por.sv"
 `include "slower_clk.sv"
+/* verilator lint_off REDEFMACRO */
+`define VERILATOR
+/* verilator lint_on REDEFMACRO */
 
 module top(input logic clk_i, input logic rst_i, 
            output logic hsync, output logic vsync, output logic [23:0] rgb);
