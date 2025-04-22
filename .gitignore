@@ -11,3 +11,4 @@ rust/*.hex
 rtl/pll.v
 .DS_Store
 *.log
+build/

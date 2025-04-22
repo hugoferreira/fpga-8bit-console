@@ -52,7 +52,7 @@ module cpu6502(
       case (state)
         // state 0: reset
         S_RESET: begin
-          PC <= 16'h00;
+          PC <= 16'h100;
           write <= 0;
           state <= S_SELECT;
         end

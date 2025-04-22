@@ -21,7 +21,7 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
   addressdecoder decoder(.addr, .rw, .cpu_di, .tb_do, .sp_do, .ram_do, .tb_cs, .sp_cs, .ram_cs);
 
   // 8x64kbit Async RAM
-  ram_async #(.A(12), .D(8), .FILE("ram.hex")) ram(.clk(~clk), .cs(ram_cs), .rw, .addr(addr[11:0]), .di(cpu_do), .dout(ram_do));
+  ram_async #(.A(16), .D(8), .FILE("ram.hex")) ram(.clk(~clk), .cs(ram_cs), .rw, .addr(addr[15:0]), .di(cpu_do), .dout(ram_do));
   
   // Control Unit
   // control c0(.clk, .reset, .vsync, .addr, .data(cpu_do), .din(cpu_di), .rw);

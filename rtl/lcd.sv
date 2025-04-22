@@ -40,7 +40,7 @@ module lcd(input bit clk, input bit reset,
       if (reset) begin
         dataout <= 0;
         counter <= 0;
-        state <= 0;
+        state <= reset_lcd;
         irdy <= 1'b1;
         waittimer <= 16'hFFFF;
       end
