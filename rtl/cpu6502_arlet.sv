@@ -116,7 +116,7 @@ logic [7:0]  AXYS[4];    // A, X, Y and S register file
 
 logic        C = 1'b0;   // Carry flag (init at zero to avoid X's in ALU sim)
 logic        Z = 1'b0;   // Zero flag
-logic        I = 1'b0;   // Interrupt flag
+logic        I = 1'b1;   // Interrupt flag - START DISABLED (set to 1)
 logic        D = 1'b0;   // Decimal flag
 logic        V = 1'b0;   // Overflow flag
 logic        N = 1'b0;   // Negative flag
@@ -312,9 +312,9 @@ always_ff @(posedge clk)
         // Only print PC changes during reset or when accessing key areas
         if (PC != PC_temp + {{15{1'b0}}, PC_inc}) begin
             if (res || state <= BRK3 || 
-                PC_temp == 16'h0300 || PC_temp == 16'hFFFC)
-                $display("CPU: PC change: %04X -> %04X, State: %d, res=%d", 
-                          PC, PC_temp + {{15{1'b0}}, PC_inc}, state, res);
+                PC_temp == 16'h0300 || PC_temp == 16'hFFFC);
+                // $display("CPU: PC change: %04X -> %04X, State: %d, res=%d", 
+                //          PC, PC_temp + {{15{1'b0}}, PC_inc}, state, res);
         end
     end
 
@@ -345,7 +345,10 @@ always_comb begin
         PUSH1,
         RTS0,
         RTI0,
-        BRK0:           AB = {STACKPAGE, regfile};
+        BRK0:           begin
+                           AB = {STACKPAGE, regfile};
+                           if (res) $display("CPU Reset: Stack operation, AB = $%04X", {STACKPAGE, regfile});
+                       end
 
         BRK1,
         JSR1,
@@ -355,13 +358,11 @@ always_comb begin
         RTI1,
         RTI2,
         RTI3,
-        BRK2:           AB = {STACKPAGE, ADD};
+        BRK2:           begin
+                           AB = {STACKPAGE, ADD};
+                           if (res) $display("CPU Reset: Stack operation, AB = $%04X", {STACKPAGE, ADD});
+                       end
         
-        INDY1,
-        INDX1,
-        ZPX1,
-        INDX2:          AB = {ZEROPAGE, ADD};
-
         ZP0,
         INDY0:          AB = {ZEROPAGE, DIMUX};
 
@@ -369,7 +370,13 @@ always_comb begin
         READ,
         WRITE:          AB = {ABH, ABL};
 
-        default:        AB = PC;
+        default:        begin
+                           AB = PC;
+                           /* verilator lint_off CMPCONST */
+                           if (res && (PC >= 16'hFFFA && PC <= 16'hFFFF))
+                           /* verilator lint_on CMPCONST */
+                               $display("CPU Reset: Vector read, AB = $%04X", PC);
+                       end
     endcase
 end
 
@@ -821,6 +828,19 @@ end
 assign IR = (IRQ & ~I) | NMI_edge ? 8'h00 :
                       IRHOLD_valid ? IRHOLD : DIMUX;
 
+// Debug check for BRK/interrupt handling                      
+always @(posedge clk) begin
+    if ((IRQ & ~I) || NMI_edge) begin
+        $display("CPU Debug: Interrupt triggered! IRQ=%b, I=%b, NMI_edge=%b at PC=$%04X", 
+                 IRQ, I, NMI_edge, PC);
+    end
+    
+    // Monitor state transitions to BRK handling
+    if (state == DECODE && IR == 8'h00) begin
+        $display("CPU Debug: BRK instruction detected at PC=$%04X", PC);
+    end
+end
+
 always_ff @(posedge clk)
     if(RDY)
         DIHOLD <= DI;
@@ -833,212 +853,110 @@ assign DIMUX = ~RDY ? DIHOLD : DI;
 always_ff @(posedge clk or posedge reset) begin
     if(reset) begin
         state <= BRK0;
-        $display("CPU: RESET triggered");
+        $display("CPU Reset: Starting reset sequence");
     end
     else if(RDY) begin
-        // Save previous state for debugging during reset
-        if (res || state <= BRK3) begin
-            cpu_state_t prev_state = state;
-            
-            // Execute state machine transitions
-            case(state)
-                DECODE: 
-                    casex(IR)
-                        8'b0000_0000:   state <= BRK0;
-                        8'b0010_0000:   state <= JSR0;
-                        8'b0010_1100:   state <= ABS0;  // BIT abs
-                        8'b0100_0000:   state <= RTI0;  // 
-                        8'b0100_1100:   state <= JMP0;
-                        8'b0110_0000:   state <= RTS0;
-                        8'b0110_1100:   state <= JMPI0;
-                        8'b0x00_1000:   state <= PUSH0;
-                        8'b0x10_1000:   state <= PULL0;
-                        8'b0xx1_1000:   state <= REG;   // CLC, SEC, CLI, SEI 
-                        8'b1xx0_00x0:   state <= FETCH; // IMM
-                        8'b1xx0_1100:   state <= ABS0;  // X/Y abs
-                        8'b1xxx_1000:   state <= REG;   // DEY, TYA, ... 
-                        8'bxxx0_0001:   state <= INDX0;
-                        8'bxxx0_01xx:   state <= ZP0;
-                        8'bxxx0_1001:   state <= FETCH; // IMM
-                        8'bxxx0_1101:   state <= ABS0;  // even E column
-                        8'bxxx0_1110:   state <= ABS0;  // even E column
-                        8'bxxx1_0000:   state <= BRA0;  // odd 0 column
-                        8'bxxx1_0001:   state <= INDY0; // odd 1 column
-                        8'bxxx1_01xx:   state <= ZPX0;  // odd 4,5,6,7 columns
-                        8'bxxx1_1001:   state <= ABSX0; // odd 9 column
-                        8'bxxx1_11xx:   state <= ABSX0; // odd C, D, E, F columns
-                        8'bxxxx_1010:   state <= REG;   // <shift> A, TXA, ...  NOP
-                    endcase
-
-                ZP0:     state <= write_back ? READ : FETCH;
-
-                ZPX0:    state <= ZPX1;
-                ZPX1:    state <= write_back ? READ : FETCH;
-
-                ABS0:    state <= ABS1;
-                ABS1:    state <= write_back ? READ : FETCH;
-
-                ABSX0:   state <= ABSX1;
-                ABSX1:   state <= (CO | store | write_back) ? ABSX2 : FETCH;
-                ABSX2:   state <= write_back ? READ : FETCH;
-
-                INDX0:   state <= INDX1;
-                INDX1:   state <= INDX2;
-                INDX2:   state <= INDX3;
-                INDX3:   state <= FETCH;
-
-                INDY0:   state <= INDY1;
-                INDY1:   state <= INDY2;
-                INDY2:   state <= (CO | store) ? INDY3 : FETCH;
-                INDY3:   state <= FETCH;
-
-                READ:    state <= WRITE;
-                WRITE:   state <= FETCH;
-                FETCH:   state <= DECODE;
-
-                REG:     state <= DECODE;
-                
-                PUSH0:   state <= PUSH1;
-                PUSH1:   state <= DECODE;
-
-                PULL0:   state <= PULL1;
-                PULL1:   state <= PULL2; 
-                PULL2:   state <= DECODE;
-
-                JSR0:    state <= JSR1;
-                JSR1:    state <= JSR2;
-                JSR2:    state <= JSR3;
-                JSR3:    state <= FETCH; 
-
-                RTI0:    state <= RTI1;
-                RTI1:    state <= RTI2;
-                RTI2:    state <= RTI3;
-                RTI3:    state <= RTI4;
-                RTI4:    state <= DECODE;
-
-                RTS0:    state <= RTS1;
-                RTS1:    state <= RTS2;
-                RTS2:    state <= RTS3;
-                RTS3:    state <= FETCH;
-
-                BRA0:    state <= cond_true ? BRA1 : DECODE;
-                BRA1:    state <= (CO ^ backwards) ? BRA2 : DECODE;
-                BRA2:    state <= DECODE;
-
-                JMP0:    state <= JMP1;
-                JMP1:    state <= DECODE; 
-
-                JMPI0:   state <= JMPI1;
-                JMPI1:   state <= JMP0;
-
-                BRK0:    state <= BRK1;
-                BRK1:    state <= BRK2;
-                BRK2:    state <= BRK3;
-                BRK3:    state <= JMP0;
-            endcase
-            
-            // Print key state transitions during reset
-            if (prev_state != state)
-                $display("CPU: Reset state transition: %d -> %d", prev_state, state);
+        // Only debug reset vector initialization
+        if (res && state == BRK3) begin
+            $display("CPU Reset: Loading reset vector from $FFFC");
+            $display("CPU Reset: PC will be set to $%04X", {DIMUX, ADD});
         end
-        else begin
-            // Execute state machine transitions without debug
-            case(state)
-                DECODE: 
-                    casex(IR)
-                        8'b0000_0000:   state <= BRK0;
-                        8'b0010_0000:   state <= JSR0;
-                        8'b0010_1100:   state <= ABS0;  // BIT abs
-                        8'b0100_0000:   state <= RTI0;  // 
-                        8'b0100_1100:   state <= JMP0;
-                        8'b0110_0000:   state <= RTS0;
-                        8'b0110_1100:   state <= JMPI0;
-                        8'b0x00_1000:   state <= PUSH0;
-                        8'b0x10_1000:   state <= PULL0;
-                        8'b0xx1_1000:   state <= REG;   // CLC, SEC, CLI, SEI 
-                        8'b1xx0_00x0:   state <= FETCH; // IMM
-                        8'b1xx0_1100:   state <= ABS0;  // X/Y abs
-                        8'b1xxx_1000:   state <= REG;   // DEY, TYA, ... 
-                        8'bxxx0_0001:   state <= INDX0;
-                        8'bxxx0_01xx:   state <= ZP0;
-                        8'bxxx0_1001:   state <= FETCH; // IMM
-                        8'bxxx0_1101:   state <= ABS0;  // even E column
-                        8'bxxx0_1110:   state <= ABS0;  // even E column
-                        8'bxxx1_0000:   state <= BRA0;  // odd 0 column
-                        8'bxxx1_0001:   state <= INDY0; // odd 1 column
-                        8'bxxx1_01xx:   state <= ZPX0;  // odd 4,5,6,7 columns
-                        8'bxxx1_1001:   state <= ABSX0; // odd 9 column
-                        8'bxxx1_11xx:   state <= ABSX0; // odd C, D, E, F columns
-                        8'bxxxx_1010:   state <= REG;   // <shift> A, TXA, ...  NOP
-                    endcase
+        
+        case(state)
+            DECODE: 
+                casex(IR)
+                    8'b0000_0000:   state <= BRK0;
+                    8'b0010_0000:   state <= JSR0;
+                    8'b0010_1100:   state <= ABS0;  // BIT abs
+                    8'b0100_0000:   state <= RTI0;  // 
+                    8'b0100_1100:   state <= JMP0;
+                    8'b0110_0000:   state <= RTS0;
+                    8'b0110_1100:   state <= JMPI0;
+                    8'b0x00_1000:   state <= PUSH0;
+                    8'b0x10_1000:   state <= PULL0;
+                    8'b0xx1_1000:   state <= REG;   // CLC, SEC, CLI, SEI 
+                    8'b1xx0_00x0:   state <= FETCH; // IMM
+                    8'b1xx0_1100:   state <= ABS0;  // X/Y abs
+                    8'b1xxx_1000:   state <= REG;   // DEY, TYA, ... 
+                    8'bxxx0_0001:   state <= INDX0;
+                    8'bxxx0_01xx:   state <= ZP0;
+                    8'bxxx0_1001:   state <= FETCH; // IMM
+                    8'bxxx0_1101:   state <= ABS0;  // even E column
+                    8'bxxx0_1110:   state <= ABS0;  // even E column
+                    8'bxxx1_0000:   state <= BRA0;  // odd 0 column
+                    8'bxxx1_0001:   state <= INDY0; // odd 1 column
+                    8'bxxx1_01xx:   state <= ZPX0;  // odd 4,5,6,7 columns
+                    8'bxxx1_1001:   state <= ABSX0; // odd 9 column
+                    8'bxxx1_11xx:   state <= ABSX0; // odd C, D, E, F columns
+                    8'bxxxx_1010:   state <= REG;   // <shift> A, TXA, ...  NOP
+                endcase
 
-                ZP0:     state <= write_back ? READ : FETCH;
+            ZP0:     state <= write_back ? READ : FETCH;
 
-                ZPX0:    state <= ZPX1;
-                ZPX1:    state <= write_back ? READ : FETCH;
+            ZPX0:    state <= ZPX1;
+            ZPX1:    state <= write_back ? READ : FETCH;
 
-                ABS0:    state <= ABS1;
-                ABS1:    state <= write_back ? READ : FETCH;
+            ABS0:    state <= ABS1;
+            ABS1:    state <= write_back ? READ : FETCH;
 
-                ABSX0:   state <= ABSX1;
-                ABSX1:   state <= (CO | store | write_back) ? ABSX2 : FETCH;
-                ABSX2:   state <= write_back ? READ : FETCH;
+            ABSX0:   state <= ABSX1;
+            ABSX1:   state <= (CO | store | write_back) ? ABSX2 : FETCH;
+            ABSX2:   state <= write_back ? READ : FETCH;
 
-                INDX0:   state <= INDX1;
-                INDX1:   state <= INDX2;
-                INDX2:   state <= INDX3;
-                INDX3:   state <= FETCH;
+            INDX0:   state <= INDX1;
+            INDX1:   state <= INDX2;
+            INDX2:   state <= INDX3;
+            INDX3:   state <= FETCH;
 
-                INDY0:   state <= INDY1;
-                INDY1:   state <= INDY2;
-                INDY2:   state <= (CO | store) ? INDY3 : FETCH;
-                INDY3:   state <= FETCH;
+            INDY0:   state <= INDY1;
+            INDY1:   state <= INDY2;
+            INDY2:   state <= (CO | store) ? INDY3 : FETCH;
+            INDY3:   state <= FETCH;
 
-                READ:    state <= WRITE;
-                WRITE:   state <= FETCH;
-                FETCH:   state <= DECODE;
+            READ:    state <= WRITE;
+            WRITE:   state <= FETCH;
+            FETCH:   state <= DECODE;
 
-                REG:     state <= DECODE;
-                
-                PUSH0:   state <= PUSH1;
-                PUSH1:   state <= DECODE;
+            REG:     state <= DECODE;
+            
+            PUSH0:   state <= PUSH1;
+            PUSH1:   state <= DECODE;
 
-                PULL0:   state <= PULL1;
-                PULL1:   state <= PULL2; 
-                PULL2:   state <= DECODE;
+            PULL0:   state <= PULL1;
+            PULL1:   state <= PULL2; 
+            PULL2:   state <= DECODE;
 
-                JSR0:    state <= JSR1;
-                JSR1:    state <= JSR2;
-                JSR2:    state <= JSR3;
-                JSR3:    state <= FETCH; 
+            JSR0:    state <= JSR1;
+            JSR1:    state <= JSR2;
+            JSR2:    state <= JSR3;
+            JSR3:    state <= FETCH; 
 
-                RTI0:    state <= RTI1;
-                RTI1:    state <= RTI2;
-                RTI2:    state <= RTI3;
-                RTI3:    state <= RTI4;
-                RTI4:    state <= DECODE;
+            RTI0:    state <= RTI1;
+            RTI1:    state <= RTI2;
+            RTI2:    state <= RTI3;
+            RTI3:    state <= RTI4;
+            RTI4:    state <= DECODE;
 
-                RTS0:    state <= RTS1;
-                RTS1:    state <= RTS2;
-                RTS2:    state <= RTS3;
-                RTS3:    state <= FETCH;
+            RTS0:    state <= RTS1;
+            RTS1:    state <= RTS2;
+            RTS2:    state <= RTS3;
+            RTS3:    state <= FETCH;
 
-                BRA0:    state <= cond_true ? BRA1 : DECODE;
-                BRA1:    state <= (CO ^ backwards) ? BRA2 : DECODE;
-                BRA2:    state <= DECODE;
+            BRA0:    state <= cond_true ? BRA1 : DECODE;
+            BRA1:    state <= (CO ^ backwards) ? BRA2 : DECODE;
+            BRA2:    state <= DECODE;
 
-                JMP0:    state <= JMP1;
-                JMP1:    state <= DECODE; 
+            JMP0:    state <= JMP1;
+            JMP1:    state <= DECODE; 
 
-                JMPI0:   state <= JMPI1;
-                JMPI1:   state <= JMP0;
+            JMPI0:   state <= JMPI1;
+            JMPI1:   state <= JMP0;
 
-                BRK0:    state <= BRK1;
-                BRK1:    state <= BRK2;
-                BRK2:    state <= BRK3;
-                BRK3:    state <= JMP0;
-            endcase
-        end
+            BRK0:    state <= BRK1;
+            BRK1:    state <= BRK2;
+            BRK2:    state <= BRK3;
+            BRK3:    state <= JMP0;
+        endcase
     end
 end
 
@@ -1047,10 +965,12 @@ end
  */
 
 always @(posedge clk)
-     if( reset )
+     if( reset ) begin
          res <= 1;
-     else if( state == DECODE )
+         $display("CPU Reset initiated. Setting res=1");
+     end else if( state == DECODE ) begin
          res <= 0;
+     end
 
 always @(posedge clk)
      if( state == DECODE && RDY )

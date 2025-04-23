@@ -20,5 +20,16 @@ module top(input logic clk_i, input logic rst_i,
   slower_clk clk2(.cin(clk_4), .clk_div256(clk_64), .reset(rst_i));
 
   hvsync_generator hvsync_gen(.clk(clk_4), .reset(rst_i), .hsync, .vsync, .hpos, .vpos);
-  chip #(.RED(8), .GREEN(8), .BLUE(8), .FILE("palette888.bin")) chip(.clk(clk_i), .cpuclk(clk_64), .reset(rst_i), .vsync, .hsync, .vpos, .hpos, .rgb);
+  
+  // Use clk_i for both clk and cpuclk to keep them in the same domain
+  chip #(.RED(8), .GREEN(8), .BLUE(8), .FILE("palette888.bin")) chip(
+    .clk(clk_i), 
+    .cpuclk(clk_i), // Use the same clock for CPU
+    .reset(rst_i), 
+    .vsync, 
+    .hsync, 
+    .vpos, 
+    .hpos, 
+    .rgb
+  );
 endmodule

@@ -1,22 +1,19 @@
 module clocks(input bit clk, output bit reset, output bit masterclk, output bit videoclk, output bit cpuclk);
-  assign reset = ~locked;
-  logic locked;
-
-  logic clk2;       
-	/* SB_GB clk2_gbuf (
-		.USER_SIGNAL_TO_GLOBAL_BUFFER(clk2),
-		.GLOBAL_BUFFER_OUTPUT(videoclk)
-	); */
-  assign videoclk = clk2;
-
-  logic clk8;       
-	/* SB_GB clk8_gbuf (
-		.USER_SIGNAL_TO_GLOBAL_BUFFER(clk8),
-		.GLOBAL_BUFFER_OUTPUT(cpuclk)
-	); */
-  assign cpuclk = clk8;
-
-  pll clk0(.clock_in(clk), .clock_out(masterclk), .locked);
-  slower_clk clocks(.cin(masterclk), .clk_div2(clk2), .clk_div256(clk8), .reset);
-
+  // Use synchronized reset with longer period
+  logic [7:0] reset_counter = 8'hFF;  // Start with reset active
+  
+  always_ff @(posedge clk) begin
+    if (reset_counter != 0) begin
+      reset_counter <= reset_counter - 1;
+      if (reset_counter == 1) begin
+        $display("Clocks: Reset period complete. CPU should now start execution.");
+      end
+    end
+  end
+  
+  // For simulation, use a single clock domain
+  assign reset = (reset_counter != 0);  // Reset active during counter period
+  assign masterclk = clk;
+  assign videoclk = clk;
+  assign cpuclk = clk;
 endmodule 

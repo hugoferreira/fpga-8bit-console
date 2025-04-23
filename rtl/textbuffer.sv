@@ -56,17 +56,29 @@ module textbuffer(input logic clk, input logic reset,
   end
 
   logic [7:0] read_attr, read_char;
-  assign dout = sel ? read_char : read_attr;
+  assign dout = sel ? read_attr : read_char;
   
   always_ff @(posedge clk)
-    if (sel & cs & ~rw) read_attr <= attrram[address];
+    if (cs & ~rw & sel) begin
+      read_attr <= attrram[address];
+      $display("TextBuffer: CPU reading attribute at $%04X = %02X", address, attrram[address]);
+    end
       
   always_ff @(posedge clk)
-    if (sel & cs & rw) attrram[address] <= di;
+    if (cs & rw & sel) begin
+      attrram[address] <= di;
+      $display("TextBuffer: CPU writing attribute at $%04X = %02X", address, di);
+    end
 
   always_ff @(posedge clk)
-    if (~sel & cs & ~rw) read_char <= charram[address];
+    if (cs & ~rw & ~sel) begin
+      read_char <= charram[address];
+      $display("TextBuffer: CPU reading character at $%04X = %02X", address, charram[address]);
+    end
   
   always_ff @(posedge clk)
-    if (~sel & cs & rw) charram[address] <= di; 
+    if (cs & rw & ~sel) begin
+      charram[address] <= di; 
+      $display("TextBuffer: CPU writing character at $%04X = %02X", address, di);
+    end
 endmodule

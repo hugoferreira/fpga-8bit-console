@@ -1,0 +1,36 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Simulation Guidelines
+
+## Environment Setup
+The project uses Verilator with Rust bindings for simulation. Key files:
+- [rust/build.rs](mdc:rust/build.rs): Verilator configuration
+- [rust/src/main.rs](mdc:rust/src/main.rs): Simulation main loop
+- [rtl/top_simulator.sv](mdc:rtl/top_simulator.sv): Simulation top-level
+
+## Performance Requirements
+- Target 60 FPS display refresh
+- Use proper clock and reset handling
+- Document all simulation parameters
+
+## Running Simulation
+Use `make run` to:
+1. Build assembly code if needed
+2. Compile RTL through Verilator
+3. Generate Rust bindings
+4. Run simulation with real-time display
+
+## Debug Features
+- VCD waveform generation
+- Performance monitoring
+- Frame timing analysis
+
+## Testing
+Reference [rtl/cpu6502_tb.sv](mdc:rtl/cpu6502_tb.sv) for testbench structure:
+- Clear test case documentation
+- Comprehensive coverage
+- Edge case handling
+- Timing verification

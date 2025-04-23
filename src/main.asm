@@ -249,26 +249,62 @@ byte_to_hex:
     pla                  ; Restore original value
     and #$0F             ; Mask to keep only low nibble
     jsr nibble_to_hex    ; Convert low nibble
-    pha                  ; Save low nibble ASCII
-    txa                  ; Restore high nibble ASCII to A
-    tax                  ; And store it in X
-    pla                  ; Restore low nibble ASCII to A
+    pha                  ; Save low nibble ASCII to X
+    txa                  ; High nibble ASCII back to A
+    tax                  ; Low nibble ASCII to X
+    pla                  ; Original value to A
     rts
 
-; Convert nibble in A to hex digit
-; Returns: A = hex character ('0'-'9', 'A'-'F')
+; Convert nibble in A to hex character
 nibble_to_hex:
-    cmp #10              ; Check if 0-9 or A-F
-    bcc @digit           ; If < 10, skip to digit
-    adc #('A' - '0' - 10 - 1) ; Convert to A-F (carry is set)
-@digit:
-    adc #'0'             ; Convert to '0'-'9'
+    cmp #10              ; Compare with 10
+    bcc @digit           ; If < 10, it's a digit
+    adc #$36             ; Otherwise, it's A-F (carry is set here)
     rts
+@digit:
+    adc #$30             ; Convert to ASCII '0'-'9'
+    rts
+
+; ------------------------------------------------------------------------------
+; Interrupt Handlers
+; ------------------------------------------------------------------------------
+
+; NMI - Non-maskable interrupt handler
+nmi_handler:
+    rti                     ; Return from interrupt since we don't use NMI
+
+; IRQ/BRK - Interrupt handler
+irq_handler:
+    pha                     ; Save registers
+    txa
+    pha
+    tya
+    pha
+    
+    ; Check if this is a BRK or IRQ
+    tsx                     ; Get stack pointer
+    lda $0103,x            ; Get status register from stack
+    and #$10               ; Check BRK bit
+    bne brk_handler        ; If set, this was a BRK
+    
+    ; Handle IRQ here if needed
+    jmp irq_done
+
+brk_handler:
+    ; Handle BRK here if needed
+
+irq_done:
+    pla                     ; Restore registers
+    tay
+    pla
+    tax
+    pla
+    rti                     ; Return from interrupt
 
 ; ------------------------------------------------------------------------------
 ; Interrupt vectors
 ; ------------------------------------------------------------------------------
 .segment "VECTORS"
-    .word $0000          ; NMI vector (unused)
-    .word start          ; Reset vector - points to the start of our program
-    .word $0000          ; IRQ/BRK vector (unused) 
+    .word $0000   ; NMI vector - not used
+    .word $0300   ; RESET vector - points to program start
+    .word $0000   ; IRQ/BRK vector - not used 

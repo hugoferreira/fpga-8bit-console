@@ -30,11 +30,20 @@ module cpu6502(
   output bit         write
 );
 
-  // Additional signals required by Arlet's implementation
-  // that aren't exposed in our interface
-  wire IRQ = 1'b0;  // No interrupt requests
-  wire NMI = 1'b0;  // No non-maskable interrupts
+  // Force all interrupt signals to remain stable during reset
+  // and completely disable interrupts for this design
+  wire IRQ = 1'b0;  // Always keep IRQ disabled 
+  wire NMI = 1'b0;  // Always keep NMI disabled
   wire RDY = 1'b1;  // Always ready
+  
+  // Debug memory access to identify if BRK instructions are being fetched
+  always_ff @(posedge clk) begin
+    if (!write && address < 16'h0400) begin
+      if (data_in == 8'h00) begin
+        $display("CPU Wrapper: WARNING - Reading BRK instruction (0x00) from address $%04X", address);
+      end
+    end
+  end
 
   // Instantiate Arlet's 6502 CPU with appropriate signal mappings
   // The module in cpu6502_arlet.sv is named "cpu"
@@ -45,8 +54,8 @@ module cpu6502(
     .DI(data_in),     // Data in
     .DO(data_out),    // Data out
     .WE(write),       // Write enable
-    .IRQ(IRQ),        // Interrupt request (tied to 0)
-    .NMI(NMI),        // Non-maskable interrupt (tied to 0)
+    .IRQ(IRQ),        // Interrupt request (always 0)
+    .NMI(NMI),        // Non-maskable interrupt (always 0)
     .RDY(RDY)         // Ready signal (tied to 1)
   );
 

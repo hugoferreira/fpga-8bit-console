@@ -1,0 +1,33 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# FPGA 8-bit Console Project Structure
+
+The project is organized into several key directories:
+
+## RTL Source Files
+The [rtl/](mdc:rtl) directory contains all hardware description files:
+- SystemVerilog modules in `.sv` files
+- Legacy Verilog modules in `.v` files
+- Memory initialization files in `.hex` format
+
+Key files:
+- [rtl/top.sv](mdc:rtl/top.sv): Top-level module
+- [rtl/cpu6502_arlet.sv](mdc:rtl/cpu6502_arlet.sv): 6502 CPU implementation
+- [rtl/chip.sv](mdc:rtl/chip.sv): Main chip implementation
+
+## Assembly Source
+The [src/](mdc:src) directory contains 6502 assembly code:
+- [src/main.asm](mdc:src/main.asm): Main program
+- [src/memory.cfg](mdc:src/memory.cfg): Memory layout configuration
+
+## Simulation Environment
+The [rust/](mdc:rust) directory contains the Verilator-based simulation:
+- [rust/src/main.rs](mdc:rust/src/main.rs): Simulation entry point
+- [rust/build.rs](mdc:rust/build.rs): Verilator build configuration
+
+## Build System
+- [Makefile](mdc:Makefile): Main build automation
+- [blackice-mx.pcf](mdc:blackice-mx.pcf): FPGA pin constraints

@@ -1,0 +1,43 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Assembly Coding Standards
+
+## Code Organization
+Reference [src/main.asm](mdc:src/main.asm) for proper code organization:
+- Use cc65 assembler directives
+- Follow memory map defined in [src/memory.cfg](mdc:src/memory.cfg)
+- Use meaningful labels and comments
+- Document register usage
+
+## Memory Layout
+Memory configuration is defined in [src/memory.cfg](mdc:src/memory.cfg):
+```asm
+MEMORY {
+    ZP:      start = $0000, size = $0100, type = rw;  // Zero Page
+    STACK:   start = $0100, size = $0100, type = rw;  // Stack
+    RAM:     start = $0200, size = $FD00, type = rw;  // Main RAM
+    VECTORS: start = $FFFA, size = $0006, type = ro;  // Interrupt vectors
+}
+```
+
+## Code Style
+- Use 4-space indentation
+- Document all interrupt handlers
+- Include hardware initialization code
+- Use clear and consistent naming
+- Comment register usage
+
+## Error Handling
+- Include proper error checking
+- Handle invalid memory accesses
+- Document error conditions
+- Implement recovery procedures
+
+## Build Process
+Use `make asm` to:
+1. Compile assembly with ca65
+2. Link according to memory configuration
+3. Generate hex file for FPGA memory

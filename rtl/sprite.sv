@@ -26,6 +26,7 @@ module sprite(input bit clk, input bit reset,
     endcase
   end
   
+  // Display logic - continues regardless of chip select
   always_ff @(posedge clk)
   begin
     if (reset) begin
@@ -55,12 +56,19 @@ module sprite(input bit clk, input bit reset,
     end
   end
 
+  // CPU read access - only when chip select is active
   always_ff @(posedge clk)
-    if (cs & ~rw) dout <= spriteram[sprite_reg_addr];
+    if (cs & ~rw) begin
+      dout <= spriteram[sprite_reg_addr];
+      $display("Sprite: CPU reading register %d at $400%01X = %02X", 
+               sprite_reg_addr, addr, spriteram[sprite_reg_addr]);
+    end
 
-  // Handle writes to sprite registers
+  // CPU write access - only when chip select is active
   always_ff @(posedge clk)
     if (cs & rw) begin
-      spriteram[sprite_reg_addr] <= di;      
+      spriteram[sprite_reg_addr] <= di;
+      $display("Sprite: CPU writing register %d at $400%01X = %02X", 
+               sprite_reg_addr, addr, di);
     end
 endmodule

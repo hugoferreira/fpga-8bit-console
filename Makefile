@@ -28,7 +28,7 @@ ASM_HEX = rtl/ram.hex
 CA65 = ca65
 LD65 = ld65
 CA65FLAGS = -t none -v
-LD65FLAGS = -C src/memory.cfg -o
+LD65FLAGS = -C src/memory.cfg
 OBJCOPY = /opt/homebrew/opt/binutils/bin/objcopy
 HEXDUMP = hexdump
 
@@ -58,7 +58,7 @@ ${ASM_HEX}: ${ASM_BIN}
 	${HEXDUMP} -v -e '16/1 "%02x " "\n"' ${ASM_BIN} > ${ASM_HEX}
 
 ${ASM_BIN}: ${ASM_OBJ}
-	${LD65} ${LD65FLAGS} ${ASM_BIN} ${ASM_OBJ}
+	${LD65} ${LD65FLAGS} ${ASM_OBJ} -o ${ASM_BIN}
 
 ${ASM_OBJ}: ${ASM_SRC}
 	mkdir -p build
