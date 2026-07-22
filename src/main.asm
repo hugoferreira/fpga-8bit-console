@@ -17,6 +17,7 @@
     .define SPR_Y              $400A  ; Staged Y
     .define SPR_FLAGS          $400B  ; bit0 xflip, bit1 yflip; write commits + index++
     .define SPR_COUNT          $400C  ; Active sprite count
+    .define SPR_FRAME          $400D  ; Frame counter (read-only, +1 per vsync)
 
     .define NSPR               128    ; Number of sprites
     .define MAX_X              152    ; 160 - 8
@@ -87,6 +88,13 @@ load_tables:
     sta SPR_COUNT
 
 main_loop:
+    ; Pace to the display: wait for the frame counter to change so each
+    ; sprite moves exactly 1px per displayed frame
+    lda SPR_FRAME
+wait_frame:
+    cmp SPR_FRAME
+    beq wait_frame
+
     lda #0
     sta SPR_INDEX      ; Rewind the list index
     ldx #0

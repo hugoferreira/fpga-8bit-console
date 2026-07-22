@@ -12,6 +12,8 @@
 //   $B     flags {bit1: yflip, bit0: xflip} - write commits the staged
 //          entry at the current index and auto-increments the index
 //   $C     active sprite count
+//   $D     frame counter (read-only, increments on vsync) - poll for a
+//          change to pace one game-loop update per displayed frame
 module sprite_compositor(input bit clk, input bit reset,
               input bit cs, input bit rw, input logic [3:0] addr, input logic [7:0] di, output logic [7:0] dout,
               input logic [7:0] hpos, input logic [6:0] vpos, input bit vsync, input bit hsync,
@@ -40,6 +42,10 @@ module sprite_compositor(input bit clk, input bit reset,
   // Double-buffered scanline, 1bpp
   logic [H_DISPLAY-1:0] front_buf;
   logic [H_DISPLAY-1:0] back_buf;
+
+  // Frame counter for CPU-side vsync pacing
+  logic [7:0] frame_count;
+  logic       vsync_q;
 
   // Scan engine state
   logic [7:0]  scan_i;
@@ -112,25 +118,37 @@ module sprite_compositor(input bit clk, input bit reset,
     if (reset) begin
       sp_index <= 0;
       sp_count <= 0;
-    end else if (reg_write) begin
-      case (reg_addr)
-        4'h8: sp_index <= reg_data;
-        4'h9: stage_x <= reg_data;
-        4'hA: stage_y <= reg_data[6:0];
-        4'hB: begin
-          list[sp_index[6:0]] <= {reg_data[1], reg_data[0], stage_y, stage_x};
-          sp_index <= sp_index + 1;
-        end
-        4'hC: sp_count <= reg_data;
-        default: pattern[reg_addr[2:0]] <= reg_data;
-      endcase
-    end else if (cs && !rw) begin
-      case (addr)
-        4'h8: dout <= sp_index;
-        4'hC: dout <= sp_count;
-        4'h9, 4'hA, 4'hB: dout <= 8'h00;
-        default: dout <= pattern[addr[2:0]];
-      endcase
+      frame_count <= 0;
+      vsync_q <= 0;
+    end else begin
+      vsync_q <= vsync;
+      if (vsync && !vsync_q)
+        frame_count <= frame_count + 1;
+    end
+
+    if (!reset) begin
+      if (reg_write) begin
+        case (reg_addr)
+          4'h8: sp_index <= reg_data;
+          4'h9: stage_x <= reg_data;
+          4'hA: stage_y <= reg_data[6:0];
+          4'hB: begin
+            list[sp_index[6:0]] <= {reg_data[1], reg_data[0], stage_y, stage_x};
+            sp_index <= sp_index + 1;
+          end
+          4'hC: sp_count <= reg_data;
+          4'hD, 4'hE, 4'hF: ;  // read-only / unmapped
+          default: pattern[reg_addr[2:0]] <= reg_data;
+        endcase
+      end else if (cs && !rw) begin
+        case (addr)
+          4'h8: dout <= sp_index;
+          4'hC: dout <= sp_count;
+          4'hD: dout <= frame_count;
+          4'h9, 4'hA, 4'hB, 4'hE, 4'hF: dout <= 8'h00;
+          default: dout <= pattern[addr[2:0]];
+        endcase
+      end
     end
   end
 endmodule

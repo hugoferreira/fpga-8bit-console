@@ -30,9 +30,14 @@ Each sprite list entry SHALL support independent horizontal and vertical flip fl
 
 ### Requirement: CPU Sprite List Interface
 
-The CPU SHALL program the shared pattern and the sprite list through the existing $400x register window using an indexed interface: $4000-$4007 pattern rows, $4008 list index, $4009 staged X, $400A staged Y, $400B flags (write commits the staged entry and auto-increments the index), $400C active sprite count.
+The CPU SHALL program the shared pattern and the sprite list through the existing $400x register window using an indexed interface: $4000-$4007 pattern rows, $4008 list index, $4009 staged X, $400A staged Y, $400B flags (write commits the staged entry and auto-increments the index), $400C active sprite count, $400D read-only frame counter that increments once per vsync.
 
 #### Scenario: Streaming entries
 
 - **WHEN** the CPU writes X, Y, then flags repeatedly
 - **THEN** consecutive list entries are populated without rewriting the index register
+
+#### Scenario: Vsync-paced game loop
+
+- **WHEN** the CPU polls $400D until its value changes
+- **THEN** it resumes exactly once per displayed frame, enabling per-frame animation updates

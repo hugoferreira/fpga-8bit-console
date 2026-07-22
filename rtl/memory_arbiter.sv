@@ -80,8 +80,14 @@ module memory_arbiter(
   end
   
   // Determine CPU ready state
-  // CPU is halted (RDY=0) during VBLANK or when DMA is active
-  assign cpu_rdy = !(vblank || dma_active);
+  // Halt the CPU only while DMA actually owns the bus. Halting on vblank
+  // itself glitched RDY for one cycle every frame even with DMA idle, and
+  // the Arlet core does not support RDY stalls during write cycles - a
+  // vsync-paced program streams register writes right after vblank, so the
+  // stall landed mid-write and eventually derailed the CPU (PC ended up in
+  // empty memory). Note the same limitation applies when DMA is re-enabled:
+  // dma_request must not assert while the CPU may be mid-write.
+  assign cpu_rdy = !dma_active;
   assign dma_active = dma_request && vblank;
   
   // Memory bus multiplexing
