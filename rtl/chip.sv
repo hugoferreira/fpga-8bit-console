@@ -22,7 +22,7 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
   logic [15:0] mem_addr;
   logic        mem_write;
   logic [7:0]  mem_data_out;
-  logic        tb_cs, sp_cs, ram_cs;
+  logic        tb_cs, sp_cs, ram_cs, ovl_cs;
   logic [7:0]  ram_do, tb_do, sp_do;
   
   // DMA signals
@@ -72,6 +72,7 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .ram_cs(ram_cs),
     .tb_cs(tb_cs),
     .sp_cs(sp_cs),
+    .ovl_cs(ovl_cs),
     .mem_addr(mem_addr),
     .mem_write(mem_write),
     .mem_data_out(mem_data_out),
@@ -152,6 +153,8 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .dout(sp_do), 
     .map_cs(tb_cs),
     .map_addr(tb_cs ? mem_addr[9:0] : 10'h0),
+    .ovl_cs(ovl_cs),
+    .ovl_addr(ovl_cs ? mem_addr[11:0] : 12'h0),
     .hpos(hpos),
     .vpos(vpos),
     .hsync(hsync),

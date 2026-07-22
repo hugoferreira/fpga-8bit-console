@@ -366,6 +366,16 @@ always_comb begin
         ZP0,
         INDY0:          AB = {ZEROPAGE, DIMUX};
 
+        // Zero-page indexed / indirect pointer fetches. This case group is
+        // present in the upstream Arlet core but was missing here, so ZP,X /
+        // (ZP,X) / (ZP),Y addressing read their pointer bytes from PC
+        // instead of the zero page - e.g. an STA (zp),Y took the NEXT
+        // OPCODE as the target high byte.
+        ZPX1,
+        INDX1,
+        INDX2,
+        INDY1:          AB = {ZEROPAGE, ADD};
+
         REG,
         READ,
         WRITE:          AB = {ABH, ABL};

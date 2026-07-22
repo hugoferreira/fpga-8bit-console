@@ -16,7 +16,9 @@
     .define SPR_SHDATA         $4002  ; Sheet data (write stores + addr++)
     .define SPR_CAMX           $4003  ; Tilemap camera X
     .define SPR_CAMY           $4004  ; Tilemap camera Y
-    .define SPR_CTRL           $4005  ; Control: bit0 = tilemap enable
+    .define SPR_CTRL           $4005  ; Control: bit0 tilemap, bit1 overlay
+    .define SPR_OVLCOL         $4006  ; Overlay color (4 bits)
+    .define OVL                $E000  ; Overlay bitmap window (write-only)
     .define SPR_INDEX          $4008  ; List index
     .define SPR_X              $4009  ; Staged X
     .define SPR_Y              $400A  ; Staged Y
@@ -45,6 +47,12 @@
     .define camy    $06
     .define camdy   $07
     .define tmp     $08
+    .define rowr    $09
+    .define ptr     $0A    ; and $0B
+    .define dotx    $0C
+    .define doty    $0D
+    .define dotdx   $0E
+    .define dotdy   $0F
 
 ; Program starts here at $0300 (see memory.cfg)
 start:
@@ -132,6 +140,117 @@ write_text:
     sta camdx
     sta camdy
 
+    ; --- Overlay: clear all 2560 bytes ---
+    ldx #0
+    lda #0
+clear_ovl:
+    sta OVL,x
+    sta OVL+$100,x
+    sta OVL+$200,x
+    sta OVL+$300,x
+    sta OVL+$400,x
+    sta OVL+$500,x
+    sta OVL+$600,x
+    sta OVL+$700,x
+    sta OVL+$800,x
+    sta OVL+$900,x
+    inx
+    bne clear_ovl
+
+    ; Box border: solid top and bottom rows, single-pixel sides
+    ldx #0
+    lda #$FF
+border_h:
+    sta OVL,x          ; row 0
+    sta OVL+2380,x     ; row 119
+    inx
+    cpx #20
+    bne border_h
+    lda #<(OVL+20)     ; rows 1-118
+    sta ptr
+    lda #>(OVL+20)
+    sta ptr+1
+    ldx #118
+border_v:
+    ldy #0
+    lda #$01
+    sta (ptr),y
+    ldy #19
+    lda #$80
+    sta (ptr),y
+    lda ptr
+    clc
+    adc #20
+    sta ptr
+    bcc @nc
+    inc ptr+1
+@nc:
+    dex
+    bne border_v
+
+    ; 4x6-font banner at pixel row 8, x = 16: two glyphs pack per overlay
+    ; byte (even glyph in bits 0-3, odd in bits 4-7), so a 4px text pitch
+    ; needs no cross-byte shifting - this is what the tile grid cannot do
+    lda #<(OVL+8*20+2)
+    sta ptr
+    lda #>(OVL+8*20+2)
+    sta ptr+1
+    lda #0
+    sta rowr
+text_row:
+    ldx #0
+text_pair:
+    txa
+    asl
+    tay
+    lda txtoff+1,y     ; odd glyph of the pair -> high nibble
+    clc
+    adc rowr
+    tay
+    lda font46,y
+    asl
+    asl
+    asl
+    asl
+    sta tmp
+    txa
+    asl
+    tay
+    lda txtoff,y       ; even glyph -> low nibble
+    clc
+    adc rowr
+    tay
+    lda font46,y
+    ora tmp
+    pha
+    txa
+    tay
+    pla
+    sta (ptr),y
+    inx
+    cpx #6
+    bne text_pair
+    lda ptr
+    clc
+    adc #20
+    sta ptr
+    bcc @nc2
+    inc ptr+1
+@nc2:
+    inc rowr
+    lda rowr
+    cmp #6
+    bne text_row
+
+    ; Bouncing dot starts mid-box
+    lda #80
+    sta dotx
+    lda #60
+    sta doty
+    lda #1
+    sta dotdx
+    sta dotdy
+
     ; Upload the sprite sheet (8 plane slots = 64 bytes) through the
     ; auto-incrementing sheet port
     lda #0
@@ -160,8 +279,10 @@ load_tables:
 
     lda #NSPR
     sta SPR_COUNT
-    lda #1
-    sta SPR_CTRL       ; Enable the tilemap
+    lda #10
+    sta SPR_OVLCOL     ; Overlay draws in yellow
+    lda #3
+    sta SPR_CTRL       ; Enable tilemap + overlay
 
 main_loop:
     ; Pace to the display: wait for the frame counter to change so each
@@ -202,6 +323,65 @@ wait_frame:
     sta SPR_CAMX
     lda camy
     sta SPR_CAMY
+
+    ; Move the overlay dot: erase, bounce over x 9..150 / y 20..110, redraw
+    ldy doty
+    lda rowtab_lo,y
+    sta ptr
+    lda rowtab_hi,y
+    sta ptr+1
+    lda dotx
+    lsr
+    lsr
+    lsr
+    tay
+    lda #0
+    sta (ptr),y
+    lda dotx
+    clc
+    adc dotdx
+    sta dotx
+    cmp #9
+    beq @dflipx
+    cmp #150
+    bne @dxdone
+@dflipx:
+    lda #0
+    sec
+    sbc dotdx
+    sta dotdx
+@dxdone:
+    lda doty
+    clc
+    adc dotdy
+    sta doty
+    cmp #20
+    beq @dflipy
+    cmp #110
+    bne @dydone
+@dflipy:
+    lda #0
+    sec
+    sbc dotdy
+    sta dotdy
+@dydone:
+    ldy doty
+    lda rowtab_lo,y
+    sta ptr
+    lda rowtab_hi,y
+    sta ptr+1
+    lda dotx
+    and #7
+    tay
+    lda bittab,y
+    sta tmp
+    lda dotx
+    lsr
+    lsr
+    lsr
+    tay
+    lda tmp
+    sta (ptr),y
 
     lda #0
     sta SPR_INDEX      ; Rewind the list index
@@ -275,6 +455,36 @@ text:
 paltbl4:
     ; {pal[3:0], bpp-1=1, no flips} for each tile row mod 8
     .byte $84, $24, $A4, $44, $C4, $54, $34, $04
+
+font46:
+    .byte $07, $05, $05, $05, $07, $00, $05, $05, $05, $05, $02, $00, $07, $01, $03, $01
+    .byte $07, $00, $03, $05, $03, $05, $05, $00, $01, $01, $01, $01, $07, $00, $02, $05
+    .byte $07, $05, $05, $00, $05, $05, $02, $02, $02, $00, $00, $00, $00, $00, $00, $00
+    .byte $05, $05, $07, $04, $04, $00, $05, $05, $02, $05, $05, $00, $07, $01, $07, $05
+    .byte $07, $00, $01, $01, $01, $00, $01, $00
+txtoff:
+    .byte $00, $06, $0C, $12, $18, $1E, $24, $2A, $30, $36, $3C, $42
+rowtab_lo:
+    .byte $00, $14, $28, $3C, $50, $64, $78, $8C, $A0, $B4, $C8, $DC, $F0, $04, $18, $2C
+    .byte $40, $54, $68, $7C, $90, $A4, $B8, $CC, $E0, $F4, $08, $1C, $30, $44, $58, $6C
+    .byte $80, $94, $A8, $BC, $D0, $E4, $F8, $0C, $20, $34, $48, $5C, $70, $84, $98, $AC
+    .byte $C0, $D4, $E8, $FC, $10, $24, $38, $4C, $60, $74, $88, $9C, $B0, $C4, $D8, $EC
+    .byte $00, $14, $28, $3C, $50, $64, $78, $8C, $A0, $B4, $C8, $DC, $F0, $04, $18, $2C
+    .byte $40, $54, $68, $7C, $90, $A4, $B8, $CC, $E0, $F4, $08, $1C, $30, $44, $58, $6C
+    .byte $80, $94, $A8, $BC, $D0, $E4, $F8, $0C, $20, $34, $48, $5C, $70, $84, $98, $AC
+    .byte $C0, $D4, $E8, $FC, $10, $24, $38, $4C
+rowtab_hi:
+    .byte $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E1, $E1, $E1
+    .byte $E1, $E1, $E1, $E1, $E1, $E1, $E1, $E1, $E1, $E1, $E2, $E2, $E2, $E2, $E2, $E2
+    .byte $E2, $E2, $E2, $E2, $E2, $E2, $E2, $E3, $E3, $E3, $E3, $E3, $E3, $E3, $E3, $E3
+    .byte $E3, $E3, $E3, $E3, $E4, $E4, $E4, $E4, $E4, $E4, $E4, $E4, $E4, $E4, $E4, $E4
+    .byte $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E6, $E6, $E6
+    .byte $E6, $E6, $E6, $E6, $E6, $E6, $E6, $E6, $E6, $E6, $E7, $E7, $E7, $E7, $E7, $E7
+    .byte $E7, $E7, $E7, $E7, $E7, $E7, $E7, $E8, $E8, $E8, $E8, $E8, $E8, $E8, $E8, $E8
+    .byte $E8, $E8, $E8, $E8, $E9, $E9, $E9, $E9
+bittab:
+    .byte $01, $02, $04, $08, $10, $20, $40, $80
+
 
 pattern:
     ; Sheet image, one 8-byte plane slot per line: 4bpp arrow at base 0

@@ -18,8 +18,9 @@ module memory_arbiter(
   
   // Memory interfaces
   output logic ram_cs,              // RAM chip select
-  output logic tb_cs,               // Text buffer chip select
-  output logic sp_cs,               // Sprite chip select
+  output logic tb_cs,               // Tilemap chip select ($F000 window)
+  output logic sp_cs,               // PPU register chip select
+  output logic ovl_cs,              // Overlay chip select ($E000 window)
   output logic [15:0] mem_addr,     // Memory address bus
   output logic mem_write,           // Memory write signal
   output logic [7:0] mem_data_out,  // Data to memory
@@ -118,6 +119,7 @@ module memory_arbiter(
     ram_cs = 0;
     tb_cs = 0;
     sp_cs = 0;
+    ovl_cs = 0;
     
     if (!reset) begin  // Don't assert chip selects during reset
       // Address decoding - use the same memory map as in addressdecoder.sv
@@ -128,8 +130,11 @@ module memory_arbiter(
         // Text buffer (character and attribute RAM)
         tb_cs = 1;
       end else if (mem_addr >= 16'h4000 && mem_addr < 16'h4100) begin
-        // Sprite registers
+        // PPU registers
         sp_cs = 1;
+      end else if (mem_addr >= 16'hE000 && mem_addr < 16'hEA00) begin
+        // Overlay bitmap (write-only)
+        ovl_cs = 1;
       end
     end
   end

@@ -50,11 +50,14 @@ module sprite_compositor_tb;
   logic [3:0] color;
   bit map_cs = 0;
   logic [9:0] map_addr = 0;
+  bit ovl_cs = 0;
+  logic [11:0] ovl_addr = 0;
 
   sprite_compositor dut(
     .clk(clk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di), .dout(dout),
     .map_cs(map_cs), .map_addr(map_addr),
+    .ovl_cs(ovl_cs), .ovl_addr(ovl_addr),
     .hpos(hp), .vpos(vp),
     .vsync(vsync), .hsync(hsync),
     .color(color),
@@ -72,6 +75,13 @@ module sprite_compositor_tb;
     map_cs = 1; rw = 1; map_addr = a; di = d;
     @(negedge clk);
     map_cs = 0; rw = 0;
+  endtask
+
+  task ovlwrite(input [11:0] a, input [7:0] d);
+    @(negedge clk);
+    ovl_cs = 1; rw = 1; ovl_addr = a; di = d;
+    @(negedge clk);
+    ovl_cs = 0; rw = 0;
   endtask
 
   // Frame capture: color for pixel (vp,hp) is valid on the pixel's last clock
@@ -111,6 +121,21 @@ module sprite_compositor_tb;
 
   // Camera motion
   int camx = 0, camy = 0, cdx = 1, cdy = 1;
+
+  // Overlay static content (border + main diagonal), CPU-shadow style
+  logic [7:0] ovlbase[0:2399];
+  int barlane = 0;
+  function automatic [7:0] ovl_static(input int y, input int lane);
+    logic [7:0] b;
+    b = 0;
+    if (y == 0 || y == H - 1) b = 8'hFF;
+    else begin
+      if (lane == 0) b[0] = 1;
+      if (lane == W/8 - 1) b[7] = 1;
+    end
+    if ((y >> 3) == lane && y < W) b[y & 7] = b[y & 7] | 1'b1;
+    return b;
+  endfunction
   logic [7:0] TEXTROW [0:16];
   initial begin
     TEXTROW[0]="S"; TEXTROW[1]="C"; TEXTROW[2]="R"; TEXTROW[3]="O"; TEXTROW[4]="L";
@@ -213,7 +238,16 @@ module sprite_compositor_tb;
         mapwrite({1'b0, ty[3:0], tx[4:0]}, lo);
         mapwrite({1'b1, ty[3:0], tx[4:0]}, hi);
       end
-    cpuwrite(4'h5, 8'h01);  // enable the tilemap
+    // Overlay: border + diagonal as static content, plus a sweeping bar
+    for (int y = 0; y < H; y++)
+      for (int l = 0; l < W/8; l++) begin
+        ovlbase[y*20 + l] = ovl_static(y, l);
+        ovlwrite(12'(y*20 + l), ovl_static(y, l));
+      end
+    for (int y = 40; y < 80; y++)
+      ovlwrite(12'(y*20 + barlane), 8'hFF);
+    cpuwrite(4'h6, 8'd10);  // overlay color: yellow
+    cpuwrite(4'h5, 8'h03);  // enable tilemap + overlay
 
     // Each iteration: move sprites, stream the list (tears into the frame
     // in progress), then let one full quiet frame render before dumping so
@@ -229,6 +263,12 @@ module sprite_compositor_tb;
         if (camy <= 0 || camy >= 8) cdy = -cdy;
         cpuwrite(4'h3, camx[7:0]);
         cpuwrite(4'h4, camy[7:0]);
+        // Sweep the overlay bar one lane right (erase old, draw new)
+        for (int y = 40; y < 80; y++)
+          ovlwrite(12'(y*20 + barlane), ovlbase[y*20 + barlane]);
+        barlane = (barlane + 1) % 20;
+        for (int y = 40; y < 80; y++)
+          ovlwrite(12'(y*20 + barlane), 8'hFF);
         write_list();
       end
       wait_frame_end();

@@ -28,17 +28,24 @@
 //   $2  sheet data (auto-inc)      $A  staged Y
 //   $3  camera X                   $B  flags/commit (below)
 //   $4  camera Y                   $C  active sprite count
-//   $5  control: bit0 tilemap en   $D  frame counter (RO, +1 per vsync)
-//                                  $E  staged pattern base
+//   $5  control: bit0 tilemap en,  $D  frame counter (RO, +1 per vsync)
+//       bit1 overlay en            $E  staged pattern base
+//   $6  overlay color (4 bits, sampled per displayed pixel)
 //   $B: bit0 xflip, bit1 yflip, bits3:2 bpp-1, bits7:4 palette base
 //       (pixel color = palette base + pixel value, mod 16); writing commits
 //       the staged X/Y/base and auto-increments the list index
 //
 // Tilemap window (map_cs, write-only): cell low bytes (pattern base) at
 // offset $000-$1FF, cell high bytes (attributes) at $200-$3FF.
+//
+// Overlay (ovl_cs, write-only): 160x120 1bpp bitmap, byte = y*20 + x/8,
+// bit 0 = leftmost pixel. Mixed ABOVE tiles and sprites at display time
+// (zero compositing cost): set bit -> overlay color, clear bit -> below
+// layers show through.
 module sprite_compositor(input bit clk, input bit reset,
               input bit cs, input bit rw, input logic [3:0] addr, input logic [7:0] di, output logic [7:0] dout,
               input bit map_cs, input logic [9:0] map_addr,
+              input bit ovl_cs, input logic [11:0] ovl_addr,
               input logic [7:0] hpos, input logic [6:0] vpos, input bit vsync, input bit hsync,
               output logic [3:0] color,
               // DMA interface
@@ -74,6 +81,11 @@ module sprite_compositor(input bit clk, input bit reset,
   logic [7:0] camera_x;
   logic [6:0] camera_y;
   logic       tiles_en;
+
+  // Overlay: 1bpp, 20 bytes per row (2400 used; sized for a clean bound)
+  logic [7:0] ovl[0:2559];
+  logic       ovl_en;
+  logic [3:0] ovl_color;
 
   // Line buffer: 2 banks x LANES words of 8 pixels x 4bpp. Address bit 5
   // selects the bank, so a swap is a register toggle, not a buffer copy.
@@ -227,6 +239,19 @@ module sprite_compositor(input bit clk, input bit reset,
     if (wr_en)
       linebuf[wr_addr] <= wr_data;
 
+  // Overlay display read: the overlay byte for the current lane is fetched
+  // in parallel with the line-buffer read (own BRAM, own port); y*20 is
+  // (y<<4) + (y<<2), so the address is adder-only
+  wire [11:0] ovl_daddr = {1'b0, vpos, 4'b0} + {3'b0, vpos, 2'b0} + {7'b0, hpos[7:3]};
+  logic [7:0] ovl_rdata;
+  always_ff @(posedge clk)
+    ovl_rdata <= ovl[ovl_daddr];
+
+  // Overlay CPU write port (write-only: the display owns the read port)
+  always_ff @(posedge clk)
+    if (ovl_cs && rw && ovl_addr < 12'd2560)
+      ovl[ovl_addr] <= di;
+
   // Display pipeline: read issued on the pixel's first clock, color
   // registered on the second (hpos is stable for the whole pixel)
   logic disp_rd_q;
@@ -247,8 +272,12 @@ module sprite_compositor(input bit clk, input bit reset,
 
       // Display side
       disp_rd_q <= disp_slot;
-      if (disp_rd_q)
-        color <= rd_data[{2'b0, hpos[2:0]} * 4 +: 4];
+      if (disp_rd_q) begin
+        if (ovl_en && ovl_rdata[hpos[2:0]])
+          color <= ovl_color;
+        else
+          color <= rd_data[{2'b0, hpos[2:0]} * 4 +: 4];
+      end
 
       // The composed bank becomes the displayed bank during the sync pixel
       if (line_end)
@@ -423,6 +452,8 @@ module sprite_compositor(input bit clk, input bit reset,
       camera_x <= 0;
       camera_y <= 0;
       tiles_en <= 0;
+      ovl_en <= 0;
+      ovl_color <= 0;
       frame_count <= 0;
       vsync_q <= 0;
     end else begin
@@ -440,7 +471,11 @@ module sprite_compositor(input bit clk, input bit reset,
           end
           4'h3: camera_x <= reg_data;
           4'h4: camera_y <= reg_data[6:0];
-          4'h5: tiles_en <= reg_data[0];
+          4'h5: begin
+            tiles_en <= reg_data[0];
+            ovl_en <= reg_data[1];
+          end
+          4'h6: ovl_color <= reg_data[3:0];
           4'h8: sp_index <= reg_data;
           4'h9: stage_x <= reg_data;
           4'hA: stage_y <= reg_data[6:0];
@@ -458,7 +493,8 @@ module sprite_compositor(input bit clk, input bit reset,
           4'h1: dout <= {5'b0, sheet_addr[10:8]};
           4'h3: dout <= camera_x;
           4'h4: dout <= {1'b0, camera_y};
-          4'h5: dout <= {7'b0, tiles_en};
+          4'h5: dout <= {6'b0, ovl_en, tiles_en};
+          4'h6: dout <= {4'b0, ovl_color};
           4'h8: dout <= sp_index;
           4'hC: dout <= sp_count;
           4'hD: dout <= frame_count;
