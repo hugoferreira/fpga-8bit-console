@@ -27,14 +27,15 @@ module cpu6502(
   output logic [15:0] address,
   input  logic [7:0] data_in,
   output logic [7:0] data_out,
-  output bit         write
+  output bit         write,
+  // New signal - exposes RDY pin for memory arbiter
+  input  bit         rdy
 );
 
-  // Force all interrupt signals to remain stable during reset
-  // and completely disable interrupts for this design
+  // Additional signals required by Arlet's implementation
   wire IRQ = 1'b0;  // Always keep IRQ disabled 
   wire NMI = 1'b0;  // Always keep NMI disabled
-  wire RDY = 1'b1;  // Always ready
+  // RDY is now controlled externally
   
   // Debug memory access to identify if BRK instructions are being fetched
   always_ff @(posedge clk) begin
@@ -42,6 +43,11 @@ module cpu6502(
       if (data_in == 8'h00) begin
         $display("CPU Wrapper: WARNING - Reading BRK instruction (0x00) from address $%04X", address);
       end
+    end
+    
+    // Log RDY state changes for debugging
+    if (rdy == 0) begin
+      $display("CPU Wrapper: CPU is halted (RDY=0) at address $%04X", address);
     end
   end
 
@@ -56,7 +62,7 @@ module cpu6502(
     .WE(write),       // Write enable
     .IRQ(IRQ),        // Interrupt request (always 0)
     .NMI(NMI),        // Non-maskable interrupt (always 0)
-    .RDY(RDY)         // Ready signal (tied to 1)
+    .RDY(rdy)         // Ready signal - now controlled by memory arbiter
   );
 
 endmodule

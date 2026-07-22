@@ -1,8 +1,16 @@
 module sprite(input bit clk, input bit reset, 
               input bit cs, input bit rw, input logic [3:0] addr, input logic [7:0] di, output logic [7:0] dout, 
               input logic [7:0] hpos, input logic [6:0] vpos, input bit vsync, input bit hsync, 
-              output bit pixel);
+              output bit pixel,
+              // New DMA interface
+              input logic dma_active,
+              input logic dma_write,
+              input logic [3:0] dma_addr,
+              input logic [7:0] dma_data);
 
+  // Local dual-port memory for sprite data
+  // Port A: CPU/DMA access
+  // Port B: Video rendering
   logic [7:0] spriteram[0:9];
   initial $readmemb("./rtl/spriteram.bin", spriteram); 
 
@@ -26,7 +34,8 @@ module sprite(input bit clk, input bit reset,
     endcase
   end
   
-  // Display logic - continues regardless of chip select
+  // Display logic - continues regardless of chip select or DMA
+  // This uses Port B of the dual-port sprite memory
   always_ff @(posedge clk)
   begin
     if (reset) begin
@@ -56,19 +65,24 @@ module sprite(input bit clk, input bit reset,
     end
   end
 
-  // CPU read access - only when chip select is active
-  always_ff @(posedge clk)
-    if (cs & ~rw) begin
+  // Memory access logic - Port A of dual-port memory
+  // Handles both CPU and DMA access to sprite registers
+  always_ff @(posedge clk) begin
+    // DMA write has priority over CPU access
+    if (dma_active && dma_write) begin
+      // DMA writing to sprite registers
+      spriteram[dma_addr] <= dma_data;
+      $display("Sprite DMA: Writing 0x%02X to register %d", dma_data, dma_addr);
+    end else if (cs & ~rw) begin
+      // CPU reading from sprite registers
       dout <= spriteram[sprite_reg_addr];
       $display("Sprite: CPU reading register %d at $400%01X = %02X", 
                sprite_reg_addr, addr, spriteram[sprite_reg_addr]);
-    end
-
-  // CPU write access - only when chip select is active
-  always_ff @(posedge clk)
-    if (cs & rw) begin
+    end else if (cs & rw) begin
+      // CPU writing to sprite registers
       spriteram[sprite_reg_addr] <= di;
       $display("Sprite: CPU writing register %d at $400%01X = %02X", 
                sprite_reg_addr, addr, di);
     end
+  end
 endmodule

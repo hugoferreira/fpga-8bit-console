@@ -2,9 +2,11 @@
 `include "chip.sv"
 `include "por.sv"
 `include "slower_clk.sv"
-/* verilator lint_off REDEFMACRO */
+// The VERILATOR macro is predefined by the Verilator tool itself; define it
+// here only for other tools (redefining is fatal DEFOVERRIDE in Verilator 5)
+`ifndef VERILATOR
 `define VERILATOR
-/* verilator lint_on REDEFMACRO */
+`endif
 
 module top(input logic clk_i, input logic rst_i, 
            output logic hsync, output logic vsync, output logic [23:0] rgb);

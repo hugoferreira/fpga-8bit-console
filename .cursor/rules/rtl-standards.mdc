@@ -13,7 +13,7 @@ All new modules should be written in SystemVerilog. Reference [rtl/chip.sv](mdc:
 - Parameters: UPPER_SNAKE_CASE (e.g., `MEMORY_SIZE`)
 - Signals: snake_case
 - Clock signals: prefix with `clk_`
-- Reset signals: prefix with `rst_`
+- Reset signals: prefix with `rst_` or `reset_`
 
 ## Code Style
 - Use 2-space indentation
@@ -46,3 +46,13 @@ See [src/memory.cfg](mdc:src/memory.cfg) for the complete memory layout:
 - 0x3000-0x3FFF: I/O space
 - 0x4000-0x4FFF: Memory-mapped I/O
 - 0xFFFA-0xFFFF: Interrupt vectors
+
+## Clock Domain Crossing
+- Be explicit about clock domain crossings
+- Use proper synchronization when crossing clock domains
+- For simple designs, consider using a single clock domain
+
+## Debug Support
+- Add debug print statements using `$display` in simulation mode
+- Wrap debug code in `ifdef SIM` ... `endif` blocks
+- Use descriptive state and signal names for easier debugging

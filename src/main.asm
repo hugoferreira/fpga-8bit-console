@@ -1,305 +1,198 @@
 .segment "CODE"
     ; ------------------------------------------------------------------------------
+    ; 128-sprite compositor demo
+    ; ------------------------------------------------------------------------------
+    ; Streams a 128-entry sprite list to the scanline compositor every loop:
+    ; each sprite moves 1px per update with edge bounce, and its X/Y flips
+    ; follow the travel direction so the arrow points where it is going.
+    ;
     ; System Memory Map
-    ; ------------------------------------------------------------------------------
-    ; $0000-$00FF: Zero Page (CPU registers and variables)
-    ; $0100-$01FF: Stack Page (Hardware stack grows down from $01FF)
-    ; $0200-$02FF: Reserved for system use
-    ; $0300-$FFFA: Program code and data
-    ; $FFFA-$FFFF: Interrupt vectors (NMI, RESET, IRQ/BRK)
-    
-    ; ------------------------------------------------------------------------------
-    ; System Constants
-    ; ------------------------------------------------------------------------------
-    
-    ; Screen Resolution Constants
-    .define SCREEN_WIDTH       160    ; LCD width in pixels (320 / SCALE)
-    .define SCREEN_HEIGHT      120    ; LCD height in pixels (240 / SCALE)
-    .define SCALE              2      ; Scale factor for the screen
-    
-    ; Sprite Constants
-    .define SPRITE_WIDTH       8      ; Sprite width in pixels
-    .define SPRITE_HEIGHT      8      ; Sprite height in pixels
-    .define SPRITE_X_REG       $4008  ; Sprite X position register
-    .define SPRITE_Y_REG       $4009  ; Sprite Y position register
-    
-    ; Screen Boundaries
-    .define LEFT_BOUNDARY      20     ; Left boundary for sprite bouncing
-    .define RIGHT_BOUNDARY     132    ; Right boundary (160 - 8 - 20)
-    .define TOP_BOUNDARY       20     ; Top boundary for sprite bouncing
-    .define BOTTOM_BOUNDARY    92     ; Bottom boundary (120 - 8 - 20)
-    
-    ; Text Buffer Constants
-    .define TEXT_COLUMNS       20     ; Number of text columns
-    .define TEXT_ROWS          15     ; Number of text rows
-    .define CHAR_RAM           $F000  ; Character data in text buffer
-    .define ATTR_RAM           $F200  ; Attribute (color) data in text buffer
-    
-    ; Movement Constants
-    .define X_STEP             1      ; Horizontal movement step size
-    .define Y_STEP             1      ; Vertical movement step size
-    
-    ; Color Constants (BBBBFFFF format - background/foreground)
-    .define COLOR_WHITE_ON_BLUE $1F   ; Blue background (1), white foreground (F)
-    .define COLOR_WHITE_ON_BLACK $0F  ; Black background (0), white foreground (F)
-    .define COLOR_GREEN_ON_BLACK $0A  ; Black background (0), green foreground (A)
-    .define COLOR_RED_ON_BLACK   $0C  ; Black background (0), red foreground (C)
-    
-    ; Direction Constants
-    .define DIR_RIGHT          0      ; Moving right
-    .define DIR_LEFT           1      ; Moving left
-    .define DIR_DOWN           0      ; Moving down
-    .define DIR_UP             1      ; Moving up
-    
-    ; Zero page variables
-    .define x_pos   $00     ; Current X position
-    .define y_pos   $01     ; Current Y position
-    .define x_dir   $02     ; X direction (0=right, 1=left)
-    .define y_dir   $03     ; Y direction (0=down, 1=up)
-    
-; Program starts here at $0300 (see memory.cfg)    
-start:
-    ; Write "CPU RUNNING" to screen to verify the CPU is running
-    lda #'C'
-    sta CHAR_RAM+5      ; Character at position 5
-    lda #'P'
-    sta CHAR_RAM+6      ; Character at position 6
-    lda #'U'
-    sta CHAR_RAM+7      ; Character at position 7
-    lda #' '
-    sta CHAR_RAM+8      ; Character at position 8
-    lda #'R'
-    sta CHAR_RAM+9      ; Character at position 9
-    lda #'U'
-    sta CHAR_RAM+10     ; Character at position 10
-    lda #'N'
-    sta CHAR_RAM+11     ; Character at position 11
-    
-    ; Write welcome message to screen with proper attributes
-    lda #'B'
-    sta CHAR_RAM      ; Character at position 0
-    lda #'A'
-    sta CHAR_RAM+1    ; Character at position 1
-    lda #'L'
-    sta CHAR_RAM+2    ; Character at position 2
-    lda #'L'
-    sta CHAR_RAM+3    ; Character at position 3
-    
-    ; Set attributes for the text (white on blue)
-    lda #COLOR_WHITE_ON_BLUE
-    sta ATTR_RAM      ; Attribute for position 0
-    sta ATTR_RAM+1    ; Attribute for position 1
-    sta ATTR_RAM+2    ; Attribute for position 2
-    sta ATTR_RAM+3    ; Attribute for position 3
-    
-    ; Initialize sprite position to middle of screen
-    lda #80          ; Center X position
-    sta x_pos
-    sta SPRITE_X_REG
-    
-    lda #60          ; Center Y position
-    sta y_pos
-    sta SPRITE_Y_REG
-    
-    ; Initialize to move down-right
-    lda #DIR_RIGHT
-    sta x_dir
-    lda #DIR_DOWN
-    sta y_dir
+    ; $0000-$00FF: Zero Page   $0100-$01FF: Stack
+    ; $0300-....:  Program     $FFFA-$FFFF: Vectors
 
-    ; Add a marker in RAM to verify CPU is running
-    lda #$DE
-    sta $F10          ; Store marker at $F10
-    lda #$AD
-    sta $F11          ; Store marker at $F11
+    ; Sprite compositor registers ($400x)
+    .define SPR_PATTERN        $4000  ; $4000-$4007 pattern rows
+    .define SPR_INDEX          $4008  ; List index
+    .define SPR_X              $4009  ; Staged X
+    .define SPR_Y              $400A  ; Staged Y
+    .define SPR_FLAGS          $400B  ; bit0 xflip, bit1 yflip; write commits + index++
+    .define SPR_COUNT          $400C  ; Active sprite count
+
+    .define NSPR               128    ; Number of sprites
+    .define MAX_X              152    ; 160 - 8
+    .define MAX_Y              112    ; 120 - 8
+
+    ; Text buffer
+    .define CHAR_RAM           $F000
+    .define ATTR_RAM           $F200
+    .define COLOR_WHITE_ON_BLACK $0F
+
+    ; Runtime tables (one page each, above the program image)
+    .define xpos    $0900
+    .define ypos    $0A00
+    .define dirs    $0B00  ; bit0: 1=moving left, bit1: 1=moving up
+
+; Program starts here at $0300 (see memory.cfg)
+start:
+    ; Clear the whole text screen: blank characters, black-on-black attributes
+    ldx #0
+    lda #$20
+clear_chars:
+    sta CHAR_RAM,x
+    sta CHAR_RAM+256,x
+    inx
+    bne clear_chars
+    lda #$00
+clear_attrs:
+    sta ATTR_RAM,x
+    sta ATTR_RAM+256,x
+    inx
+    bne clear_attrs
+
+    ; Banner text
+    ldx #0
+print_text:
+    lda text,x
+    beq text_done
+    sta CHAR_RAM,x
+    lda #COLOR_WHITE_ON_BLACK
+    sta ATTR_RAM,x
+    inx
+    bne print_text
+text_done:
+
+    ; Program the shared 8x8 pattern through the CPU interface
+    ldx #0
+load_pattern:
+    lda pattern,x
+    sta SPR_PATTERN,x
+    inx
+    cpx #8
+    bne load_pattern
+
+    ; Copy initial positions and directions into the runtime tables
+    ldx #0
+load_tables:
+    lda init_x,x
+    sta xpos,x
+    lda init_y,x
+    sta ypos,x
+    lda init_d,x
+    sta dirs,x
+    inx
+    cpx #NSPR
+    bne load_tables
+
+    lda #NSPR
+    sta SPR_COUNT
 
 main_loop:
-    ; Update the counter on screen to show program is running
-    inc $F12
-    lda $F12
-    sta CHAR_RAM+20   ; Show counter on screen
-    lda #COLOR_WHITE_ON_BLACK
-    sta ATTR_RAM+20   ; Set attribute for counter
+    lda #0
+    sta SPR_INDEX      ; Rewind the list index
+    ldx #0
+update:
+    ; --- X axis ---
+    lda dirs,x
+    and #1
+    bne @moving_left
+    inc xpos,x         ; Moving right
+    lda xpos,x
+    cmp #MAX_X
+    bcc @x_done
+    lda dirs,x         ; Hit right edge: turn left
+    ora #1
+    sta dirs,x
+    bne @x_done
+@moving_left:
+    dec xpos,x
+    lda xpos,x
+    bne @x_done
+    lda dirs,x         ; Hit left edge: turn right
+    and #$FE
+    sta dirs,x
+@x_done:
+    ; --- Y axis ---
+    lda dirs,x
+    and #2
+    bne @moving_up
+    inc ypos,x         ; Moving down
+    lda ypos,x
+    cmp #MAX_Y
+    bcc @y_done
+    lda dirs,x         ; Hit bottom edge: turn up
+    ora #2
+    sta dirs,x
+    bne @y_done
+@moving_up:
+    dec ypos,x
+    lda ypos,x
+    bne @y_done
+    lda dirs,x         ; Hit top edge: turn down
+    and #$FD
+    sta dirs,x
+@y_done:
+    ; --- Stream this entry to the compositor ---
+    lda xpos,x
+    sta SPR_X
+    lda ypos,x
+    sta SPR_Y
+    lda dirs,x
+    eor #3             ; Arrow points along travel: flip when moving right/down
+    and #3
+    sta SPR_FLAGS      ; Commit, index auto-increments
+    inx
+    cpx #NSPR
+    bne update
 
-    ; === Simple X movement ===
-    lda x_dir
-    beq move_right
-    
-move_left:
-    lda x_pos
-    sec
-    sbc #X_STEP       ; Move left by X_STEP pixels
-    sta x_pos
-    cmp #LEFT_BOUNDARY
-    bcs x_done
-    lda #DIR_RIGHT    ; Change direction to right
-    sta x_dir
-    jmp x_done
-    
-move_right:
-    lda x_pos
-    clc
-    adc #X_STEP       ; Move right by X_STEP pixels
-    sta x_pos
-    cmp #RIGHT_BOUNDARY
-    bcc x_done
-    lda #DIR_LEFT     ; Change direction to left
-    sta x_dir
-    
-x_done:
-    ; === Simple Y movement ===
-    lda y_dir
-    beq move_down
-    
-move_up:
-    lda y_pos
-    sec
-    sbc #Y_STEP       ; Move up by Y_STEP pixels
-    sta y_pos
-    cmp #TOP_BOUNDARY
-    bcs y_done
-    lda #DIR_DOWN     ; Change direction to down
-    sta y_dir
-    jmp y_done
-    
-move_down:
-    lda y_pos
-    clc
-    adc #Y_STEP       ; Move down by Y_STEP pixels
-    sta y_pos
-    cmp #BOTTOM_BOUNDARY
-    bcc y_done
-    lda #DIR_UP       ; Change direction to up
-    sta y_dir
-    
-y_done:
-    ; Display "X=" and current position
-    lda #'X'
-    sta CHAR_RAM+40   ; Character at position 40
-    lda #'='
-    sta CHAR_RAM+41   ; Character at position 41
-    
-    ; Convert X position to ASCII numeral
-    lda x_pos
-    jsr byte_to_hex
-    sta CHAR_RAM+42    ; Store high nibble at position 42
-    stx CHAR_RAM+43    ; Store low nibble at position 43
-    
-    ; Set attributes for X position (green on black)
-    lda #COLOR_GREEN_ON_BLACK
-    sta ATTR_RAM+40
-    sta ATTR_RAM+41
-    sta ATTR_RAM+42
-    sta ATTR_RAM+43
-    
-    ; Display "Y=" and current position
-    lda #'Y'
-    sta CHAR_RAM+45    ; Character at position 45
-    lda #'='
-    sta CHAR_RAM+46    ; Character at position 46
-    
-    ; Convert Y position to ASCII numeral
-    lda y_pos
-    jsr byte_to_hex
-    sta CHAR_RAM+47    ; Store high nibble at position 47
-    stx CHAR_RAM+48    ; Store low nibble at position 48
-    
-    ; Set attributes for Y position (red on black)
-    lda #COLOR_RED_ON_BLACK
-    sta ATTR_RAM+45
-    sta ATTR_RAM+46
-    sta ATTR_RAM+47
-    sta ATTR_RAM+48
-    
-    ; Update sprite position in hardware
-    lda x_pos
-    sta SPRITE_X_REG   ; Update X position
-    
-    lda y_pos
-    sta SPRITE_Y_REG   ; Update Y position
-    
-    ; Add delay to control speed
-    ldx #$20           ; Reasonable delay for testing
-delay:
-    ldy #$20
-inner_delay:
-    dey
-    bne inner_delay
-    dex
-    bne delay
-    
-    jmp main_loop      ; Repeat forever
+    inc $F12           ; Heartbeat for debugging
+    jmp main_loop
 
 ; ------------------------------------------------------------------------------
-; Utility subroutines
+; Data
 ; ------------------------------------------------------------------------------
+text:
+    .byte "128 SPRITES 1 SHAPE", 0
 
-; Convert byte in A to two hex digits
-; Returns: A = high nibble as hex char, X = low nibble as hex char
-byte_to_hex:
-    pha                  ; Save original value
-    lsr                  ; Shift high nibble to low nibble
-    lsr
-    lsr
-    lsr
-    jsr nibble_to_hex    ; Convert high nibble
-    pha                  ; Save high nibble ASCII
-    pla                  ; Restore high nibble ASCII to A
-    tax                  ; Save high nibble ASCII to X temporarily
-    pla                  ; Restore original value
-    and #$0F             ; Mask to keep only low nibble
-    jsr nibble_to_hex    ; Convert low nibble
-    pha                  ; Save low nibble ASCII to X
-    txa                  ; High nibble ASCII back to A
-    tax                  ; Low nibble ASCII to X
-    pla                  ; Original value to A
-    rts
+pattern:
+    .byte $01, $03, $07, $0F, $1F, $13, $21, $40
 
-; Convert nibble in A to hex character
-nibble_to_hex:
-    cmp #10              ; Compare with 10
-    bcc @digit           ; If < 10, it's a digit
-    adc #$36             ; Otherwise, it's A-F (carry is set here)
-    rts
-@digit:
-    adc #$30             ; Convert to ASCII '0'-'9'
-    rts
+init_x:
+    .byte $4E, $3D, $18, $91, $8D, $65, $8F, $35, $64, $75, $05, $00, $49, $23, $32, $51
+    .byte $55, $48, $1E, $32, $39, $4C, $71, $02, $03, $27, $7B, $69, $6D, $62, $6C, $96
+    .byte $5D, $7B, $4C, $5B, $4D, $33, $23, $2F, $73, $32, $81, $41, $91, $48, $96, $83
+    .byte $3D, $4E, $52, $64, $31, $62, $45, $34, $4B, $35, $2F, $52, $5D, $57, $18, $40
+    .byte $45, $81, $50, $7D, $05, $81, $57, $69, $83, $48, $05, $93, $69, $36, $92, $15
+    .byte $8D, $63, $1E, $0E, $28, $38, $49, $3D, $53, $23, $23, $74, $64, $3D, $24, $22
+    .byte $1D, $16, $5C, $17, $2C, $37, $93, $3A, $03, $4E, $59, $7D, $38, $4C, $8E, $4F
+    .byte $45, $49, $6A, $4F, $58, $95, $55, $5F, $1B, $19, $17, $8E, $8C, $53, $6F, $14
+init_y:
+    .byte $3B, $54, $3B, $2A, $09, $0C, $02, $37, $42, $17, $15, $58, $07, $15, $03, $1B
+    .byte $66, $06, $0B, $11, $40, $0A, $0F, $2B, $65, $31, $3D, $17, $25, $1A, $57, $56
+    .byte $10, $67, $4C, $39, $16, $37, $1B, $0E, $37, $1A, $16, $16, $13, $20, $4B, $62
+    .byte $6A, $69, $0C, $00, $4C, $14, $58, $21, $4A, $63, $0E, $66, $42, $25, $40, $4D
+    .byte $45, $1A, $4C, $18, $23, $32, $64, $65, $6C, $2D, $57, $05, $10, $2A, $34, $29
+    .byte $1F, $5B, $5D, $0F, $19, $2F, $40, $68, $6E, $56, $0F, $35, $4E, $10, $09, $14
+    .byte $09, $1D, $2D, $56, $60, $1D, $5D, $0C, $21, $0F, $37, $54, $5D, $05, $2D, $1F
+    .byte $34, $4E, $3E, $5E, $46, $3A, $09, $1F, $43, $69, $10, $53, $4B, $6B, $31, $0B
+init_d:
+    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
+    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
+    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
+    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
+    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
+    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
+    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
+    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
+
 
 ; ------------------------------------------------------------------------------
 ; Interrupt Handlers
 ; ------------------------------------------------------------------------------
-
-; NMI - Non-maskable interrupt handler
 nmi_handler:
-    rti                     ; Return from interrupt since we don't use NMI
+    rti
 
-; IRQ/BRK - Interrupt handler
 irq_handler:
-    pha                     ; Save registers
-    txa
-    pha
-    tya
-    pha
-    
-    ; Check if this is a BRK or IRQ
-    tsx                     ; Get stack pointer
-    lda $0103,x            ; Get status register from stack
-    and #$10               ; Check BRK bit
-    bne brk_handler        ; If set, this was a BRK
-    
-    ; Handle IRQ here if needed
-    jmp irq_done
-
-brk_handler:
-    ; Handle BRK here if needed
-
-irq_done:
-    pla                     ; Restore registers
-    tay
-    pla
-    tax
-    pla
-    rti                     ; Return from interrupt
+    rti
 
 ; ------------------------------------------------------------------------------
 ; Interrupt vectors
@@ -307,4 +200,4 @@ irq_done:
 .segment "VECTORS"
     .word $0000   ; NMI vector - not used
     .word $0300   ; RESET vector - points to program start
-    .word $0000   ; IRQ/BRK vector - not used 
+    .word $0000   ; IRQ vector - not used

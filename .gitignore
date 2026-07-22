@@ -24,3 +24,6 @@ rust/*.hex
 
 # Tools
 tools/target/
+
+# Vendored/cloned dependencies
+rust/verilated-rs/

@@ -101,6 +101,12 @@ debug: bin/sim_debug_${SIM_TOP}
 debug_custom: bin/sim_${DEBUG_TEST}
 	${VVP} bin/sim_${DEBUG_TEST}
 
+# Testbench targets
+test_ram: rtl/ram_test_tb.v rtl/ram_async.sv rtl/ram.hex
+	@echo "Running RAM testbench..."
+	iverilog -g2012 -o ram_test.vvp rtl/ram_test_tb.v rtl/ram_async.sv
+	vvp ram_test.vvp
+
 # Commands
 .PHONY: timing stat upload run clean all asm font tools test sim debug debug_custom
 
