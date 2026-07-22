@@ -165,7 +165,7 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
   );
 
   // Video Sprites - now with DMA interface
-  logic pixel;
+  logic [3:0] sprite_color;
   logic [RGB-1:0] srgb;
   sprite_compositor s0(
     .clk(clk), 
@@ -175,11 +175,11 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .rw(mem_write), 
     .di(mem_data_out), 
     .dout(sp_do), 
-    .hpos(hpos), 
-    .vpos(vpos), 
-    .hsync(hsync), 
-    .vsync(vsync), 
-    .pixel(pixel),
+    .hpos(hpos),
+    .vpos(vpos),
+    .hsync(hsync),
+    .vsync(vsync),
+    .color(sprite_color),
     // DMA interface
     .dma_active(sp_dma_active),
     .dma_write(sp_dma_write),
@@ -187,8 +187,8 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .dma_data(sp_dma_data)
   );
   palette #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE("./rtl/palette888.bin")) pal_sprite(
-    .clk(clk), 
-    .color(pixel ? 4'h9 : 4'h0), 
+    .clk(clk),
+    .color(sprite_color),
     .rgb(srgb)
   );
 
