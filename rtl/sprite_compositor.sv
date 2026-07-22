@@ -35,6 +35,12 @@
 //       (pixel color = palette base + pixel value, mod 16); writing commits
 //       the staged X/Y/base and auto-increments the list index
 //
+// Draw state ($4010-$403F, identity/full-screen defaults at reset):
+//   $10-$1F draw palette   - remaps the post-base color of tiles+sprites
+//   $20-$2F screen palette - remaps every displayed pixel (overlay too)
+//   $30-$33 clip rectangle x0/y0/x1/y1 (inclusive; tiles+sprites only)
+//   $34/$35 transparency mask lo/hi - bit v makes pixel VALUE v transparent
+//
 // Tilemap window (map_cs, write-only): cell low bytes (pattern base) at
 // offset $000-$1FF, cell high bytes (attributes) at $200-$3FF.
 //
@@ -43,7 +49,7 @@
 // (zero compositing cost): set bit -> overlay color, clear bit -> below
 // layers show through.
 module sprite_compositor(input bit clk, input bit reset,
-              input bit cs, input bit rw, input logic [3:0] addr, input logic [7:0] di, output logic [7:0] dout,
+              input bit cs, input bit rw, input logic [5:0] addr, input logic [7:0] di, output logic [7:0] dout,
               input bit map_cs, input logic [9:0] map_addr,
               input bit ovl_cs, input logic [11:0] ovl_addr,
               input logic [7:0] hpos, input logic [6:0] vpos, input bit vsync, input bit hsync,
@@ -86,6 +92,13 @@ module sprite_compositor(input bit clk, input bit reset,
   logic [7:0] ovl[0:2559];
   logic       ovl_en;
   logic [3:0] ovl_color;
+
+  // Draw state
+  logic [3:0]  dpal[0:15];   // draw palette (tiles + sprites, at blit time)
+  logic [3:0]  spal[0:15];   // screen palette (every displayed pixel)
+  logic [15:0] palt_t;       // bit v -> pixel value v is transparent
+  logic [7:0]  clip_x0, clip_x1;
+  logic [6:0]  clip_y0, clip_y1;
 
   // Line buffer: 2 banks x LANES words of 8 pixels x 4bpp. Address bit 5
   // selects the bank, so a swap is a register toggle, not a buffer copy.
@@ -176,8 +189,8 @@ module sprite_compositor(input bit clk, input bit reset,
       logic [3:0] pix;
       jj = e_xf ? 3'd7 - j[2:0] : j[2:0];
       pix = {prow[3][jj], prow[2][jj], prow[1][jj], prow[0][jj]} & bmask;
-      opq8[j] = |pix;
-      packed32[j*4 +: 4] = e_pal + pix;
+      opq8[j] = ~palt_t[pix];
+      packed32[j*4 +: 4] = dpal[e_pal + pix];
     end
   end
 
@@ -187,6 +200,18 @@ module sprite_compositor(input bit clk, input bit reset,
   wire [2:0]  off    = e_x[2:0];
   wire [63:0] data64 = {32'b0, packed32} << {off, 2'b00};
   wire [15:0] mask16 = {8'b0, opq8} << off;
+
+  // Clip mask over the 2-word blit window: pixel k sits at screen x =
+  // {lane,000}+k in 8-bit arithmetic, which also clips the wrapped
+  // left-edge partial tile correctly
+  wire line_in_clip = (line_y >= clip_y0) && (line_y <= clip_y1);
+  logic [15:0] clipm;
+  always_comb
+    for (int k = 0; k < 16; k++) begin
+      logic [7:0] xk;
+      xk = {lane, 3'b000} + k[7:0];
+      clipm[k] = line_in_clip && (xk >= clip_x0) && (xk <= clip_x1);
+    end
 
   function automatic [31:0] merge(input [31:0] old, input [31:0] nw, input [7:0] m);
     for (int n = 0; n < 8; n++)
@@ -225,12 +250,12 @@ module sprite_compositor(input bit clk, input bit reset,
       E_WR0: if (lane < LANES[4:0]) begin
         wr_en = 1;
         wr_addr = {~bank, lane};
-        wr_data = merge(old_w0, data64[31:0], mask16[7:0]);
+        wr_data = merge(old_w0, data64[31:0], mask16[7:0] & clipm[7:0]);
       end
-      E_WR1: if (lane1 < LANES[4:0] && mask16[15:8] != 8'd0) begin
+      E_WR1: if (lane1 < LANES[4:0] && (mask16[15:8] & clipm[15:8]) != 8'd0) begin
         wr_en = 1;
         wr_addr = {~bank, lane1};
-        wr_data = merge(old_w1, data64[63:32], mask16[15:8]);
+        wr_data = merge(old_w1, data64[63:32], mask16[15:8] & clipm[15:8]);
       end
       default: ;
     endcase
@@ -274,9 +299,9 @@ module sprite_compositor(input bit clk, input bit reset,
       disp_rd_q <= disp_slot;
       if (disp_rd_q) begin
         if (ovl_en && ovl_rdata[hpos[2:0]])
-          color <= ovl_color;
+          color <= spal[ovl_color];
         else
-          color <= rd_data[{2'b0, hpos[2:0]} * 4 +: 4];
+          color <= spal[rd_data[{2'b0, hpos[2:0]} * 4 +: 4]];
       end
 
       // The composed bank becomes the displayed bank during the sync pixel
@@ -441,7 +466,7 @@ module sprite_compositor(input bit clk, input bit reset,
   // Register interface - DMA writes win over CPU access
   // ------------------------------------------------------------------
   wire        reg_write = (dma_active && dma_write) || (cs && rw);
-  wire [3:0]  reg_addr  = (dma_active && dma_write) ? dma_addr : addr;
+  wire [5:0]  reg_addr  = (dma_active && dma_write) ? {2'b00, dma_addr} : addr;
   wire [7:0]  reg_data  = (dma_active && dma_write) ? dma_data : di;
 
   always_ff @(posedge clk) begin
@@ -456,6 +481,15 @@ module sprite_compositor(input bit clk, input bit reset,
       ovl_color <= 0;
       frame_count <= 0;
       vsync_q <= 0;
+      for (int k = 0; k < 16; k++) begin
+        dpal[k] <= k[3:0];
+        spal[k] <= k[3:0];
+      end
+      palt_t <= 16'h0001;
+      clip_x0 <= 0;
+      clip_y0 <= 0;
+      clip_x1 <= H_DISPLAY[7:0] - 1;
+      clip_y1 <= V_DISPLAY[6:0] - 1;
     end else begin
       vsync_q <= vsync;
       if (vsync && !vsync_q)
@@ -463,42 +497,61 @@ module sprite_compositor(input bit clk, input bit reset,
 
       if (reg_write) begin
         case (reg_addr)
-          4'h0: sheet_addr[7:0] <= reg_data;
-          4'h1: sheet_addr[10:8] <= reg_data[2:0];
-          4'h2: begin
+          6'h10, 6'h11, 6'h12, 6'h13, 6'h14, 6'h15, 6'h16, 6'h17,
+          6'h18, 6'h19, 6'h1A, 6'h1B, 6'h1C, 6'h1D, 6'h1E, 6'h1F:
+            dpal[reg_addr[3:0]] <= reg_data[3:0];
+          6'h20, 6'h21, 6'h22, 6'h23, 6'h24, 6'h25, 6'h26, 6'h27,
+          6'h28, 6'h29, 6'h2A, 6'h2B, 6'h2C, 6'h2D, 6'h2E, 6'h2F:
+            spal[reg_addr[3:0]] <= reg_data[3:0];
+          6'h30: clip_x0 <= reg_data;
+          6'h31: clip_y0 <= reg_data[6:0];
+          6'h32: clip_x1 <= reg_data;
+          6'h33: clip_y1 <= reg_data[6:0];
+          6'h34: palt_t[7:0] <= reg_data;
+          6'h35: palt_t[15:8] <= reg_data;
+          6'h00: sheet_addr[7:0] <= reg_data;
+          6'h01: sheet_addr[10:8] <= reg_data[2:0];
+          6'h02: begin
             sheet[sheet_addr] <= reg_data;
             sheet_addr <= sheet_addr + 1;
           end
-          4'h3: camera_x <= reg_data;
-          4'h4: camera_y <= reg_data[6:0];
-          4'h5: begin
+          6'h03: camera_x <= reg_data;
+          6'h04: camera_y <= reg_data[6:0];
+          6'h05: begin
             tiles_en <= reg_data[0];
             ovl_en <= reg_data[1];
           end
-          4'h6: ovl_color <= reg_data[3:0];
-          4'h8: sp_index <= reg_data;
-          4'h9: stage_x <= reg_data;
-          4'hA: stage_y <= reg_data[6:0];
-          4'hB: begin
+          6'h06: ovl_color <= reg_data[3:0];
+          6'h08: sp_index <= reg_data;
+          6'h09: stage_x <= reg_data;
+          6'h0A: stage_y <= reg_data[6:0];
+          6'h0B: begin
             list[sp_index[6:0]] <= {reg_data[7:2], reg_data[1], reg_data[0], stage_base, stage_y, stage_x};
             sp_index <= sp_index + 1;
           end
-          4'hC: sp_count <= reg_data;
-          4'hE: stage_base <= reg_data;
+          6'h0C: sp_count <= reg_data;
+          6'h0E: stage_base <= reg_data;
           default: ;  // $6, $7, $D, $F: unmapped / read-only
         endcase
       end else if (cs && !rw) begin
-        case (addr)
-          4'h0: dout <= sheet_addr[7:0];
-          4'h1: dout <= {5'b0, sheet_addr[10:8]};
-          4'h3: dout <= camera_x;
-          4'h4: dout <= {1'b0, camera_y};
-          4'h5: dout <= {6'b0, ovl_en, tiles_en};
-          4'h6: dout <= {4'b0, ovl_color};
-          4'h8: dout <= sp_index;
-          4'hC: dout <= sp_count;
-          4'hD: dout <= frame_count;
-          4'hE: dout <= stage_base;
+        casez (addr)
+          6'h00: dout <= sheet_addr[7:0];
+          6'h01: dout <= {5'b0, sheet_addr[10:8]};
+          6'h03: dout <= camera_x;
+          6'h04: dout <= {1'b0, camera_y};
+          6'h05: dout <= {6'b0, ovl_en, tiles_en};
+          6'h06: dout <= {4'b0, ovl_color};
+          6'h08: dout <= sp_index;
+          6'h0C: dout <= sp_count;
+          6'h0D: dout <= frame_count;
+          6'h0E: dout <= stage_base;
+          6'b01????: dout <= {4'b0, addr[4] ? spal[addr[3:0]] : dpal[addr[3:0]]};
+          6'h30: dout <= clip_x0;
+          6'h31: dout <= {1'b0, clip_y0};
+          6'h32: dout <= clip_x1;
+          6'h33: dout <= {1'b0, clip_y1};
+          6'h34: dout <= palt_t[7:0];
+          6'h35: dout <= palt_t[15:8];
           default: dout <= 8'h00;
         endcase
       end

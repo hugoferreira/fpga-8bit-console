@@ -18,6 +18,10 @@
     .define SPR_CAMY           $4004  ; Tilemap camera Y
     .define SPR_CTRL           $4005  ; Control: bit0 tilemap, bit1 overlay
     .define SPR_OVLCOL         $4006  ; Overlay color (4 bits)
+    .define SPR_DPAL           $4010  ; Draw palette (16 entries)
+    .define SPR_SPAL           $4020  ; Screen palette (16 entries)
+    .define SPR_CLIP           $4030  ; Clip rect x0/y0/x1/y1
+    .define SPR_PALT           $4034  ; Transparency mask lo/hi
     .define OVL                $E000  ; Overlay bitmap window (write-only)
     .define SPR_INDEX          $4008  ; List index
     .define SPR_X              $4009  ; Staged X
@@ -281,6 +285,23 @@ load_tables:
     sta SPR_COUNT
     lda #10
     sta SPR_OVLCOL     ; Overlay draws in yellow
+
+    ; Draw state: inset clip window, value 3 also transparent, draw-palette
+    ; 9 -> 14 (orange -> pink), screen-palette 0 -> 1 (navy background)
+    lda #8
+    sta SPR_CLIP
+    sta SPR_CLIP+1
+    lda #151
+    sta SPR_CLIP+2
+    lda #111
+    sta SPR_CLIP+3
+    lda #$09
+    sta SPR_PALT
+    lda #14
+    sta SPR_DPAL+9
+    lda #1
+    sta SPR_SPAL
+
     lda #3
     sta SPR_CTRL       ; Enable tilemap + overlay
 

@@ -44,7 +44,7 @@ module sprite_compositor_tb;
 
   // CPU register interface
   bit cs = 0, rw = 0;
-  logic [3:0] addr = 0;
+  logic [5:0] addr = 0;
   logic [7:0] di = 0;
   logic [7:0] dout;
   logic [3:0] color;
@@ -63,7 +63,7 @@ module sprite_compositor_tb;
     .color(color),
     .dma_active(1'b0), .dma_write(1'b0), .dma_addr(4'h0), .dma_data(8'h00));
 
-  task cpuwrite(input [3:0] a, input [7:0] d);
+  task cpuwrite(input [5:0] a, input [7:0] d);
     @(negedge clk);
     cs = 1; rw = 1; addr = a; di = d;
     @(negedge clk);
@@ -247,6 +247,17 @@ module sprite_compositor_tb;
     for (int y = 40; y < 80; y++)
       ovlwrite(12'(y*20 + barlane), 8'hFF);
     cpuwrite(4'h6, 8'd10);  // overlay color: yellow
+
+    // Draw state: inset clip window, value 3 also transparent, draw-palette
+    // 9 -> 14 (orange -> pink), screen-palette 0 -> 1 (navy background)
+    cpuwrite(6'h30, 8'd8);
+    cpuwrite(6'h31, 8'd8);
+    cpuwrite(6'h32, 8'd151);
+    cpuwrite(6'h33, 8'd111);
+    cpuwrite(6'h34, 8'h09);
+    cpuwrite(6'h19, 8'd14);
+    cpuwrite(6'h20, 8'd1);
+
     cpuwrite(4'h5, 8'h03);  // enable tilemap + overlay
 
     // Each iteration: move sprites, stream the list (tears into the frame

@@ -146,7 +146,7 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
   sprite_compositor s0(
     .clk(clk), 
     .reset(reset), 
-    .addr(sp_cs ? mem_addr[3:0] : 4'h0), 
+    .addr(sp_cs ? mem_addr[5:0] : 6'h0), 
     .cs(sp_cs), 
     .rw(mem_write), 
     .di(mem_data_out), 
