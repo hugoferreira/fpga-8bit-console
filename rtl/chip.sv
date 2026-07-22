@@ -1,4 +1,3 @@
-`include "textbuffer.sv"
 `include "sprite_compositor.sv"
 `include "palette.sv"
 `include "ram_async.sv"
@@ -136,35 +135,11 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .rdy(cpu_rdy)
   );
 
-  // Text Video Buffer - now with DMA interface
-  logic [3:0] text_color;
-  logic [RGB-1:0] trgb; 
-  textbuffer tb(
-    .clk(clk), 
-    .reset(reset), 
-    .addr(tb_cs ? mem_addr[9:0] : 10'h0), 
-    .cs(tb_cs), 
-    .rw(mem_write), 
-    .di(mem_data_out), 
-    .dout(tb_do), 
-    .hpos(hpos), 
-    .vpos(vpos), 
-    .vsync(vsync), 
-    .hsync(hsync), 
-    .color(text_color),
-    // DMA interface
-    .dma_active(tb_dma_active),
-    .dma_write(tb_dma_write),
-    .dma_addr(tb_dma_addr),
-    .dma_data(tb_dma_data)
-  );
-  palette #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE("./rtl/palette888.bin")) pal_text(
-    .clk(clk), 
-    .color(text_color), 
-    .rgb(trgb)
-  );
+  // The PPU's tilemap absorbed the old textbuffer; its $F000 window is the
+  // map's CPU write port (write-only, reads return 0)
+  assign tb_do = 8'h00;
 
-  // Video Sprites - now with DMA interface
+  // PPU: tilemap + sprite compositor
   logic [3:0] sprite_color;
   logic [RGB-1:0] srgb;
   sprite_compositor s0(
@@ -175,6 +150,8 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .rw(mem_write), 
     .di(mem_data_out), 
     .dout(sp_do), 
+    .map_cs(tb_cs),
+    .map_addr(tb_cs ? mem_addr[9:0] : 10'h0),
     .hpos(hpos),
     .vpos(vpos),
     .hsync(hsync),
@@ -193,5 +170,5 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
   );
 
   // Basic Video Signals 
-  assign rgb = srgb | trgb;
+  assign rgb = srgb;
 endmodule

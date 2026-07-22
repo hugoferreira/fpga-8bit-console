@@ -1,36 +1,44 @@
-// Scanline sprite compositor / PPU: renders up to MAX_SPRITES sprites per
-// frame from a shared sprite sheet, each entry with its own pattern, depth
-// (1-4 bpp), palette base, and X/Y flips. While line N is displayed, the
-// engine walks the sprite list and composites line N+1 into the back bank of
-// a BRAM line buffer. Priority is painter's order: later entries overdraw
-// earlier ones; pixel value 0 is transparent.
+// PPU: scrolling tilemap layer + sprite compositor, both fed from a shared
+// sprite sheet. While line N is displayed, the engine composites line N+1
+// into the back bank of a BRAM line buffer: clear, then one pass of tile
+// blits (if enabled), then the sprite list in painter's order. Pixel value 0
+// is transparent at every stage.
 //
-// Sprite sheet (v3): 256 uniform 8-byte plane slots (one 8x8 bitplane each)
-// in 2KB of block RAM. An entry references its pattern by plane-slot BASE
-// ADDRESS, and the entry's bpp field doubles as the footprint: the pattern
-// is bpp consecutive slots, plane p row r at byte {base+p, r}. Mixed depths
-// pack with zero waste (allocation is the CPU's business - a bump allocator
-// works), and every fetch is self-contained in the entry: no region config,
-// no tables, no multiplies, blit latency = bpp+1 fetches + fixed 4-cycle
-// line-buffer read-modify-write.
+// Sprite sheet: 256 uniform 8-byte plane slots (one 8x8 bitplane each) in
+// 2KB of block RAM. Sprites AND tiles reference patterns by plane-slot BASE
+// ADDRESS; the bpp field doubles as the footprint (bpp consecutive slots,
+// plane p row r at byte {base+p, r}). Every fetch is self-contained: no
+// region config, no tables, no multiplies.
+//
+// Tilemap: 32x16 cells of {pal[3:0], bppm1[1:0], yflip, xflip, base[7:0]},
+// wrapping over a 256x128-pixel world, scrolled by camera registers latched
+// once per scanline. A tile is composited as a synthesized sprite entry at
+// x = k*8 - (camera_x & 7) through the SAME fetch/blit pipeline - the 8-bit
+// x wraparound makes the partial left-edge tile work with no extra logic.
+// Cell $0000 is empty and skipped.
 //
 // Line buffer: 20 lanes x 32 bits (8 pixels x 4bpp), double-banked by an
-// address bit. A sprite row straddles at most two lanes -> 2-word RMW blit.
+// address bit. A row straddles at most two lanes -> 2-word RMW blit.
 // Timing contract: pixels are >=4 system clocks wide (hpos advances at the
 // pixel rate); the display side takes one line-buffer read slot per pixel.
 //
 // Register map ($400x, CPU and DMA share it):
-//   $0  sheet address low                          $8  list index
-//   $1  sheet address high (3 bits)                $9  staged X
-//   $2  sheet data - write stores at the sheet     $A  staged Y
-//       address and auto-increments it             $B  flags/commit (below)
-//   $C  active sprite count                        $E  staged pattern base
-//   $D  frame counter (read-only, +1 per vsync)
+//   $0  sheet address low          $8  list index
+//   $1  sheet address high (3b)    $9  staged X
+//   $2  sheet data (auto-inc)      $A  staged Y
+//   $3  camera X                   $B  flags/commit (below)
+//   $4  camera Y                   $C  active sprite count
+//   $5  control: bit0 tilemap en   $D  frame counter (RO, +1 per vsync)
+//                                  $E  staged pattern base
 //   $B: bit0 xflip, bit1 yflip, bits3:2 bpp-1, bits7:4 palette base
 //       (pixel color = palette base + pixel value, mod 16); writing commits
 //       the staged X/Y/base and auto-increments the list index
+//
+// Tilemap window (map_cs, write-only): cell low bytes (pattern base) at
+// offset $000-$1FF, cell high bytes (attributes) at $200-$3FF.
 module sprite_compositor(input bit clk, input bit reset,
               input bit cs, input bit rw, input logic [3:0] addr, input logic [7:0] di, output logic [7:0] dout,
+              input bit map_cs, input logic [9:0] map_addr,
               input logic [7:0] hpos, input logic [6:0] vpos, input bit vsync, input bit hsync,
               output logic [3:0] color,
               // DMA interface
@@ -45,6 +53,7 @@ module sprite_compositor(input bit clk, input bit reset,
   parameter SHEET_SLOTS = 256;             // 8-byte plane slots
   localparam LANES = H_DISPLAY / 8;        // 32-bit words per line
   localparam SHEET_BYTES = SHEET_SLOTS * 8;
+  localparam TILE_COLS = LANES + 1;        // visible tile columns per line
 
   // Sprite sheet: plane slot s row r at byte {s, r}
   logic [7:0] sheet[0:SHEET_BYTES-1];
@@ -58,6 +67,13 @@ module sprite_compositor(input bit clk, input bit reset,
   logic [7:0]  stage_x;
   logic [6:0]  stage_y;
   logic [7:0]  stage_base;
+
+  // Tilemap: 32x16 cells as two byte planes (low = base, high = attributes)
+  logic [7:0] map_lo[0:511];
+  logic [7:0] map_hi[0:511];
+  logic [7:0] camera_x;
+  logic [6:0] camera_y;
+  logic       tiles_en;
 
   // Line buffer: 2 banks x LANES words of 8 pixels x 4bpp. Address bit 5
   // selects the bank, so a swap is a register toggle, not a buffer copy.
@@ -82,7 +98,7 @@ module sprite_compositor(input bit clk, input bit reset,
   // ------------------------------------------------------------------
   // Compositing engine
   // ------------------------------------------------------------------
-  typedef enum logic [2:0] { E_IDLE, E_CLEAR, E_SCAN, E_FETCH, E_RD0, E_RD1, E_WR0, E_WR1 } estate_t;
+  typedef enum logic [3:0] { E_IDLE, E_CLEAR, E_TMAP0, E_TMAP1, E_SCAN, E_FETCH, E_RD0, E_RD1, E_WR0, E_WR1 } estate_t;
   estate_t est;
 
   logic [7:0]  scan_i;
@@ -92,6 +108,26 @@ module sprite_compositor(input bit clk, input bit reset,
   logic        w0_wait, w1_wait;
   logic [31:0] old_w0, old_w1;
   logic [6:0]  line_y;
+
+  // Per-line latched scroll state
+  logic [7:0] camx_l;
+  logic [6:0] wy_row;
+  logic [4:0] tk;         // tile column cursor
+  logic       tile_mode;
+  wire [4:0]  tx0    = camx_l[7:3];
+  wire [2:0]  xoff   = camx_l[2:0];
+  wire [3:0]  ty     = wy_row[6:3];
+  wire [2:0]  rowoff = wy_row[2:0];
+  wire [7:0]  x_syn  = {tk, 3'b000} - {5'b0, xoff};
+  wire [6:0]  y_syn  = line_y - {4'b0, rowoff};
+
+  // Tile cell fetch (registered read, issued in E_TMAP0)
+  wire [8:0] map_raddr = {ty, tx0 + tk};
+  logic [7:0] map_rd_lo, map_rd_hi;
+  always_ff @(posedge clk) begin
+    map_rd_lo <= map_lo[map_raddr];
+    map_rd_hi <= map_hi[map_raddr];
+  end
 
   wire [7:0] count_eff = (sp_count > MAX_SPRITES[7:0]) ? MAX_SPRITES[7:0] : sp_count;
 
@@ -200,6 +236,7 @@ module sprite_compositor(input bit clk, input bit reset,
       est <= E_IDLE;
       bank <= 0;
       entry_valid <= 0;
+      tile_mode <= 0;
       w0_wait <= 0;
       w1_wait <= 0;
       disp_rd_q <= 0;
@@ -220,9 +257,13 @@ module sprite_compositor(input bit clk, input bit reset,
       // Engine
       if (line_start) begin
         line_y <= next_line;
+        camx_l <= camera_x;
+        wy_row <= camera_y + next_line;
         clear_i <= 0;
+        tk <= 0;
         scan_i <= 0;
         entry_valid <= 0;
+        tile_mode <= 0;
         w0_wait <= 0;
         w1_wait <= 0;
         est <= E_CLEAR;
@@ -230,8 +271,42 @@ module sprite_compositor(input bit clk, input bit reset,
         case (est)
           E_CLEAR: begin
             clear_i <= clear_i + 1;
-            if (clear_i == LANES[4:0] - 1)
+            if (clear_i == LANES[4:0] - 1) begin
+              tile_mode <= tiles_en;
+              if (tiles_en)
+                est <= E_TMAP0;
+              else
+                est <= E_SCAN;
+            end
+          end
+
+          E_TMAP0: begin
+            // Cell read for column tk goes out this cycle
+            if (tk >= TILE_COLS[4:0]) begin
+              tile_mode <= 0;
+              entry_valid <= 0;
               est <= E_SCAN;
+            end else
+              est <= E_TMAP1;
+          end
+
+          E_TMAP1: begin
+            tk <= tk + 1;
+            if ({map_rd_hi, map_rd_lo} == 16'h0000)
+              est <= E_TMAP0;   // empty cell, 2 cycles
+            else begin
+              // Synthesize a sprite entry for this tile and blit it through
+              // the shared pipeline; y is chosen so dy lands on the tile row
+              entry_q <= {map_rd_hi[7:4], map_rd_hi[3:2], map_rd_hi[1], map_rd_hi[0], map_rd_lo, y_syn, x_syn};
+              entry_valid <= 1;
+              prow[0] <= 0;
+              prow[1] <= 0;
+              prow[2] <= 0;
+              prow[3] <= 0;
+              fp <= 0;
+              fpend <= 0;
+              est <= E_FETCH;
+            end
           end
 
           E_SCAN: begin
@@ -302,14 +377,19 @@ module sprite_compositor(input bit clk, input bit reset,
           end
 
           E_WR1: begin
-            // merged word1 is written this cycle; resume the scan
-            entry_q <= list[scan_i[6:0]];
-            if (scan_i < count_eff) begin
-              entry_valid <= 1;
-              scan_i <= scan_i + 1;
-            end else
-              entry_valid <= 0;
-            est <= E_SCAN;
+            // merged word1 is written this cycle; go back for the next
+            // tile column or the next list entry
+            if (tile_mode)
+              est <= E_TMAP0;
+            else begin
+              entry_q <= list[scan_i[6:0]];
+              if (scan_i < count_eff) begin
+                entry_valid <= 1;
+                scan_i <= scan_i + 1;
+              end else
+                entry_valid <= 0;
+              est <= E_SCAN;
+            end
           end
 
           default: ;  // E_IDLE waits for line_start
@@ -317,6 +397,16 @@ module sprite_compositor(input bit clk, input bit reset,
       end
     end
   end
+
+  // ------------------------------------------------------------------
+  // Tilemap CPU write port (write-only: the fetcher owns the read ports)
+  // ------------------------------------------------------------------
+  always_ff @(posedge clk)
+    if (map_cs && rw && !map_addr[9])
+      map_lo[map_addr[8:0]] <= di;
+  always_ff @(posedge clk)
+    if (map_cs && rw && map_addr[9])
+      map_hi[map_addr[8:0]] <= di;
 
   // ------------------------------------------------------------------
   // Register interface - DMA writes win over CPU access
@@ -330,6 +420,9 @@ module sprite_compositor(input bit clk, input bit reset,
       sp_index <= 0;
       sp_count <= 0;
       sheet_addr <= 0;
+      camera_x <= 0;
+      camera_y <= 0;
+      tiles_en <= 0;
       frame_count <= 0;
       vsync_q <= 0;
     end else begin
@@ -345,6 +438,9 @@ module sprite_compositor(input bit clk, input bit reset,
             sheet[sheet_addr] <= reg_data;
             sheet_addr <= sheet_addr + 1;
           end
+          4'h3: camera_x <= reg_data;
+          4'h4: camera_y <= reg_data[6:0];
+          4'h5: tiles_en <= reg_data[0];
           4'h8: sp_index <= reg_data;
           4'h9: stage_x <= reg_data;
           4'hA: stage_y <= reg_data[6:0];
@@ -354,12 +450,15 @@ module sprite_compositor(input bit clk, input bit reset,
           end
           4'hC: sp_count <= reg_data;
           4'hE: stage_base <= reg_data;
-          default: ;  // $3-$7, $D, $F: unmapped / read-only
+          default: ;  // $6, $7, $D, $F: unmapped / read-only
         endcase
       end else if (cs && !rw) begin
         case (addr)
           4'h0: dout <= sheet_addr[7:0];
           4'h1: dout <= {5'b0, sheet_addr[10:8]};
+          4'h3: dout <= camera_x;
+          4'h4: dout <= {1'b0, camera_y};
+          4'h5: dout <= {7'b0, tiles_en};
           4'h8: dout <= sp_index;
           4'hC: dout <= sp_count;
           4'hD: dout <= frame_count;

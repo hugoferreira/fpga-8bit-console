@@ -14,6 +14,9 @@
     .define SPR_SHADDR_LO      $4000  ; Sheet upload address, low byte
     .define SPR_SHADDR_HI      $4001  ; Sheet upload address, high 3 bits
     .define SPR_SHDATA         $4002  ; Sheet data (write stores + addr++)
+    .define SPR_CAMX           $4003  ; Tilemap camera X
+    .define SPR_CAMY           $4004  ; Tilemap camera Y
+    .define SPR_CTRL           $4005  ; Control: bit0 = tilemap enable
     .define SPR_INDEX          $4008  ; List index
     .define SPR_X              $4009  ; Staged X
     .define SPR_Y              $400A  ; Staged Y
@@ -26,44 +29,108 @@
     .define MAX_X              152    ; 160 - 8
     .define MAX_Y              112    ; 120 - 8
 
-    ; Text buffer
-    .define CHAR_RAM           $F000
-    .define ATTR_RAM           $F200
-    .define COLOR_WHITE_ON_BLACK $0F
+    ; Tilemap window (write-only): cell low bytes = pattern base,
+    ; cell high bytes = {pal[3:0], bpp-1[1:0], yflip, xflip}
+    .define MAP_LO             $F000
+    .define MAP_HI             $F200
 
     ; Runtime tables (one page each, above the program image)
     .define xpos    $0900
     .define ypos    $0A00
     .define dirs    $0B00  ; bit0: 1=moving left, bit1: 1=moving up
 
+    ; Zero page
+    .define camx    $04
+    .define camdx   $05
+    .define camy    $06
+    .define camdy   $07
+    .define tmp     $08
+
 ; Program starts here at $0300 (see memory.cfg)
 start:
-    ; Clear the whole text screen: blank characters, black-on-black attributes
+    ; Clear the whole tilemap (both byte planes, 512 cells each)
     ldx #0
-    lda #$20
-clear_chars:
-    sta CHAR_RAM,x
-    sta CHAR_RAM+256,x
+    lda #0
+clear_map:
+    sta MAP_LO,x
+    sta MAP_LO+256,x
+    sta MAP_HI,x
+    sta MAP_HI+256,x
     inx
-    bne clear_chars
-    lda #$00
-clear_attrs:
-    sta ATTR_RAM,x
-    sta ATTR_RAM+256,x
-    inx
-    bne clear_attrs
+    bne clear_map
 
-    ; Banner text
+    ; Decorate the world: 2bpp diamond tiles on the (tx+ty)%8==0 diagonals.
+    ; For cell byte X of either page, tx = X&31 and ty%8 = X>>5, so the
+    ; same loop body serves both halves of the map.
+decor_page0:
     ldx #0
-print_text:
-    lda text,x
-    beq text_done
-    sta CHAR_RAM,x
-    lda #COLOR_WHITE_ON_BLACK
-    sta ATTR_RAM,x
+@loop:
+    txa
+    and #31
+    sta tmp
+    txa
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr                ; A = ty & 7
+    tay
+    clc
+    adc tmp
+    and #7
+    bne @next
+    lda paltbl4,y      ; {pal, bpp-1=1, no flips} by tile row
+    sta MAP_HI,x
+    lda #5             ; diamond pattern base
+    sta MAP_LO,x
+@next:
     inx
-    bne print_text
-text_done:
+    bne @loop
+decor_page1:
+    ldx #0
+@loop:
+    txa
+    and #31
+    sta tmp
+    txa
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    tay
+    clc
+    adc tmp
+    and #7
+    bne @next
+    lda paltbl4,y
+    sta MAP_HI+256,x
+    lda #5
+    sta MAP_LO+256,x
+@next:
+    inx
+    bne @loop
+
+    ; Text banner living in the world at tile row 2, column 2: font glyphs
+    ; sit in sheet slots 128-255, so base = charcode | $80
+    ldx #0
+write_text:
+    lda text,x
+    ora #$80
+    sta MAP_LO+66,x
+    lda #$60           ; palette 6 -> glyph color 7 (white)
+    sta MAP_HI+66,x
+    inx
+    cpx #17
+    bne write_text
+
+    ; Camera starts at the origin drifting down-right
+    lda #0
+    sta camx
+    sta camy
+    lda #1
+    sta camdx
+    sta camdy
 
     ; Upload the sprite sheet (8 plane slots = 64 bytes) through the
     ; auto-incrementing sheet port
@@ -93,6 +160,8 @@ load_tables:
 
     lda #NSPR
     sta SPR_COUNT
+    lda #1
+    sta SPR_CTRL       ; Enable the tilemap
 
 main_loop:
     ; Pace to the display: wait for the frame counter to change so each
@@ -101,6 +170,38 @@ main_loop:
 wait_frame:
     cmp SPR_FRAME
     beq wait_frame
+
+    ; Drift the camera with edge bounce: x over 0..96, y over 0..8
+    lda camx
+    clc
+    adc camdx
+    sta camx
+    beq @flipx
+    cmp #96
+    bne @xdone
+@flipx:
+    lda #0
+    sec
+    sbc camdx
+    sta camdx
+@xdone:
+    lda camy
+    clc
+    adc camdy
+    sta camy
+    beq @flipy
+    cmp #8
+    bne @ydone
+@flipy:
+    lda #0
+    sec
+    sbc camdy
+    sta camdy
+@ydone:
+    lda camx
+    sta SPR_CAMX
+    lda camy
+    sta SPR_CAMY
 
     lda #0
     sta SPR_INDEX      ; Rewind the list index
@@ -169,7 +270,11 @@ update:
 ; Data
 ; ------------------------------------------------------------------------------
 text:
-    .byte "SPRITE SHEET 1-4BPP", 0
+    .byte "SCROLLING TILEMAP", 0
+
+paltbl4:
+    ; {pal[3:0], bpp-1=1, no flips} for each tile row mod 8
+    .byte $84, $24, $A4, $44, $C4, $54, $34, $04
 
 pattern:
     ; Sheet image, one 8-byte plane slot per line: 4bpp arrow at base 0

@@ -48,10 +48,13 @@ module sprite_compositor_tb;
   logic [7:0] di = 0;
   logic [7:0] dout;
   logic [3:0] color;
+  bit map_cs = 0;
+  logic [9:0] map_addr = 0;
 
   sprite_compositor dut(
     .clk(clk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di), .dout(dout),
+    .map_cs(map_cs), .map_addr(map_addr),
     .hpos(hp), .vpos(vp),
     .vsync(vsync), .hsync(hsync),
     .color(color),
@@ -62,6 +65,13 @@ module sprite_compositor_tb;
     cs = 1; rw = 1; addr = a; di = d;
     @(negedge clk);
     cs = 0; rw = 0;
+  endtask
+
+  task mapwrite(input [9:0] a, input [7:0] d);
+    @(negedge clk);
+    map_cs = 1; rw = 1; map_addr = a; di = d;
+    @(negedge clk);
+    map_cs = 0; rw = 0;
   endtask
 
   // Frame capture: color for pixel (vp,hp) is valid on the pixel's last clock
@@ -98,6 +108,16 @@ module sprite_compositor_tb;
   // to exercise the auto-increment path (first 8 plane slots are used)
   logic [7:0] SHEET_INIT[0:2047];
   initial $readmemb("./rtl/sprite_pattern.bin", SHEET_INIT);
+
+  // Camera motion
+  int camx = 0, camy = 0, cdx = 1, cdy = 1;
+  logic [7:0] TEXTROW [0:16];
+  initial begin
+    TEXTROW[0]="S"; TEXTROW[1]="C"; TEXTROW[2]="R"; TEXTROW[3]="O"; TEXTROW[4]="L";
+    TEXTROW[5]="L"; TEXTROW[6]="I"; TEXTROW[7]="N"; TEXTROW[8]="G"; TEXTROW[9]=" ";
+    TEXTROW[10]="T"; TEXTROW[11]="I"; TEXTROW[12]="L"; TEXTROW[13]="E"; TEXTROW[14]="M";
+    TEXTROW[15]="A"; TEXTROW[16]="P";
+  end
 
   // Sprite motion and appearance
   int px[NSPR], py[NSPR], vx[NSPR], vy[NSPR];
@@ -175,6 +195,26 @@ module sprite_compositor_tb;
     for (int b = 0; b < 64; b++)
       cpuwrite(4'h2, SHEET_INIT[b]);
 
+    // Build the tile world: diagonal stripes of 2bpp diamonds plus a text
+    // banner living in the world at row 2
+    for (int ty = 0; ty < 16; ty++)
+      for (int tx = 0; tx < 32; tx++) begin
+        logic [7:0] lo, hi;
+        lo = 0;
+        hi = 0;
+        if (((tx + ty) & 7) == 0) begin
+          lo = 8'd5;
+          hi = {PALTBL[ty & 7], 2'd1, 2'b00};
+        end
+        if (ty == 2 && tx >= 2 && tx < 19) begin
+          lo = 8'd128 + TEXTROW[tx - 2];
+          hi = 8'h60;
+        end
+        mapwrite({1'b0, ty[3:0], tx[4:0]}, lo);
+        mapwrite({1'b1, ty[3:0], tx[4:0]}, hi);
+      end
+    cpuwrite(4'h5, 8'h01);  // enable the tilemap
+
     // Each iteration: move sprites, stream the list (tears into the frame
     // in progress), then let one full quiet frame render before dumping so
     // every dumped frame is bit-exact against the golden model
@@ -183,6 +223,12 @@ module sprite_compositor_tb;
         write_list();
       else begin
         step_motion();
+        camx += cdx;
+        if (camx <= 0 || camx >= 96) cdx = -cdx;
+        camy += cdy;
+        if (camy <= 0 || camy >= 8) cdy = -cdy;
+        cpuwrite(4'h3, camx[7:0]);
+        cpuwrite(4'h4, camy[7:0]);
         write_list();
       end
       wait_frame_end();
