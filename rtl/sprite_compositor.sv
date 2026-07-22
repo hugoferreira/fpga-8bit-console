@@ -1,33 +1,34 @@
-// Scanline sprite compositor / PPU: renders up to MAX_SPRITES instances of a
-// shared 8x8 pattern, each at a configurable depth of 1-4 bpp with its own
-// palette base and X/Y flips. While line N is displayed, the engine walks the
-// sprite list and composites line N+1 into the back bank of a BRAM line
-// buffer.
-//
-// FPGA-space design (v2): the line buffer is 20 lanes x 32 bits (8 pixels x
-// 4bpp) in block RAM, double-banked by an address bit. A sprite row lands in
-// at most two adjacent lanes, so a blit is a 2-word read-modify-write (4
-// cycles) using a 64-bit window shifter - this replaces the v1 design's two
-// 160-bit flip-flop buffers and 160-bit dynamic OR-shifter, which did not
-// scale to 4bpp. Priority is painter's order: later list entries overdraw
+// Scanline sprite compositor / PPU: renders up to MAX_SPRITES sprites per
+// frame from a shared sprite sheet, each entry with its own pattern, depth
+// (1-4 bpp), palette base, and X/Y flips. While line N is displayed, the
+// engine walks the sprite list and composites line N+1 into the back bank of
+// a BRAM line buffer. Priority is painter's order: later entries overdraw
 // earlier ones; pixel value 0 is transparent.
 //
+// Sprite sheet (v3): 256 uniform 8-byte plane slots (one 8x8 bitplane each)
+// in 2KB of block RAM. An entry references its pattern by plane-slot BASE
+// ADDRESS, and the entry's bpp field doubles as the footprint: the pattern
+// is bpp consecutive slots, plane p row r at byte {base+p, r}. Mixed depths
+// pack with zero waste (allocation is the CPU's business - a bump allocator
+// works), and every fetch is self-contained in the entry: no region config,
+// no tables, no multiplies, blit latency = bpp+1 fetches + fixed 4-cycle
+// line-buffer read-modify-write.
+//
+// Line buffer: 20 lanes x 32 bits (8 pixels x 4bpp), double-banked by an
+// address bit. A sprite row straddles at most two lanes -> 2-word RMW blit.
 // Timing contract: pixels are >=4 system clocks wide (hpos advances at the
-// pixel rate, the module clocks at the system rate). The display side issues
-// one line-buffer read per pixel; the engine gets the read port on the
-// remaining cycles.
+// pixel rate); the display side takes one line-buffer read slot per pixel.
 //
 // Register map ($400x, CPU and DMA share it):
-//   $0-$7  pattern rows of the plane selected by $E (bit 0 = leftmost pixel)
-//   $8     list index
-//   $9     staged X
-//   $A     staged Y
-//   $B     flags - write commits the staged entry and increments the index:
-//          bit0 xflip, bit1 yflip, bits3:2 bpp-1, bits7:4 palette base
-//          (pixel color = palette base + pixel value, mod 16)
-//   $C     active sprite count
-//   $D     frame counter (read-only, increments on vsync)
-//   $E     pattern plane select (0-3)
+//   $0  sheet address low                          $8  list index
+//   $1  sheet address high (3 bits)                $9  staged X
+//   $2  sheet data - write stores at the sheet     $A  staged Y
+//       address and auto-increments it             $B  flags/commit (below)
+//   $C  active sprite count                        $E  staged pattern base
+//   $D  frame counter (read-only, +1 per vsync)
+//   $B: bit0 xflip, bit1 yflip, bits3:2 bpp-1, bits7:4 palette base
+//       (pixel color = palette base + pixel value, mod 16); writing commits
+//       the staged X/Y/base and auto-increments the list index
 module sprite_compositor(input bit clk, input bit reset,
               input bit cs, input bit rw, input logic [3:0] addr, input logic [7:0] di, output logic [7:0] dout,
               input logic [7:0] hpos, input logic [6:0] vpos, input bit vsync, input bit hsync,
@@ -41,20 +42,22 @@ module sprite_compositor(input bit clk, input bit reset,
   parameter H_DISPLAY = 160;
   parameter V_DISPLAY = 120;
   parameter MAX_SPRITES = 128;
-  localparam LANES = H_DISPLAY / 8;  // 32-bit words per line
+  parameter SHEET_SLOTS = 256;             // 8-byte plane slots
+  localparam LANES = H_DISPLAY / 8;        // 32-bit words per line
+  localparam SHEET_BYTES = SHEET_SLOTS * 8;
 
-  // Pattern planes: 4 planes x 8 rows, plane p row r at index {p, r}.
-  // Register-based so the engine reads all four planes combinationally.
-  logic [7:0] planes[0:31];
-  initial $readmemb("./rtl/sprite_pattern.bin", planes);
+  // Sprite sheet: plane slot s row r at byte {s, r}
+  logic [7:0] sheet[0:SHEET_BYTES-1];
+  initial $readmemb("./rtl/sprite_pattern.bin", sheet);
+  logic [10:0] sheet_addr;   // CPU upload pointer
 
-  // Sprite list: {pal[3:0], bppm1[1:0], yflip, xflip, y[6:0], x[7:0]}
-  logic [22:0] list[0:MAX_SPRITES-1];
+  // Sprite list: {pal[3:0], bppm1[1:0], yflip, xflip, base[7:0], y[6:0], x[7:0]}
+  logic [30:0] list[0:MAX_SPRITES-1];
   logic [7:0]  sp_index;
   logic [7:0]  sp_count;
   logic [7:0]  stage_x;
   logic [6:0]  stage_y;
-  logic [1:0]  plane_sel;
+  logic [7:0]  stage_base;
 
   // Line buffer: 2 banks x LANES words of 8 pixels x 4bpp. Address bit 5
   // selects the bank, so a swap is a register toggle, not a buffer copy.
@@ -79,12 +82,12 @@ module sprite_compositor(input bit clk, input bit reset,
   // ------------------------------------------------------------------
   // Compositing engine
   // ------------------------------------------------------------------
-  typedef enum logic [2:0] { E_IDLE, E_CLEAR, E_SCAN, E_RD1, E_WR0, E_WR1 } estate_t;
+  typedef enum logic [2:0] { E_IDLE, E_CLEAR, E_SCAN, E_FETCH, E_RD0, E_RD1, E_WR0, E_WR1 } estate_t;
   estate_t est;
 
   logic [7:0]  scan_i;
   logic [4:0]  clear_i;
-  logic [22:0] entry_q;
+  logic [30:0] entry_q;
   logic        entry_valid;
   logic        w0_wait, w1_wait;
   logic [31:0] old_w0, old_w1;
@@ -92,21 +95,29 @@ module sprite_compositor(input bit clk, input bit reset,
 
   wire [7:0] count_eff = (sp_count > MAX_SPRITES[7:0]) ? MAX_SPRITES[7:0] : sp_count;
 
-  // Entry decode and row fetch, combinational from the held entry
+  // Entry decode, combinational from the held entry
   wire [7:0] e_x     = entry_q[7:0];
   wire [6:0] e_y     = entry_q[14:8];
-  wire       e_xf    = entry_q[15];
-  wire       e_yf    = entry_q[16];
-  wire [1:0] e_bppm1 = entry_q[18:17];
-  wire [3:0] e_pal   = entry_q[22:19];
+  wire [7:0] e_base  = entry_q[22:15];
+  wire       e_xf    = entry_q[23];
+  wire       e_yf    = entry_q[24];
+  wire [1:0] e_bppm1 = entry_q[26:25];
+  wire [3:0] e_pal   = entry_q[30:27];
   wire [6:0] dy      = line_y - e_y;
   wire       hit     = (dy < 7'd8) && entry_valid;
   wire [2:0] rowi    = dy[2:0] ^ {3{e_yf}};
-  wire [7:0] p0 = planes[{2'd0, rowi}];
-  wire [7:0] p1 = planes[{2'd1, rowi}];
-  wire [7:0] p2 = planes[{2'd2, rowi}];
-  wire [7:0] p3 = planes[{2'd3, rowi}];
-  wire [3:0] bmask = {e_bppm1 == 2'd3, e_bppm1 >= 2'd2, e_bppm1 >= 2'd1, 1'b1};
+  wire [3:0] bmask   = {e_bppm1 == 2'd3, e_bppm1 >= 2'd2, e_bppm1 >= 2'd1, 1'b1};
+
+  // Plane-row fetch pipeline: bpp reads from the sheet's dedicated read
+  // port, address {base+p, rowi} - self-contained in the entry
+  logic [7:0] prow[0:3];
+  logic [2:0] fp;        // next plane to issue
+  logic       fpend;     // a sheet read is in flight
+  logic [1:0] fpidx;     // which plane it is for
+  wire [10:0] sheet_eaddr = {e_base + {6'b0, fp[1:0]}, rowi};
+  logic [7:0] sheet_rdata;
+  always_ff @(posedge clk)
+    sheet_rdata <= sheet[sheet_eaddr];
 
   // Per-pixel color and opacity for the 8-pixel row (after flips/bpp/palette)
   logic [31:0] packed32;
@@ -116,7 +127,7 @@ module sprite_compositor(input bit clk, input bit reset,
       logic [2:0] jj;
       logic [3:0] pix;
       jj = e_xf ? 3'd7 - j[2:0] : j[2:0];
-      pix = {p3[jj], p2[jj], p1[jj], p0[jj]} & bmask;
+      pix = {prow[3][jj], prow[2][jj], prow[1][jj], prow[0][jj]} & bmask;
       opq8[j] = |pix;
       packed32[j*4 +: 4] = e_pal + pix;
     end
@@ -140,7 +151,7 @@ module sprite_compositor(input bit clk, input bit reset,
   always_comb begin
     if (disp_slot)
       rd_addr = {bank, hpos[7:3]};
-    else if (est == E_SCAN && hit)
+    else if (est == E_RD0)
       rd_addr = {~bank, lane};
     else if (est == E_RD1)
       rd_addr = {~bank, lane1};
@@ -225,13 +236,14 @@ module sprite_compositor(input bit clk, input bit reset,
 
           E_SCAN: begin
             if (hit) begin
-              // Hold the entry and start the 2-word read-modify-write; the
-              // read of word0 goes out this cycle unless the display owns
-              // the port
-              if (!disp_slot) begin
-                w0_wait <= 1;
-                est <= E_RD1;
-              end
+              // Hold the entry and fetch its plane rows from the sheet
+              prow[0] <= 0;
+              prow[1] <= 0;
+              prow[2] <= 0;
+              prow[3] <= 0;
+              fp <= 0;
+              fpend <= 0;
+              est <= E_FETCH;
             end else begin
               // Examine the next entry (1 per clock, pipelined)
               entry_q <= list[scan_i[6:0]];
@@ -243,6 +255,29 @@ module sprite_compositor(input bit clk, input bit reset,
                 if (!entry_valid)
                   est <= E_IDLE;
               end
+            end
+          end
+
+          E_FETCH: begin
+            // Pipelined issue/capture: bpp reads, one per plane, then drain
+            if (fpend)
+              prow[fpidx] <= sheet_rdata;
+            if (fp <= {1'b0, e_bppm1}) begin
+              fpend <= 1;
+              fpidx <= fp[1:0];
+              fp <= fp + 1;
+            end else begin
+              fpend <= 0;
+              if (!fpend)
+                est <= E_RD0;
+            end
+          end
+
+          E_RD0: begin
+            // Issue the word0 read when the display isn't using the port
+            if (!disp_slot) begin
+              w0_wait <= 1;
+              est <= E_RD1;
             end
           end
 
@@ -294,7 +329,7 @@ module sprite_compositor(input bit clk, input bit reset,
     if (reset) begin
       sp_index <= 0;
       sp_count <= 0;
-      plane_sel <= 0;
+      sheet_addr <= 0;
       frame_count <= 0;
       vsync_q <= 0;
     end else begin
@@ -304,26 +339,32 @@ module sprite_compositor(input bit clk, input bit reset,
 
       if (reg_write) begin
         case (reg_addr)
+          4'h0: sheet_addr[7:0] <= reg_data;
+          4'h1: sheet_addr[10:8] <= reg_data[2:0];
+          4'h2: begin
+            sheet[sheet_addr] <= reg_data;
+            sheet_addr <= sheet_addr + 1;
+          end
           4'h8: sp_index <= reg_data;
           4'h9: stage_x <= reg_data;
           4'hA: stage_y <= reg_data[6:0];
           4'hB: begin
-            list[sp_index[6:0]] <= {reg_data[7:2], reg_data[1], reg_data[0], stage_y, stage_x};
+            list[sp_index[6:0]] <= {reg_data[7:2], reg_data[1], reg_data[0], stage_base, stage_y, stage_x};
             sp_index <= sp_index + 1;
           end
           4'hC: sp_count <= reg_data;
-          4'hE: plane_sel <= reg_data[1:0];
-          4'hD, 4'hF: ;  // read-only / unmapped
-          default: planes[{plane_sel, reg_addr[2:0]}] <= reg_data;
+          4'hE: stage_base <= reg_data;
+          default: ;  // $3-$7, $D, $F: unmapped / read-only
         endcase
       end else if (cs && !rw) begin
         case (addr)
+          4'h0: dout <= sheet_addr[7:0];
+          4'h1: dout <= {5'b0, sheet_addr[10:8]};
           4'h8: dout <= sp_index;
           4'hC: dout <= sp_count;
           4'hD: dout <= frame_count;
-          4'hE: dout <= {6'b0, plane_sel};
-          4'h9, 4'hA, 4'hB, 4'hF: dout <= 8'h00;
-          default: dout <= planes[{plane_sel, addr[2:0]}];
+          4'hE: dout <= stage_base;
+          default: dout <= 8'h00;
         endcase
       end
     end

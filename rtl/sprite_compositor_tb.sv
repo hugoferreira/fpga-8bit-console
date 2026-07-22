@@ -94,14 +94,15 @@ module sprite_compositor_tb;
     $fclose(fd);
   endtask
 
-  // Same pattern data as rtl/sprite_pattern.bin, written via the CPU port
-  // to exercise the plane-select path
-  logic [7:0] PLANES_INIT[0:31];
-  initial $readmemb("./rtl/sprite_pattern.bin", PLANES_INIT);
+  // Same sheet data as rtl/sprite_pattern.bin, uploaded via the CPU port
+  // to exercise the auto-increment path (first 8 plane slots are used)
+  logic [7:0] SHEET_INIT[0:2047];
+  initial $readmemb("./rtl/sprite_pattern.bin", SHEET_INIT);
 
   // Sprite motion and appearance
   int px[NSPR], py[NSPR], vx[NSPR], vy[NSPR];
   logic [7:0] fbase[NSPR];  // static flag bits: {pal[3:0], bppm1[1:0], 2'b00}
+  logic [7:0] sbase[NSPR];  // pattern base (plane-slot address)
   int seed;
   logic [3:0] PALTBL[0:7];
   initial begin
@@ -116,6 +117,7 @@ module sprite_compositor_tb;
       flags = fbase[i] | {6'b0, vy[i] > 0, vx[i] > 0};  // arrow points along travel
       cpuwrite(4'h9, px[i][7:0]);
       cpuwrite(4'hA, py[i][7:0]);
+      cpuwrite(4'hE, sbase[i]);
       cpuwrite(4'hB, flags);
     end
     cpuwrite(4'hC, NSPR[7:0]);
@@ -152,7 +154,14 @@ module sprite_compositor_tb;
       py[i] = (seed >> 8) % (H - 8);
       vx[i] = ((i % 4) < 2) ? ((i % 2) + 1) : -((i % 2) + 1);
       vy[i] = (((i / 4) % 4) < 2) ? (((i / 2) % 2) + 1) : -(((i / 2) % 2) + 1);
-      bppm1 = i[1:0];
+      // Pattern by kind: 4bpp arrow @0, 1bpp disc @4, 2bpp diamond @5,
+      // 1bpp cross @7 - mixed footprints packed back to back in the sheet
+      case (i[1:0])
+        2'd0: begin sbase[i] = 8'd0; bppm1 = 2'd3; end
+        2'd1: begin sbase[i] = 8'd4; bppm1 = 2'd0; end
+        2'd2: begin sbase[i] = 8'd5; bppm1 = 2'd1; end
+        2'd3: begin sbase[i] = 8'd7; bppm1 = 2'd0; end
+      endcase
       pal = (bppm1 == 2'd3) ? 4'd8 : PALTBL[(i >> 2) & 7];
       fbase[i] = {pal, bppm1, 2'b00};
     end
@@ -160,13 +169,11 @@ module sprite_compositor_tb;
     repeat (4) @(negedge clk);
     reset = 0;
 
-    // Program the four pattern planes through the plane-select register
-    for (int p = 0; p < 4; p++) begin
-      cpuwrite(4'hE, p[7:0]);
-      for (int r = 0; r < 8; r++)
-        cpuwrite(r[3:0], PLANES_INIT[p*8 + r]);
-    end
-    cpuwrite(4'hE, 8'd0);
+    // Upload the first 8 plane slots of the sheet via the auto-increment port
+    cpuwrite(4'h0, 8'd0);
+    cpuwrite(4'h1, 8'd0);
+    for (int b = 0; b < 64; b++)
+      cpuwrite(4'h2, SHEET_INIT[b]);
 
     // Each iteration: move sprites, stream the list (tears into the frame
     // in progress), then let one full quiet frame render before dumping so

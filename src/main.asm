@@ -11,14 +11,16 @@
     ; $0300-....:  Program     $FFFA-$FFFF: Vectors
 
     ; Sprite compositor registers ($400x)
-    .define SPR_PATTERN        $4000  ; $4000-$4007 pattern rows
+    .define SPR_SHADDR_LO      $4000  ; Sheet upload address, low byte
+    .define SPR_SHADDR_HI      $4001  ; Sheet upload address, high 3 bits
+    .define SPR_SHDATA         $4002  ; Sheet data (write stores + addr++)
     .define SPR_INDEX          $4008  ; List index
     .define SPR_X              $4009  ; Staged X
     .define SPR_Y              $400A  ; Staged Y
     .define SPR_FLAGS          $400B  ; bit0 xflip, bit1 yflip; write commits + index++
     .define SPR_COUNT          $400C  ; Active sprite count
     .define SPR_FRAME          $400D  ; Frame counter (read-only, +1 per vsync)
-    .define SPR_PLANE          $400E  ; Pattern plane select (0-3)
+    .define SPR_BASE           $400E  ; Staged pattern base (plane-slot addr)
 
     .define NSPR               128    ; Number of sprites
     .define MAX_X              152    ; 160 - 8
@@ -63,45 +65,18 @@ print_text:
     bne print_text
 text_done:
 
-    ; Program the four pattern planes through the CPU interface
+    ; Upload the sprite sheet (8 plane slots = 64 bytes) through the
+    ; auto-incrementing sheet port
     lda #0
-    sta SPR_PLANE
+    sta SPR_SHADDR_LO
+    sta SPR_SHADDR_HI
     ldx #0
-load_plane0:
+load_sheet:
     lda pattern,x
-    sta SPR_PATTERN,x
+    sta SPR_SHDATA
     inx
-    cpx #8
-    bne load_plane0
-    lda #1
-    sta SPR_PLANE
-    ldx #0
-load_plane1:
-    lda pattern+8,x
-    sta SPR_PATTERN,x
-    inx
-    cpx #8
-    bne load_plane1
-    lda #2
-    sta SPR_PLANE
-    ldx #0
-load_plane2:
-    lda pattern+16,x
-    sta SPR_PATTERN,x
-    inx
-    cpx #8
-    bne load_plane2
-    lda #3
-    sta SPR_PLANE
-    ldx #0
-load_plane3:
-    lda pattern+24,x
-    sta SPR_PATTERN,x
-    inx
-    cpx #8
-    bne load_plane3
-    lda #0
-    sta SPR_PLANE
+    cpx #64
+    bne load_sheet
 
     ; Copy initial positions and directions into the runtime tables
     ldx #0
@@ -176,6 +151,8 @@ update:
     sta SPR_X
     lda ypos,x
     sta SPR_Y
+    lda init_b,x       ; This sprite's pattern base in the sheet
+    sta SPR_BASE
     lda dirs,x
     eor #3             ; Arrow points along travel: flip when moving right/down
     and #3
@@ -192,25 +169,39 @@ update:
 ; Data
 ; ------------------------------------------------------------------------------
 text:
-    .byte "128 SPRITES 1-4 BPP", 0
+    .byte "SPRITE SHEET 1-4BPP", 0
 
 pattern:
-    ; Plane 0: arrow silhouette; planes 1-2 are subsets so the shape holds
-    ; at every depth; plane 3 unused
+    ; Sheet image, one 8-byte plane slot per line: 4bpp arrow at base 0
+    ; (planes 1-2 subsets of the silhouette), 1bpp disc at 4, 2bpp diamond
+    ; at 5 (rim + inner), 1bpp cross at 7 - mixed footprints back to back
     .byte $01, $03, $07, $0F, $1F, $13, $21, $40
     .byte $00, $03, $00, $0F, $00, $13, $00, $40
     .byte $00, $00, $00, $00, $10, $10, $20, $40
     .byte $00, $00, $00, $00, $00, $00, $00, $00
+    .byte $3C, $7E, $FF, $FF, $FF, $FF, $7E, $3C
+    .byte $18, $3C, $7E, $FF, $FF, $7E, $3C, $18
+    .byte $00, $18, $3C, $7E, $7E, $3C, $18, $00
+    .byte $81, $42, $24, $18, $18, $24, $42, $81
 
 init_f:
-    .byte $80, $84, $88, $8C, $20, $24, $28, $8C, $A0, $A4, $A8, $8C, $40, $44, $48, $8C
-    .byte $C0, $C4, $C8, $8C, $50, $54, $58, $8C, $30, $34, $38, $8C, $00, $04, $08, $8C
-    .byte $80, $84, $88, $8C, $20, $24, $28, $8C, $A0, $A4, $A8, $8C, $40, $44, $48, $8C
-    .byte $C0, $C4, $C8, $8C, $50, $54, $58, $8C, $30, $34, $38, $8C, $00, $04, $08, $8C
-    .byte $80, $84, $88, $8C, $20, $24, $28, $8C, $A0, $A4, $A8, $8C, $40, $44, $48, $8C
-    .byte $C0, $C4, $C8, $8C, $50, $54, $58, $8C, $30, $34, $38, $8C, $00, $04, $08, $8C
-    .byte $80, $84, $88, $8C, $20, $24, $28, $8C, $A0, $A4, $A8, $8C, $40, $44, $48, $8C
-    .byte $C0, $C4, $C8, $8C, $50, $54, $58, $8C, $30, $34, $38, $8C, $00, $04, $08, $8C
+    .byte $8C, $80, $84, $80, $8C, $20, $24, $20, $8C, $A0, $A4, $A0, $8C, $40, $44, $40
+    .byte $8C, $C0, $C4, $C0, $8C, $50, $54, $50, $8C, $30, $34, $30, $8C, $00, $04, $00
+    .byte $8C, $80, $84, $80, $8C, $20, $24, $20, $8C, $A0, $A4, $A0, $8C, $40, $44, $40
+    .byte $8C, $C0, $C4, $C0, $8C, $50, $54, $50, $8C, $30, $34, $30, $8C, $00, $04, $00
+    .byte $8C, $80, $84, $80, $8C, $20, $24, $20, $8C, $A0, $A4, $A0, $8C, $40, $44, $40
+    .byte $8C, $C0, $C4, $C0, $8C, $50, $54, $50, $8C, $30, $34, $30, $8C, $00, $04, $00
+    .byte $8C, $80, $84, $80, $8C, $20, $24, $20, $8C, $A0, $A4, $A0, $8C, $40, $44, $40
+    .byte $8C, $C0, $C4, $C0, $8C, $50, $54, $50, $8C, $30, $34, $30, $8C, $00, $04, $00
+init_b:
+    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
+    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
+    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
+    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
+    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
+    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
+    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
+    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
 init_x:
     .byte $4E, $3D, $18, $91, $8D, $65, $8F, $35, $64, $75, $05, $00, $49, $23, $32, $51
     .byte $55, $48, $1E, $32, $39, $4C, $71, $02, $03, $27, $7B, $69, $6D, $62, $6C, $96
