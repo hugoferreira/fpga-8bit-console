@@ -17,6 +17,7 @@
     .define SPR_SHDATA         $4002
     .define SPR_CTRL           $4005
     .define SPR_OVLCOL         $4006
+    .define SPR_CAMX           $4003
     .define SPR_BTN            $4007
     .define SPR_INDEX          $4008
     .define SPR_X              $4009
@@ -76,9 +77,27 @@
     .define tmp3    $1F
     .define servedx $20
     .define ptr2    $22    ; and $23
+    .define shaket  $24
+    .define shx     $25
+    .define pnext   $26
+    .define spx     $27
+    .define spy     $28
+    .define spvx    $29
+    .define spvy    $2A
+    .define spcol   $2B
 
-    ; Brick shadow map: 10 rows x 11 cols
-    .define shadow  $0C00
+    ; Particle pool (12), one page
+    .define PPX     $2100
+    .define PPY     $2110
+    .define PVX     $2120
+    .define PVY     $2130
+    .define PLIFE   $2140
+    .define PCOL    $2150
+
+    ; Brick shadow map: 10 rows x 11 cols (well above the program image,
+    ; which now extends past $1200 - the original $0C00 scratch overlapped
+    ; the level data and got wiped by the shadow clear)
+    .define shadow  $2000
 
 ; ------------------------------------------------------------------------------
 start:
@@ -97,7 +116,7 @@ start:
     lda gfx_data+256,x
     sta SPR_SHDATA
     inx
-    cpx #96
+    cpx #104
     bne @gfx2
 
     ; Clear the whole tilemap and overlay
@@ -340,6 +359,8 @@ do_play:
     lda bally+1
     cmp #BALL_DEATH
     bcc @alive
+    lda #8
+    sta shaket
     dec lives
     jsr draw_hud
     lda lives
@@ -403,6 +424,27 @@ do_play:
     bpl @nopad
     jsr negx
 @nopad:
+
+    ; ball trail spark every other frame
+    lda blink
+    and #1
+    bne @notrail
+    lda ballx+1
+    clc
+    adc #2
+    sta spx
+    lda bally+1
+    clc
+    adc #2
+    sta spy
+    lda #0
+    sta spvx
+    sta spvy
+    lda #$90               ; yellow (pal 9 -> color 10)
+    sta spcol
+    lda #4
+    jsr spawn_particle
+@notrail:
 
     ; --- brick collisions: probe ahead of the ball center on each axis ---
     lda ballx+1
@@ -552,6 +594,40 @@ brick_hit:
     sta ptr2+1
     lda type_hi,x
     sta (ptr2),y           ; MAP_HI
+    ; game feel: shake + 4 sparks from the brick center
+    lda #4
+    sta shaket
+    lda type_spark,x
+    sta spcol
+    lda hitc
+    asl
+    asl
+    asl
+    clc
+    adc #19                ; brick center x
+    sta spx
+    lda hitr
+    asl
+    asl
+    asl
+    clc
+    adc #19                ; brick center y
+    sta spy
+    ldy #0
+@burst:
+    lda burst_vx,y
+    sta spvx
+    lda burst_vy,y
+    sta spvy
+    tya
+    pha
+    lda #10
+    jsr spawn_particle
+    pla
+    tay
+    iny
+    cpy #4
+    bne @burst
     jsr draw_hud
     rts
 
@@ -604,11 +680,51 @@ move_paddle:
     rts
 
 ; ------------------------------------------------------------------------------
+; spawn_particle: A = life; spx/spy/spvx/spvy/spcol set by caller
+spawn_particle:
+    ldx pnext
+    sta PLIFE,x
+    lda spx
+    sta PPX,x
+    lda spy
+    sta PPY,x
+    lda spvx
+    sta PVX,x
+    lda spvy
+    sta PVY,x
+    lda spcol
+    sta PCOL,x
+    inx
+    cpx #12
+    bne @w
+    ldx #0
+@w: stx pnext
+    rts
+
 frame_end:
-    ; stream sprites: ball + two paddle halves
+    ; screen shake: camera moves the tile layer, sprites get the inverse
+    lda shaket
+    beq @noshake
+    dec shaket
+    ldx shaket
+    lda shake_tbl,x
+    sta SPR_CAMX
+    eor #$FF
+    clc
+    adc #1
+    sta shx
+    jmp @shdone
+@noshake:
+    lda #0
+    sta SPR_CAMX
+    sta shx
+@shdone:
+    ; stream sprites: ball + paddle + particles
     lda #0
     sta SPR_INDEX
     lda ballx+1
+    clc
+    adc shx
     sta SPR_X
     lda bally+1
     sta SPR_Y
@@ -617,6 +733,8 @@ frame_end:
     lda #$0C               ; 4bpp, pal 0
     sta SPR_FLAGS
     lda padx
+    clc
+    adc shx
     sta SPR_X
     lda #PAD_Y
     sta SPR_Y
@@ -627,6 +745,7 @@ frame_end:
     lda padx
     clc
     adc #8
+    adc shx
     sta SPR_X
     lda #PAD_Y
     sta SPR_Y
@@ -637,6 +756,7 @@ frame_end:
     lda padx
     clc
     adc #16
+    adc shx
     sta SPR_X
     lda #PAD_Y
     sta SPR_Y
@@ -644,12 +764,57 @@ frame_end:
     sta SPR_BASE
     lda #$0C
     sta SPR_FLAGS
-    lda #4
+    ldx #0
+@ploop:
+    lda PLIFE,x
+    beq @pdead
+    dec PLIFE,x
+    lda PPX,x
+    clc
+    adc PVX,x
+    sta PPX,x
+    lda PPY,x
+    clc
+    adc PVY,x
+    sta PPY,x
+    clc
+    adc shx                ; reuse shx on y for a touch of vertical judder
+    sta SPR_Y
+    lda PPX,x
+    clc
+    adc shx
+    sta SPR_X
+    lda #44
+    sta SPR_BASE
+    lda PCOL,x
+    sta SPR_FLAGS
+    jmp @pnextp
+@pdead:
+    lda #124
+    sta SPR_Y
+    lda #0
+    sta SPR_X
+    lda #44
+    sta SPR_BASE
+    lda #0
+    sta SPR_FLAGS
+@pnextp:
+    inx
+    cpx #12
+    bne @ploop
+    lda #16
     sta SPR_COUNT
     jmp main_loop
 
 ; ------------------------------------------------------------------------------
 new_game:
+    ldx #11
+    lda #0
+@cp: sta PLIFE,x
+    dex
+    bpl @cp
+    sta shaket
+    sta pnext
     lda #0
     sta score0
     sta score1
@@ -935,6 +1100,14 @@ zone_vx_lo: .byte $C0, $40, $40, $C0, $40
 zone_vx_hi: .byte $FE, $FF, $00, $00, $01
 zone_vy_lo: .byte $40, $C0, $80, $C0, $40
 zone_vy_hi: .byte $FF, $FE, $FE, $FE, $FF
+
+; spark color by brick type (sprite flags: pal<<4, 1bpp)
+type_spark:
+    .byte $60, $D0, $60, $80, $60, $B0, $60
+burst_vx: .byte $01, $FF, $02, $FE
+burst_vy: .byte $FF, $FF, $01, $01
+shake_tbl:
+    .byte 0, 1, $FF, 2, $FE, 1, $FF, 2
 
 times11:
     .byte 0, 11, 22, 33, 44, 55, 66, 77, 88, 99
