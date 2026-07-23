@@ -32,6 +32,11 @@
 //       bit1 overlay en            $E  staged pattern base
 //   $6  overlay color (4 bits, sampled per displayed pixel)
 //   $7  buttons (read-only): bit0 left, 1 right, 2 up, 3 down, 4 O, 5 X
+//   $F  LFSR random byte (read-only, free-running)
+//   $36 behind-split: list entries 0..split-1 composite BEFORE the tile
+//       layer (background sprites), entries split..count-1 after. 0 (the
+//       reset value) keeps the whole list in front - no extra scan cost
+//       either way, the list is partitioned, never scanned twice.
 //   $B: bit0 xflip, bit1 yflip, bits3:2 bpp-1, bits7:4 palette base
 //       (pixel color = palette base + pixel value, mod 16); writing commits
 //       the staged X/Y/base and auto-increments the list index
@@ -111,6 +116,13 @@ module sprite_compositor(input bit clk, input bit reset,
   logic [7:0] frame_count;
   logic       vsync_q;
 
+  // Free-running LFSR (taps 16,14,13,11 - maximal length)
+  logic [15:0] lfsr;
+
+  // Background-sprite split: entries below this index draw behind the tiles
+  logic [7:0] bsplit;
+  logic       scan_pass;   // 0 = behind pass, 1 = front pass
+
   // Pixel-phase tracking: hpos advances once per displayed pixel
   logic [7:0] hpos_q;
   wire hpos_changed = hpos != hpos_q;
@@ -157,6 +169,8 @@ module sprite_compositor(input bit clk, input bit reset,
   end
 
   wire [7:0] count_eff = (sp_count > MAX_SPRITES[7:0]) ? MAX_SPRITES[7:0] : sp_count;
+  wire [7:0] limA       = (bsplit > count_eff) ? count_eff : bsplit;
+  wire [7:0] scan_limit = scan_pass ? count_eff : limA;
 
   // Entry decode, combinational from the held entry
   wire [7:0] e_x     = entry_q[7:0];
@@ -320,6 +334,7 @@ module sprite_compositor(input bit clk, input bit reset,
         scan_i <= 0;
         entry_valid <= 0;
         tile_mode <= 0;
+        scan_pass <= 0;
         w0_wait <= 0;
         w1_wait <= 0;
         est <= E_CLEAR;
@@ -327,13 +342,8 @@ module sprite_compositor(input bit clk, input bit reset,
         case (est)
           E_CLEAR: begin
             clear_i <= clear_i + 1;
-            if (clear_i == LANES[4:0] - 1) begin
-              tile_mode <= tiles_en;
-              if (tiles_en)
-                est <= E_TMAP0;
-              else
-                est <= E_SCAN;
-            end
+            if (clear_i == LANES[4:0] - 1)
+              est <= E_SCAN;   // behind pass first (instant when split = 0)
           end
 
           E_TMAP0: begin
@@ -378,13 +388,24 @@ module sprite_compositor(input bit clk, input bit reset,
             end else begin
               // Examine the next entry (1 per clock, pipelined)
               entry_q <= list[scan_i[6:0]];
-              if (scan_i < count_eff) begin
+              if (scan_i < scan_limit) begin
                 entry_valid <= 1;
                 scan_i <= scan_i + 1;
               end else begin
                 entry_valid <= 0;
-                if (!entry_valid)
-                  est <= E_IDLE;
+                if (!entry_valid) begin
+                  if (!scan_pass) begin
+                    // behind pass done: tile layer next, then the front pass
+                    scan_pass <= 1;
+                    if (tiles_en) begin
+                      tile_mode <= 1;
+                      tk <= 0;
+                      est <= E_TMAP0;
+                    end
+                    // else: stay in E_SCAN; scan_i continues at the split
+                  end else
+                    est <= E_IDLE;
+                end
               end
             end
           end
@@ -439,7 +460,7 @@ module sprite_compositor(input bit clk, input bit reset,
               est <= E_TMAP0;
             else begin
               entry_q <= list[scan_i[6:0]];
-              if (scan_i < count_eff) begin
+              if (scan_i < scan_limit) begin
                 entry_valid <= 1;
                 scan_i <= scan_i + 1;
               end else
@@ -483,6 +504,8 @@ module sprite_compositor(input bit clk, input bit reset,
       ovl_color <= 0;
       frame_count <= 0;
       vsync_q <= 0;
+      lfsr <= 16'hACE1;
+      bsplit <= 0;
       for (int k = 0; k < 16; k++) begin
         dpal[k] <= k[3:0];
         spal[k] <= k[3:0];
@@ -496,6 +519,7 @@ module sprite_compositor(input bit clk, input bit reset,
       vsync_q <= vsync;
       if (vsync && !vsync_q)
         frame_count <= frame_count + 1;
+      lfsr <= {lfsr[14:0], lfsr[15] ^ lfsr[13] ^ lfsr[12] ^ lfsr[10]};
 
       if (reg_write) begin
         case (reg_addr)
@@ -511,6 +535,7 @@ module sprite_compositor(input bit clk, input bit reset,
           6'h33: clip_y1 <= reg_data[6:0];
           6'h34: palt_t[7:0] <= reg_data;
           6'h35: palt_t[15:8] <= reg_data;
+          6'h36: bsplit <= reg_data;
           6'h00: sheet_addr[7:0] <= reg_data;
           6'h01: sheet_addr[10:8] <= reg_data[2:0];
           6'h02: begin
@@ -555,6 +580,8 @@ module sprite_compositor(input bit clk, input bit reset,
           6'h33: dout <= {1'b0, clip_y1};
           6'h34: dout <= palt_t[7:0];
           6'h35: dout <= palt_t[15:8];
+          6'h36: dout <= bsplit;
+          6'h0F: dout <= lfsr[7:0];
           default: dout <= 8'h00;
         endcase
       end

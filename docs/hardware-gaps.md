@@ -13,19 +13,20 @@ palette fades/flashes, chain multiplier, sudden death, and pervasive SFX.
    the original's SFX/music dimension is simply unportable. Needs: a PSG-class
    synth (2-4 channels: pulse/noise, pitch + envelope registers) plus a DAC/
    PWM output on hardware and a sample-rate hook in the simulator runner.
-2. **Sprite-vs-tilemap priority.** Ambient background particles float BEHIND
-   the bricks in the original. Our compositor draws all sprites above the
-   tilemap. Classic solution (NES-style): a per-entry priority bit - entries
-   are exactly 31 bits, so the bit fits - and a second scan pass composing
-   behind-tiles entries between clear and the tile phase. Budget cost: one
-   extra list scan per line.
-3. **Sprite rotation.** Brick shards spin as they fly. Era-authentic answer:
-   pre-rotated pattern frames in the sheet (cheap, no hardware). Hardware
-   rotation would be a luxury; not recommended.
-4. **Hardware RNG.** The original uses rnd() everywhere (shake, particles,
-   serve variation). A free-running LFSR readable at a PPU register is a
-   few dozen LUTs and removes a recurring software burden. Nicety, not a
-   blocker (a 6502 LFSR works).
+2. **Sprite-vs-tilemap priority.** DONE (behind-split register $4036):
+   the list is PARTITIONED, not flagged - entries below the split composite
+   before the tile layer, the rest after. Zero extra scan cost (the list is
+   still walked exactly once per line), no entry-format change, and the
+   reset value 0 keeps old behavior. Chosen over a per-entry priority bit,
+   which would have required scanning the list twice per line and would
+   have blown the 483-cycle line budget.
+3. **Sprite rotation.** Resolved by convention: the port's shards tumble by
+   alternating two silhouette patterns plus the flip bits (2 patterns x
+   flips = 8 apparent poses). True hardware rotation stays not-recommended:
+   per-pixel source rotation in a scanline blitter needs a DDA/multiplier
+   per fetch and buys little over pre-rotated frames at 8x8.
+4. **Hardware RNG.** DONE: free-running 16-bit maximal LFSR readable at
+   $400F. The port uses it for dust spawns and serve variation.
 
 ## Covered by existing hardware (no gap)
 

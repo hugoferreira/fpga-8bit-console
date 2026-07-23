@@ -26,6 +26,8 @@
     .define SPR_COUNT          $400C
     .define SPR_FRAME          $400D
     .define SPR_BASE           $400E
+    .define SPR_RND            $400F  ; hardware LFSR, read-only
+    .define SPR_BSPLIT         $4036  ; list entries below this draw behind tiles
     .define SPR_SPAL           $4020
 
     .define MAP_LO             $F000
@@ -103,7 +105,9 @@
     .define PVY     $2130
     .define PLIFE   $2140
     .define PCOL    $2150
-    .define PKIND   $2160  ; 0 = burst spark, 1 = ball trail
+    .define PKIND   $2160  ; 0 = burst spark, 1 = ball trail, 2 = shard
+    .define DUSTX   $2170  ; ambient dust (8), behind the bricks
+    .define DUSTY   $2178
 
     ; Brick shadow map: 10 rows x 11 cols (well above the program image,
     ; which now extends past $1200 - the original $0C00 scratch overlapped
@@ -127,7 +131,7 @@ start:
     lda gfx_data+256,x
     sta SPR_SHDATA
     inx
-    cpx #104
+    cpx #144
     bne @gfx2
 
     ; Clear the whole tilemap and overlay
@@ -228,6 +232,26 @@ start:
     lda #0
     sta SPR_SPAL+3
 
+    ; First 8 list entries (ambient dust) composite behind the tile layer
+    lda #8
+    sta SPR_BSPLIT
+    ; seed the dust from the hardware LFSR
+    ldx #0
+@dust0:
+    lda SPR_RND
+    and #63
+    clc
+    adc #20
+    sta DUSTX,x
+    lda SPR_RND
+    and #63
+    clc
+    adc #24
+    sta DUSTY,x
+    inx
+    cpx #8
+    bne @dust0
+
     ; PPU on: tilemap + overlay, white overlay text
     lda #7
     sta SPR_OVLCOL
@@ -293,7 +317,7 @@ do_serve:
     sta ballspd
     sta windt
     sta windt+1
-    lda blink
+    lda SPR_RND
     and #3
     clc
     adc #5                 ; angle index 5..8
@@ -645,7 +669,44 @@ brick_hit:
     sta ptr2+1
     lda type_hi,x
     sta (ptr2),y           ; MAP_HI
-    ; game feel: shake + 4 sparks from the brick center
+    ; game feel: shards + shake + 4 sparks from the brick center
+    lda type_next,x
+    bne @noshard           ; only when the brick is destroyed
+    lda #2
+    sta spkind
+    lda type_spark,x
+    sta spcol
+    lda hitc
+    asl
+    asl
+    asl
+    clc
+    adc #17
+    sta spx
+    lda hitr
+    asl
+    asl
+    asl
+    clc
+    adc #17
+    sta spy
+    lda #$FF
+    sta spvx
+    lda #$FE
+    sta spvy
+    lda #16
+    jsr spawn_particle
+    lda spx
+    clc
+    adc #4
+    sta spx
+    lda #1
+    sta spvx
+    lda #$FE
+    sta spvy
+    lda #16
+    jsr spawn_particle
+@noshard:
     lda #4
     sta shaket
     lda type_spark,x
@@ -824,6 +885,28 @@ spawn_particle:
     rts
 
 frame_end:
+    ; ambient dust drifts up slowly, respawning at the bottom (LFSR x)
+    lda blink
+    and #3
+    bne @dustdone
+    ldx #0
+@dustup:
+    dec DUSTY,x
+    lda DUSTY,x
+    cmp #18
+    bcs @dnext
+    lda #110
+    sta DUSTY,x
+    lda SPR_RND
+    and #63
+    clc
+    adc #20
+    sta DUSTX,x
+@dnext:
+    inx
+    cpx #8
+    bne @dustup
+@dustdone:
     ; powerup chests shimmer: rewrite their tile attribute every 8 frames
     lda blink
     and #7
@@ -903,9 +986,24 @@ frame_end:
     sta SPR_CAMX
     sta shx
 @shdone:
-    ; stream sprites: ball + paddle + particles
+    ; stream sprites: dust (behind tiles) + ball + paddle + particles
     lda #0
     sta SPR_INDEX
+    ldx #0
+@dstream:
+    lda DUSTX,x
+    clc
+    adc shx
+    sta SPR_X
+    lda DUSTY,x
+    sta SPR_Y
+    lda #44
+    sta SPR_BASE
+    lda #$40               ; dark grey dot, under the bricks
+    sta SPR_FLAGS
+    inx
+    cpx #8
+    bne @dstream
     lda ballx+1
     clc
     adc shx
@@ -955,9 +1053,10 @@ frame_end:
     jmp @pdead
 @palive:
     dec PLIFE,x
-    ; burst sparks fall: gentle gravity every 4th frame
+    ; sparks and shards fall: gentle gravity every 4th frame
     lda PKIND,x
-    bne @nograv
+    cmp #1
+    beq @nograv
     lda blink
     and #3
     bne @nograv
@@ -985,6 +1084,25 @@ frame_end:
     sta SPR_X
     lda PKIND,x
     beq @bspark
+    cmp #2
+    bne @ptrail
+    ; shard: alternate two silhouettes + xflip as it tumbles
+    lda PLIFE,x
+    lsr
+    lsr
+    and #1
+    clc
+    adc #48
+    sta SPR_BASE
+    lda PLIFE,x
+    and #8
+    lsr
+    lsr
+    lsr
+    ora PCOL,x
+    sta SPR_FLAGS
+    jmp @pnextp
+@ptrail:
     ; trail: shrinking circle, white -> yellow -> orange with age
     lda PLIFE,x
     cmp #8
@@ -1029,7 +1147,7 @@ frame_end:
     beq @pfin
     jmp @ploop
 @pfin:
-    lda #20
+    lda #28
     sta SPR_COUNT
     jmp main_loop
 

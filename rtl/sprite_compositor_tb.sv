@@ -258,6 +258,7 @@ module sprite_compositor_tb;
     cpuwrite(6'h19, 8'd14);
     cpuwrite(6'h20, 8'd1);
 
+    cpuwrite(6'h36, 8'd2);  // entries 0-1 composite behind the tile layer
     cpuwrite(4'h5, 8'h03);  // enable tilemap + overlay
 
     // Each iteration: move sprites, stream the list (tears into the frame
