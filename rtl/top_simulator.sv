@@ -12,16 +12,27 @@ module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
            output logic hsync, output logic vsync, output logic [23:0] rgb);
   localparam WIDTH = 320, HEIGHT = 240;
 
-  logic       clk_4;
-  logic       clk_64;
   logic [7:0] hpos;
   logic [6:0] vpos;
-    
-  /* verilator lint_off PINMISSING */
-  slower_clk clk1(.cin(clk_i), .clk_div4(clk_4), .reset(rst_i));
-  slower_clk clk2(.cin(clk_4), .clk_div256(clk_64), .reset(rst_i));
 
-  hvsync_generator hvsync_gen(.clk(clk_4), .reset(rst_i), .hsync, .vsync, .hpos, .vpos);
+  // Pixel clock: divide by 3. The PPU display pipeline needs 3 clocks per
+  // pixel (read, capture, stable); the old /4 dated from the retired
+  // textbuffer's 4-state renderer and cost 25% more simulation work.
+  logic [1:0] div3 = 0;
+  logic       clk_3 = 0;
+  always_ff @(posedge clk_i) begin
+    if (div3 == 2) begin
+      div3 <= 0;
+      clk_3 <= 1;
+    end else begin
+      div3 <= div3 + 1;
+      clk_3 <= 0;
+    end
+  end
+
+  /* verilator lint_off PINMISSING */
+  hvsync_generator hvsync_gen(.clk(clk_3), .reset(rst_i), .hsync, .vsync, .hpos, .vpos);
+  /* verilator lint_on PINMISSING */
   
   // Use clk_i for both clk and cpuclk to keep them in the same domain
   chip #(.RED(8), .GREEN(8), .BLUE(8), .FILE("palette888.bin")) chip(

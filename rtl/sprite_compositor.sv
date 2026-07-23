@@ -19,7 +19,7 @@
 //
 // Line buffer: 20 lanes x 32 bits (8 pixels x 4bpp), double-banked by an
 // address bit. A row straddles at most two lanes -> 2-word RMW blit.
-// Timing contract: pixels are >=4 system clocks wide (hpos advances at the
+// Timing contract: pixels are >=3 system clocks wide (hpos advances at the
 // pixel rate); the display side takes one line-buffer read slot per pixel.
 //
 // Register map ($400x, CPU and DMA share it):

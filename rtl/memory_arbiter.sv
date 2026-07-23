@@ -52,9 +52,6 @@ module memory_arbiter(
       vblank <= 0;
       vblank_prev <= 0;
       cpu_rdy_prev <= 1;  // CPU starts ready
-      
-      // Output debug message
-      $display("Memory Arbiter: Reset - initializing all state");
     end else begin
       vsync_prev <= vsync;
       
@@ -71,12 +68,6 @@ module memory_arbiter(
       // Store previous values for edge detection
       vblank_prev <= vblank;
       cpu_rdy_prev <= cpu_rdy;
-      
-      // Debug information
-      if (vblank && !vblank_prev) $display("Memory Arbiter: VBLANK started");
-      if (!vblank && vblank_prev) $display("Memory Arbiter: VBLANK ended");
-      if (!cpu_rdy) $display("Memory Arbiter: CPU halted (RDY=0)");
-      if (cpu_rdy && !cpu_rdy_prev) $display("Memory Arbiter: CPU resumed (RDY=1)");
     end
   end
   

@@ -40,35 +40,14 @@ module ram_async(input bit clk, input bit cs, input bit rw,
   
   // Register the read data on clock edge
   always_ff @(posedge clk) begin
-    if (cs & ~rw) begin
+    if (cs & ~rw)
       data_out_reg <= mem[addr];
-      
-      // Print all memory accesses during reset
-      /* verilator lint_off CMPCONST */
-      if (addr >= 16'hFFFA && addr <= 16'hFFFF)
-      /* verilator lint_on CMPCONST */
-        $display("RAM Access: CPU reading vector area $%04X = %02X (cs=%b, rw=%b)",
-                 addr, mem[addr], cs, rw);
-      
-      // Print program area accesses
-      if (addr >= 16'h0300 && addr <= 16'h030F)
-        $display("RAM Access: CPU reading program area $%04X = %02X (cs=%b, rw=%b)", 
-                 addr, mem[addr], cs, rw);
-                 
-      // Print zero page accesses
-      if (addr < 16'h0010)
-        $display("RAM Access: CPU reading zero page $%04X = %02X (cs=%b, rw=%b)",
-                 addr, mem[addr], cs, rw);
-    end
   end
-  
+
   // Handle writes
   always_ff @(posedge clk) begin
-    if (cs & rw) begin
+    if (cs & rw)
       mem[addr] <= di;
-      $display("RAM Write: CPU wrote %02X to $%04X (cs=%b, rw=%b)", 
-               di, addr, cs, rw);
-    end
   end
   
   // Expose the registered data

@@ -37,20 +37,6 @@ module cpu6502(
   wire NMI = 1'b0;  // Always keep NMI disabled
   // RDY is now controlled externally
   
-  // Debug memory access to identify if BRK instructions are being fetched
-  always_ff @(posedge clk) begin
-    if (!write && address < 16'h0400) begin
-      if (data_in == 8'h00) begin
-        $display("CPU Wrapper: WARNING - Reading BRK instruction (0x00) from address $%04X", address);
-      end
-    end
-    
-    // Log RDY state changes for debugging
-    if (rdy == 0) begin
-      $display("CPU Wrapper: CPU is halted (RDY=0) at address $%04X", address);
-    end
-  end
-
   // Instantiate Arlet's 6502 CPU with appropriate signal mappings
   // The module in cpu6502_arlet.sv is named "cpu"
   cpu cpu_arlet(
