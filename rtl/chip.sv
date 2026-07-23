@@ -8,7 +8,9 @@
 
 module chip(input logic clk, input logic cpuclk, input logic reset,
             input logic vsync, input logic hsync,
-            input logic [6:0] vpos, input logic [7:0] hpos, output logic [RGB-1:0] rgb);
+            input logic [6:0] vpos, input logic [7:0] hpos,
+            input logic [7:0] buttons,
+            output logic [RGB-1:0] rgb);
 
   parameter RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
 
@@ -153,6 +155,7 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .dout(sp_do), 
     .map_cs(tb_cs),
     .map_addr(tb_cs ? mem_addr[9:0] : 10'h0),
+    .btn(buttons),
     .ovl_cs(ovl_cs),
     .ovl_addr(ovl_cs ? mem_addr[11:0] : 12'h0),
     .hpos(hpos),

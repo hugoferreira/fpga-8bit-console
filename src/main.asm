@@ -1,153 +1,117 @@
 .segment "CODE"
     ; ------------------------------------------------------------------------------
-    ; 128-sprite compositor demo
+    ; BREAKOUT HERO - port of Krystman's PICO-8 cart to this console
     ; ------------------------------------------------------------------------------
-    ; Streams a 128-entry sprite list to the scanline compositor every loop:
-    ; each sprite moves 1px per update with edge bounce, and its X/Y flips
-    ; follow the travel direction so the arrow points where it is going.
+    ; Original game (c) Krystman / Lazy Devs Academy (PICO-8 BBS cart 53976).
+    ; Level layouts and paddle/ball art come from the cart; this 6502 game
+    ; code is an original implementation written for this hardware.
     ;
-    ; System Memory Map
-    ; $0000-$00FF: Zero Page   $0100-$01FF: Stack
-    ; $0300-....:  Program     $FFFA-$FFFF: Vectors
+    ; Arena: tile cols 1 and 13 are walls, bricks in an 11-wide grid at tile
+    ; cols 2-12, rows 2-11. Interior pixels x 16..103, top y 16, open bottom.
+    ; Right side (cols 14+) is the HUD. Ball and paddle are sprites; bricks
+    ; are tilemap cells; messages use the 4x6 overlay font.
 
-    ; Sprite compositor registers ($400x)
-    .define SPR_SHADDR_LO      $4000  ; Sheet upload address, low byte
-    .define SPR_SHADDR_HI      $4001  ; Sheet upload address, high 3 bits
-    .define SPR_SHDATA         $4002  ; Sheet data (write stores + addr++)
-    .define SPR_CAMX           $4003  ; Tilemap camera X
-    .define SPR_CAMY           $4004  ; Tilemap camera Y
-    .define SPR_CTRL           $4005  ; Control: bit0 tilemap, bit1 overlay
-    .define SPR_OVLCOL         $4006  ; Overlay color (4 bits)
-    .define SPR_DPAL           $4010  ; Draw palette (16 entries)
-    .define SPR_SPAL           $4020  ; Screen palette (16 entries)
-    .define SPR_CLIP           $4030  ; Clip rect x0/y0/x1/y1
-    .define SPR_PALT           $4034  ; Transparency mask lo/hi
-    .define OVL                $E000  ; Overlay bitmap window (write-only)
-    .define SPR_INDEX          $4008  ; List index
-    .define SPR_X              $4009  ; Staged X
-    .define SPR_Y              $400A  ; Staged Y
-    .define SPR_FLAGS          $400B  ; bit0 xflip, bit1 yflip; write commits + index++
-    .define SPR_COUNT          $400C  ; Active sprite count
-    .define SPR_FRAME          $400D  ; Frame counter (read-only, +1 per vsync)
-    .define SPR_BASE           $400E  ; Staged pattern base (plane-slot addr)
+    ; PPU registers
+    .define SPR_SHADDR_LO      $4000
+    .define SPR_SHADDR_HI      $4001
+    .define SPR_SHDATA         $4002
+    .define SPR_CTRL           $4005
+    .define SPR_OVLCOL         $4006
+    .define SPR_BTN            $4007
+    .define SPR_INDEX          $4008
+    .define SPR_X              $4009
+    .define SPR_Y              $400A
+    .define SPR_FLAGS          $400B
+    .define SPR_COUNT          $400C
+    .define SPR_FRAME          $400D
+    .define SPR_BASE           $400E
 
-    .define NSPR               128    ; Number of sprites
-    .define MAX_X              152    ; 160 - 8
-    .define MAX_Y              112    ; 120 - 8
-
-    ; Tilemap window (write-only): cell low bytes = pattern base,
-    ; cell high bytes = {pal[3:0], bpp-1[1:0], yflip, xflip}
     .define MAP_LO             $F000
     .define MAP_HI             $F200
+    .define OVL                $E000
 
-    ; Runtime tables (one page each, above the program image)
-    .define xpos    $0900
-    .define ypos    $0A00
-    .define dirs    $0B00  ; bit0: 1=moving left, bit1: 1=moving up
+    ; Buttons
+    .define BTN_L              $01
+    .define BTN_R              $02
+    .define BTN_X              $20
+
+    ; Geometry
+    .define ARENA_L            16     ; interior left edge
+    .define ARENA_R            104    ; interior right edge (exclusive)
+    .define ARENA_T            16     ; interior top edge
+    .define PAD_Y              106    ; paddle sprite y
+    .define PAD_MIN            16
+    .define PAD_MAX            88
+    .define BALL_DEATH         118
+
+    ; Game states
+    .define ST_SERVE           0
+    .define ST_PLAY            1
+    .define ST_OVER            2
 
     ; Zero page
-    .define camx    $04
-    .define camdx   $05
-    .define camy    $06
-    .define camdy   $07
-    .define tmp     $08
-    .define rowr    $09
-    .define ptr     $0A    ; and $0B
-    .define dotx    $0C
-    .define doty    $0D
-    .define dotdx   $0E
-    .define dotdy   $0F
+    .define ballx   $04    ; 8.8: frac, int
+    .define bally   $06
+    .define bvx     $08    ; signed 8.8
+    .define bvy     $0A
+    .define padx    $0C
+    .define state   $0D
+    .define lives   $0E
+    .define level   $0F    ; 0-based
+    .define score0  $10    ; BCD, low digits first
+    .define score1  $11
+    .define score2  $12
+    .define bricksn $13
+    .define tmp     $14
+    .define tmp2    $15
+    .define btn     $16
+    .define btnprev $17
+    .define blink   $18
+    .define ptr     $19    ; and $1A
+    .define rowv    $1B
+    .define colv    $1C
+    .define hitr    $1D
+    .define hitc    $1E
+    .define tmp3    $1F
+    .define servedx $20
+    .define ptr2    $22    ; and $23
 
-; Program starts here at $0300 (see memory.cfg)
+    ; Brick shadow map: 10 rows x 11 cols
+    .define shadow  $0C00
+
+; ------------------------------------------------------------------------------
 start:
-    ; Clear the whole tilemap (both byte planes, 512 cells each)
+    ; Upload game patterns to sheet slots 0-39 (font at 128+ is preloaded)
+    lda #0
+    sta SPR_SHADDR_LO
+    sta SPR_SHADDR_HI
+    ldx #0
+@gfx1:
+    lda gfx_data,x
+    sta SPR_SHDATA
+    inx
+    bne @gfx1
+    ldx #0
+@gfx2:
+    lda gfx_data+256,x
+    sta SPR_SHDATA
+    inx
+    cpx #64
+    bne @gfx2
+
+    ; Clear the whole tilemap and overlay
     ldx #0
     lda #0
-clear_map:
+@clrmap:
     sta MAP_LO,x
     sta MAP_LO+256,x
     sta MAP_HI,x
     sta MAP_HI+256,x
     inx
-    bne clear_map
-
-    ; Decorate the world: 2bpp diamond tiles on the (tx+ty)%8==0 diagonals.
-    ; For cell byte X of either page, tx = X&31 and ty%8 = X>>5, so the
-    ; same loop body serves both halves of the map.
-decor_page0:
-    ldx #0
-@loop:
-    txa
-    and #31
-    sta tmp
-    txa
-    lsr
-    lsr
-    lsr
-    lsr
-    lsr                ; A = ty & 7
-    tay
-    clc
-    adc tmp
-    and #7
-    bne @next
-    lda paltbl4,y      ; {pal, bpp-1=1, no flips} by tile row
-    sta MAP_HI,x
-    lda #5             ; diamond pattern base
-    sta MAP_LO,x
-@next:
-    inx
-    bne @loop
-decor_page1:
-    ldx #0
-@loop:
-    txa
-    and #31
-    sta tmp
-    txa
-    lsr
-    lsr
-    lsr
-    lsr
-    lsr
-    tay
-    clc
-    adc tmp
-    and #7
-    bne @next
-    lda paltbl4,y
-    sta MAP_HI+256,x
-    lda #5
-    sta MAP_LO+256,x
-@next:
-    inx
-    bne @loop
-
-    ; Text banner living in the world at tile row 2, column 2: font glyphs
-    ; sit in sheet slots 128-255, so base = charcode | $80
-    ldx #0
-write_text:
-    lda text,x
-    ora #$80
-    sta MAP_LO+66,x
-    lda #$60           ; palette 6 -> glyph color 7 (white)
-    sta MAP_HI+66,x
-    inx
-    cpx #17
-    bne write_text
-
-    ; Camera starts at the origin drifting down-right
-    lda #0
-    sta camx
-    sta camy
-    lda #1
-    sta camdx
-    sta camdy
-
-    ; --- Overlay: clear all 2560 bytes ---
+    bne @clrmap
     ldx #0
     lda #0
-clear_ovl:
+@clrovl:
     sta OVL,x
     sta OVL+$100,x
     sta OVL+$200,x
@@ -159,29 +123,742 @@ clear_ovl:
     sta OVL+$800,x
     sta OVL+$900,x
     inx
-    bne clear_ovl
+    bne @clrovl
 
-    ; Box border: solid top and bottom rows, single-pixel sides
-    ldx #0
-    lda #$FF
-border_h:
-    sta OVL,x          ; row 0
-    sta OVL+2380,x     ; row 119
+    ; Walls: top row 1 (cols 1-13), sides cols 1 and 13 (rows 1-14)
+    ldx #1
+@topwall:
+    lda #36            ; wall pattern base
+    sta MAP_LO+32,x    ; row 1 starts at cell 32
+    lda #$0C           ; 4bpp, pal 0
+    sta MAP_HI+32,x
     inx
-    cpx #20
-    bne border_h
-    lda #<(OVL+20)     ; rows 1-118
+    cpx #14
+    bne @topwall
+    ldx #1
+@sidewall:
+    lda rowmap_lo,x
     sta ptr
-    lda #>(OVL+20)
+    lda rowmap_hi,x
     sta ptr+1
-    ldx #118
-border_v:
+    ldy #1
+    lda #36
+    sta (ptr),y
+    ldy #13
+    sta (ptr),y
+    lda ptr+1
+    clc
+    adc #2             ; MAP_HI page = MAP_LO page + $200
+    sta ptr+1
+    ldy #1
+    lda #$0C
+    sta (ptr),y
+    ldy #13
+    sta (ptr),y
+    inx
+    cpx #15
+    bne @sidewall
+
+    ; HUD labels (font tiles, white): SCORE / BALLS / LEVEL in col 14+
+    ldx #0
+@hud1:
+    lda txt_score,x
+    ora #$80
+    sta MAP_LO+32+14,x     ; row 1
+    lda #$60
+    sta MAP_HI+32+14,x
+    inx
+    cpx #5
+    bne @hud1
+    ldx #0
+@hud2:
+    lda txt_balls,x
+    ora #$80
+    sta MAP_LO+128+14,x    ; row 4
+    lda #$60
+    sta MAP_HI+128+14,x
+    inx
+    cpx #5
+    bne @hud2
+    ldx #0
+@hud3:
+    lda txt_level,x
+    ora #$80
+    sta MAP_LO+224+14,x    ; row 7
+    lda #$60
+    sta MAP_HI+224+14,x
+    inx
+    cpx #5
+    bne @hud3
+
+    ; PPU on: tilemap + overlay, white overlay text
+    lda #7
+    sta SPR_OVLCOL
+    lda #3
+    sta SPR_CTRL
+
+    jsr new_game
+
+; ------------------------------------------------------------------------------
+main_loop:
+    lda SPR_FRAME
+@wf: cmp SPR_FRAME
+    beq @wf
+
+    lda btn
+    sta btnprev
+    lda SPR_BTN
+    sta btn
+    inc blink
+
+    lda state
+    cmp #ST_PLAY
+    bne @notplay
+    jmp do_play
+@notplay:
+    cmp #ST_SERVE
+    beq do_serve
+    jmp do_over
+
+; --- serve: ball rides the paddle, X launches ---------------------------------
+do_serve:
+    jsr move_paddle
+    lda padx
+    clc
+    adc #4
+    sta ballx+1
+    lda #0
+    sta ballx
+    sta bally
+    lda #98
+    sta bally+1
+    ; blink PRESS X
+    lda blink
+    and #$1F
+    bne @noblk
+    jsr msg_clear
+    lda blink
+    and #$20
+    bne @noblk
+    jsr msg_press
+@noblk:
+    lda btn
+    and #BTN_X
+    beq @done
+    lda btnprev
+    and #BTN_X
+    bne @done
+    jsr msg_clear
+    lda #ST_PLAY
+    sta state
+    ; serve vector: dy = -1.25, dx = +/-0.75 alternating
+    lda #$C0
+    sta bvy
+    lda #$FE
+    sta bvy+1
+    lda servedx
+    eor #1
+    sta servedx
+    beq @sleft
+    lda #$C0
+    sta bvx
+    lda #$00
+    sta bvx+1
+    jmp @done
+@sleft:
+    lda #$40
+    sta bvx
+    lda #$FF
+    sta bvx+1
+@done:
+    jmp frame_end
+
+; --- game over -----------------------------------------------------------------
+do_over:
+    lda blink
+    and #$1F
+    bne @chk
+    jsr msg_clear
+    lda blink
+    and #$20
+    bne @chk
+    jsr msg_over
+@chk:
+    lda btn
+    and #BTN_X
+    beq @done
+    lda btnprev
+    and #BTN_X
+    bne @done
+    jsr msg_clear
+    jsr new_game
+@done:
+    jmp frame_end
+
+; --- play ----------------------------------------------------------------------
+do_play:
+    jsr move_paddle
+
+    ; ball position += velocity (16-bit signed adds)
+    lda ballx
+    clc
+    adc bvx
+    sta ballx
+    lda ballx+1
+    adc bvx+1
+    sta ballx+1
+    lda bally
+    clc
+    adc bvy
+    sta bally
+    lda bally+1
+    adc bvy+1
+    sta bally+1
+
+    ; walls (ball box is sprite+2 .. sprite+5)
+    lda ballx+1
+    cmp #ARENA_L-2
+    bcs @notleft
+    lda #ARENA_L-2
+    sta ballx+1
+    jsr negx
+@notleft:
+    lda ballx+1
+    cmp #ARENA_R-6
+    bcc @notright
+    lda #ARENA_R-6
+    sta ballx+1
+    jsr negx
+@notright:
+    lda bally+1
+    cmp #ARENA_T-2
+    bcs @nottop
+    lda #ARENA_T-2
+    sta bally+1
+    jsr negy
+@nottop:
+
+    ; death?
+    lda bally+1
+    cmp #BALL_DEATH
+    bcc @alive
+    dec lives
+    jsr draw_hud
+    lda lives
+    beq @gameover
+    lda #ST_SERVE
+    sta state
+    jmp frame_end
+@gameover:
+    lda #ST_OVER
+    sta state
+    jmp frame_end
+@alive:
+
+    ; paddle bounce (moving down, box bottom in paddle band, x overlap)
+    lda bvy+1
+    bmi @nopad
+    lda bally+1
+    cmp #PAD_Y-4
+    bcc @nopad
+    cmp #PAD_Y+2
+    bcs @nopad
+    lda ballx+1
+    sec
+    sbc padx
+    clc
+    adc #5                 ; 0..18 when overlapping
+    cmp #19
+    bcs @nopad
+    lsr
+    lsr                    ; zone 0..4
+    tay
+    lda bvx+1
+    sta tmp3               ; remember travel direction
+    lda zone_vx_lo,y
+    sta bvx
+    lda zone_vx_hi,y
+    sta bvx+1
+    lda zone_vy_lo,y
+    sta bvy
+    lda zone_vy_hi,y
+    sta bvy+1
+    cpy #2
+    bne @nopad
+    lda tmp3               ; center zone keeps horizontal direction
+    bpl @nopad
+    jsr negx
+@nopad:
+
+    ; --- brick collisions: probe ahead of the ball center on each axis ---
+    lda ballx+1
+    clc
+    adc #3
+    sta tmp                ; cx
+    lda bally+1
+    clc
+    adc #3
+    sta tmp2               ; cy
+    ; horizontal probe (cx +/- 3, cy)
+    lda tmp
+    ldy bvx+1
+    bmi @hneg
+    clc
+    adc #3
+    jmp @hgo
+@hneg:
+    sec
+    sbc #3
+@hgo:
+    tax
+    ldy tmp2
+    jsr probe_brick
+    bcc @noh
+    jsr brick_hit
+    jsr negx
+@noh:
+    ; vertical probe (cx, cy +/- 3)
+    lda tmp2
+    ldy bvy+1
+    bmi @vneg
+    clc
+    adc #3
+    jmp @vgo
+@vneg:
+    sec
+    sbc #3
+@vgo:
+    tay
+    ldx tmp
+    jsr probe_brick
+    bcc @nov
+    jsr brick_hit
+    jsr negy
+@nov:
+
+    ; level cleared?
+    lda bricksn
+    bne @go
+    ldx level
+    inx
+    cpx #15
+    bcc @lv
+    ldx #0
+@lv:
+    stx level
+    jsr build_level
+    jsr draw_hud
+    lda #ST_SERVE
+    sta state
+@go:
+    jmp frame_end
+
+; ------------------------------------------------------------------------------
+; probe_brick: X = pixel x, Y = pixel y -> C set if a brick cell is there.
+; Cell coords left in hitr/hitc.
+probe_brick:
+    txa
+    sec
+    sbc #ARENA_L
+    bcc @miss
+    lsr
+    lsr
+    lsr
+    cmp #11
+    bcs @miss
+    sta hitc
+    tya
+    sec
+    sbc #ARENA_T
+    bcc @miss
+    lsr
+    lsr
+    lsr
+    cmp #10
+    bcs @miss
+    sta hitr
+    tax
+    lda times11,x
+    clc
+    adc hitc
+    tay
+    lda shadow,y
+    beq @miss
+    sec
+    rts
+@miss:
+    clc
+    rts
+
+; ------------------------------------------------------------------------------
+; brick_hit: damage the cell at (hitr, hitc)
+brick_hit:
+    ldx hitr
+    lda times11,x
+    clc
+    adc hitc
+    tay
+    ldx shadow,y           ; X = type code
+    sed                    ; score += points[type] (BCD)
+    lda score0
+    clc
+    adc type_pts,x
+    sta score0
+    lda score1
+    adc #0
+    sta score1
+    lda score2
+    adc #0
+    sta score2
+    cld
+    lda type_next,x
+    sta shadow,y
+    pha
+    bne @tile              ; still standing (damaged or indestructible)
+    cpx #4
+    beq @tile
+    dec bricksn
+@tile:
+    ; rewrite the map cell at row hitr+2, col hitc+2
+    ldx hitr
+    lda rowmap2_lo,x
+    sta ptr2
+    lda rowmap2_hi,x
+    sta ptr2+1
+    pla
+    tax                    ; X = new type
+    ldy hitc
+    iny
+    iny
+    lda type_tile,x
+    sta (ptr2),y           ; MAP_LO
+    lda ptr2+1
+    clc
+    adc #2
+    sta ptr2+1
+    lda type_hi,x
+    sta (ptr2),y           ; MAP_HI
+    jsr draw_hud
+    rts
+
+; ------------------------------------------------------------------------------
+negx:
+    sec
+    lda #0
+    sbc bvx
+    sta bvx
+    lda #0
+    sbc bvx+1
+    sta bvx+1
+    rts
+negy:
+    sec
+    lda #0
+    sbc bvy
+    sta bvy
+    lda #0
+    sbc bvy+1
+    sta bvy+1
+    rts
+
+; ------------------------------------------------------------------------------
+move_paddle:
+    lda btn
+    and #BTN_L
+    beq @notl
+    lda padx
+    sec
+    sbc #2
+    cmp #PAD_MIN
+    bcs @stl
+    lda #PAD_MIN
+@stl:
+    sta padx
+@notl:
+    lda btn
+    and #BTN_R
+    beq @notr
+    lda padx
+    clc
+    adc #2
+    cmp #PAD_MAX
+    bcc @str
+    lda #PAD_MAX
+@str:
+    sta padx
+@notr:
+    rts
+
+; ------------------------------------------------------------------------------
+frame_end:
+    ; stream sprites: ball + two paddle halves
+    lda #0
+    sta SPR_INDEX
+    lda ballx+1
+    sta SPR_X
+    lda bally+1
+    sta SPR_Y
+    lda #0
+    sta SPR_BASE
+    lda #$0C               ; 4bpp, pal 0
+    sta SPR_FLAGS
+    lda padx
+    sta SPR_X
+    lda #PAD_Y
+    sta SPR_Y
+    lda #4
+    sta SPR_BASE
+    lda #$0C
+    sta SPR_FLAGS
+    lda padx
+    clc
+    adc #8
+    sta SPR_X
+    lda #PAD_Y
+    sta SPR_Y
+    lda #8
+    sta SPR_BASE
+    lda #$0C
+    sta SPR_FLAGS
+    lda #3
+    sta SPR_COUNT
+    jmp main_loop
+
+; ------------------------------------------------------------------------------
+new_game:
+    lda #0
+    sta score0
+    sta score1
+    sta score2
+    sta level
+    sta servedx
+    lda #3
+    sta lives
+    lda #52
+    sta padx
+    jsr build_level
+    jsr draw_hud
+    lda #ST_SERVE
+    sta state
+    rts
+
+; ------------------------------------------------------------------------------
+; build_level: unpack level_data[level] into the shadow map and the tilemap
+build_level:
+    ldy #109
+    lda #0
+@cs: sta shadow,y
+    dey
+    bpl @cs
+    ; clear brick region rows 2-11, cols 2-12
+    ldx #0
+@clrrow:
+    lda rowmap2_lo,x
+    sta ptr2
+    lda rowmap2_hi,x
+    sta ptr2+1
+    lda #0
+    ldy #12
+@cc: sta (ptr2),y
+    dey
+    cpy #1
+    bne @cc
+    lda ptr2+1
+    clc
+    adc #2
+    sta ptr2+1
+    lda #0
+    ldy #12
+@ch: sta (ptr2),y
+    dey
+    cpy #1
+    bne @ch
+    inx
+    cpx #10
+    bne @clrrow
+
+    lda #0
+    sta bricksn
+    ldx level
+    lda level_ptr_lo,x
+    sta ptr
+    lda level_ptr_hi,x
+    sta ptr+1
     ldy #0
-    lda #$01
+    lda (ptr),y            ; nrows
+    sta rowv
+    inc ptr
+    bne @p0
+    inc ptr+1
+@p0:
+    lda #0
+    sta hitr
+@rowloop:
+    lda hitr
+    cmp rowv
+    bcs @done
+    lda #0
+    sta hitc
+@colloop:
+    ldy hitc
+    lda (ptr),y            ; type code
+    beq @next
+    pha
+    ldx hitr
+    lda times11,x
+    clc
+    adc hitc
+    tay
+    pla
+    sta shadow,y
+    cmp #4                 ; 'i' is not destructible
+    beq @place
+    inc bricksn
+@place:
+    tax
+    ldy hitr
+    lda rowmap2_lo,y
+    sta ptr2
+    lda rowmap2_hi,y
+    sta ptr2+1
+    lda hitc
+    clc
+    adc #2
+    tay
+    lda type_tile,x
+    sta (ptr2),y
+    lda ptr2+1
+    clc
+    adc #2
+    sta ptr2+1
+    lda type_hi,x
+    sta (ptr2),y
+@next:
+    inc hitc
+    lda hitc
+    cmp #11
+    bne @colloop
+    lda ptr
+    clc
+    adc #11
+    sta ptr
+    bcc @p1
+    inc ptr+1
+@p1:
+    inc hitr
+    jmp @rowloop
+@done:
+    rts
+
+; ------------------------------------------------------------------------------
+; draw_hud: score (6 digits), lives, level as font tiles
+draw_hud:
+    lda score2
+    jsr bcd_two
+    sta MAP_LO+64+14
+    stx MAP_LO+64+15
+    lda score1
+    jsr bcd_two
+    sta MAP_LO+64+16
+    stx MAP_LO+64+17
+    lda score0
+    jsr bcd_two
+    sta MAP_LO+64+18
+    stx MAP_LO+64+19
+    ldx #0
+@attr:
+    lda #$60
+    sta MAP_HI+64+14,x
+    inx
+    cpx #6
+    bne @attr
+    lda lives
+    and #$0F
+    ora #$B0               ; font tile for '0' + digit
+    sta MAP_LO+160+14
+    lda #$60
+    sta MAP_HI+160+14
+    ldx level
+    lda lvl_tens,x
+    sta MAP_LO+256+14
+    lda lvl_ones,x
+    sta MAP_LO+256+15
+    lda #$60
+    sta MAP_HI+256+14
+    sta MAP_HI+256+15
+    rts
+bcd_two:                   ; A = BCD byte -> A = tens font tile, X = ones
+    pha
+    and #$0F
+    ora #$B0
+    tax
+    pla
+    lsr
+    lsr
+    lsr
+    lsr
+    ora #$B0
+    rts
+
+; ------------------------------------------------------------------------------
+; Overlay messages (4x6 font, two glyphs per byte, byte-aligned)
+msg_press:
+    lda #<(OVL+70*20+8)
+    sta ptr
+    lda #>(OVL+70*20+8)
+    sta ptr+1
+    ldx #<msg_press_t
+    ldy #>msg_press_t
+    lda #4
+    jmp ovl_print
+msg_over:
+    lda #<(OVL+70*20+7)
+    sta ptr
+    lda #>(OVL+70*20+7)
+    sta ptr+1
+    ldx #<msg_over_t
+    ldy #>msg_over_t
+    lda #5
+; ovl_print: ptr = overlay dest, X/Y = glyph-offset table, A = pair count
+ovl_print:
+    sta tmp3
+    stx tmp
+    sty tmp2
+    lda #0
+    sta rowv
+@row:
+    lda #0
+    sta colv
+@pair:
+    lda colv
+    asl
+    tay
+    iny
+    lda (tmp),y            ; odd glyph offset -> high nibble
+    clc
+    adc rowv
+    tay
+    lda font46,y
+    asl
+    asl
+    asl
+    asl
+    sta hitr
+    lda colv
+    asl
+    tay
+    lda (tmp),y            ; even glyph offset -> low nibble
+    clc
+    adc rowv
+    tay
+    lda font46,y
+    ora hitr
+    ldy colv
     sta (ptr),y
-    ldy #19
-    lda #$80
-    sta (ptr),y
+    inc colv
+    lda colv
+    cmp tmp3
+    bne @pair
     lda ptr
     clc
     adc #20
@@ -189,397 +866,100 @@ border_v:
     bcc @nc
     inc ptr+1
 @nc:
-    dex
-    bne border_v
+    inc rowv
+    lda rowv
+    cmp #6
+    bne @row
+    rts
 
-    ; 4x6-font banner at pixel row 8, x = 16: two glyphs pack per overlay
-    ; byte (even glyph in bits 0-3, odd in bits 4-7), so a 4px text pitch
-    ; needs no cross-byte shifting - this is what the tile grid cannot do
-    lda #<(OVL+8*20+2)
+msg_clear:
+    lda #<(OVL+68*20+5)
     sta ptr
-    lda #>(OVL+8*20+2)
+    lda #>(OVL+68*20+5)
     sta ptr+1
-    lda #0
-    sta rowr
-text_row:
-    ldx #0
-text_pair:
-    txa
-    asl
-    tay
-    lda txtoff+1,y     ; odd glyph of the pair -> high nibble
-    clc
-    adc rowr
-    tay
-    lda font46,y
-    asl
-    asl
-    asl
-    asl
-    sta tmp
-    txa
-    asl
-    tay
-    lda txtoff,y       ; even glyph -> low nibble
-    clc
-    adc rowr
-    tay
-    lda font46,y
-    ora tmp
-    pha
-    txa
-    tay
-    pla
-    sta (ptr),y
-    inx
-    cpx #6
-    bne text_pair
+    ldx #10
+@r: lda #0
+    ldy #10
+@c: sta (ptr),y
+    dey
+    bpl @c
     lda ptr
     clc
     adc #20
     sta ptr
-    bcc @nc2
+    bcc @n
     inc ptr+1
-@nc2:
-    inc rowr
-    lda rowr
-    cmp #6
-    bne text_row
-
-    ; Bouncing dot starts mid-box
-    lda #80
-    sta dotx
-    lda #60
-    sta doty
-    lda #1
-    sta dotdx
-    sta dotdy
-
-    ; Upload the sprite sheet (8 plane slots = 64 bytes) through the
-    ; auto-incrementing sheet port
-    lda #0
-    sta SPR_SHADDR_LO
-    sta SPR_SHADDR_HI
-    ldx #0
-load_sheet:
-    lda pattern,x
-    sta SPR_SHDATA
-    inx
-    cpx #64
-    bne load_sheet
-
-    ; Copy initial positions and directions into the runtime tables
-    ldx #0
-load_tables:
-    lda init_x,x
-    sta xpos,x
-    lda init_y,x
-    sta ypos,x
-    lda init_d,x
-    sta dirs,x
-    inx
-    cpx #NSPR
-    bne load_tables
-
-    lda #NSPR
-    sta SPR_COUNT
-    lda #10
-    sta SPR_OVLCOL     ; Overlay draws in yellow
-
-    ; Draw state: inset clip window, value 3 also transparent, draw-palette
-    ; 9 -> 14 (orange -> pink), screen-palette 0 -> 1 (navy background)
-    lda #8
-    sta SPR_CLIP
-    sta SPR_CLIP+1
-    lda #151
-    sta SPR_CLIP+2
-    lda #111
-    sta SPR_CLIP+3
-    lda #$09
-    sta SPR_PALT
-    lda #14
-    sta SPR_DPAL+9
-    lda #1
-    sta SPR_SPAL
-
-    lda #3
-    sta SPR_CTRL       ; Enable tilemap + overlay
-
-main_loop:
-    ; Pace to the display: wait for the frame counter to change so each
-    ; sprite moves exactly 1px per displayed frame
-    lda SPR_FRAME
-wait_frame:
-    cmp SPR_FRAME
-    beq wait_frame
-
-    ; Drift the camera with edge bounce: x over 0..96, y over 0..8
-    lda camx
-    clc
-    adc camdx
-    sta camx
-    beq @flipx
-    cmp #96
-    bne @xdone
-@flipx:
-    lda #0
-    sec
-    sbc camdx
-    sta camdx
-@xdone:
-    lda camy
-    clc
-    adc camdy
-    sta camy
-    beq @flipy
-    cmp #8
-    bne @ydone
-@flipy:
-    lda #0
-    sec
-    sbc camdy
-    sta camdy
-@ydone:
-    lda camx
-    sta SPR_CAMX
-    lda camy
-    sta SPR_CAMY
-
-    ; Move the overlay dot: erase, bounce over x 9..150 / y 20..110, redraw
-    ldy doty
-    lda rowtab_lo,y
-    sta ptr
-    lda rowtab_hi,y
-    sta ptr+1
-    lda dotx
-    lsr
-    lsr
-    lsr
-    tay
-    lda #0
-    sta (ptr),y
-    lda dotx
-    clc
-    adc dotdx
-    sta dotx
-    cmp #9
-    beq @dflipx
-    cmp #150
-    bne @dxdone
-@dflipx:
-    lda #0
-    sec
-    sbc dotdx
-    sta dotdx
-@dxdone:
-    lda doty
-    clc
-    adc dotdy
-    sta doty
-    cmp #20
-    beq @dflipy
-    cmp #110
-    bne @dydone
-@dflipy:
-    lda #0
-    sec
-    sbc dotdy
-    sta dotdy
-@dydone:
-    ldy doty
-    lda rowtab_lo,y
-    sta ptr
-    lda rowtab_hi,y
-    sta ptr+1
-    lda dotx
-    and #7
-    tay
-    lda bittab,y
-    sta tmp
-    lda dotx
-    lsr
-    lsr
-    lsr
-    tay
-    lda tmp
-    sta (ptr),y
-
-    lda #0
-    sta SPR_INDEX      ; Rewind the list index
-    ldx #0
-update:
-    ; --- X axis ---
-    lda dirs,x
-    and #1
-    bne @moving_left
-    inc xpos,x         ; Moving right
-    lda xpos,x
-    cmp #MAX_X
-    bcc @x_done
-    lda dirs,x         ; Hit right edge: turn left
-    ora #1
-    sta dirs,x
-    bne @x_done
-@moving_left:
-    dec xpos,x
-    lda xpos,x
-    bne @x_done
-    lda dirs,x         ; Hit left edge: turn right
-    and #$FE
-    sta dirs,x
-@x_done:
-    ; --- Y axis ---
-    lda dirs,x
-    and #2
-    bne @moving_up
-    inc ypos,x         ; Moving down
-    lda ypos,x
-    cmp #MAX_Y
-    bcc @y_done
-    lda dirs,x         ; Hit bottom edge: turn up
-    ora #2
-    sta dirs,x
-    bne @y_done
-@moving_up:
-    dec ypos,x
-    lda ypos,x
-    bne @y_done
-    lda dirs,x         ; Hit top edge: turn down
-    and #$FD
-    sta dirs,x
-@y_done:
-    ; --- Stream this entry to the compositor ---
-    lda xpos,x
-    sta SPR_X
-    lda ypos,x
-    sta SPR_Y
-    lda init_b,x       ; This sprite's pattern base in the sheet
-    sta SPR_BASE
-    lda dirs,x
-    eor #3             ; Arrow points along travel: flip when moving right/down
-    and #3
-    ora init_f,x       ; Static per-sprite bits: palette base and bpp
-    sta SPR_FLAGS      ; Commit, index auto-increments
-    inx
-    cpx #NSPR
-    bne update
-
-    inc $F12           ; Heartbeat for debugging
-    jmp main_loop
+@n: dex
+    bne @r
+    rts
 
 ; ------------------------------------------------------------------------------
 ; Data
 ; ------------------------------------------------------------------------------
-text:
-    .byte "SCROLLING TILEMAP", 0
+; brick types:   0    b    h    s    i    p   hdmg
+type_tile:
+    .byte  0,  12,  16,  24,  28,  32,  20
+type_hi:
+    .byte  0, $0C, $0C, $0C, $0C, $0C, $0C
+type_pts:
+    .byte  0, $10, $20, $30, $00, $50, $20
+type_next:
+    .byte  0,   0,   6,   0,   4,   0,   0
 
-paltbl4:
-    ; {pal[3:0], bpp-1=1, no flips} for each tile row mod 8
-    .byte $84, $24, $A4, $44, $C4, $54, $34, $04
+; paddle-english zones: (vx, vy) in signed 8.8
+zone_vx_lo: .byte $C0, $40, $40, $C0, $40
+zone_vx_hi: .byte $FE, $FF, $00, $00, $01
+zone_vy_lo: .byte $40, $C0, $80, $C0, $40
+zone_vy_hi: .byte $FF, $FE, $FE, $FE, $FF
+
+times11:
+    .byte 0, 11, 22, 33, 44, 55, 66, 77, 88, 99
+
+rowmap_lo:
+    .byte $00, $20, $40, $60, $80, $A0, $C0, $E0, $00, $20, $40, $60, $80, $A0, $C0, $E0
+rowmap_hi:
+    .byte $F0, $F0, $F0, $F0, $F0, $F0, $F0, $F0, $F1, $F1, $F1, $F1, $F1, $F1, $F1, $F1
+rowmap2_lo:
+    .byte $40, $60, $80, $A0, $C0, $E0, $00, $20, $40, $60
+rowmap2_hi:
+    .byte $F0, $F0, $F0, $F0, $F0, $F0, $F1, $F1, $F1, $F1
+
+lvl_tens:
+    .byte $B0,$B0,$B0,$B0,$B0,$B0,$B0,$B0,$B0,$B1,$B1,$B1,$B1,$B1,$B1
+lvl_ones:
+    .byte $B1,$B2,$B3,$B4,$B5,$B6,$B7,$B8,$B9,$B0,$B1,$B2,$B3,$B4,$B5
+
+txt_score: .byte "SCORE"
+txt_balls: .byte "BALLS"
+txt_level: .byte "LEVEL"
 
 font46:
-    .byte $07, $05, $05, $05, $07, $00, $05, $05, $05, $05, $02, $00, $07, $01, $03, $01
-    .byte $07, $00, $03, $05, $03, $05, $05, $00, $01, $01, $01, $01, $07, $00, $02, $05
-    .byte $07, $05, $05, $00, $05, $05, $02, $02, $02, $00, $00, $00, $00, $00, $00, $00
-    .byte $05, $05, $07, $04, $04, $00, $05, $05, $02, $05, $05, $00, $07, $01, $07, $05
-    .byte $07, $00, $01, $01, $01, $00, $01, $00
-txtoff:
-    .byte $00, $06, $0C, $12, $18, $1E, $24, $2A, $30, $36, $3C, $42
-rowtab_lo:
-    .byte $00, $14, $28, $3C, $50, $64, $78, $8C, $A0, $B4, $C8, $DC, $F0, $04, $18, $2C
-    .byte $40, $54, $68, $7C, $90, $A4, $B8, $CC, $E0, $F4, $08, $1C, $30, $44, $58, $6C
-    .byte $80, $94, $A8, $BC, $D0, $E4, $F8, $0C, $20, $34, $48, $5C, $70, $84, $98, $AC
-    .byte $C0, $D4, $E8, $FC, $10, $24, $38, $4C, $60, $74, $88, $9C, $B0, $C4, $D8, $EC
-    .byte $00, $14, $28, $3C, $50, $64, $78, $8C, $A0, $B4, $C8, $DC, $F0, $04, $18, $2C
-    .byte $40, $54, $68, $7C, $90, $A4, $B8, $CC, $E0, $F4, $08, $1C, $30, $44, $58, $6C
-    .byte $80, $94, $A8, $BC, $D0, $E4, $F8, $0C, $20, $34, $48, $5C, $70, $84, $98, $AC
-    .byte $C0, $D4, $E8, $FC, $10, $24, $38, $4C
-rowtab_hi:
-    .byte $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E0, $E1, $E1, $E1
-    .byte $E1, $E1, $E1, $E1, $E1, $E1, $E1, $E1, $E1, $E1, $E2, $E2, $E2, $E2, $E2, $E2
-    .byte $E2, $E2, $E2, $E2, $E2, $E2, $E2, $E3, $E3, $E3, $E3, $E3, $E3, $E3, $E3, $E3
-    .byte $E3, $E3, $E3, $E3, $E4, $E4, $E4, $E4, $E4, $E4, $E4, $E4, $E4, $E4, $E4, $E4
-    .byte $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E5, $E6, $E6, $E6
-    .byte $E6, $E6, $E6, $E6, $E6, $E6, $E6, $E6, $E6, $E6, $E7, $E7, $E7, $E7, $E7, $E7
-    .byte $E7, $E7, $E7, $E7, $E7, $E7, $E7, $E8, $E8, $E8, $E8, $E8, $E8, $E8, $E8, $E8
-    .byte $E8, $E8, $E8, $E8, $E9, $E9, $E9, $E9
-bittab:
-    .byte $01, $02, $04, $08, $10, $20, $40, $80
+    .byte $02,$05,$07,$05,$05,$00   ; 0  A
+    .byte $07,$01,$03,$01,$07,$00   ; 6  E
+    .byte $07,$01,$05,$05,$07,$00   ; 12 G
+    .byte $05,$07,$07,$05,$05,$00   ; 18 M
+    .byte $07,$05,$05,$05,$07,$00   ; 24 O
+    .byte $03,$05,$03,$01,$01,$00   ; 30 P
+    .byte $03,$05,$03,$05,$05,$00   ; 36 R
+    .byte $07,$01,$07,$04,$07,$00   ; 42 S
+    .byte $05,$05,$05,$05,$02,$00   ; 48 V
+    .byte $05,$05,$02,$05,$05,$00   ; 54 X
+    .byte $00,$00,$00,$00,$00,$00   ; 60 space
 
+msg_press_t:
+    .byte 30, 36, 6, 42, 42, 60, 54, 60          ; PRESS X
+msg_over_t:
+    .byte 12, 0, 18, 6, 60, 24, 48, 6, 36, 60    ; GAME OVER
 
-pattern:
-    ; Sheet image, one 8-byte plane slot per line: 4bpp arrow at base 0
-    ; (planes 1-2 subsets of the silhouette), 1bpp disc at 4, 2bpp diamond
-    ; at 5 (rim + inner), 1bpp cross at 7 - mixed footprints back to back
-    .byte $01, $03, $07, $0F, $1F, $13, $21, $40
-    .byte $00, $03, $00, $0F, $00, $13, $00, $40
-    .byte $00, $00, $00, $00, $10, $10, $20, $40
-    .byte $00, $00, $00, $00, $00, $00, $00, $00
-    .byte $3C, $7E, $FF, $FF, $FF, $FF, $7E, $3C
-    .byte $18, $3C, $7E, $FF, $FF, $7E, $3C, $18
-    .byte $00, $18, $3C, $7E, $7E, $3C, $18, $00
-    .byte $81, $42, $24, $18, $18, $24, $42, $81
+.include "breakout_data.asm"
 
-init_f:
-    .byte $8C, $80, $84, $80, $8C, $20, $24, $20, $8C, $A0, $A4, $A0, $8C, $40, $44, $40
-    .byte $8C, $C0, $C4, $C0, $8C, $50, $54, $50, $8C, $30, $34, $30, $8C, $00, $04, $00
-    .byte $8C, $80, $84, $80, $8C, $20, $24, $20, $8C, $A0, $A4, $A0, $8C, $40, $44, $40
-    .byte $8C, $C0, $C4, $C0, $8C, $50, $54, $50, $8C, $30, $34, $30, $8C, $00, $04, $00
-    .byte $8C, $80, $84, $80, $8C, $20, $24, $20, $8C, $A0, $A4, $A0, $8C, $40, $44, $40
-    .byte $8C, $C0, $C4, $C0, $8C, $50, $54, $50, $8C, $30, $34, $30, $8C, $00, $04, $00
-    .byte $8C, $80, $84, $80, $8C, $20, $24, $20, $8C, $A0, $A4, $A0, $8C, $40, $44, $40
-    .byte $8C, $C0, $C4, $C0, $8C, $50, $54, $50, $8C, $30, $34, $30, $8C, $00, $04, $00
-init_b:
-    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
-    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
-    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
-    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
-    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
-    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
-    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
-    .byte $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07, $00, $04, $05, $07
-init_x:
-    .byte $4E, $3D, $18, $91, $8D, $65, $8F, $35, $64, $75, $05, $00, $49, $23, $32, $51
-    .byte $55, $48, $1E, $32, $39, $4C, $71, $02, $03, $27, $7B, $69, $6D, $62, $6C, $96
-    .byte $5D, $7B, $4C, $5B, $4D, $33, $23, $2F, $73, $32, $81, $41, $91, $48, $96, $83
-    .byte $3D, $4E, $52, $64, $31, $62, $45, $34, $4B, $35, $2F, $52, $5D, $57, $18, $40
-    .byte $45, $81, $50, $7D, $05, $81, $57, $69, $83, $48, $05, $93, $69, $36, $92, $15
-    .byte $8D, $63, $1E, $0E, $28, $38, $49, $3D, $53, $23, $23, $74, $64, $3D, $24, $22
-    .byte $1D, $16, $5C, $17, $2C, $37, $93, $3A, $03, $4E, $59, $7D, $38, $4C, $8E, $4F
-    .byte $45, $49, $6A, $4F, $58, $95, $55, $5F, $1B, $19, $17, $8E, $8C, $53, $6F, $14
-init_y:
-    .byte $3B, $54, $3B, $2A, $09, $0C, $02, $37, $42, $17, $15, $58, $07, $15, $03, $1B
-    .byte $66, $06, $0B, $11, $40, $0A, $0F, $2B, $65, $31, $3D, $17, $25, $1A, $57, $56
-    .byte $10, $67, $4C, $39, $16, $37, $1B, $0E, $37, $1A, $16, $16, $13, $20, $4B, $62
-    .byte $6A, $69, $0C, $00, $4C, $14, $58, $21, $4A, $63, $0E, $66, $42, $25, $40, $4D
-    .byte $45, $1A, $4C, $18, $23, $32, $64, $65, $6C, $2D, $57, $05, $10, $2A, $34, $29
-    .byte $1F, $5B, $5D, $0F, $19, $2F, $40, $68, $6E, $56, $0F, $35, $4E, $10, $09, $14
-    .byte $09, $1D, $2D, $56, $60, $1D, $5D, $0C, $21, $0F, $37, $54, $5D, $05, $2D, $1F
-    .byte $34, $4E, $3E, $5E, $46, $3A, $09, $1F, $43, $69, $10, $53, $4B, $6B, $31, $0B
-init_d:
-    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
-    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
-    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
-    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
-    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
-    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
-    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
-    .byte $00, $00, $01, $01, $00, $00, $01, $01, $02, $02, $03, $03, $02, $02, $03, $03
-
-
-; ------------------------------------------------------------------------------
-; Interrupt Handlers
 ; ------------------------------------------------------------------------------
 nmi_handler:
     rti
-
 irq_handler:
     rti
 
-; ------------------------------------------------------------------------------
-; Interrupt vectors
-; ------------------------------------------------------------------------------
 .segment "VECTORS"
-    .word $0000   ; NMI vector - not used
-    .word $0300   ; RESET vector - points to program start
-    .word $0000   ; IRQ vector - not used
+    .word $0000
+    .word $0300
+    .word $0000

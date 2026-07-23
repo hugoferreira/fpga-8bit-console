@@ -8,7 +8,7 @@
 `define VERILATOR
 `endif
 
-module top(input logic clk_i, input logic rst_i, 
+module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
            output logic hsync, output logic vsync, output logic [23:0] rgb);
   localparam WIDTH = 320, HEIGHT = 240;
 
@@ -32,6 +32,7 @@ module top(input logic clk_i, input logic rst_i,
     .hsync, 
     .vpos, 
     .hpos, 
+    .buttons(buttons),
     .rgb
   );
 endmodule

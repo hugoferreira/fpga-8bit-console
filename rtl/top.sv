@@ -32,7 +32,7 @@ module top(input  bit clk, output bit yellow_led,
 
   lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk(videoclk), .reset, .rgb, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
   scalescreen #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) scaler0(.clk(videoclk), .reset, .vp, .hp, .vpos, .hpos);
-  chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE)) chip(.clk(masterclk), .cpuclk(cpuclk), .reset, .vsync, .hsync, .vpos, .hpos, .rgb);
+  chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE)) chip(.clk(masterclk), .cpuclk(cpuclk), .reset, .vsync, .hsync, .vpos, .hpos, .buttons(8'h00), .rgb);
 
   /* wire tx_ready;
 

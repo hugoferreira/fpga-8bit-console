@@ -122,19 +122,21 @@ module memory_arbiter(
     ovl_cs = 0;
     
     if (!reset) begin  // Don't assert chip selects during reset
-      // Address decoding - use the same memory map as in addressdecoder.sv
-      if ((mem_addr < 16'h1000) || (mem_addr >= 16'hFFFA)) begin
-        // RAM and vectors - rewritten to avoid >= 16'h0000 warning
-        ram_cs = 1;
-      end else if (mem_addr >= 16'hF000 && mem_addr < 16'hF800) begin
-        // Text buffer (character and attribute RAM)
-        tb_cs = 1;
-      end else if (mem_addr >= 16'h4000 && mem_addr < 16'h4100) begin
+      // Device windows carved out of a 64KB RAM map. (The old decode only
+      // exposed $0000-$0FFF of RAM, which silently open-bussed any program
+      // larger than 4KB - the Breakout port's level data was the first
+      // thing to cross the line.)
+      if (mem_addr >= 16'h4000 && mem_addr < 16'h4100) begin
         // PPU registers
         sp_cs = 1;
       end else if (mem_addr >= 16'hE000 && mem_addr < 16'hEA00) begin
         // Overlay bitmap (write-only)
         ovl_cs = 1;
+      end else if (mem_addr >= 16'hF000 && mem_addr < 16'hF800) begin
+        // Tilemap (write-only)
+        tb_cs = 1;
+      end else begin
+        ram_cs = 1;
       end
     end
   end

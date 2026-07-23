@@ -14,6 +14,7 @@ const MAX_FPS: u32 = 60;
 pub struct Top {
     #[port(clock)]  pub clk_i: bool,
     #[port(reset)]  pub rst_i: bool,
+    #[port(input)]  pub buttons: [bool; 8],
     #[port(output)] pub hsync: bool,
     #[port(output)] pub vsync: bool,
     #[port(output)] pub rgb: [bool; 24],
@@ -41,6 +42,8 @@ fn resetdesign(tb: &mut Top, clocks: &mut u64) {
 fn main() {    
     let buffer_read = Arc::new(Mutex::new(vec![0_u32; WIDTH * HEIGHT]));
     let buffer_write = Arc::clone(&buffer_read);
+    let keys_read = Arc::new(Mutex::new(0_u8));
+    let keys_write = Arc::clone(&keys_read);
 
     let (tx, rx) = mpsc::sync_channel(1);
 
@@ -65,6 +68,7 @@ fn main() {
                 vblank = true;
                 vpos = 0;
                 frame += 1;
+                tb.set_buttons(*keys_read.lock().unwrap());
 
                 buffer_write.lock().unwrap().clone_from(&buffer);
                 tx.send(1).unwrap();
@@ -101,6 +105,14 @@ fn main() {
     window.limit_update_rate(Some(Duration::from_micros((1000000/MAX_FPS).into())));
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        let mut b = 0_u8;
+        if window.is_key_down(Key::Left)  { b |= 0x01; }
+        if window.is_key_down(Key::Right) { b |= 0x02; }
+        if window.is_key_down(Key::Up)    { b |= 0x04; }
+        if window.is_key_down(Key::Down)  { b |= 0x08; }
+        if window.is_key_down(Key::Z)     { b |= 0x10; }
+        if window.is_key_down(Key::X)     { b |= 0x20; }
+        *keys_write.lock().unwrap() = b;
         window.update_with_buffer(&buffer_read.lock().unwrap(), WIDTH, HEIGHT).unwrap_or_else(|e| { 
             panic!("{}", e); 
         });

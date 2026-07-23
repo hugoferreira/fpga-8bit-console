@@ -31,6 +31,7 @@
 //   $5  control: bit0 tilemap en,  $D  frame counter (RO, +1 per vsync)
 //       bit1 overlay en            $E  staged pattern base
 //   $6  overlay color (4 bits, sampled per displayed pixel)
+//   $7  buttons (read-only): bit0 left, 1 right, 2 up, 3 down, 4 O, 5 X
 //   $B: bit0 xflip, bit1 yflip, bits3:2 bpp-1, bits7:4 palette base
 //       (pixel color = palette base + pixel value, mod 16); writing commits
 //       the staged X/Y/base and auto-increments the list index
@@ -51,6 +52,7 @@
 module sprite_compositor(input bit clk, input bit reset,
               input bit cs, input bit rw, input logic [5:0] addr, input logic [7:0] di, output logic [7:0] dout,
               input bit map_cs, input logic [9:0] map_addr,
+              input logic [7:0] btn,
               input bit ovl_cs, input logic [11:0] ovl_addr,
               input logic [7:0] hpos, input logic [6:0] vpos, input bit vsync, input bit hsync,
               output logic [3:0] color,
@@ -541,6 +543,7 @@ module sprite_compositor(input bit clk, input bit reset,
           6'h04: dout <= {1'b0, camera_y};
           6'h05: dout <= {6'b0, ovl_en, tiles_en};
           6'h06: dout <= {4'b0, ovl_color};
+          6'h07: dout <= btn;
           6'h08: dout <= sp_index;
           6'h0C: dout <= sp_count;
           6'h0D: dout <= frame_count;
