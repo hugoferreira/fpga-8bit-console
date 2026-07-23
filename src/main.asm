@@ -25,7 +25,7 @@
     .define SPR_COUNT          $400C
     .define SPR_FRAME          $400D
     .define SPR_BASE           $400E
-    .define SPR_PALT           $4034
+    .define SPR_SPAL           $4020
 
     .define MAP_LO             $F000
     .define MAP_HI             $F200
@@ -42,7 +42,7 @@
     .define ARENA_T            16     ; interior top edge
     .define PAD_Y              106    ; paddle sprite y
     .define PAD_MIN            16
-    .define PAD_MAX            91     ; 13px paddle in the 88px interior
+    .define PAD_MAX            80     ; 24px paddle in the 88px interior
     .define BALL_DEATH         118
 
     ; Game states
@@ -97,7 +97,7 @@ start:
     lda gfx_data+256,x
     sta SPR_SHDATA
     inx
-    cpx #64
+    cpx #96
     bne @gfx2
 
     ; Clear the whole tilemap and overlay
@@ -129,7 +129,7 @@ start:
     ; Walls: top row 1 (cols 1-13), sides cols 1 and 13 (rows 1-14)
     ldx #1
 @topwall:
-    lda #36            ; wall pattern base
+    lda #40            ; wall pattern base
     sta MAP_LO+32,x    ; row 1 starts at cell 32
     lda #$0C           ; 4bpp, pal 0
     sta MAP_HI+32,x
@@ -143,7 +143,7 @@ start:
     lda rowmap_hi,x
     sta ptr+1
     ldy #1
-    lda #36
+    lda #40
     sta (ptr),y
     ldy #13
     sta (ptr),y
@@ -192,6 +192,12 @@ start:
     cpx #5
     bne @hud3
 
+    ; Original look: navy background, value 3 renders black (mortar)
+    lda #1
+    sta SPR_SPAL+0
+    lda #0
+    sta SPR_SPAL+3
+
     ; PPU on: tilemap + overlay, white overlay text
     lda #7
     sta SPR_OVLCOL
@@ -226,7 +232,7 @@ do_serve:
     jsr move_paddle
     lda padx
     clc
-    adc #4
+    adc #9
     sta ballx+1
     lda #0
     sta ballx
@@ -364,16 +370,23 @@ do_play:
     sec
     sbc padx
     clc
-    adc #6                 ; 0..19 when overlapping
-    cmp #20
+    adc #6                 ; 0..29 when overlapping
+    cmp #30
     bcs @nopad
-    lsr
-    lsr                    ; zone 0..4
-    cmp #5
+    ldy #0
+    cmp #6
     bcc @zok
-    lda #4
+    iny
+    cmp #12
+    bcc @zok
+    iny
+    cmp #18
+    bcc @zok
+    iny
+    cmp #24
+    bcc @zok
+    iny
 @zok:
-    tay
     lda bvx+1
     sta tmp3               ; remember travel direction
     lda zone_vx_lo,y
@@ -613,7 +626,7 @@ frame_end:
     sta SPR_FLAGS
     lda padx
     clc
-    adc #5
+    adc #8
     sta SPR_X
     lda #PAD_Y
     sta SPR_Y
@@ -621,7 +634,17 @@ frame_end:
     sta SPR_BASE
     lda #$0C
     sta SPR_FLAGS
-    lda #3
+    lda padx
+    clc
+    adc #16
+    sta SPR_X
+    lda #PAD_Y
+    sta SPR_Y
+    lda #12
+    sta SPR_BASE
+    lda #$0C
+    sta SPR_FLAGS
+    lda #4
     sta SPR_COUNT
     jmp main_loop
 
@@ -899,7 +922,7 @@ msg_clear:
 ; ------------------------------------------------------------------------------
 ; brick types:   0    b    h    s    i    p   hdmg
 type_tile:
-    .byte  0,  12,  16,  24,  28,  32,  20
+    .byte  0,  16,  20,  28,  32,  36,  24
 type_hi:
     .byte  0, $0C, $0C, $0C, $0C, $0C, $0C
 type_pts:
