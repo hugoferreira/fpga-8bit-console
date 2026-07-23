@@ -85,6 +85,16 @@
     .define spvx    $29
     .define spvy    $2A
     .define spcol   $2B
+    .define padvx   $2C    ; and $2D (signed 8.8)
+    .define padxf   $2E    ; paddle x fraction
+    .define ballspd $2F    ; wind-up speed level 0-2
+    .define windt   $30    ; and $31
+    .define chain   $32    ; score multiplier 1-7
+    .define chaint  $33    ; chain window frames
+    .define flasht  $34    ; screen flash frames
+    .define spkind  $35    ; particle kind for spawn
+    .define mulk    $36    ; scratch (brick_hit)
+    .define sidx    $37    ; scratch (brick_hit)
 
     ; Particle pool (12), one page
     .define PPX     $2100
@@ -93,6 +103,7 @@
     .define PVY     $2130
     .define PLIFE   $2140
     .define PCOL    $2150
+    .define PKIND   $2160  ; 0 = burst spark, 1 = ball trail
 
     ; Brick shadow map: 10 rows x 11 cols (well above the program image,
     ; which now extends past $1200 - the original $0C00 scratch overlapped
@@ -277,25 +288,17 @@ do_serve:
     jsr msg_clear
     lda #ST_PLAY
     sta state
-    ; serve vector: dy = -1.25, dx = +/-0.75 alternating
-    lda #$C0
-    sta bvy
-    lda #$FE
-    sta bvy+1
-    lda servedx
-    eor #1
-    sta servedx
-    beq @sleft
-    lda #$C0
-    sta bvx
-    lda #$00
-    sta bvx+1
-    jmp @done
-@sleft:
-    lda #$40
-    sta bvx
-    lda #$FF
-    sta bvx+1
+    ; serve at a near-vertical angle with per-serve variation
+    lda #0
+    sta ballspd
+    sta windt
+    sta windt+1
+    lda blink
+    and #3
+    clc
+    adc #5                 ; angle index 5..8
+    tay
+    jsr set_vec
 @done:
     jmp frame_end
 
@@ -315,6 +318,35 @@ do_over:
 ; --- play ----------------------------------------------------------------------
 do_play:
     jsr move_paddle
+
+    ; speed wind-up: every 600 frames raise the speed level (applies at
+    ; the next paddle bounce), max level 2
+    inc windt
+    bne @wnb
+    inc windt+1
+@wnb:
+    lda windt+1
+    cmp #2
+    bcc @wdone
+    lda windt
+    cmp #$58
+    bcc @wdone
+    lda #0
+    sta windt
+    sta windt+1
+    lda ballspd
+    cmp #2
+    bcs @wdone
+    inc ballspd
+@wdone:
+    ; chain multiplier window
+    lda chaint
+    beq @chz
+    dec chaint
+    bne @chz
+    lda #1
+    sta chain
+@chz:
 
     ; ball position += velocity (16-bit signed adds)
     lda ballx
@@ -408,43 +440,42 @@ do_play:
     bcc @zok
     iny
 @zok:
-    lda bvx+1
-    sta tmp3               ; remember travel direction
-    lda zone_vx_lo,y
-    sta bvx
-    lda zone_vx_hi,y
-    sta bvx+1
-    lda zone_vy_lo,y
-    sta bvy
-    lda zone_vy_hi,y
-    sta bvy+1
-    cpy #2
-    bne @nopad
-    lda tmp3               ; center zone keeps horizontal direction
-    bpl @nopad
-    jsr negx
+    lda zone_ang,y
+    tay
+    ; paddle velocity biases the bounce one angle step
+    lda padvx+1
+    bmi @bleft
+    bne @bright
+    lda padvx
+    cmp #$60
+    bcc @nobias
+@bright:
+    cpy #12
+    bcs @nobias
+    iny
+    bne @nobias
+@bleft:
+    cpy #0
+    beq @nobias
+    dey
+@nobias:
+    jsr set_vec
+    lda #1                 ; returning to the paddle resets the chain
+    sta chain
 @nopad:
 
-    ; ball trail spark every other frame
-    lda blink
-    and #1
-    bne @notrail
+    ; ball trail: a shrinking circle every frame (white -> yellow -> orange)
     lda ballx+1
-    clc
-    adc #2
     sta spx
     lda bally+1
-    clc
-    adc #2
     sta spy
     lda #0
     sta spvx
     sta spvy
-    lda #$90               ; yellow (pal 9 -> color 10)
-    sta spcol
-    lda #4
+    lda #1
+    sta spkind
+    lda #12
     jsr spawn_particle
-@notrail:
 
     ; --- brick collisions: probe ahead of the ball center on each axis ---
     lda ballx+1
@@ -504,6 +535,8 @@ do_play:
     stx level
     jsr build_level
     jsr draw_hud
+    lda #6
+    sta flasht
     lda #ST_SERVE
     sta state
 @go:
@@ -555,10 +588,17 @@ brick_hit:
     adc hitc
     tay
     ldx shadow,y           ; X = type code
-    sed                    ; score += points[type] (BCD)
+    sty sidx
+    ; score += points[type] * chain (BCD), then boost the chain
+    lda type_pts,x
+    beq @nopts
+    sta mulk
+    ldy chain
+    sed
+@mul:
     lda score0
     clc
-    adc type_pts,x
+    adc mulk
     sta score0
     lda score1
     adc #0
@@ -566,7 +606,18 @@ brick_hit:
     lda score2
     adc #0
     sta score2
+    dey
+    bne @mul
     cld
+    lda chain
+    cmp #7
+    bcs @cmax
+    inc chain
+@cmax:
+    lda #44
+    sta chaint
+@nopts:
+    ldy sidx
     lda type_next,x
     sta shadow,y
     pha
@@ -613,6 +664,8 @@ brick_hit:
     clc
     adc #19                ; brick center y
     sta spy
+    lda #0
+    sta spkind
     ldy #0
 @burst:
     lda burst_vx,y
@@ -652,31 +705,98 @@ negy:
     rts
 
 ; ------------------------------------------------------------------------------
+; Paddle with momentum: accelerate 0.5/frame toward +/-2.5, decay by
+; ~x0.75 per frame when no key is held (the original decays by /1.3)
 move_paddle:
     lda btn
     and #BTN_L
     beq @notl
-    lda padx
+    lda padvx
     sec
-    sbc #3
-    cmp #PAD_MIN
-    bcs @stl
-    lda #PAD_MIN
-@stl:
-    sta padx
+    sbc #$80
+    sta padvx
+    lda padvx+1
+    sbc #0
+    sta padvx+1
+    cmp #$FD               ; clamp at -2.5 ($FD80)
+    bcs @chkr
+    lda #$80
+    sta padvx
+    lda #$FD
+    sta padvx+1
+    jmp @apply
 @notl:
+@chkr:
     lda btn
     and #BTN_R
-    beq @notr
-    lda padx
+    beq @friction
+    lda padvx
     clc
-    adc #3
-    cmp #PAD_MAX
-    bcc @str
-    lda #PAD_MAX
-@str:
+    adc #$80
+    sta padvx
+    lda padvx+1
+    adc #0
+    sta padvx+1
+    cmp #3                 ; clamp at +2.5 ($0280)
+    bcc @apply
+    lda #$80
+    sta padvx
+    lda #$02
+    sta padvx+1
+    jmp @apply
+@friction:
+    lda btn
+    and #BTN_L
+    bne @apply
+    ; v -= v>>2 (arithmetic), toward zero
+    lda padvx+1
+    cmp #$80
+    ror
+    sta tmp
+    lda padvx
+    ror
+    sta tmp2
+    lda tmp
+    cmp #$80
+    ror
+    sta tmp
+    lda tmp2
+    ror
+    sta tmp2
+    lda padvx
+    sec
+    sbc tmp2
+    sta padvx
+    lda padvx+1
+    sbc tmp
+    sta padvx+1
+@apply:
+    lda padxf
+    clc
+    adc padvx
+    sta padxf
+    lda padx
+    adc padvx+1
     sta padx
-@notr:
+    cmp #PAD_MIN
+    bcs @okmin
+    lda #PAD_MIN
+    sta padx
+    lda #0
+    sta padvx
+    sta padvx+1
+    sta padxf
+@okmin:
+    lda padx
+    cmp #PAD_MAX
+    bcc @done
+    lda #PAD_MAX
+    sta padx
+    lda #0
+    sta padvx
+    sta padvx+1
+    sta padxf
+@done:
     rts
 
 ; ------------------------------------------------------------------------------
@@ -694,19 +814,83 @@ spawn_particle:
     sta PVY,x
     lda spcol
     sta PCOL,x
+    lda spkind
+    sta PKIND,x
     inx
-    cpx #12
+    cpx #16
     bne @w
     ldx #0
 @w: stx pnext
     rts
 
 frame_end:
+    ; powerup chests shimmer: rewrite their tile attribute every 8 frames
+    lda blink
+    and #7
+    bne @noblink
+    ldx #0                 ; brick row
+@brow:
+    lda rowmap2_lo,x
+    sta ptr2
+    lda rowmap2_hi,x
+    clc
+    adc #2                 ; attribute page
+    sta ptr2+1
+    lda #0
+    sta colv
+@bcol:
+    txa
+    pha
+    lda times11,x
+    clc
+    adc colv
+    tay
+    lda shadow,y
+    cmp #5
+    bne @bnext
+    lda colv
+    clc
+    adc #2
+    tay
+    lda blink
+    and #8
+    beq @balt
+    lda #$2C               ; alternate chest palette
+    bne @bset
+@balt:
+    lda #$0C
+@bset:
+    sta (ptr2),y
+@bnext:
+    pla
+    tax
+    inc colv
+    lda colv
+    cmp #11
+    bne @bcol
+    inx
+    cpx #10
+    bne @brow
+@noblink:
+    ; level-clear screen flash via the screen palette
+    lda flasht
+    beq @noflash
+    dec flasht
+    lda #7
+    bne @setbg
+@noflash:
+    lda #1
+@setbg:
+    sta SPR_SPAL+0
     ; screen shake: camera moves the tile layer, sprites get the inverse
     lda shaket
     beq @noshake
     dec shaket
-    ldx shaket
+    lda shaket
+    clc
+    adc blink              ; vary the wobble direction
+    and #7
+    tax
     lda shake_tbl,x
     sta SPR_CAMX
     eor #$FF
@@ -767,8 +951,23 @@ frame_end:
     ldx #0
 @ploop:
     lda PLIFE,x
-    beq @pdead
+    bne @palive
+    jmp @pdead
+@palive:
     dec PLIFE,x
+    ; burst sparks fall: gentle gravity every 4th frame
+    lda PKIND,x
+    bne @nograv
+    lda blink
+    and #3
+    bne @nograv
+    lda PVY,x
+    bmi @grav
+    cmp #2
+    bcs @nograv
+@grav:
+    inc PVY,x
+@nograv:
     lda PPX,x
     clc
     adc PVX,x
@@ -784,6 +983,32 @@ frame_end:
     clc
     adc shx
     sta SPR_X
+    lda PKIND,x
+    beq @bspark
+    ; trail: shrinking circle, white -> yellow -> orange with age
+    lda PLIFE,x
+    cmp #8
+    bcc @t2
+    lda #45
+    sta SPR_BASE
+    lda #$60
+    sta SPR_FLAGS
+    jmp @pnextp
+@t2:
+    cmp #4
+    bcc @t1
+    lda #46
+    sta SPR_BASE
+    lda #$90
+    sta SPR_FLAGS
+    jmp @pnextp
+@t1:
+    lda #47
+    sta SPR_BASE
+    lda #$80
+    sta SPR_FLAGS
+    jmp @pnextp
+@bspark:
     lda #44
     sta SPR_BASE
     lda PCOL,x
@@ -800,21 +1025,30 @@ frame_end:
     sta SPR_FLAGS
 @pnextp:
     inx
-    cpx #12
-    bne @ploop
-    lda #16
+    cpx #16
+    beq @pfin
+    jmp @ploop
+@pfin:
+    lda #20
     sta SPR_COUNT
     jmp main_loop
 
 ; ------------------------------------------------------------------------------
 new_game:
-    ldx #11
+    ldx #15
     lda #0
 @cp: sta PLIFE,x
     dex
     bpl @cp
     sta shaket
     sta pnext
+    sta padvx
+    sta padvx+1
+    sta padxf
+    sta chaint
+    sta flasht
+    lda #1
+    sta chain
     lda #0
     sta score0
     sta score1
@@ -975,6 +1209,15 @@ draw_hud:
     lda #$60
     sta MAP_HI+256+14
     sta MAP_HI+256+15
+    ; chain multiplier "nX" at row 10
+    lda chain
+    ora #$B0
+    sta MAP_LO+320+14
+    lda #$D8               ; 'X' glyph tile
+    sta MAP_LO+320+15
+    lda #$60
+    sta MAP_HI+320+14
+    sta MAP_HI+320+15
     rts
 bcd_two:                   ; A = BCD byte -> A = tens font tile, X = ones
     pha
@@ -1101,6 +1344,25 @@ zone_vx_hi: .byte $FE, $FF, $00, $00, $01
 zone_vy_lo: .byte $40, $C0, $80, $C0, $40
 zone_vy_hi: .byte $FF, $FE, $FE, $FE, $FF
 
+; set_vec: Y = angle index 0-12; applies the current wind-up speed level
+set_vec:
+    tya
+    ldx ballspd
+    clc
+    adc times13,x
+    tay
+    lda ang_vx_lo,y
+    sta bvx
+    lda ang_vx_hi,y
+    sta bvx+1
+    lda ang_vy_lo,y
+    sta bvy
+    lda ang_vy_hi,y
+    sta bvy+1
+    rts
+times13:  .byte 0, 13, 26
+zone_ang: .byte 1, 4, 6, 8, 11
+
 ; spark color by brick type (sprite flags: pal<<4, 1bpp)
 type_spark:
     .byte $60, $D0, $60, $80, $60, $B0, $60
@@ -1149,6 +1411,7 @@ msg_over_t:
     .byte 12, 0, 18, 6, 60, 24, 48, 6, 36, 60    ; GAME OVER
 
 .include "breakout_data.asm"
+.include "breakout_tables.asm"
 
 ; ------------------------------------------------------------------------------
 nmi_handler:
