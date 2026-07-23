@@ -9,7 +9,8 @@
 `endif
 
 module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
-           output logic hsync, output logic vsync, output logic [23:0] rgb);
+           output logic hsync, output logic vsync, output logic [23:0] rgb,
+           output logic [7:0] audio);
   localparam WIDTH = 320, HEIGHT = 240;
 
   logic [7:0] hpos;
@@ -44,6 +45,7 @@ module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
     .vpos, 
     .hpos, 
     .buttons(buttons),
-    .rgb
+    .rgb,
+    .audio(audio)
   );
 endmodule

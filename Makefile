@@ -78,10 +78,10 @@ bin/toplevel.json: ${TOP_LEVEL} ${INCLUDE_FILES} ${PLL_FILE} ${ASM_HEX} ${FONT_H
 
 # C++ / SDL2 simulator runner
 SIM_BIN = build/obj_dir/console
-$(SIM_BIN): sim/main.cpp rtl/*.sv rtl/*.bin rtl/*.hex
+$(SIM_BIN): sim/console.cpp rtl/*.sv rtl/*.bin rtl/*.hex
 	verilator --cc rtl/top_simulator.sv --top-module top -Irtl -O3 \
 		--x-assign fast --x-initial fast -Wno-DEFOVERRIDE \
-		--exe $(abspath sim/main.cpp) -o console --build -j 8 \
+		--exe $(abspath sim/console.cpp) -o console --build -j 8 \
 		-Mdir build/obj_dir \
 		-CFLAGS "-O2 $$(sdl2-config --cflags)" \
 		-LDFLAGS "$$(sdl2-config --libs)"

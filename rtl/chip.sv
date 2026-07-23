@@ -1,4 +1,5 @@
 `include "sprite_compositor.sv"
+`include "psg.sv"
 `include "palette.sv"
 `include "ram_async.sv"
 `include "control.sv"
@@ -10,7 +11,8 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
             input logic vsync, input logic hsync,
             input logic [6:0] vpos, input logic [7:0] hpos,
             input logic [7:0] buttons,
-            output logic [RGB-1:0] rgb);
+            output logic [RGB-1:0] rgb,
+            output logic [7:0] audio);
 
   parameter RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
 
@@ -24,7 +26,8 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
   logic [15:0] mem_addr;
   logic        mem_write;
   logic [7:0]  mem_data_out;
-  logic        tb_cs, sp_cs, ram_cs, ovl_cs;
+  logic        tb_cs, sp_cs, ram_cs, ovl_cs, psg_cs;
+  logic [7:0]  psg_do;
   logic [7:0]  ram_do, tb_do, sp_do;
   
   // DMA signals
@@ -75,12 +78,14 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .tb_cs(tb_cs),
     .sp_cs(sp_cs),
     .ovl_cs(ovl_cs),
+    .psg_cs(psg_cs),
     .mem_addr(mem_addr),
     .mem_write(mem_write),
     .mem_data_out(mem_data_out),
     .ram_data_in(ram_do),
     .tb_data_in(tb_do),
     .sp_data_in(sp_do),
+    .psg_data_in(psg_do),
     
     // DMA interface
     .dma_active(dma_active),
@@ -173,6 +178,19 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .clk(clk),
     .color(sprite_color),
     .rgb(srgb)
+  );
+
+  // PSG: 4-channel sound, sequenced in hardware from the 60 Hz vsync
+  psg psg0(
+    .clk(clk),
+    .reset(reset),
+    .cs(psg_cs),
+    .rw(mem_write),
+    .addr(psg_cs ? mem_addr[7:0] : 8'h0),
+    .di(mem_data_out),
+    .dout(psg_do),
+    .tick(vsync),
+    .pcm(audio)
   );
 
   // Basic Video Signals 

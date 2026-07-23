@@ -9,10 +9,12 @@ palette fades/flashes, chain multiplier, sudden death, and pervasive SFX.
 
 ## Real gaps (hardware evolution candidates)
 
-1. **Audio - the biggest gap by far.** The console has no sound path at all;
-   the original's SFX/music dimension is simply unportable. Needs: a PSG-class
-   synth (2-4 channels: pulse/noise, pitch + envelope registers) plus a DAC/
-   PWM output on hardware and a sample-rate hook in the simulator runner.
+1. **Audio.** v1 DONE (rtl/psg.sv, $4100 window): 4 channels, PICO-8-native
+   note format, hardware sequencer (sfx() = 4 register writes), cart sound
+   data plays unconverted. Remaining for full fidelity: effect interpretation
+   (slides/vibrato/arpeggio), the music/pattern layer above SFX, exact
+   tilted-saw/organ/phaser waves, and a PWM/delta-sigma output stage for
+   real hardware (the simulator resamples PCM to 44.1 kHz via SDL).
 2. **Sprite-vs-tilemap priority.** DONE (behind-split register $4036):
    the list is PARTITIONED, not flagged - entries below the split composite
    before the tile layer, the rest after. Zero extra scan cost (the list is

@@ -29,11 +29,21 @@ int main(int argc, char** argv) {
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         W * SCALE, H * SCALE, SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
+    SDL_AudioSpec want = {}, have = {};
+    want.freq = 44100;
+    want.format = AUDIO_U8;
+    want.channels = 1;
+    want.samples = 1024;
+    SDL_AudioDeviceID adev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+    if (adev) SDL_PauseAudioDevice(adev, 0);
     SDL_Texture* tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888,
         SDL_TEXTUREACCESS_STREAMING, W, H);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 
     std::vector<uint32_t> fb(W * H, 0);
+    std::vector<uint8_t> abuf;
+    abuf.reserve(1024);
+    long aerr = 0;                        // 735 samples per 19481 pixels
     uint32_t hpos = 0, vpos = 0, frame = 0;
     bool vblank = true, hblank = false;
 
@@ -48,6 +58,13 @@ int main(int argc, char** argv) {
             tb->clk_i = 0; tb->eval();
         }
         bool vs = tb->vsync, hs = tb->hsync;
+
+        // resample the PSG output to 44100 Hz (Bresenham across the frame)
+        aerr += 735;
+        if (aerr >= 19481) {
+            aerr -= 19481;
+            abuf.push_back(tb->audio);
+        }
 
         if (vs && !vblank) {
             vblank = true;
@@ -69,6 +86,11 @@ int main(int argc, char** argv) {
             if (k[SDL_SCANCODE_X])     b |= 0x20;
             tb->buttons = b;
 
+            if (adev) {
+                if (SDL_GetQueuedAudioSize(adev) < 4 * 735)
+                    SDL_QueueAudio(adev, abuf.data(), (Uint32)abuf.size());
+                abuf.clear();
+            }
             SDL_UpdateTexture(tex, nullptr, fb.data(), W * 4);
             SDL_RenderClear(ren);
             SDL_RenderCopy(ren, tex, nullptr, nullptr);
@@ -101,6 +123,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (adev) SDL_CloseAudioDevice(adev);
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

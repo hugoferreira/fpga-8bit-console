@@ -28,6 +28,21 @@
     .define SPR_BASE           $400E
     .define SPR_RND            $400F  ; hardware LFSR, read-only
     .define SPR_BSPLIT         $4036  ; list entries below this draw behind tiles
+
+    ; PSG
+    .define PSG_ADDR_LO        $4100
+    .define PSG_ADDR_HI        $4101
+    .define PSG_DATA           $4102
+    .define PSG_CH             $4110  ; +ch*4: start, len, speed, ctrl
+
+    ; sound ids (indices into the sfx_* tables)
+    .define SND_WALL           0
+    .define SND_PADDLE         1
+    .define SND_LOSE           2
+    .define SND_BRICK          3
+    .define SND_SERVE          4
+    .define SND_SHATTER        5
+    .define SND_CHAIN          6
     .define SPR_SPAL           $4020
 
     .define MAP_LO             $F000
@@ -232,6 +247,18 @@ start:
     lda #0
     sta SPR_SPAL+3
 
+    ; Upload the cart's sound effects to the PSG
+    lda #0
+    sta PSG_ADDR_LO
+    sta PSG_ADDR_HI
+    ldx #0
+@sfxup:
+    lda sfx_data,x
+    sta PSG_DATA
+    inx
+    cpx #SFX_BYTES
+    bne @sfxup
+
     ; First 8 list entries (ambient dust) composite behind the tile layer
     lda #8
     sta SPR_BSPLIT
@@ -317,6 +344,9 @@ do_serve:
     sta ballspd
     sta windt
     sta windt+1
+    ldx #SND_SERVE
+    ldy #8
+    jsr sfx_play
     lda SPR_RND
     and #3
     clc
@@ -395,6 +425,7 @@ do_play:
     lda #ARENA_L-1
     sta ballx+1
     jsr negx
+    jsr snd_wall
 @notleft:
     lda ballx+1
     cmp #ARENA_R-7
@@ -402,6 +433,7 @@ do_play:
     lda #ARENA_R-7
     sta ballx+1
     jsr negx
+    jsr snd_wall
 @notright:
     lda bally+1
     cmp #ARENA_T-1
@@ -409,12 +441,16 @@ do_play:
     lda #ARENA_T-1
     sta bally+1
     jsr negy
+    jsr snd_wall
 @nottop:
 
     ; death?
     lda bally+1
     cmp #BALL_DEATH
     bcc @alive
+    ldx #SND_LOSE
+    ldy #8
+    jsr sfx_play
     lda #8
     sta shaket
     dec lives
@@ -486,6 +522,9 @@ do_play:
     jsr set_vec
     lda #1                 ; returning to the paddle resets the chain
     sta chain
+    ldx #SND_PADDLE
+    ldy #4
+    jsr sfx_play
 @nopad:
 
     ; ball trail: a shrinking circle every frame (white -> yellow -> orange)
@@ -637,6 +676,16 @@ brick_hit:
     cmp #7
     bcs @cmax
     inc chain
+    lda chain
+    cmp #7
+    bne @cmax
+    txa
+    pha
+    ldx #SND_CHAIN
+    ldy #12
+    jsr sfx_play
+    pla
+    tax
 @cmax:
     lda #44
     sta chaint
@@ -669,9 +718,24 @@ brick_hit:
     sta ptr2+1
     lda type_hi,x
     sta (ptr2),y           ; MAP_HI
+    ; sound: shatter when destroyed, blip otherwise (hardware sequencer,
+    ; so this is 4 register writes either way)
+    txa
+    pha
+    txa                    ; X here is the NEW type: 0 = destroyed
+    bne @sndhit
+    ldx #SND_SHATTER
+    bne @sndgo
+@sndhit:
+    ldx #SND_BRICK
+@sndgo:
+    ldy #0
+    jsr sfx_play
+    pla
+    tax
     ; game feel: shards + shake + 4 sparks from the brick center
-    lda type_next,x
-    bne @noshard           ; only when the brick is destroyed
+    txa                    ; X is the NEW type: shards only on destruction
+    bne @noshard
     lda #2
     sta spkind
     lda type_spark,x
@@ -746,6 +810,11 @@ brick_hit:
     rts
 
 ; ------------------------------------------------------------------------------
+snd_wall:
+    ldx #SND_WALL
+    ldy #4
+    jmp sfx_play
+
 negx:
     sec
     lda #0
@@ -1462,6 +1531,19 @@ zone_vx_hi: .byte $FE, $FF, $00, $00, $01
 zone_vy_lo: .byte $40, $C0, $80, $C0, $40
 zone_vy_hi: .byte $FF, $FE, $FE, $FE, $FF
 
+; sfx_play: X = sound id, Y = channel*4. Four writes and the hardware
+; sequencer does the rest.
+sfx_play:
+    lda sfx_start,x
+    sta PSG_CH,y
+    lda sfx_len,x
+    sta PSG_CH+1,y
+    lda sfx_spd,x
+    sta PSG_CH+2,y
+    lda #1
+    sta PSG_CH+3,y
+    rts
+
 ; set_vec: Y = angle index 0-12; applies the current wind-up speed level
 set_vec:
     tya
@@ -1530,6 +1612,7 @@ msg_over_t:
 
 .include "breakout_data.asm"
 .include "breakout_tables.asm"
+.include "breakout_sfx.asm"
 
 ; ------------------------------------------------------------------------------
 nmi_handler:

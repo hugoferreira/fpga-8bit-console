@@ -21,12 +21,14 @@ module memory_arbiter(
   output logic tb_cs,               // Tilemap chip select ($F000 window)
   output logic sp_cs,               // PPU register chip select
   output logic ovl_cs,              // Overlay chip select ($E000 window)
+  output logic psg_cs,              // PSG chip select ($4100 window)
   output logic [15:0] mem_addr,     // Memory address bus
   output logic mem_write,           // Memory write signal
   output logic [7:0] mem_data_out,  // Data to memory
   input  logic [7:0] ram_data_in,   // Data from RAM
   input  logic [7:0] tb_data_in,    // Data from text buffer
   input  logic [7:0] sp_data_in,    // Data from sprites
+  input  logic [7:0] psg_data_in,   // Data from the PSG
   
   // DMA interface
   output logic dma_active,          // DMA is active (CPU is halted)
@@ -111,6 +113,7 @@ module memory_arbiter(
     tb_cs = 0;
     sp_cs = 0;
     ovl_cs = 0;
+    psg_cs = 0;
     
     if (!reset) begin  // Don't assert chip selects during reset
       // Device windows carved out of a 64KB RAM map. (The old decode only
@@ -120,6 +123,9 @@ module memory_arbiter(
       if (mem_addr >= 16'h4000 && mem_addr < 16'h4100) begin
         // PPU registers
         sp_cs = 1;
+      end else if (mem_addr >= 16'h4100 && mem_addr < 16'h4200) begin
+        // PSG registers
+        psg_cs = 1;
       end else if (mem_addr >= 16'hE000 && mem_addr < 16'hEA00) begin
         // Overlay bitmap (write-only)
         ovl_cs = 1;
@@ -138,16 +144,18 @@ module memory_arbiter(
   // chip-select from that same cycle. Using the live chip-selects here also
   // created a combinational loop (cpu_addr -> cs -> cpu_data_in -> Arlet AB
   // -> cpu_addr) that made Verilator's settle loop diverge.
-  logic ram_sel_q, tb_sel_q, sp_sel_q;
+  logic ram_sel_q, tb_sel_q, sp_sel_q, psg_sel_q;
   always_ff @(posedge clk) begin
     if (reset) begin
       ram_sel_q <= 0;
       tb_sel_q <= 0;
       sp_sel_q <= 0;
+      psg_sel_q <= 0;
     end else begin
       ram_sel_q <= ram_cs;
       tb_sel_q <= tb_cs;
       sp_sel_q <= sp_cs;
+      psg_sel_q <= psg_cs;
     end
   end
 
@@ -161,6 +169,8 @@ module memory_arbiter(
       cpu_data_in = tb_data_in;
     end else if (sp_sel_q) begin
       cpu_data_in = sp_data_in;
+    end else if (psg_sel_q) begin
+      cpu_data_in = psg_data_in;
     end else begin
       cpu_data_in = 8'hFF; // Default to FF for undriven bus
     end
