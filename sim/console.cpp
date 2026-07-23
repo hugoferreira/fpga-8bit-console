@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 10; i++) { tb->clk_i = !tb->clk_i; tb->eval(); }
     tb->rst_i = 0;
 
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
@@ -36,6 +36,7 @@ int main(int argc, char** argv) {
     want.samples = 1024;
     SDL_AudioDeviceID adev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
     if (adev) SDL_PauseAudioDevice(adev, 0);
+    else fprintf(stderr, "audio disabled: %s\n", SDL_GetError());
     SDL_Texture* tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888,
         SDL_TEXTUREACCESS_STREAMING, W, H);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
@@ -59,7 +60,8 @@ int main(int argc, char** argv) {
         }
         bool vs = tb->vsync, hs = tb->hsync;
 
-        // resample the PSG output to 44100 Hz (Bresenham across the frame)
+        // sample the PSG's 22050 Hz PCM at 44100 Hz (Bresenham across the
+        // frame) - a natural 2x zero-order hold of the chip's native rate
         aerr += 735;
         if (aerr >= 19481) {
             aerr -= 19481;

@@ -9,12 +9,18 @@ palette fades/flashes, chain multiplier, sudden death, and pervasive SFX.
 
 ## Real gaps (hardware evolution candidates)
 
-1. **Audio.** v1 DONE (rtl/psg.sv, $4100 window): 4 channels, PICO-8-native
-   note format, hardware sequencer (sfx() = 4 register writes), cart sound
-   data plays unconverted. Remaining for full fidelity: effect interpretation
-   (slides/vibrato/arpeggio), the music/pattern layer above SFX, exact
-   tilted-saw/organ/phaser waves, and a PWM/delta-sigma output stage for
-   real hardware (the simulator resamples PCM to 44.1 kHz via SDL).
+1. **Audio.** v2 DONE (rtl/psg.sv, $4100 window): a PICO-8-equivalent chip.
+   The cart's audio RAM image ($3100-$42FF: 64 music patterns + 64 SFX
+   records) uploads verbatim; sfx(n,ch) and music(m) are one register write
+   each. PICO-8 timing (22050 Hz virtual rate, 120.49 Hz tick, speed =
+   ticks/row), all 8 waveforms (wave ROM + pitched LFSR noise + dual-osc
+   phaser), all 8 note effects (slide/vibrato/drop/fades/arpeggios), loop
+   and length-only conventions, and a hardware music sequencer with
+   loop-start/loop-back/stop flow control. Remaining for full fidelity:
+   the filter byte (NOIZ/BUZZ/DETUNE/REVERB/DAMPEN), custom SFX/wavetable
+   instruments, auto channel selection, music fades, and a PWM/delta-sigma
+   output stage for real hardware (the simulator samples the 22050 Hz PCM
+   at 44.1 kHz via SDL).
 2. **Sprite-vs-tilemap priority.** DONE (behind-split register $4036):
    the list is PARTITIONED, not flagged - entries below the split composite
    before the tile layer, the rest after. Zero extra scan cost (the list is

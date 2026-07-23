@@ -24,6 +24,10 @@ rust/*.hex
 
 # Tools
 tools/target/
+tools/__pycache__/
+
+# Standalone testbench builds
+rtl/obj_dir/
 
 # Vendored/cloned dependencies
 rust/verilated-rs/

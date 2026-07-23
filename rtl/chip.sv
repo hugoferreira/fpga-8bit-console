@@ -180,7 +180,8 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .rgb(srgb)
   );
 
-  // PSG: 4-channel sound, sequenced in hardware from the 60 Hz vsync
+  // PSG: PICO-8-equivalent audio chip; all timing derived internally
+  // from CLK_HZ (22050 Hz virtual sample rate, 120.49 Hz sequencer tick)
   psg psg0(
     .clk(clk),
     .reset(reset),
@@ -189,7 +190,6 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .addr(psg_cs ? mem_addr[7:0] : 8'h0),
     .di(mem_data_out),
     .dout(psg_do),
-    .tick(vsync),
     .pcm(audio)
   );
 

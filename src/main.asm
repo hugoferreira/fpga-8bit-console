@@ -33,16 +33,21 @@
     .define PSG_ADDR_LO        $4100
     .define PSG_ADDR_HI        $4101
     .define PSG_DATA           $4102
-    .define PSG_CH             $4110  ; +ch*4: start, len, speed, ctrl
+    .define PSG_CH             $4110  ; +ch: write cart SFX # to play, $80 stops
+    .define PSG_MUSIC          $4120  ; write pattern # to start music, $80 stops
 
-    ; sound ids (indices into the sfx_* tables)
+    ; sound ids (the cart's own SFX slot numbers; brick = 2 + chain)
     .define SND_WALL           0
     .define SND_PADDLE         1
     .define SND_LOSE           2
-    .define SND_BRICK          3
-    .define SND_SERVE          4
-    .define SND_SHATTER        5
-    .define SND_CHAIN          6
+    .define SND_SERVE          12
+    .define SND_SHATTER        13
+    .define SND_CHAIN          44
+
+    ; music (the cart's own pattern numbers)
+    .define MUS_TITLE          1
+    .define MUS_CLEAR          6
+    .define MUS_OVER           7
     .define SPR_SPAL           $4020
 
     .define MAP_LO             $F000
@@ -247,17 +252,30 @@ start:
     lda #0
     sta SPR_SPAL+3
 
-    ; Upload the cart's sound effects to the PSG
-    lda #0
+    ; Upload the cart's audio RAM image (music + SFX, 4608 bytes) to the
+    ; PSG at PICO-8 address $3100 - verbatim cart bytes, no conversion
+    lda #$00
     sta PSG_ADDR_LO
+    lda #$31
     sta PSG_ADDR_HI
-    ldx #0
+    lda #<audio_data
+    sta ptr
+    lda #>audio_data
+    sta ptr+1
+    ldx #18                ; 18 pages = 4608 bytes
+    ldy #0
 @sfxup:
-    lda sfx_data,x
+    lda (ptr),y
     sta PSG_DATA
-    inx
-    cpx #SFX_BYTES
+    iny
     bne @sfxup
+    inc ptr+1
+    dex
+    bne @sfxup
+
+    ; title music while waiting to serve
+    lda #MUS_TITLE
+    sta PSG_MUSIC
 
     ; First 8 list entries (ambient dust) composite behind the tile layer
     lda #8
@@ -344,8 +362,10 @@ do_serve:
     sta ballspd
     sta windt
     sta windt+1
+    lda #$80               ; title music ends when play begins
+    sta PSG_MUSIC
     ldx #SND_SERVE
-    ldy #8
+    ldy #2
     jsr sfx_play
     lda SPR_RND
     and #3
@@ -366,6 +386,8 @@ do_over:
     bne @done
     jsr msg_clear
     jsr new_game
+    lda #MUS_TITLE         ; back to the title loop while serving
+    sta PSG_MUSIC
 @done:
     jmp frame_end
 
@@ -449,7 +471,7 @@ do_play:
     cmp #BALL_DEATH
     bcc @alive
     ldx #SND_LOSE
-    ldy #8
+    ldy #2
     jsr sfx_play
     lda #8
     sta shaket
@@ -465,6 +487,8 @@ do_play:
 @gameover:
     lda #ST_OVER
     sta state
+    lda #MUS_OVER          ; the cart's game-over jingle
+    sta PSG_MUSIC
     jsr msg_over
     lda #124
     sta bally+1            ; park the dead ball off-screen
@@ -523,7 +547,7 @@ do_play:
     lda #1                 ; returning to the paddle resets the chain
     sta chain
     ldx #SND_PADDLE
-    ldy #4
+    ldy #1
     jsr sfx_play
 @nopad:
 
@@ -598,6 +622,8 @@ do_play:
     stx level
     jsr build_level
     jsr draw_hud
+    lda #MUS_CLEAR         ; the cart's level-clear jingle
+    sta PSG_MUSIC
     lda #6
     sta flasht
     lda #ST_SERVE
@@ -682,7 +708,7 @@ brick_hit:
     txa
     pha
     ldx #SND_CHAIN
-    ldy #12
+    ldy #3
     jsr sfx_play
     pla
     tax
@@ -727,7 +753,15 @@ brick_hit:
     ldx #SND_SHATTER
     bne @sndgo
 @sndhit:
-    ldx #SND_BRICK
+    ; the cart's rising combo blips: sfx 2+chain (chain clamped to 6)
+    lda chain
+    cmp #7
+    bcc @chok
+    lda #6
+@chok:
+    clc
+    adc #2
+    tax
 @sndgo:
     ldy #0
     jsr sfx_play
@@ -812,7 +846,7 @@ brick_hit:
 ; ------------------------------------------------------------------------------
 snd_wall:
     ldx #SND_WALL
-    ldy #4
+    ldy #1
     jmp sfx_play
 
 negx:
@@ -1531,17 +1565,11 @@ zone_vx_hi: .byte $FE, $FF, $00, $00, $01
 zone_vy_lo: .byte $40, $C0, $80, $C0, $40
 zone_vy_hi: .byte $FF, $FE, $FE, $FE, $FF
 
-; sfx_play: X = sound id, Y = channel*4. Four writes and the hardware
-; sequencer does the rest.
+; sfx_play: X = cart SFX number, Y = channel 0-3. One register write;
+; the chip fetches the record and sequences it in hardware.
 sfx_play:
-    lda sfx_start,x
+    txa
     sta PSG_CH,y
-    lda sfx_len,x
-    sta PSG_CH+1,y
-    lda sfx_spd,x
-    sta PSG_CH+2,y
-    lda #1
-    sta PSG_CH+3,y
     rts
 
 ; set_vec: Y = angle index 0-12; applies the current wind-up speed level
