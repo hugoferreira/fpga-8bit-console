@@ -72,6 +72,13 @@
     .define ST_SERVE           0
     .define ST_PLAY            1
     .define ST_OVER            2
+    .define ST_WIN             3
+
+    .define MUS_WIN            8
+    .define SND_INVINC         10
+    .define SND_PILL           11
+    .define SND_EXPLODE        14
+    .define SND_SD             29
 
     ; Zero page
     .define ballx   $04    ; 8.8: frac, int
@@ -118,6 +125,35 @@
     .define mulk    $36    ; scratch (brick_hit)
     .define sidx    $37    ; scratch (brick_hit)
 
+    ; power-ups / pills (two falling pills max)
+    .define pill_t  $38    ; and $39: type 1-7, 0 = inactive
+    .define pill_x  $3A    ; and $3B
+    .define pill_y  $3C    ; and $3D
+    .define pill_yf $3E    ; and $3F: y fraction (falls 0.7/frame)
+    .define t_slow  $40    ; 16-bit frame timers
+    .define t_expand $42
+    .define t_reduce $44
+    .define t_megaw $46    ; megaball warmup (armed until first brick)
+    .define t_mega  $48    ; megaball active (8-bit, 120)
+    .define stickyf $49    ; sticky-paddle armed
+    .define stuckf  $4A    ; ball riding the paddle mid-play
+    .define stuckoff $4B   ; ballx - padx while stuck
+    .define padw    $4C    ; 0 = 24px, 1 = 32px (expand), 2 = 16px (reduce)
+    .define b2on    $4D    ; second ball (multiball) active
+    .define b2x     $4E    ; and $4F: 8.8 frac,int
+    .define b2y     $50    ; and $51
+    .define b2vx    $52    ; and $53
+    .define b2vy    $54    ; and $55
+    .define sd_on   $56    ; sudden death armed
+    .define sd_t    $57    ; and $58: 450-frame fuse
+    .define sd_blink $59   ; frames to next beep/flash
+    .define sd_idx  $5A    ; shadow index of the doomed brick
+    .define curball $5B    ; 0 = primary, 1 = ball2 (inside ball_step)
+    .define msgt    $5C    ; pill sash message timer
+    .define ncmb    $5D    ; brick_hit: 1 = no score/chain (explosions)
+    .define hittype $5E    ; brick_hit: type code seen at entry
+    .define expn    $5F    ; explosion queue depth
+
     ; Particle pool (12), one page
     .define PPX     $2100
     .define PPY     $2110
@@ -128,6 +164,7 @@
     .define PKIND   $2160  ; 0 = burst spark, 1 = ball trail, 2 = shard
     .define DUSTX   $2170  ; ambient dust (8), behind the bricks
     .define DUSTY   $2178
+    .define EXPQ    $2180  ; explosion queue: shadow indices (8)
 
     ; Brick shadow map: 10 rows x 11 cols (well above the program image,
     ; which now extends past $1200 - the original $0C00 scratch overlapped
@@ -424,7 +461,173 @@ do_play:
     sta chain
 @chz:
 
-    ; ball position += velocity (16-bit signed adds)
+    ; power-up timers, falling pills, sudden-death fuse, explosions
+    jsr powerup_timers
+    jsr update_pills
+    jsr update_sd
+    jsr update_explosions
+
+    ; pill sash message expiry
+    lda msgt
+    beq @nomsg
+    dec msgt
+    bne @nomsg
+    jsr msg_clear
+@nomsg:
+
+    ; a stuck ball rides the paddle; X releases it
+    lda stuckf
+    beq @notstuck
+    lda padx
+    clc
+    adc stuckoff
+    sta ballx+1
+    lda #PAD_Y-5
+    sta bally+1
+    lda btn
+    and #BTN_X
+    beq @after1
+    lda btnprev
+    and #BTN_X
+    bne @after1
+    lda #0
+    sta stuckf
+    jsr pad_zone
+    bcc @after1
+    jsr set_vec
+    lda bvy+1
+    bmi @after1
+    jsr negy
+    jmp @after1
+@notstuck:
+    lda #0
+    sta curball
+    jsr ball_step
+    bcc @after1
+    ; primary ball lost: promote ball2 if one is out, else lose a life
+    lda b2on
+    beq @lifelost
+    ldx #7
+@promote:
+    lda b2x,x
+    sta ballx,x
+    dex
+    bpl @promote
+    lda #0
+    sta b2on
+    beq @after1
+@lifelost:
+    ldx #SND_LOSE
+    ldy #2
+    jsr sfx_play
+    lda #8
+    sta shaket
+    dec lives
+    jsr draw_hud
+    jsr serve_reset
+    lda lives
+    beq @gameover
+    lda #ST_SERVE
+    sta state
+    lda #0
+    sta blink
+    jmp frame_end
+@gameover:
+    lda #ST_OVER
+    sta state
+    lda #MUS_OVER          ; the cart's game-over jingle
+    sta PSG_MUSIC
+    jsr msg_over
+    lda #124
+    sta bally+1            ; park the dead ball off-screen
+    jmp frame_end
+@after1:
+
+    ; second ball (multiball)
+    lda b2on
+    beq @noball2
+    jsr swap_ball2
+    lda #1
+    sta curball
+    jsr ball_step
+    jsr swap_ball2
+    bcc @noball2
+    lda #0
+    sta b2on
+    ldx #SND_LOSE
+    ldy #2
+    jsr sfx_play
+@noball2:
+
+    ; level cleared?
+    lda bricksn
+    bne @go
+    ldx level
+    inx
+    cpx #15
+    bcc @lv
+    ; all 15 levels cleared: winner screen (X restarts via do_over)
+    lda #ST_WIN
+    sta state
+    lda #MUS_WIN
+    sta PSG_MUSIC
+    jsr serve_reset
+    jsr msg_win
+    lda #124
+    sta bally+1
+    jmp frame_end
+@lv:
+    stx level
+    jsr build_level
+    jsr draw_hud
+    jsr serve_reset
+    lda #MUS_CLEAR         ; the cart's level-clear jingle
+    sta PSG_MUSIC
+    lda #6
+    sta flasht
+    lda #ST_SERVE
+    sta state
+@go:
+    jmp frame_end
+
+; ------------------------------------------------------------------------------
+; ball_step: move/bounce/collide the ball in ballx..bvy (curball says which
+; ball that is). Returns C=1 if the ball fell off the bottom.
+ball_step:
+    ; position += velocity (halved while a slowdown pill is active)
+    lda t_slow
+    ora t_slow+1
+    beq @full
+    lda bvx+1              ; arithmetic halves into tmp2:tmp
+    cmp #$80
+    ror
+    sta tmp2
+    lda bvx
+    ror
+    sta tmp
+    lda ballx
+    clc
+    adc tmp
+    sta ballx
+    lda ballx+1
+    adc tmp2
+    sta ballx+1
+    lda bvy+1
+    cmp #$80
+    ror
+    sta tmp2
+    lda bvy
+    ror
+    sta tmp
+    lda bally
+    clc
+    adc tmp
+    sta bally
+    lda bally+1
+    adc tmp2
+    sta bally+1
+    jmp @moved
+@full:
     lda ballx
     clc
     adc bvx
@@ -439,6 +642,7 @@ do_play:
     lda bally+1
     adc bvy+1
     sta bally+1
+@moved:
 
     ; walls (ball box is sprite+2 .. sprite+5)
     lda ballx+1
@@ -470,29 +674,8 @@ do_play:
     lda bally+1
     cmp #BALL_DEATH
     bcc @alive
-    ldx #SND_LOSE
-    ldy #2
-    jsr sfx_play
-    lda #8
-    sta shaket
-    dec lives
-    jsr draw_hud
-    lda lives
-    beq @gameover
-    lda #ST_SERVE
-    sta state
-    lda #0
-    sta blink
-    jmp frame_end
-@gameover:
-    lda #ST_OVER
-    sta state
-    lda #MUS_OVER          ; the cart's game-over jingle
-    sta PSG_MUSIC
-    jsr msg_over
-    lda #124
-    sta bally+1            ; park the dead ball off-screen
-    jmp frame_end
+    sec
+    rts
 @alive:
 
     ; paddle bounce (moving down, box bottom in paddle band, x overlap)
@@ -503,29 +686,33 @@ do_play:
     bcc @nopad
     cmp #PAD_Y+2
     bcs @nopad
+    jsr pad_zone
+    bcc @nopad
+    ; sticky paddle catches the primary ball instead of bouncing
+    lda stickyf
+    beq @bounce
+    lda stuckf
+    bne @bounce
+    lda curball
+    bne @bounce
+    lda #1
+    sta stuckf
     lda ballx+1
     sec
     sbc padx
-    clc
-    adc #6                 ; 0..29 when overlapping
-    cmp #30
-    bcs @nopad
-    ldy #0
-    cmp #6
-    bcc @zok
-    iny
-    cmp #12
-    bcc @zok
-    iny
-    cmp #18
-    bcc @zok
-    iny
-    cmp #24
-    bcc @zok
-    iny
-@zok:
-    lda zone_ang,y
-    tay
+    sta stuckoff
+    lda #0
+    sta bvx
+    sta bvx+1
+    sta bvy
+    sta bvy+1
+    lda #1
+    sta chain
+    ldx #SND_PADDLE
+    ldy #1
+    jsr sfx_play
+    jmp @nopad
+@bounce:
     ; paddle velocity biases the bounce one angle step
     lda padvx+1
     bmi @bleft
@@ -589,6 +776,8 @@ do_play:
     jsr probe_brick
     bcc @noh
     jsr brick_hit
+    jsr mega_pass          ; C=1: megaball smashes through, no bounce
+    bcs @noh
     jsr negx
 @noh:
     ; vertical probe (cx, cy +/- 3)
@@ -607,29 +796,576 @@ do_play:
     jsr probe_brick
     bcc @nov
     jsr brick_hit
+    jsr mega_pass
+    bcs @nov
     jsr negy
 @nov:
+    clc
+    rts
 
-    ; level cleared?
-    lda bricksn
-    bne @go
-    ldx level
+; pad_zone: Y = bounce angle index for the ball's paddle position
+; (width-aware). C=1 when the ball overlaps the paddle, C=0 otherwise.
+pad_zone:
+    ldx padw
+    lda ballx+1
+    sec
+    sbc padx
+    sec
+    sbc pleft_adj,x        ; overlap vs the true left edge
+    clc
+    adc #6
+    cmp ovr_max,x
+    bcs @miss
+    ldy #0
+    cmp zthr1,x
+    bcc @zok
+    iny
+    cmp zthr2,x
+    bcc @zok
+    iny
+    cmp zthr3,x
+    bcc @zok
+    iny
+    cmp zthr4,x
+    bcc @zok
+    iny
+@zok:
+    lda zone_ang,y
+    tay
+    sec
+    rts
+@miss:
+    clc
+    rts
+
+; mega_pass: C=1 when an active/armed megaball should pass through the
+; brick just hit (never through invincible bricks)
+mega_pass:
+    lda hittype
+    cmp #4
+    beq @solid
+    lda t_mega
+    bne @pass
+    lda t_megaw
+    ora t_megaw+1
+    bne @pass
+@solid:
+    clc
+    rts
+@pass:
+    sec
+    rts
+
+; swap_ball2: exchange the working ball state with ball2's
+swap_ball2:
+    ldx #7
+@sw:
+    lda ballx,x
+    pha
+    lda b2x,x
+    sta ballx,x
+    pla
+    sta b2x,x
+    dex
+    bpl @sw
+    rts
+
+; powerup_timers: tick the four 16-bit timers and t_mega; the paddle
+; width follows whichever of expand/reduce is running
+powerup_timers:
+    lda t_mega
+    beq @m0
+    dec t_mega
+@m0:
+    ldx #0                 ; t_slow/t_expand/t_reduce/t_megaw are contiguous
+@tl:
+    lda t_slow,x
+    ora t_slow+1,x
+    beq @tn
+    lda t_slow,x
+    bne @dl
+    dec t_slow+1,x
+@dl:
+    dec t_slow,x
+@tn:
     inx
-    cpx #15
-    bcc @lv
+    inx
+    cpx #8
+    bne @tl
+    lda t_expand
+    ora t_expand+1
+    beq @notw
+    lda #1
+    sta padw
+    rts
+@notw:
+    lda t_reduce
+    ora t_reduce+1
+    beq @notn
+    lda #2
+    sta padw
+    rts
+@notn:
+    lda #0
+    sta padw
+    rts
+
+; spawn_pill: drop a random pill (type 1-7) from the brick at hitr/hitc
+spawn_pill:
     ldx #0
-@lv:
-    stx level
-    jsr build_level
+    lda pill_t
+    beq @slot
+    ldx #1
+    lda pill_t+1
+    bne @full
+@slot:
+    lda SPR_RND
+    and #7
+    bne @t
+    lda #7
+@t:
+    sta pill_t,x
+    lda hitc
+    asl
+    asl
+    asl
+    clc
+    adc #15                ; brick centre - half a pill
+    sta pill_x,x
+    lda hitr
+    asl
+    asl
+    asl
+    clc
+    adc #15
+    sta pill_y,x
+    lda #0
+    sta pill_yf,x
+@full:
+    rts
+
+; update_pills: pills fall 0.7px/frame; the paddle catches them
+update_pills:
+    ldx #1
+@pl:
+    lda pill_t,x
+    bne @act
+    jmp @pnext
+@act:
+    lda pill_yf,x
+    clc
+    adc #$B3
+    sta pill_yf,x
+    lda pill_y,x
+    adc #0
+    sta pill_y,x
+    cmp #118
+    bcc @on
+    lda #0
+    sta pill_t,x
+    jmp @pnext
+@on:
+    cmp #PAD_Y-5
+    bcc @pnext
+    cmp #PAD_Y+6
+    bcs @pnext
+    ldy padw
+    lda padx
+    clc
+    adc pleft_adj,y
+    sta tmp                ; paddle left edge
+    clc
+    adc padwid,y
+    sta tmp2               ; paddle right edge
+    lda pill_x,x
+    clc
+    adc #8
+    cmp tmp
+    bcc @pnext
+    lda pill_x,x
+    cmp tmp2
+    bcs @pnext
+    ; caught
+    lda pill_t,x
+    sta mulk
+    lda #0
+    sta pill_t,x
+    txa
+    pha
+    ldx #SND_PILL
+    ldy #2
+    jsr sfx_play
+    lda mulk
+    jsr apply_pill
+    pla
+    tax
+@pnext:
+    dex
+    bpl @pl
+    rts
+
+; apply_pill: A = pill type 1-7
+apply_pill:
+    cmp #1
+    bne @n1
+    lda #$90               ; slowdown: 400 frames at half ball speed
+    sta t_slow
+    lda #$01
+    sta t_slow+1
+    lda #0
+    jmp msg_show
+@n1:
+    cmp #2
+    bne @n2
+    lda lives              ; extra life (display is one digit)
+    cmp #9
+    bcs @lmax
+    inc lives
     jsr draw_hud
-    lda #MUS_CLEAR         ; the cart's level-clear jingle
-    sta PSG_MUSIC
+@lmax:
+    lda #1
+    jmp msg_show
+@n2:
+    cmp #3
+    bne @n3
+    lda #1                 ; sticky paddle until the next serve
+    sta stickyf
+    lda #2
+    jmp msg_show
+@n3:
+    cmp #4
+    bne @n4
+    lda #$58               ; expand: 600 frames of 32px paddle
+    sta t_expand
+    lda #$02
+    sta t_expand+1
+    lda #0
+    sta t_reduce
+    sta t_reduce+1
+    lda #1
+    sta padw
+    lda #3
+    jmp msg_show
+@n4:
+    cmp #5
+    bne @n5
+    lda #$58               ; reduce: 600 frames of 16px paddle
+    sta t_reduce
+    lda #$02
+    sta t_reduce+1
+    lda #0
+    sta t_expand
+    sta t_expand+1
+    lda #2
+    sta padw
+    lda #4
+    jmp msg_show
+@n5:
+    cmp #6
+    bne @n6
+    lda #$58               ; megaball: armed until the next brick contact
+    sta t_megaw
+    lda #$02
+    sta t_megaw+1
+    lda #0
+    sta t_mega
+    lda #5
+    jmp msg_show
+@n6:
+    ; multiball: clone the ball, diverging horizontally
+    lda b2on
+    bne @have
+    ldx #7
+@cp:
+    lda ballx,x
+    sta b2x,x
+    dex
+    bpl @cp
+    lda #1
+    sta b2on
+    ; a clone of a riding ball launches upward instead
+    lda stuckf
+    beq @negvx
+    lda #0
+    sta b2vx
+    sta b2vy
+    lda #1
+    sta b2vx+1
+    lda #$FF
+    sta b2vy+1
+    jmp @have
+@negvx:
+    sec
+    lda #0
+    sbc b2vx
+    sta b2vx
+    lda #0
+    sbc b2vx+1
+    sta b2vx+1
+@have:
     lda #6
-    sta flasht
-    lda #ST_SERVE
-    sta state
-@go:
-    jmp frame_end
+    jmp msg_show
+
+; check_sd: arm sudden death when 3 or fewer destructible bricks remain
+; (called from brick_hit - preserves hitr for the caller)
+check_sd:
+    lda sd_on
+    bne @done
+    lda bricksn
+    beq @done
+    cmp #4
+    bcs @done
+    ldy #0
+@scan:
+    lda shadow,y
+    beq @next
+    cmp #4
+    beq @next
+    sty sd_idx
+    lda #1
+    sta sd_on
+    lda #$C2               ; 450-frame fuse
+    sta sd_t
+    lda #$01
+    sta sd_t+1
+    lda #8
+    sta sd_blink
+    ldx #SND_SD
+    ldy #3
+    jsr sfx_play
+    lda hitr
+    pha
+    lda #7
+    jsr msg_show
+    pla
+    sta hitr
+@done:
+    rts
+@next:
+    iny
+    cpy #110
+    bne @scan
+    rts
+
+; sd_attr: write A to the doomed brick's tile attribute (flash/restore)
+sd_attr:
+    pha
+    lda sd_idx
+    ldx #0
+@dv:
+    cmp #11
+    bcc @f
+    sbc #11
+    inx
+    bne @dv
+@f:
+    clc
+    adc #2
+    tay
+    lda rowmap2_lo,x
+    sta ptr2
+    lda rowmap2_hi,x
+    clc
+    adc #2
+    sta ptr2+1
+    pla
+    sta (ptr2),y
+    rts
+sd_attr_norm:
+    lda #$0C
+    jmp sd_attr
+
+; update_sd: tick the fuse; flash and beep faster as it runs out; on
+; expiry the brick detonates like an explosive brick
+update_sd:
+    lda sd_on
+    beq @done
+    lda sd_t
+    bne @d1
+    dec sd_t+1
+@d1:
+    dec sd_t
+    lda sd_t
+    ora sd_t+1
+    beq @boom
+    lda sd_blink
+    cmp #4
+    bcs @dark
+    lda #$2C
+    jsr sd_attr
+    jmp @tick
+@dark:
+    lda #$0C
+    jsr sd_attr
+@tick:
+    dec sd_blink
+    bne @done
+    ldx #SND_SD
+    ldy #3
+    jsr sfx_play
+    lda sd_t+1             ; reload: fuse/8 + 2 frames (accelerates)
+    sta tmp
+    lda sd_t
+    lsr tmp
+    ror
+    lsr tmp
+    ror
+    lsr tmp
+    ror
+    clc
+    adc #2
+    sta sd_blink
+@done:
+    rts
+@boom:
+    lda #0
+    sta sd_on
+    lda sd_idx
+    ldx #0
+@dv2:
+    cmp #11
+    bcc @f2
+    sbc #11
+    inx
+    bne @dv2
+@f2:
+    sta hitc
+    stx hitr
+    ldy sd_idx
+    lda #3                 ; detonate as an explosive brick
+    sta shadow,y
+    lda #1
+    sta ncmb
+    jsr brick_hit
+    lda #0
+    sta ncmb
+    rts
+
+; update_explosions: one queued detonation per frame hits all 8 neighbours
+update_explosions:
+    lda expn
+    beq @done
+    dec expn
+    ldx expn
+    lda EXPQ,x
+    sta tmp3
+    ldx #SND_EXPLODE
+    ldy #2
+    jsr sfx_play
+    lda #6
+    sta shaket
+    lda tmp3
+    ldx #0
+@dv:
+    cmp #11
+    bcc @f
+    sbc #11
+    inx
+    bne @dv
+@f:
+    sta colv
+    stx rowv
+    ldy #0
+@nb:
+    lda rowv
+    clc
+    adc nb_dr,y
+    cmp #10
+    bcs @skip
+    sta hitr
+    lda colv
+    clc
+    adc nb_dc,y
+    cmp #11
+    bcs @skip
+    sta hitc
+    ldx hitr
+    lda times11,x
+    clc
+    adc hitc
+    tax
+    lda shadow,x
+    beq @skip
+    tya
+    pha
+    lda rowv
+    pha
+    lda colv
+    pha
+    lda #1
+    sta ncmb
+    jsr brick_hit
+    lda #0
+    sta ncmb
+    pla
+    sta colv
+    pla
+    sta rowv
+    pla
+    tay
+@skip:
+    iny
+    cpy #8
+    bne @nb
+@done:
+    rts
+
+; serve_reset: clear everything a new serve resets (pills, timers,
+; sticky, multiball, sudden death, explosions, sash)
+serve_reset:
+    lda sd_on
+    beq @nosd
+    jsr sd_attr_norm
+@nosd:
+    lda #0
+    sta pill_t
+    sta pill_t+1
+    sta t_slow
+    sta t_slow+1
+    sta t_expand
+    sta t_expand+1
+    sta t_reduce
+    sta t_reduce+1
+    sta t_megaw
+    sta t_megaw+1
+    sta t_mega
+    sta stickyf
+    sta stuckf
+    sta padw
+    sta b2on
+    sta sd_on
+    sta expn
+    sta msgt
+    rts
+
+; msg_show: A = message index; print it centred in the sash row
+msg_show:
+    tax
+    lda msg_pairs,x
+    sta tmp3
+    lda #12
+    sec
+    sbc tmp3
+    clc
+    adc #<(OVL+70*20)
+    sta ptr
+    lda #>(OVL+70*20)
+    adc #0
+    sta ptr+1
+    lda msg_txt_hi,x
+    tay
+    lda msg_txt_lo,x
+    tax
+    lda tmp3
+    jsr ovl_print
+    lda #120
+    sta msgt
+    rts
+
+msg_win:
+    lda #8
+    jmp msg_show
+
 
 ; ------------------------------------------------------------------------------
 ; probe_brick: X = pixel x, Y = pixel y -> C set if a brick cell is there.
@@ -678,6 +1414,55 @@ brick_hit:
     tay
     ldx shadow,y           ; X = type code
     sty sidx
+    stx hittype
+    ; smashing the sudden-death brick disarms it with a bonus
+    lda sd_on
+    beq @nosdhit
+    lda sidx
+    cmp sd_idx
+    bne @nosdhit
+    lda #0
+    sta sd_on
+    jsr sd_attr_norm
+    sed
+    lda score0
+    clc
+    adc #$10
+    sta score0
+    lda score1
+    adc #0
+    sta score1
+    lda score2
+    adc #0
+    sta score2
+    cld
+    ldx #1                 ; force-destroy as a plain brick
+    stx hittype
+@nosdhit:
+    ; megaball: first brick contact converts the warmup to active
+    cpx #4
+    beq @nomega
+    lda t_megaw
+    ora t_megaw+1
+    beq @mchk
+    lda #0
+    sta t_megaw
+    sta t_megaw+1
+    lda #120
+    sta t_mega
+@mchk:
+    lda t_mega             ; active megaball smashes hard bricks outright
+    beq @nomega
+    cpx #2
+    beq @msmash
+    cpx #6
+    bne @nomega
+@msmash:
+    ldx #1
+@nomega:
+    ; explosion side-hits score no points and do not boost the chain
+    lda ncmb
+    bne @nopts
     ; score += points[type] * chain (BCD), then boost the chain
     lda type_pts,x
     beq @nopts
@@ -724,6 +1509,24 @@ brick_hit:
     cpx #4
     beq @tile
     dec bricksn
+    ; a destroyed powerup brick drops a pill
+    lda hittype
+    cmp #5
+    bne @nopill
+    jsr spawn_pill
+@nopill:
+    ; a destroyed explosive brick detonates next frame
+    lda hittype
+    cmp #3
+    bne @noexp
+    ldy expn
+    cpy #8
+    bcs @noexp
+    lda sidx
+    sta EXPQ,y
+    inc expn
+@noexp:
+    jsr check_sd
 @tile:
     ; rewrite the map cell at row hitr+2, col hitc+2
     ldx hitr
@@ -942,9 +1745,10 @@ move_paddle:
     lda padx
     adc padvx+1
     sta padx
-    cmp #PAD_MIN
+    ldy padw               ; clamps follow the current paddle width
+    cmp pmin_tbl,y
     bcs @okmin
-    lda #PAD_MIN
+    lda pmin_tbl,y
     sta padx
     lda #0
     sta padvx
@@ -952,9 +1756,9 @@ move_paddle:
     sta padxf
 @okmin:
     lda padx
-    cmp #PAD_MAX
+    cmp pmax_tbl,y
     bcc @done
-    lda #PAD_MAX
+    lda pmax_tbl,y
     sta padx
     lda #0
     sta padvx
@@ -1117,38 +1921,107 @@ frame_end:
     sta SPR_BASE
     lda #$0C               ; 4bpp, pal 0
     sta SPR_FLAGS
+    ; paddle: up to 4 segments depending on width (unused slots park)
+    ldy padw
     lda padx
     clc
+    adc pleft_adj,y
+    sta tmp                ; true left edge
+    tya
+    asl
+    asl
+    sta tmp2               ; psegs row base = padw*4
+    ldx #0
+@pseg:
+    txa
+    clc
+    adc tmp2
+    tay
+    lda psegs,y
+    cmp #$FF
+    beq @ppark
+    pha
+    txa
+    asl
+    asl
+    asl                    ; segment*8
+    clc
+    adc tmp
     adc shx
     sta SPR_X
     lda #PAD_Y
     sta SPR_Y
-    lda #4
+    pla
     sta SPR_BASE
     lda #$0C
     sta SPR_FLAGS
-    lda padx
+    jmp @pnexts
+@ppark:
+    lda #0
+    sta SPR_X
+    lda #124
+    sta SPR_Y
+    lda #44
+    sta SPR_BASE
+    lda #0
+    sta SPR_FLAGS
+@pnexts:
+    inx
+    cpx #4
+    bne @pseg
+    ; second ball (multiball)
+    lda b2on
+    beq @b2park
+    lda b2x+1
     clc
-    adc #8
     adc shx
     sta SPR_X
-    lda #PAD_Y
+    lda b2y+1
     sta SPR_Y
-    lda #8
+    lda #0
     sta SPR_BASE
     lda #$0C
     sta SPR_FLAGS
-    lda padx
+    jmp @b2done
+@b2park:
+    lda #0
+    sta SPR_X
+    lda #124
+    sta SPR_Y
+    lda #44
+    sta SPR_BASE
+    lda #0
+    sta SPR_FLAGS
+@b2done:
+    ; falling pills: an 8px circle tinted per type
+    ldx #1
+@pillspr:
+    lda pill_t,x
+    beq @pillpark
+    tay
+    lda pill_x,x
     clc
-    adc #16
     adc shx
     sta SPR_X
-    lda #PAD_Y
+    lda pill_y,x
     sta SPR_Y
-    lda #12
+    lda #45
     sta SPR_BASE
-    lda #$0C
+    lda pill_flags-1,y
     sta SPR_FLAGS
+    jmp @pillnext
+@pillpark:
+    lda #0
+    sta SPR_X
+    lda #124
+    sta SPR_Y
+    lda #44
+    sta SPR_BASE
+    lda #0
+    sta SPR_FLAGS
+@pillnext:
+    dex
+    bpl @pillspr
     ldx #0
 @ploop:
     lda PLIFE,x
@@ -1250,7 +2123,7 @@ frame_end:
     beq @pfin
     jmp @ploop
 @pfin:
-    lda #28
+    lda #32                ; dust 8 + ball + paddle 4 + ball2 + pills 2 + 16
     sta SPR_COUNT
     jmp main_loop
 
@@ -1280,6 +2153,7 @@ new_game:
     sta lives
     lda #52
     sta padx
+    jsr serve_reset
     jsr build_level
     jsr draw_hud
     lda #ST_SERVE
@@ -1632,11 +2506,64 @@ font46:
     .byte $05,$05,$05,$05,$02,$00   ; 48 V
     .byte $05,$05,$02,$05,$05,$00   ; 54 X
     .byte $00,$00,$00,$00,$00,$00   ; 60 space
+    .byte $03,$05,$03,$05,$03,$00   ; 66 B
+    .byte $07,$01,$01,$01,$07,$00   ; 72 C
+    .byte $03,$05,$05,$05,$03,$00   ; 78 D
+    .byte $07,$01,$03,$01,$01,$00   ; 84 F
+    .byte $05,$05,$07,$05,$05,$00   ; 90 H
+    .byte $07,$02,$02,$02,$07,$00   ; 96 I
+    .byte $05,$05,$03,$05,$05,$00   ; 102 K
+    .byte $01,$01,$01,$01,$07,$00   ; 108 L
+    .byte $03,$05,$05,$05,$05,$00   ; 114 N
+    .byte $07,$02,$02,$02,$02,$00   ; 120 T
+    .byte $05,$05,$05,$05,$07,$00   ; 126 U
+    .byte $05,$05,$07,$07,$05,$00   ; 132 W
+    .byte $05,$05,$02,$02,$02,$00   ; 138 Y
 
 msg_press_t:
     .byte 30, 36, 6, 42, 42, 60, 54, 60          ; PRESS X
 msg_over_t:
     .byte 12, 0, 18, 6, 60, 24, 48, 6, 36, 60    ; GAME OVER
+
+; pill sash / event messages (glyph-offset pairs)
+msg_slow_t:  .byte 42, 108, 24, 132, 78, 24, 132, 114              ; SLOWDOWN
+msg_life_t:  .byte 108, 96, 84, 6, 60, 126, 30, 60                 ; LIFE UP
+msg_stick_t: .byte 42, 120, 96, 72, 102, 138                       ; STICKY
+msg_exp_t:   .byte 6, 54, 30, 0, 114, 78                           ; EXPAND
+msg_red_t:   .byte 36, 6, 78, 126, 72, 6                           ; REDUCE
+msg_mega_t:  .byte 18, 6, 12, 0, 66, 0, 108, 108                   ; MEGABALL
+msg_multi_t: .byte 18, 126, 108, 120, 96, 66, 0, 108, 108, 60      ; MULTIBALL
+msg_sd_t:    .byte 42, 126, 78, 78, 6, 114, 60, 78, 6, 0, 120, 90  ; SUDDEN DEATH
+msg_win_t:   .byte 138, 24, 126, 60, 132, 96, 114, 60              ; YOU WIN
+msg_txt_lo:
+    .byte <msg_slow_t, <msg_life_t, <msg_stick_t, <msg_exp_t, <msg_red_t
+    .byte <msg_mega_t, <msg_multi_t, <msg_sd_t, <msg_win_t
+msg_txt_hi:
+    .byte >msg_slow_t, >msg_life_t, >msg_stick_t, >msg_exp_t, >msg_red_t
+    .byte >msg_mega_t, >msg_multi_t, >msg_sd_t, >msg_win_t
+msg_pairs:
+    .byte 4, 4, 3, 3, 3, 4, 5, 6, 4
+
+; paddle-width tables (indexed by padw: 0=24px, 1=32px expand, 2=16px reduce)
+pleft_adj: .byte 0, $FC, 4
+padwid:    .byte 24, 32, 16
+ovr_max:   .byte 30, 38, 22
+zthr1:     .byte 6, 8, 4
+zthr2:     .byte 12, 16, 9
+zthr3:     .byte 18, 23, 13
+zthr4:     .byte 24, 30, 18
+pmin_tbl:  .byte 16, 20, 12
+pmax_tbl:  .byte 80, 76, 84
+; paddle sprite segments per width ($FF = park the slot)
+psegs:
+    .byte 4, 8, 12, $FF
+    .byte 4, 8, 8, 12
+    .byte 4, 12, $FF, $FF
+; pill sprite tints (1bpp circle palette bases), types 1-7
+pill_flags: .byte $80, $60, $A0, $B0, $70, $D0, $90
+; explosion neighbour offsets
+nb_dr: .byte $FF, $FF, $FF, 0, 0, 1, 1, 1
+nb_dc: .byte $FF, 0, 1, $FF, 1, $FF, 0, 1
 
 .include "breakout_data.asm"
 .include "breakout_tables.asm"
