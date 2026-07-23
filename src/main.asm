@@ -25,6 +25,7 @@
     .define SPR_COUNT          $400C
     .define SPR_FRAME          $400D
     .define SPR_BASE           $400E
+    .define SPR_PALT           $4034
 
     .define MAP_LO             $F000
     .define MAP_HI             $F200
@@ -41,7 +42,7 @@
     .define ARENA_T            16     ; interior top edge
     .define PAD_Y              106    ; paddle sprite y
     .define PAD_MIN            16
-    .define PAD_MAX            88
+    .define PAD_MAX            91     ; 13px paddle in the 88px interior
     .define BALL_DEATH         118
 
     ; Game states
@@ -234,11 +235,11 @@ do_serve:
     sta bally+1
     ; blink PRESS X
     lda blink
-    and #$1F
+    and #$0F
     bne @noblk
     jsr msg_clear
     lda blink
-    and #$20
+    and #$10
     bne @noblk
     jsr msg_press
 @noblk:
@@ -275,15 +276,6 @@ do_serve:
 
 ; --- game over -----------------------------------------------------------------
 do_over:
-    lda blink
-    and #$1F
-    bne @chk
-    jsr msg_clear
-    lda blink
-    and #$20
-    bne @chk
-    jsr msg_over
-@chk:
     lda btn
     and #BTN_X
     beq @done
@@ -317,23 +309,23 @@ do_play:
 
     ; walls (ball box is sprite+2 .. sprite+5)
     lda ballx+1
-    cmp #ARENA_L-2
+    cmp #ARENA_L-1
     bcs @notleft
-    lda #ARENA_L-2
+    lda #ARENA_L-1
     sta ballx+1
     jsr negx
 @notleft:
     lda ballx+1
-    cmp #ARENA_R-6
+    cmp #ARENA_R-7
     bcc @notright
-    lda #ARENA_R-6
+    lda #ARENA_R-7
     sta ballx+1
     jsr negx
 @notright:
     lda bally+1
-    cmp #ARENA_T-2
+    cmp #ARENA_T-1
     bcs @nottop
-    lda #ARENA_T-2
+    lda #ARENA_T-1
     sta bally+1
     jsr negy
 @nottop:
@@ -348,10 +340,15 @@ do_play:
     beq @gameover
     lda #ST_SERVE
     sta state
+    lda #0
+    sta blink
     jmp frame_end
 @gameover:
     lda #ST_OVER
     sta state
+    jsr msg_over
+    lda #124
+    sta bally+1            ; park the dead ball off-screen
     jmp frame_end
 @alive:
 
@@ -367,11 +364,15 @@ do_play:
     sec
     sbc padx
     clc
-    adc #5                 ; 0..18 when overlapping
-    cmp #19
+    adc #6                 ; 0..19 when overlapping
+    cmp #20
     bcs @nopad
     lsr
     lsr                    ; zone 0..4
+    cmp #5
+    bcc @zok
+    lda #4
+@zok:
     tay
     lda bvx+1
     sta tmp3               ; remember travel direction
@@ -568,7 +569,7 @@ move_paddle:
     beq @notl
     lda padx
     sec
-    sbc #2
+    sbc #3
     cmp #PAD_MIN
     bcs @stl
     lda #PAD_MIN
@@ -580,7 +581,7 @@ move_paddle:
     beq @notr
     lda padx
     clc
-    adc #2
+    adc #3
     cmp #PAD_MAX
     bcc @str
     lda #PAD_MAX
@@ -612,7 +613,7 @@ frame_end:
     sta SPR_FLAGS
     lda padx
     clc
-    adc #8
+    adc #5
     sta SPR_X
     lda #PAD_Y
     sta SPR_Y
