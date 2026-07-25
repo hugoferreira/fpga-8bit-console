@@ -1,0 +1,63 @@
+{
+  "note": "refactor-cpu-core phase 2. The whole-chip numbers T4/T5/T8 ask for do NOT exist: the design cannot be placed, because its 64 KB main memory is modelled as an on-chip array (rtl/ram_async.sv) with no memory abstraction behind it. See docs/cpu-core.md.",
+  "target": {
+    "device": "ice40 hx8k",
+    "package": "tq144:4k",
+    "board": "BlackIce MX",
+    "board_clock_mhz": 25.0,
+    "target_freq_mhz": 50.0,
+    "target_freq_status": "aspirational: rtl/pll.v is generated for 50 MHz but rtl/top.sv never instantiates it, so the board runs the raw 25 MHz pin"
+  },
+  "whole_chip": {
+    "status": "unbuildable",
+    "reason": "ram_async #(.A(16)) infers a 64 KB on-chip memory; hx8k has 32 x 4 kbit BRAM = 16 KB total. yosys cannot map it, falls back to logic and emits 1,727,271 AND gates / 4,954,853 wires, then never finishes ABC9.",
+    "bram_required_bits_approx": 640000,
+    "bram_available_bits": 131072,
+    "blocked_gates": ["T4 critical path relocated", "T5 Fmax", "T8 area"],
+    "blocked_tasks": ["2.1", "2.3 (whole-chip part)", "2.5"]
+  },
+  "core_only": {
+    "harness": "rtl/cpu_fmax_top.sv: one core plus a 2 KB synchronous-read RAM with ram_async's timing. No memory arbiter, so a difference between runs is a difference between cores.",
+    "tool": "yosys + nextpnr-ice40 --hx8k --package tq144:4k --freq 50",
+    "arlet": {
+      "fmax_mhz": 50.97,
+      "icestorm_lc": 818,
+      "icestorm_ram": 4,
+      "critical_path": "starts at a registered decode signal (V) -> store -> write_back -> inc -> index_y -> dst_reg -> regfile -> ALU half-carry -> PC. 11.75 ns logic.",
+      "critical_path_starts_at_memory": false
+    },
+    "v2": {
+      "fmax_mhz": 37.94,
+      "icestorm_lc": 1323,
+      "icestorm_ram": 4,
+      "critical_path": "starts at the BRAM read data: RDATA -> di -> combinational decode (ir) -> flag/ALU select -> store data -> carry chain -> C flag. 14.12 ns logic.",
+      "critical_path_starts_at_memory": true
+    }
+  },
+  "throughput": {
+    "note": "static mean CPI over Breakout's 1,928 instructions, from docs/cpu-timing-*.json",
+    "arlet_cpi": 3.0334,
+    "v2_cpi": 2.6234,
+    "at_board_clock_25mhz": {
+      "both_meet_timing": true,
+      "arlet_minsn_per_s": 8.24,
+      "v2_minsn_per_s": 9.53,
+      "v2_advantage_pct": 15.6
+    },
+    "at_each_core_own_fmax": {
+      "arlet_minsn_per_s": 16.81,
+      "v2_minsn_per_s": 14.46,
+      "v2_advantage_pct": -14.0
+    }
+  },
+  "other_clock_consumers": {
+    "psg": "rate derived from the CLK_HZ parameter (chip.sv:22, top.sv:22); clock-portable, no benefit",
+    "uart_tx": "MAIN_CLK parameter; clock-portable, no benefit",
+    "lcd_serialiser": "runs at the system clock, so a faster clock is a shorter frame push - the one part that gains",
+    "compositor": "per-line cycle budget scales with the clock"
+  },
+  "psg_register_reads": {
+    "side_effects": false,
+    "evidence": "rtl/psg.sv CPU-interface block only assigns dout; no register read alters sequencer or channel state. So the corpus's one indexed MMIO site (sta PSG_CH,y at src/main.asm:2479) is safe against a spurious read."
+  }
+}

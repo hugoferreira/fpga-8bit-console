@@ -319,14 +319,28 @@ PPU_TOP = rtl/sprite_compositor.sv
 PPU_RTL = $(PPU_TOP) $(filter-out rtl/ppu_golden_tb.sv,$(wildcard rtl/ppu_*.sv))
 PPUARGS ?=
 
+# The old binary is removed first and iverilog's exit status is checked, not
+# the pipeline's: piping through `grep -v sorry:` to hide iverilog's
+# unsupported-construct notices also hides its exit code, and a compile error
+# then silently re-runs the PREVIOUS build - which passes, and means nothing.
 build/ppu_golden.vvp: rtl/ppu_golden_tb.sv $(PPU_RTL) rtl/sprite_pattern.bin
 	@mkdir -p build
-	iverilog -g2012 -I. -Irtl -o $@ rtl/ppu_golden_tb.sv $(PPU_TOP) 2>&1 | grep -v 'sorry:' || true
-	@test -f $@
+	@rm -f $@
+	@iverilog -g2012 -I. -Irtl -o $@ rtl/ppu_golden_tb.sv $(PPU_TOP) \
+	   > build/ppu_iverilog.log 2>&1; \
+	 status=$$?; grep -v 'sorry:' build/ppu_iverilog.log; exit $$status
 
-ppu-check: build/ppu_golden.vvp
+ppu-check: ppu-lint build/ppu_golden.vvp
 	@mkdir -p rtl/golden
-	vvp $< $(PPUARGS)
+	vvp build/ppu_golden.vvp $(PPUARGS)
+
+# Verilator's width checking, which iverilog does not do and which the golden
+# frames cannot: a truncation that happens to be equivalent still passes every
+# pixel, and then breaks `make run` at the next build. Caught exactly that
+# during the module split, so it runs before the frames now.
+ppu-lint:
+	@verilator --lint-only -Irtl -Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
+	   -Wno-VARHIDDEN --top-module sprite_compositor $(PPU_TOP)
 
 # What the engine actually spends a scanline on, while a real game runs. The
 # three optimisations in section 4 of the change are each gated on a number
@@ -345,6 +359,25 @@ $(PPU_PROBE): sim/ppu_probe.cpp rtl/*.sv rtl/*.bin rtl/*.hex
 		--public-flat-rw --x-assign fast --x-initial fast -Wno-DEFOVERRIDE \
 		--exe $(abspath sim/ppu_probe.cpp) -o ppu_probe --build -j 8 \
 		-Mdir build/obj_probe -CFLAGS "-O2"
+
+# nextpnr's placement is seed-dependent, and the spread on this design is about
+# 5 MHz - wider than most of the deltas this change produces. A single Fmax
+# number therefore cannot support "timing did not regress", so this places the
+# same netlist SEEDS times and reports the range. Run `make ppu-synth` first.
+#
+#   make ppu-timing            5 seeds
+#   make ppu-timing SEEDS=12   tighter, and slower
+SEEDS ?= 5
+ppu-timing:
+	@test -f build/ppu/ppu.json || { echo "run 'make ppu-synth' first"; exit 1; }
+	@for s in $$(seq 1 $(SEEDS)); do \
+	   nextpnr-ice40 --hx8k --package tq144:4k --json build/ppu/ppu.json \
+	     --asc /dev/null --freq 50 --seed $$s 2>&1 | \
+	     grep 'Max frequency for clock' | tail -1 | \
+	     sed -E 's/.*: ([0-9.]+) MHz.*/\1/'; \
+	 done | sort -n | awk '{a[NR]=$$1} END { \
+	   printf "  Fmax over %d seeds: min %.2f  median %.2f  max %.2f MHz\n", \
+	          NR, a[1], a[int((NR+1)/2)], a[NR] }'
 
 ppu-probe: hex ${FONT_HEX}
 	@$(MAKE) -s $(PPU_PROBE)
@@ -409,8 +442,39 @@ tools: ${FONT_CONVERT}
 
 font: ${FONT_HEX}
 
-timing: bin/toplevel.bin
-	icetime -tmd ${FPGA_TYPE} -c ${TARGET_FREQ} -p ${FPGA_PCF} -P ${FPGA_PKG} bin/toplevel.asc
+# Achieved Fmax comes from nextpnr, which is the tool that knows the placement;
+# icetime re-derives it from the .asc and is kept as a second opinion. Exits
+# non-zero when the achieved frequency misses TARGET_FREQ (task 2.2).
+#
+# NOTE: this cannot run today. The whole chip does not place - rtl/ram_async.sv
+# models the 64 KB main memory as an on-chip array and the hx8k has 16 KB of
+# BRAM in total, so yosys emits ~1.7 M AND gates and never finishes. That is a
+# memory-abstraction problem, not a CPU one; see docs/cpu-baseline.json.
+# `make cpu-fmax` measures a core on its own in the meantime.
+timing: bin/toplevel.asc
+	@nextpnr-ice40 --${FPGA_TYPE} --package ${FPGA_PKG} --freq ${TARGET_FREQ} \
+	    --json bin/toplevel.json --pcf ${FPGA_PCF} --asc /dev/null 2>&1 \
+	  | tee bin/timing.log | grep -E "Max frequency|Critical path report|Info: +[0-9]+\.[0-9]+ ns" || true
+	@icetime -tmd ${FPGA_TYPE} -c ${TARGET_FREQ} -p ${FPGA_PCF} -P ${FPGA_PKG} bin/toplevel.asc
+	@grep -q "FAIL at" bin/timing.log && { echo "timing: achieved Fmax misses TARGET_FREQ=${TARGET_FREQ}"; exit 1; } || true
+
+# Fmax and area for ONE core, against a real BRAM with ram_async's timing and
+# no arbiter in the loop, so a difference between runs is a difference between
+# cores. This is the only timing measurement available until the memory map is
+# abstracted behind an interface the board's external RAM can back.
+#
+#   make cpu-fmax SST_CORE=arlet
+#   make cpu-fmax SST_CORE=v2
+cpu-fmax: rtl/cpu_fmax_top.sv $(SST_SRC)
+	@mkdir -p build/fmax
+	yosys -q -p "read_verilog -Irtl -sv $(SST_DEFS) rtl/cpu_fmax_top.sv; \
+	    synth_ice40 -top cpu_fmax_top -json build/fmax/$(SST_CORE).json" \
+	    > build/fmax/$(SST_CORE).yosys.log 2>&1
+	@nextpnr-ice40 --${FPGA_TYPE} --package ${FPGA_PKG} --freq ${TARGET_FREQ} \
+	    --json build/fmax/$(SST_CORE).json --asc build/fmax/$(SST_CORE).asc \
+	    > build/fmax/$(SST_CORE).pnr.log 2>&1 || true
+	@grep -E "Max frequency for clock|ICESTORM_LC:|ICESTORM_RAM:" \
+	    build/fmax/$(SST_CORE).pnr.log | tail -4
 
 stat: bin/toplevel.asc
 	icebox_stat -v bin/toplevel.asc
@@ -427,7 +491,7 @@ clean:
 .PHONY: all games hex hex-ca65 asm asm-ca65 check-customasm-version run shot \
         timing stat upload clean font tools test \
         sim debug debug_custom test_ram test-nemo test-celeste metrics \
-        ppu-check ppu-synth ppu-probe
+        ppu-check ppu-lint ppu-synth ppu-probe ppu-timing
 
 # ------------------------------------------------------------------------------
 # 65x02 conformance suite (openspec/changes/refactor-cpu-core)
@@ -514,4 +578,4 @@ build/$(GAME).lst: $(GAME_SRC) $(GAME_DEPS)
 	$(CUSTOMASM) $(GAME_SRC) -t 10 --color=off --legacy=off \
 	    -f annotated -o $(abspath build/$(GAME).lst)
 
-.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi
+.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi cpu-fmax

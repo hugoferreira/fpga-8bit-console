@@ -113,12 +113,12 @@ module cpu6502_decode (
         endcase
     endfunction
 
+    // Built as one concatenation rather than field by field: yosys cannot
+    // infer a width for a struct member assigned inside a function, and this
+    // table has to synthesise, not just simulate. The order here is the field
+    // order of dec_t.
     function automatic dec_t row(amode_t am, aluop_t op, rsel_t ra, dsel_t dst);
-        row.am  = am;
-        row.op  = op;
-        row.ra  = ra;
-        row.dst = dst;
-        row.fw  = fwset(op, dst);
+        row = dec_t'({am, op, ra, dst, fwset(op, dst)});
     endfunction
 
     always_comb begin

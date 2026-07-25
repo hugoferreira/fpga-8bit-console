@@ -300,6 +300,106 @@ shorter is not breaking anything.
   yet evidence.
 - **Integration.** `rtl/cpu6502_wrapper.sv` still points at the old core.
 
+## Phase 2: what the FPGA flow actually says
+
+### The design does not place, and the CPU is not why
+
+`make bin/toplevel.json` has never completed. It is not slow - yosys emits
+**1,727,271 AND gates and 4,954,853 wires** and then sits in ABC9 indefinitely.
+
+The cause is `rtl/ram_async.sv`, which models the console's 64 KB main memory as
+an on-chip array. An hx8k has 32 x 4 kbit BRAM, **16 KB in total**, and the rest
+of the design (PSG audio RAM, wavetable, reverb buffer, PPU overlay and map,
+text buffer, font) already wants most of that. Roughly 640 kbit asked for
+against 128 kbit available. Yosys cannot map it, falls back to logic, and the
+netlist explodes.
+
+That memory was never meant to be on-chip: the BlackIce MX has external RAM.
+What is missing is the abstraction - a memory interface the CPU and the arbiter
+talk to, with BRAM behind it for the small windows and the board's external RAM
+behind the 64 KB map. `rtl/top.pcf` has no memory pins at all, so nothing has
+ever been wired to a real chip.
+
+Until that exists:
+
+- **T4 (critical path relocated), T5 (Fmax) and T8 (area) cannot be measured**,
+  and tasks 2.1, 2.5 and the whole-chip half of 2.3 are blocked.
+- The blocker is a memory-subsystem problem, not a CPU one. Nothing about the
+  CPU rebuild makes it better or worse.
+
+### Core-only Fmax, and it is not the answer that was expected
+
+`rtl/cpu_fmax_top.sv` puts one core against a 2 KB synchronous-read RAM with
+`ram_async`'s timing and no arbiter, so a difference between runs is a
+difference between cores. `make cpu-fmax SST_CORE=arlet|v2`:
+
+| | old core | new core |
+| --- | --- | --- |
+| Fmax (hx8k, `--freq 50`) | **50.97 MHz** | **37.94 MHz** |
+| Logic cells | 818 | 1323 (+62%) |
+| static mean CPI (Breakout) | 3.0334 | 2.6234 |
+| 65x02, full sweep | 1,509,471 / 1,510,000 | **1,510,000 / 1,510,000** |
+
+**The new core is 26% slower in Fmax and 62% larger.** That is the opposite of
+what the combinational-address decision was betting on, and the placement says
+exactly why.
+
+The new core's critical path **starts at the BRAM read data**:
+
+```
+RDATA -> di -> combinational decode (ir) -> flag/ALU select
+      -> store data -> carry chain -> C flag          14.12 ns logic
+```
+
+The old core's does not. Its decode signals are *flops*, loaded at DECODE, so
+its path starts at a register:
+
+```
+V -> store -> write_back -> inc -> index_y -> dst_reg
+  -> regfile -> ALU half-carry -> PC                  11.75 ns logic
+```
+
+So the thing that costs is not the address mux the design notes worried about -
+it is that the new core decodes *and executes* in the same cycle as the fetched
+byte arrives. That is precisely what buys implied instructions their 1 cycle,
+and it is being paid for in Fmax. The narrow-address-mux argument was right
+about the address and wrong about what would bind.
+
+### Which core is faster today
+
+The board runs the raw 25 MHz pin: `rtl/pll.v` is generated for 50 MHz and
+`rtl/top.sv` never instantiates it. So `TARGET_FREQ = 50` is **aspirational, not
+a constraint the hardware meets** (task 2.4).
+
+At 25 MHz both cores close timing, and the new core's 15.6% lower CPI is a
+straight 15.6% more instructions per second. At each core's *own* Fmax the
+ranking inverts: 16.8 vs 14.5 M instructions/s, a 14% win for the old core. So
+the answer depends entirely on whether 50 MHz is ever pursued, and today it is
+not.
+
+### What this says about phase 4
+
+Registering the decode - phase 4's task 4.2 - is now measured, not assumed: it
+is the single change that moves the critical path off the memory output. It
+costs a cycle on implied instructions, which prefetching can win back, and it
+has a second payoff: a 256-row table of 22 bits is 5,632 bits, which fits in two
+BRAMs. Inferring it as a ROM would register it *and* return most of the 505
+extra logic cells.
+
+### Other clock consumers (task 2.6)
+
+The PSG derives its rate from `CLK_HZ` and `uart_tx` from `MAIN_CLK`; both are
+clock-portable and gain nothing. The LCD serialiser runs at the system clock, so
+a faster clock is a shorter frame push - it is the only part that benefits, and
+the compositor's per-line budget scales with it.
+
+### PSG register reads (task 2.7)
+
+No side effects: the CPU-interface block in `rtl/psg.sv` only assigns `dout`, and
+no read alters sequencer or channel state. The corpus's single indexed MMIO site,
+`sta PSG_CH,y` at `src/main.asm:2479`, is therefore safe against a spurious read
+- which also means Tier 2 divergence at that address would be harmless.
+
 ## `make test`
 
 `rtl/cpu6502_tb.sv` now calls `$fatal` on a failed check instead of printing

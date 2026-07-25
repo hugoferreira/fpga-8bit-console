@@ -51,24 +51,63 @@ against Arlet before the new core exists, exactly as the bring-up plan asks.
 ## 2. Baseline measurement (no RTL change)
 
 - [ ] 2.1 Get a `yosys` → `nextpnr` → `icetime` run to complete for `hx8k`
-      (`synthesis.log` currently ends mid-optimisation) and record the wall time
-- [ ] 2.2 Rewrite `make timing` to report achieved Fmax plus the top-10 critical
+      (`synthesis.log` currently ends mid-optimisation) and record the wall time.
+      **BLOCKED, and not by the CPU.** `rtl/ram_async.sv` models the 64 KB main
+      memory as an on-chip array; hx8k has 16 KB of BRAM in total, so yosys
+      emits 1,727,271 AND gates and never finishes ABC9. That memory belongs
+      behind a memory interface with the board's external RAM under it — no
+      such abstraction exists and `rtl/top.pcf` has no memory pins
+- [x] 2.2 Rewrite `make timing` to report achieved Fmax plus the top-10 critical
       paths with the owning module for each, and to exit non-zero when the achieved
-      frequency misses `TARGET_FREQ`
-- [ ] 2.3 Record achieved Fmax, the attributed paths and `make stat` utilisation in
+      frequency misses `TARGET_FREQ`. Done, and `make cpu-fmax` added — the only
+      timing measurement available until 2.1 unblocks
+- [~] 2.3 Record achieved Fmax, the attributed paths and `make stat` utilisation in
       `docs/cpu-baseline.json`, including the CPU's own LUT/DFF count as the T8
-      budget
-- [ ] 2.4 Resolve whether `TARGET_FREQ = 50` is a goal or a stale constraint:
+      budget. **Core-only figures recorded** (old 50.97 MHz / 818 LC, new
+      37.94 MHz / 1323 LC); whole-chip figures blocked on 2.1
+- [x] 2.4 Resolve whether `TARGET_FREQ = 50` is a goal or a stale constraint:
       `rtl/pll.v` is generated for 50 MHz and `rtl/top.sv` never instantiates it,
-      so the board runs the raw 25 MHz pin. Set the T5 target accordingly
-- [ ] 2.5 Record whether the critical path is inside `cpu`. If it is not, the Fmax
+      so the board runs the raw 25 MHz pin. Set the T5 target accordingly.
+      **Aspirational.** The board meets 25 MHz and both cores close timing
+      there. T5 should be stated against 25 MHz until a PLL is actually
+      instantiated
+- [~] 2.5 Record whether the critical path is inside `cpu`. If it is not, the Fmax
       motivation is void and only decode extensibility justifies the change —
-      re-scope before continuing
-- [ ] 2.6 Check whether anything besides the CPU benefits from a higher clock (LCD
-      serialiser, PSG `CLK_HZ` derivation, compositor line budget)
-- [ ] 2.7 Determine whether PSG register reads have side effects, for the
+      re-scope before continuing. **Unanswerable whole-chip** (see 2.1). Measured
+      core-only: the new core's critical path starts at the memory read data and
+      runs through the combinational decode; the old core's starts at a
+      registered decode signal. So the path IS in the CPU — but the new core
+      currently makes it worse, not better
+- [x] 2.6 Check whether anything besides the CPU benefits from a higher clock (LCD
+      serialiser, PSG `CLK_HZ` derivation, compositor line budget). PSG and UART
+      are parameterised and clock-portable; only the LCD serialiser and the
+      compositor's line budget gain
+- [x] 2.7 Determine whether PSG register reads have side effects, for the
       `sta PSG_CH,y` site at `src/main.asm:2479` — the corpus's only indexed MMIO
-      access
+      access. **No side effects**: the CPU-interface block only assigns `dout`
+
+### Phase 2 result
+
+Two findings, both load-bearing.
+
+**The chip does not place, and the CPU is not why.** The 64 KB main memory is
+modelled on-chip against an hx8k's 16 KB of BRAM, so yosys emits 1.7 M AND gates
+and never finishes. It needs a memory abstraction with the board's external RAM
+behind it. T4, T5 and T8 are blocked on that, not on this change.
+
+**Core-only, the new core is 26% slower and 62% larger** — 37.94 MHz / 1323 LC
+against 50.97 MHz / 818 LC. Its critical path starts at the memory read data and
+runs through the combinational decode into the ALU; the old core's starts at a
+*registered* decode signal. Decoding and executing in the cycle the byte arrives
+is what buys implied instructions their single cycle, and it is being paid for
+in Fmax.
+
+At the board's real 25 MHz both cores close timing, so today the new core's
+15.6% lower CPI is a straight 15.6% throughput win. At each core's own Fmax the
+ranking inverts by 14%. Task 4.2 (register the decode) is therefore no longer a
+speculative improvement — it is the measured fix, and inferring the 256 x 22-bit
+table as a BRAM ROM would register it and return most of the extra logic cells
+at the same time.
 
 ## 3. New core, non-pipelined
 
