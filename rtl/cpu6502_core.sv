@@ -188,16 +188,39 @@ module cpu6502_core (
     logic [7:0] alu_r;
     logic       alu_n, alu_v, alu_z, alu_c, alu_i, alu_d;
 
-    logic [8:0] bin, sbin, sbin_cmp;
+    // ADC, SBC and CMP all went through their own 9-bit adder. A 6502 needs
+    // one: subtraction is addition of the inverted operand, and the three
+    // differ only in whether the operand is inverted and what comes in as
+    // carry.
+    //
+    //   ADC  invert 0, carry in C     sum = A + M + C
+    //   SBC  invert 1, carry in C     sum = A + ~M + C   = A - M - (1-C)
+    //   CMP  invert 1, carry in 1     sum = A + ~M + 1   = A - M
+    //
+    // Carry out is the carry flag directly in all three - for the subtracting
+    // pair, "no borrow" is exactly "carry out set", so the inversion that used
+    // to sit on `alu_c` goes away too.
+    //
+    // Overflow falls out of the same trick. ADC wants ~(A^M) and SBC wants
+    // (A^M); with the inverted operand, ~(A ^ opb_eff) is the first when
+    // invert is 0 and the second when it is 1, so one expression serves both.
+    logic       add_inv, add_cin;
+    logic [7:0] opb_eff;
+    logic [8:0] sum;
+    logic       ovf;
+    assign opb_eff = opb ^ {8{add_inv}};
+    assign sum     = {1'b0, ra_val} + {1'b0, opb_eff} + {8'd0, add_cin};
+    assign ovf     = (~(ra_val ^ opb_eff) & (ra_val ^ sum[7:0]) & 8'h80) != 8'h00;
+
+    always_comb begin
+        add_inv = (dec_r.op == OP_SBC) || (dec_r.op == OP_CMP);
+        add_cin = (dec_r.op == OP_CMP) ? 1'b1 : fc;
+    end
+
     logic [5:0] dal, dal2, dah, dah2;
     logic [4:0] sal, sal2, sah, sah2;
 
     always_comb begin
-        bin  = {1'b0, ra_val} + {1'b0, opb} + {8'h00, fc};
-        sbin = {1'b0, ra_val} - {1'b0, opb} - {8'h00, ~fc};
-        // CMP subtracts without borrowing in the carry, so it needs its own
-        // difference rather than reusing SBC's.
-        sbin_cmp = {1'b0, ra_val} - {1'b0, opb};
 
         dal  = {2'b0, ra_val[3:0]} + {2'b0, opb[3:0]} + {5'b0, fc};
         dal2 = (dal > 6'd9) ? (dal + 6'd6) : dal;
@@ -227,33 +250,33 @@ module cpu6502_core (
                 // Z comes from the binary sum in both modes, which is what NMOS
                 // does and what the suite records. N and V in decimal mode are
                 // undocumented and are not contractual.
-                alu_z = (bin[7:0] == 8'h00);
-                alu_v = (~(ra_val ^ opb) & (ra_val ^ bin[7:0]) & 8'h80) != 8'h00;
+                alu_z = (sum[7:0] == 8'h00);
+                alu_v = ovf;
                 if (fd) begin
                     alu_r = {dah2[3:0], dal2[3:0]};
                     alu_c = (dah2 > 6'd15);
                     alu_n = dah2[3];
                 end else begin
-                    alu_r = bin[7:0];
-                    alu_c = bin[8];
-                    alu_n = bin[7];
+                    alu_r = sum[7:0];
+                    alu_c = sum[8];
+                    alu_n = sum[7];
                 end
             end
 
             OP_SBC: begin
                 // Every flag is the binary result's, in both modes: on NMOS only
                 // the result byte differs in decimal. Nothing here is masked.
-                alu_n = sbin[7];
-                alu_z = (sbin[7:0] == 8'h00);
-                alu_v = ((ra_val ^ opb) & (ra_val ^ sbin[7:0]) & 8'h80) != 8'h00;
-                alu_c = ~sbin[8];
-                alu_r = fd ? {sah2[3:0], sal2[3:0]} : sbin[7:0];
+                alu_n = sum[7];
+                alu_z = (sum[7:0] == 8'h00);
+                alu_v = ovf;
+                alu_c = sum[8];
+                alu_r = fd ? {sah2[3:0], sal2[3:0]} : sum[7:0];
             end
 
             OP_CMP: begin
-                alu_n = sbin_cmp[7];
-                alu_z = (sbin_cmp[7:0] == 8'h00);
-                alu_c = ~sbin_cmp[8];
+                alu_n = sum[7];
+                alu_z = (sum[7:0] == 8'h00);
+                alu_c = sum[8];
             end
 
             OP_BIT: begin
