@@ -23,20 +23,20 @@
 
 ## 3. RTL: ADD / SUB
 
-- [ ] 3.1 Force the carry-in mux to 0 for `ADD` and 1 for `SUB` on the existing
+- [x] 3.1 Force the carry-in mux to 0 for `ADD` and 1 for `SUB` on the existing
       `ADC`/`SBC` datapath
-- [ ] 3.2 Disable the decimal adjust for `ADD`/`SUB` only, leaving `ADC`/`SBC`
+- [x] 3.2 Disable the decimal adjust for `ADD`/`SUB` only, leaving `ADC`/`SBC`
       behaviour untouched
-- [ ] 3.3 Decode `$33`, `$43`, `$53`, `$63` onto those paths
-- [ ] 3.4 Confirm `N`, `V`, `Z`, `C` match `ADC`/`SBC` for the same operands with
+- [x] 3.3 Decode `$33`, `$43`, `$53`, `$63` onto those paths
+- [x] 3.4 Confirm `N`, `V`, `Z`, `C` match `ADC`/`SBC` for the same operands with
       carry-in forced
 
 ## 4. RTL: TRAP
 
-- [ ] 4.1 Decode `$73`, add a `trap_valid`/`trap_code` output pulsed for one
+- [x] 4.1 Decode `$73`, add a `trap_valid`/`trap_code` output pulsed for one
       cycle, and continue to the next instruction
-- [ ] 4.2 Confirm no register, flag or memory effect
-- [ ] 4.3 Tie the output off in `rtl/top.sv` so the FPGA build is unaffected
+- [x] 4.2 Confirm no register, flag or memory effect
+- [x] 4.3 Tie the output off in `rtl/top.sv` so the FPGA build is unaffected
 
 ## 5. Tests
 
@@ -84,3 +84,40 @@
 - [ ] 8.5 **G8** frame-work cycles did not increase on the replay
 - [ ] 8.6 Update `docs/isa-baseline.json` with the post-slice measurement as the
       new reference for slice 4
+
+### Migration result (breakout)
+
+`python3 tools/65x02/migrate_ext.py src/main.asm build/breakout.sym --apply`
+
+| | before | after | |
+| --- | --- | --- | --- |
+| instructions | 1928 | 1770 | **−8.2%** |
+| code bytes | 3894 | 3736 | −4.1% |
+| plumbing (**G6**) | 32.9% | **22.0%** | −10.9 points |
+| toll | 464 | 290 | |
+| ceremony | 95 | 24 | |
+
+158 sites rewritten: 78 `lda #k / sta v`, 62 `clc/adc`, 9 `sec/sbc`, 9
+`lda t,x / sta v`. **G5 met** — the count falls and the image does not grow.
+
+101 sites were declined and every one is categorised. The tool proves each
+rewrite safe rather than assuming it: `MOV` touches neither `A` nor N/Z where
+`lda`/`sta` set both, so a site is only rewritten where a conservative forward
+scan shows both dead. A label, a branch, a call or a read of either rejects it.
+The largest categories are 21 `sta dst,x` (no `MOV` form), 20 `jsr`, 19 label
+and 17 `A read by sta`.
+
+The last of those is a missed opportunity rather than a hazard: `lda #0 / sta a
+/ sta b` cannot become `mov a,#0 / sta b`, but it could become two `MOV`s. Left
+for a second pass.
+
+Three form constraints were found by the assembler rejecting the output, which
+is the right way to find them:
+
+- `MOV zp, abs+X` has no absolute-destination form, so 12 sites were declined.
+- `ADD`/`SUB` exist only as `#imm` and `zp`, so 9 `adc`/`sbc` on absolute or
+  indexed operands were declined.
+- **`lda zp,x` wraps inside page zero and `abs,x` does not.** Rewriting one such
+  site would have changed behaviour whenever `zp+X` crossed `$FF`. Declined, and
+  the tool now resolves symbol values from the assembler's own output to tell
+  the two apart.

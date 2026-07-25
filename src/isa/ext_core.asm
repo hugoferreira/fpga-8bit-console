@@ -25,8 +25,14 @@
     mov  {addr: u16}, #{imm: i8}  => 0x13 @ $le(addr) @ imm
 
     ; 4 bytes / 6 cycles, replacing `lda abs,x / sta zp` (5 bytes / 7 cycles)
-    mov <{zaddr: u8}, {addr: u16}, x => 0x23 @ zaddr @ $le(addr)
-    mov  {zaddr: u8}, {addr: u16}, x => 0x23 @ zaddr @ $le(addr)
+    ;
+    ; Written `mov dst, table + x` rather than `mov dst, table, x`: with a
+    ; two-operand mnemonic a third comma reads as a third operand, and the
+    ; index is not one - it is part of the source address. customasm treats
+    ; `+ x` as a syntactic marker here, not an expression, so `table + x`
+    ; assembles to the indexed opcode and not to an addition.
+    mov <{zaddr: u8}, {addr: u16} + x => 0x23 @ zaddr @ $le(addr)
+    mov  {zaddr: u8}, {addr: u16} + x => 0x23 @ zaddr @ $le(addr)
 
     ; --- ADD / SUB: the carry is in the opcode, not in a preceding clc --
     add #{imm:  i8} => 0x33 @ imm      ; 2/2, replacing clc/adc #k  (3/4)
@@ -38,4 +44,22 @@
 
     ; --- TRAP: a named failure instead of silent corruption ------------
     trap #{imm: u8} => 0x73 @ imm
+}
+
+; The low/high-byte immediate forms, matching cpu6502_immediate_lohi in
+; nmos6502.asm. `mov ptr, #<table` is how a pointer gets initialised, and it is
+; the single most common MOV site in the corpus.
+#ruledef ext_core_immediate_lohi
+{
+    mov <{zaddr: u8}, #<{v: u16} => 0x03 @ zaddr @ v[7:0]
+    mov <{zaddr: u8}, #>{v: u16} => 0x03 @ zaddr @ v[15:8]
+    mov  {zaddr: u8}, #<{v: u16} => 0x03 @ zaddr @ v[7:0]
+    mov  {zaddr: u8}, #>{v: u16} => 0x03 @ zaddr @ v[15:8]
+    mov  {addr: u16}, #<{v: u16} => 0x13 @ $le(addr) @ v[7:0]
+    mov  {addr: u16}, #>{v: u16} => 0x13 @ $le(addr) @ v[15:8]
+
+    add #<{v: u16} => 0x33 @ v[7:0]
+    add #>{v: u16} => 0x33 @ v[15:8]
+    sub #<{v: u16} => 0x53 @ v[7:0]
+    sub #>{v: u16} => 0x53 @ v[15:8]
 }

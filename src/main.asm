@@ -1,4 +1,5 @@
 #include "isa/nmos6502.asm"
+#include "isa/ext_core.asm"
 #include "isa/memmap.asm"
 #include "isa/console.asm"
 
@@ -62,8 +63,7 @@ start:
     bne .topwall
     ldx #1
 .sidewall:
-    lda rowmap_lo, x
-    sta ptr
+    mov ptr, rowmap_lo + x
     lda rowmap_hi, x
     sta ptr+1
     ldy #1
@@ -72,8 +72,7 @@ start:
     ldy #13
     sta (ptr), y
     lda ptr+1
-    clc
-    adc #2             ; MAP_HI page = MAP_LO page + $200
+    add #2  ; MAP_HI page = MAP_LO page + $200
     sta ptr+1
     ldy #1
     lda #$0C
@@ -117,19 +116,14 @@ start:
     bne .hud3
 
     ; Original look: navy background, value 3 renders black (mortar)
-    lda #1
-    sta SPR_SPAL+0
-    lda #0
-    sta SPR_SPAL+3
+    mov SPR_SPAL+0, #1
+    mov SPR_SPAL+3, #0
 
     ; Upload the cart's audio RAM image (music + SFX, 4608 bytes) to the
     ; PSG at PICO-8 address $3100 - verbatim cart bytes, no conversion
-    lda #$00
-    sta PSG_ADDR_LO
-    lda #$31
-    sta PSG_ADDR_HI
-    lda #<audio_data
-    sta ptr
+    mov PSG_ADDR_LO, #$00
+    mov PSG_ADDR_HI, #$31
+    mov ptr, #<audio_data
     lda #>audio_data
     sta ptr+1
     ldx #18                ; 18 pages = 4608 bytes
@@ -144,8 +138,7 @@ start:
     bne .sfxup
 
     ; title music while waiting to serve
-    lda #MUS_TITLE
-    sta PSG_MUSIC
+    mov PSG_MUSIC, #MUS_TITLE
 
     ; First 8 list entries (ambient dust) composite behind the tile layer
     lda #8
@@ -155,21 +148,18 @@ start:
 .dust0:
     lda SPR_RND
     and #63
-    clc
-    adc #20
+    add #20
     sta DUSTX, x
     lda SPR_RND
     and #63
-    clc
-    adc #24
+    add #24
     sta DUSTY, x
     inx
     cpx #8
     bne .dust0
 
     ; PPU on: tilemap + overlay, white overlay text
-    lda #7
-    sta SPR_OVLCOL
+    mov SPR_OVLCOL, #7
     lda #3
     sta SPR_CTRL
 
@@ -200,14 +190,12 @@ main_loop:
 do_serve:
     jsr move_paddle
     lda padx
-    clc
-    adc #9
+    add #9
     sta ballx+1
     lda #0
     sta ballx
     sta bally
-    lda #98
-    sta bally+1
+    mov bally+1, #98
     ; blink PRESS X
     lda blink
     and #$0F
@@ -225,15 +213,13 @@ do_serve:
     and #BTN_X
     bne .done
     jsr msg_clear
-    lda #ST_PLAY
-    sta state
+    mov state, #ST_PLAY
     ; serve at a near-vertical angle with per-serve variation
     lda #0
     sta ballspd
     sta windt
     sta windt+1
-    lda #MUS_FADE_2S       ; title music fades out over 2 s, as music(-1, 2000)
-    sta PSG_FADE
+    mov PSG_FADE, #MUS_FADE_2S
     lda #$80
     sta PSG_MUSIC
     ldx #SND_SERVE
@@ -241,8 +227,7 @@ do_serve:
     jsr sfx_play
     lda SPR_RND
     and #3
-    clc
-    adc #5                 ; angle index 5..8
+    add #5  ; angle index 5..8
     tay
     jsr set_vec
 .done:
@@ -314,11 +299,9 @@ do_play:
     lda stuckf
     beq .notstuck
     lda padx
-    clc
-    adc stuckoff
+    add stuckoff
     sta ballx+1
-    lda #PAD_Y-5
-    sta bally+1
+    mov bally+1, #PAD_Y-5
     lda btn
     and #BTN_X
     beq .after1
@@ -362,14 +345,12 @@ do_play:
     jsr serve_reset
     lda lives
     beq .gameover
-    lda #ST_SERVE
-    sta state
+    mov state, #ST_SERVE
     lda #0
     sta blink
     jmp frame_end
 .gameover:
-    lda #ST_OVER
-    sta state
+    mov state, #ST_OVER
     lda #MUS_OVER          ; the cart's game-over jingle
     sta PSG_MUSIC
     jsr msg_over
@@ -402,8 +383,7 @@ do_play:
     cpx #15
     bcc .lv
     ; all 15 levels cleared: winner screen (X restarts via do_over)
-    lda #ST_WIN
-    sta state
+    mov state, #ST_WIN
     lda #MUS_WIN
     sta PSG_MUSIC
     jsr serve_reset
@@ -416,10 +396,8 @@ do_play:
     jsr build_level
     jsr draw_hud
     jsr serve_reset
-    lda #MUS_CLEAR         ; the cart's level-clear jingle
-    sta PSG_MUSIC
-    lda #6
-    sta flasht
+    mov PSG_MUSIC, #MUS_CLEAR
+    mov flasht, #6
     lda #ST_SERVE
     sta state
 .go:
@@ -441,8 +419,7 @@ ball_step:
     ror
     sta tmp
     lda ballx
-    clc
-    adc tmp
+    add tmp
     sta ballx
     lda ballx+1
     adc tmp2
@@ -455,8 +432,7 @@ ball_step:
     ror
     sta tmp
     lda bally
-    clc
-    adc tmp
+    add tmp
     sta bally
     lda bally+1
     adc tmp2
@@ -464,15 +440,13 @@ ball_step:
     jmp .moved
 .full:
     lda ballx
-    clc
-    adc bvx
+    add bvx
     sta ballx
     lda ballx+1
     adc bvx+1
     sta ballx+1
     lda bally
-    clc
-    adc bvy
+    add bvy
     sta bally
     lda bally+1
     adc bvy+1
@@ -530,11 +504,9 @@ ball_step:
     bne .bounce
     lda curball
     bne .bounce
-    lda #1
-    sta stuckf
+    mov stuckf, #1
     lda ballx+1
-    sec
-    sbc padx
+    sub padx
     sta stuckoff
     lda #0
     sta bvx
@@ -581,30 +553,25 @@ ball_step:
     lda #0
     sta spvx
     sta spvy
-    lda #1
-    sta spkind
+    mov spkind, #1
     lda #12
     jsr spawn_particle
 
     ; --- brick collisions: probe ahead of the ball center on each axis ---
     lda ballx+1
-    clc
-    adc #3
+    add #3
     sta tmp                ; cx
     lda bally+1
-    clc
-    adc #3
+    add #3
     sta tmp2               ; cy
     ; horizontal probe (cx +/- 3, cy)
     lda tmp
     ldy bvx+1
     bmi .hneg
-    clc
-    adc #3
+    add #3
     jmp .hgo
 .hneg:
-    sec
-    sbc #3
+    sub #3
 .hgo:
     tax
     ldy tmp2
@@ -619,12 +586,10 @@ ball_step:
     lda tmp2
     ldy bvy+1
     bmi .vneg
-    clc
-    adc #3
+    add #3
     jmp .vgo
 .vneg:
-    sec
-    sbc #3
+    sub #3
 .vgo:
     tay
     ldx tmp
@@ -643,12 +608,10 @@ ball_step:
 pad_zone:
     ldx padw
     lda ballx+1
-    sec
-    sbc padx
+    sub padx
     sec
     sbc pleft_adj, x        ; overlap vs the true left edge
-    clc
-    adc #6
+    add #6
     cmp ovr_max, x
     bcs .miss
     ldy #0
@@ -764,15 +727,13 @@ spawn_pill:
     asl
     asl
     asl
-    clc
-    adc #15                ; brick centre - half a pill
+    add #15  ; brick centre - half a pill
     sta pill_x, x
     lda hitr
     asl
     asl
     asl
-    clc
-    adc #15
+    add #15
     sta pill_y, x
     lda #0
     sta pill_yf, x
@@ -788,8 +749,7 @@ update_pills:
     jmp .pnext
 .act:
     lda pill_yf, x
-    clc
-    adc #$B3
+    add #$B3
     sta pill_yf, x
     lda pill_y, x
     adc #0
@@ -813,8 +773,7 @@ update_pills:
     adc padwid, y
     sta tmp2               ; paddle right edge
     lda pill_x, x
-    clc
-    adc #8
+    add #8
     cmp tmp
     bcc .pnext
     lda pill_x, x
@@ -843,10 +802,8 @@ update_pills:
 apply_pill:
     cmp #1
     bne .n1
-    lda #$90               ; slowdown: 400 frames at half ball speed
-    sta t_slow
-    lda #$01
-    sta t_slow+1
+    mov t_slow, #$90
+    mov t_slow+1, #$01
     lda #0
     jmp msg_show
 .n1:
@@ -863,47 +820,37 @@ apply_pill:
 .n2:
     cmp #3
     bne .n3
-    lda #1                 ; sticky paddle until the next serve
-    sta stickyf
+    mov stickyf, #1
     lda #2
     jmp msg_show
 .n3:
     cmp #4
     bne .n4
-    lda #$58               ; expand: 600 frames of 32px paddle
-    sta t_expand
-    lda #$02
-    sta t_expand+1
+    mov t_expand, #$58
+    mov t_expand+1, #$02
     lda #0
     sta t_reduce
     sta t_reduce+1
-    lda #1
-    sta padw
+    mov padw, #1
     lda #3
     jmp msg_show
 .n4:
     cmp #5
     bne .n5
-    lda #$58               ; reduce: 600 frames of 16px paddle
-    sta t_reduce
-    lda #$02
-    sta t_reduce+1
+    mov t_reduce, #$58
+    mov t_reduce+1, #$02
     lda #0
     sta t_expand
     sta t_expand+1
-    lda #2
-    sta padw
+    mov padw, #2
     lda #4
     jmp msg_show
 .n5:
     cmp #6
     bne .n6
-    lda #$58               ; megaball: armed until the next brick contact
-    sta t_megaw
-    lda #$02
-    sta t_megaw+1
-    lda #0
-    sta t_mega
+    mov t_megaw, #$58
+    mov t_megaw+1, #$02
+    mov t_mega, #0
     lda #5
     jmp msg_show
 .n6:
@@ -916,16 +863,14 @@ apply_pill:
     sta b2x, x
     dex
     bpl .cp
-    lda #1
-    sta b2on
+    mov b2on, #1
     ; a clone of a riding ball launches upward instead
     lda stuckf
     beq .negvx
     lda #0
     sta b2vx
     sta b2vy
-    lda #1
-    sta b2vx+1
+    mov b2vx+1, #1
     lda #$FF
     sta b2vy+1
     jmp .have
@@ -957,12 +902,9 @@ check_sd:
     cmp #4
     beq .next
     sty sd_idx
-    lda #1
-    sta sd_on
-    lda #$C2               ; 450-frame fuse
-    sta sd_t
-    lda #$01
-    sta sd_t+1
+    mov sd_on, #1
+    mov sd_t, #$C2
+    mov sd_t+1, #$01
     lda #8
     sta sd_blink
     ldx #SND_SD
@@ -994,14 +936,11 @@ sd_attr:
     inx
     bne .dv
 .f:
-    clc
-    adc #2
+    add #2
     tay
-    lda rowmap2_lo, x
-    sta ptr2
+    mov ptr2, rowmap2_lo + x
     lda rowmap2_hi, x
-    clc
-    adc #2
+    add #2
     sta ptr2+1
     pla
     sta (ptr2), y
@@ -1047,14 +986,12 @@ update_sd:
     ror
     lsr tmp
     ror
-    clc
-    adc #2
+    add #2
     sta sd_blink
 .done:
     rts
 .boom:
-    lda #0
-    sta sd_on
+    mov sd_on, #0
     lda sd_idx
     ldx #0
 .dv2:
@@ -1087,8 +1024,7 @@ update_explosions:
     ldx #SND_EXPLODE
     ldy #2
     jsr sfx_play
-    lda #6
-    sta shaket
+    mov shaket, #6
     lda tmp3
     ldx #0
 .dv:
@@ -1116,8 +1052,7 @@ update_explosions:
     sta hitc
     ldx hitr
     lda times11, x
-    clc
-    adc hitc
+    add hitc
     tax
     lda shadow, x
     beq .skip
@@ -1130,8 +1065,7 @@ update_explosions:
     lda #1
     sta ncmb
     jsr brick_hit
-    lda #0
-    sta ncmb
+    mov ncmb, #0
     pla
     sta colv
     pla
@@ -1176,13 +1110,10 @@ serve_reset:
 ; msg_show: A = message index; print it centred in the sash row
 msg_show:
     tax
-    lda msg_pairs, x
-    sta tmp3
+    mov tmp3, msg_pairs + x
     lda #12
-    sec
-    sbc tmp3
-    clc
-    adc #<(OVL+70*20)
+    sub tmp3
+    add #<(OVL+70*20)
     sta ptr
     lda #>(OVL+70*20)
     adc #0
@@ -1207,8 +1138,7 @@ msg_win:
 ; Cell coords left in hitr/hitc.
 probe_brick:
     txa
-    sec
-    sbc #ARENA_L
+    sub #ARENA_L
     bcc .miss
     lsr
     lsr
@@ -1217,8 +1147,7 @@ probe_brick:
     bcs .miss
     sta hitc
     tya
-    sec
-    sbc #ARENA_T
+    sub #ARENA_T
     bcc .miss
     lsr
     lsr
@@ -1228,8 +1157,7 @@ probe_brick:
     sta hitr
     tax
     lda times11, x
-    clc
-    adc hitc
+    add hitc
     tay
     lda shadow, y
     beq .miss
@@ -1244,8 +1172,7 @@ probe_brick:
 brick_hit:
     ldx hitr
     lda times11, x
-    clc
-    adc hitc
+    add hitc
     tay
     ldx shadow, y           ; X = type code
     sty sidx
@@ -1261,8 +1188,7 @@ brick_hit:
     jsr sd_attr_norm
     sed
     lda score0
-    clc
-    adc #$10
+    add #$10
     sta score0
     lda score1
     adc #0
@@ -1306,8 +1232,7 @@ brick_hit:
     sed
 .mul:
     lda score0
-    clc
-    adc mulk
+    add mulk
     sta score0
     lda score1
     adc #0
@@ -1353,8 +1278,7 @@ brick_hit:
 .tile:
     ; rewrite the map cell at row hitr+2, col hitc+2
     ldx hitr
-    lda rowmap2_lo, x
-    sta ptr2
+    mov ptr2, rowmap2_lo + x
     lda rowmap2_hi, x
     sta ptr2+1
     pla
@@ -1365,8 +1289,7 @@ brick_hit:
     lda type_tile, x
     sta (ptr2), y           ; MAP_LO
     lda ptr2+1
-    clc
-    adc #2
+    add #2
     sta ptr2+1
     lda type_hi, x
     sta (ptr2), y           ; MAP_HI
@@ -1379,8 +1302,7 @@ brick_hit:
     pha                    ; save the NEW type across the sound calls
     bne .clink             ; new type != 0 -> brick survived
     lda chain              ; smash pitch rises with the chain (sfx 3..9)
-    clc
-    adc #2
+    add #2
     tax
     jsr sfx_play
     ldx #SND_SHATTER       ; layered shatter (sfx 13)
@@ -1407,58 +1329,45 @@ brick_hit:
     ; game feel: shards + shake + 4 sparks from the brick center
     txa                    ; X is the NEW type: shards only on destruction
     bne .noshard
-    lda #2
-    sta spkind
-    lda type_spark, x
-    sta spcol
+    mov spkind, #2
+    mov spcol, type_spark + x
     lda hitc
     asl
     asl
     asl
-    clc
-    adc #17
+    add #17
     sta spx
     lda hitr
     asl
     asl
     asl
-    clc
-    adc #17
+    add #17
     sta spy
-    lda #$FF
-    sta spvx
-    lda #$FE
-    sta spvy
+    mov spvx, #$FF
+    mov spvy, #$FE
     lda #16
     jsr spawn_particle
     lda spx
-    clc
-    adc #4
+    add #4
     sta spx
-    lda #1
-    sta spvx
-    lda #$FE
-    sta spvy
+    mov spvx, #1
+    mov spvy, #$FE
     lda #16
     jsr spawn_particle
 .noshard:
-    lda #4
-    sta shaket
-    lda type_spark, x
-    sta spcol
+    mov shaket, #4
+    mov spcol, type_spark + x
     lda hitc
     asl
     asl
     asl
-    clc
-    adc #19                ; brick center x
+    add #19  ; brick center x
     sta spx
     lda hitr
     asl
     asl
     asl
-    clc
-    adc #19                ; brick center y
+    add #19  ; brick center y
     sta spy
     lda #0
     sta spkind
@@ -1513,16 +1422,14 @@ move_paddle:
     and #BTN_L
     beq .notl
     lda padvx
-    sec
-    sbc #$80
+    sub #$80
     sta padvx
     lda padvx+1
     sbc #0
     sta padvx+1
     cmp #$FD               ; clamp at -2.5 ($FD80)
     bcs .chkr
-    lda #$80
-    sta padvx
+    mov padvx, #$80
     lda #$FD
     sta padvx+1
     jmp .apply
@@ -1532,16 +1439,14 @@ move_paddle:
     and #BTN_R
     beq .friction
     lda padvx
-    clc
-    adc #$80
+    add #$80
     sta padvx
     lda padvx+1
     adc #0
     sta padvx+1
     cmp #3                 ; clamp at +2.5 ($0280)
     bcc .apply
-    lda #$80
-    sta padvx
+    mov padvx, #$80
     lda #$02
     sta padvx+1
     jmp .apply
@@ -1565,16 +1470,14 @@ move_paddle:
     ror
     sta tmp2
     lda padvx
-    sec
-    sbc tmp2
+    sub tmp2
     sta padvx
     lda padvx+1
     sbc tmp
     sta padvx+1
 .apply:
     lda padxf
-    clc
-    adc padvx
+    add padvx
     sta padxf
     lda padx
     adc padvx+1
@@ -1640,8 +1543,7 @@ frame_end:
     sta DUSTY, x
     lda SPR_RND
     and #63
-    clc
-    adc #20
+    add #20
     sta DUSTX, x
 .dnext:
     inx
@@ -1654,11 +1556,9 @@ frame_end:
     bne .noblink
     ldx #0                 ; brick row
 .brow:
-    lda rowmap2_lo, x
-    sta ptr2
+    mov ptr2, rowmap2_lo + x
     lda rowmap2_hi, x
-    clc
-    adc #2                 ; attribute page
+    add #2  ; attribute page
     sta ptr2+1
     lda #0
     sta colv
@@ -1666,15 +1566,13 @@ frame_end:
     txa
     pha
     lda times11, x
-    clc
-    adc colv
+    add colv
     tay
     lda shadow, y
     cmp #5
     bne .bnext
     lda colv
-    clc
-    adc #2
+    add #2
     tay
     lda blink
     and #8
@@ -1711,15 +1609,13 @@ frame_end:
     beq .noshake
     dec shaket
     lda shaket
-    clc
-    adc blink              ; vary the wobble direction
+    add blink  ; vary the wobble direction
     and #7
     tax
     lda shake_tbl, x
     sta SPR_CAMX
     eor #$FF
-    clc
-    adc #1
+    add #1
     sta shx
     jmp .shdone
 .noshake:
@@ -1733,28 +1629,23 @@ frame_end:
     ldx #0
 .dstream:
     lda DUSTX, x
-    clc
-    adc shx
+    add shx
     sta SPR_X
     lda DUSTY, x
     sta SPR_Y
-    lda #44
-    sta SPR_BASE
+    mov SPR_BASE, #44
     lda #$40               ; dark grey dot, under the bricks
     sta SPR_FLAGS
     inx
     cpx #8
     bne .dstream
     lda ballx+1
-    clc
-    adc shx
+    add shx
     sta SPR_X
     lda bally+1
     sta SPR_Y
-    lda #0
-    sta SPR_BASE
-    lda #$0C               ; 4bpp, pal 0
-    sta SPR_FLAGS
+    mov SPR_BASE, #0
+    mov SPR_FLAGS, #$0C
     ; paddle: up to 4 segments depending on width (unused slots park)
     ldy padw
     lda padx
@@ -1768,8 +1659,7 @@ frame_end:
     ldx #0
 .pseg:
     txa
-    clc
-    adc tmp2
+    add tmp2
     tay
     lda psegs, y
     cmp #$FF
@@ -1779,24 +1669,19 @@ frame_end:
     asl
     asl
     asl                    ; segment*8
-    clc
-    adc tmp
+    add tmp
     adc shx
     sta SPR_X
-    lda #PAD_Y
-    sta SPR_Y
+    mov SPR_Y, #PAD_Y
     pla
     sta SPR_BASE
     lda #$0C
     sta SPR_FLAGS
     jmp .pnexts
 .ppark:
-    lda #0
-    sta SPR_X
-    lda #124
-    sta SPR_Y
-    lda #44
-    sta SPR_BASE
+    mov SPR_X, #0
+    mov SPR_Y, #124
+    mov SPR_BASE, #44
     lda #0
     sta SPR_FLAGS
 .pnexts:
@@ -1807,23 +1692,18 @@ frame_end:
     lda b2on
     beq .b2park
     lda b2x+1
-    clc
-    adc shx
+    add shx
     sta SPR_X
     lda b2y+1
     sta SPR_Y
-    lda #0
-    sta SPR_BASE
+    mov SPR_BASE, #0
     lda #$0C
     sta SPR_FLAGS
     jmp .b2done
 .b2park:
-    lda #0
-    sta SPR_X
-    lda #124
-    sta SPR_Y
-    lda #44
-    sta SPR_BASE
+    mov SPR_X, #0
+    mov SPR_Y, #124
+    mov SPR_BASE, #44
     lda #0
     sta SPR_FLAGS
 .b2done:
@@ -1834,23 +1714,18 @@ frame_end:
     beq .pillpark
     tay
     lda pill_x, x
-    clc
-    adc shx
+    add shx
     sta SPR_X
     lda pill_y, x
     sta SPR_Y
-    lda #45
-    sta SPR_BASE
+    mov SPR_BASE, #45
     lda pill_flags-1, y
     sta SPR_FLAGS
     jmp .pillnext
 .pillpark:
-    lda #0
-    sta SPR_X
-    lda #124
-    sta SPR_Y
-    lda #44
-    sta SPR_BASE
+    mov SPR_X, #0
+    mov SPR_Y, #124
+    mov SPR_BASE, #44
     lda #0
     sta SPR_FLAGS
 .pillnext:
@@ -1885,12 +1760,10 @@ frame_end:
     clc
     adc PVY, x
     sta PPY, x
-    clc
-    adc shx                ; reuse shx on y for a touch of vertical judder
+    add shx  ; reuse shx on y for a touch of vertical judder
     sta SPR_Y
     lda PPX, x
-    clc
-    adc shx
+    add shx
     sta SPR_X
     lda PKIND, x
     beq .bspark
@@ -1901,8 +1774,7 @@ frame_end:
     lsr
     lsr
     and #1
-    clc
-    adc #48
+    add #48
     sta SPR_BASE
     lda PLIFE, x
     and #8
@@ -1917,38 +1789,31 @@ frame_end:
     lda PLIFE, x
     cmp #8
     bcc .t2
-    lda #45
-    sta SPR_BASE
+    mov SPR_BASE, #45
     lda #$60
     sta SPR_FLAGS
     jmp .pnextp
 .t2:
     cmp #4
     bcc .t1
-    lda #46
-    sta SPR_BASE
+    mov SPR_BASE, #46
     lda #$90
     sta SPR_FLAGS
     jmp .pnextp
 .t1:
-    lda #47
-    sta SPR_BASE
+    mov SPR_BASE, #47
     lda #$80
     sta SPR_FLAGS
     jmp .pnextp
 .bspark:
-    lda #44
-    sta SPR_BASE
+    mov SPR_BASE, #44
     lda PCOL, x
     sta SPR_FLAGS
     jmp .pnextp
 .pdead:
-    lda #124
-    sta SPR_Y
-    lda #0
-    sta SPR_X
-    lda #44
-    sta SPR_BASE
+    mov SPR_Y, #124
+    mov SPR_X, #0
+    mov SPR_BASE, #44
     lda #0
     sta SPR_FLAGS
 .pnextp:
@@ -1975,16 +1840,14 @@ new_game:
     sta padxf
     sta chaint
     sta flasht
-    lda #1
-    sta chain
+    mov chain, #1
     lda #0
     sta score0
     sta score1
     sta score2
     sta level
     sta servedx
-    lda #3
-    sta lives
+    mov lives, #3
     lda #52
     sta padx
     jsr serve_reset
@@ -2005,8 +1868,7 @@ build_level:
     ; clear brick region rows 2-11, cols 2-12
     ldx #0
 .clrrow:
-    lda rowmap2_lo, x
-    sta ptr2
+    mov ptr2, rowmap2_lo + x
     lda rowmap2_hi, x
     sta ptr2+1
     lda #0
@@ -2016,8 +1878,7 @@ build_level:
     cpy #1
     bne .cc
     lda ptr2+1
-    clc
-    adc #2
+    add #2
     sta ptr2+1
     lda #0
     ldy #12
@@ -2029,11 +1890,9 @@ build_level:
     cpx #10
     bne .clrrow
 
-    lda #0
-    sta bricksn
+    mov bricksn, #0
     ldx level
-    lda level_ptr_lo, x
-    sta ptr
+    mov ptr, level_ptr_lo + x
     lda level_ptr_hi, x
     sta ptr+1
     ldy #0
@@ -2058,8 +1917,7 @@ build_level:
     pha
     ldx hitr
     lda times11, x
-    clc
-    adc hitc
+    add hitc
     tay
     pla
     sta shadow, y
@@ -2074,14 +1932,12 @@ build_level:
     lda rowmap2_hi, y
     sta ptr2+1
     lda hitc
-    clc
-    adc #2
+    add #2
     tay
     lda type_tile, x
     sta (ptr2), y
     lda ptr2+1
-    clc
-    adc #2
+    add #2
     sta ptr2+1
     lda type_hi, x
     sta (ptr2), y
@@ -2091,8 +1947,7 @@ build_level:
     cmp #11
     bne .colloop
     lda ptr
-    clc
-    adc #11
+    add #11
     sta ptr
     bcc .p1
     inc ptr+1
@@ -2128,8 +1983,7 @@ draw_hud:
     and #$0F
     ora #$B0               ; font tile for '0' + digit
     sta MAP_LO+160+14
-    lda #$60
-    sta MAP_HI+160+14
+    mov MAP_HI+160+14, #$60
     ldx level
     lda lvl_tens, x
     sta MAP_LO+256+14
@@ -2142,8 +1996,7 @@ draw_hud:
     lda chain
     ora #$B0
     sta MAP_LO+320+14
-    lda #$D8               ; 'X' glyph tile
-    sta MAP_LO+320+15
+    mov MAP_LO+320+15, #$D8
     lda #$60
     sta MAP_HI+320+14
     sta MAP_HI+320+15
@@ -2164,19 +2017,15 @@ bcd_two:                   ; A = BCD byte -> A = tens font tile, X = ones
 ; ------------------------------------------------------------------------------
 ; Overlay messages (4x6 font, two glyphs per byte, byte-aligned)
 msg_press:
-    lda #<(OVL+70*20+8)
-    sta ptr
-    lda #>(OVL+70*20+8)
-    sta ptr+1
+    mov ptr, #<(OVL+70*20+8)
+    mov ptr+1, #>(OVL+70*20+8)
     ldx #<msg_press_t
     ldy #>msg_press_t
     lda #4
     jmp ovl_print
 msg_over:
-    lda #<(OVL+70*20+7)
-    sta ptr
-    lda #>(OVL+70*20+7)
-    sta ptr+1
+    mov ptr, #<(OVL+70*20+7)
+    mov ptr+1, #>(OVL+70*20+7)
     ldx #<msg_over_t
     ldy #>msg_over_t
     lda #5
@@ -2196,8 +2045,7 @@ ovl_print:
     tay
     iny
     lda (tmp), y            ; odd glyph offset -> high nibble
-    clc
-    adc rowv
+    add rowv
     tay
     lda font46, y
     asl
@@ -2209,8 +2057,7 @@ ovl_print:
     asl
     tay
     lda (tmp), y            ; even glyph offset -> low nibble
-    clc
-    adc rowv
+    add rowv
     tay
     lda font46, y
     ora hitr
@@ -2221,8 +2068,7 @@ ovl_print:
     cmp tmp3
     bne .pair
     lda ptr
-    clc
-    adc #20
+    add #20
     sta ptr
     bcc .nc
     inc ptr+1
@@ -2234,8 +2080,7 @@ ovl_print:
     rts
 
 msg_clear:
-    lda #<(OVL+68*20+5)
-    sta ptr
+    mov ptr, #<(OVL+68*20+5)
     lda #>(OVL+68*20+5)
     sta ptr+1
     ldx #10
@@ -2245,8 +2090,7 @@ msg_clear:
     dey
     bpl .c
     lda ptr
-    clc
-    adc #20
+    add #20
     sta ptr
     bcc .n
     inc ptr+1
@@ -2294,8 +2138,7 @@ sfx_play:
     lsr                    ; ch3
     bcc .go
     lda nextch             ; all busy: round-robin steal
-    clc
-    adc #1
+    add #1
     and #3
     sta nextch
     tay

@@ -44,7 +44,7 @@ start:
 
     ; ---- MOV zp, abs,X : the indexed table read ----
     ldx #3
-    mov 0x11, table, x
+    mov 0x11, table + x
     lda 0x11
     cmp #0x33                ; table+3
     bne fail3
