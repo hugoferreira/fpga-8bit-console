@@ -1,3 +1,7 @@
+#include "../isa/nmos6502.asm"
+#include "../isa/ext_core.asm"
+#include "../isa/memmap.asm"
+
 ; ------------------------------------------------------------------------------
 ; Celeste Classic, ported to this console
 ; ------------------------------------------------------------------------------
@@ -35,9 +39,10 @@
 ;     physics constants are the cart's own numbers rather than halved ones.
 ; ------------------------------------------------------------------------------
 
-.segment "CODE"
+#bank ram
+#addr 0x0300
 
-    .include "memmap.asm"
+    #include "memmap.asm"
 
 ; ------------------------------------------------------------------------------
 reset:
@@ -93,8 +98,7 @@ title_screen:
     sta deaths
     sta start_game
     sta start_game_flash
-    lda #1
-    sta max_djump
+    mov max_djump, #1
     lda #MUS_TITLE
     jsr music_play
     lda #0                      ; slot 0 is the title room, level 31
@@ -114,9 +118,9 @@ begin_game:
 
 wait_frame:
     lda SPR_FRAME
-@wait:
+.wait:
     cmp SPR_FRAME
-    beq @wait
+    beq .wait
     rts
 
 read_buttons:
@@ -133,75 +137,72 @@ update_frame:
     inc frames                  ; frames = (frames + 1) % 30
     lda frames
     cmp #30
-    bcc @clock
-    lda #0
-    sta frames
+    bcc .clock
+    mov frames, #0
 
     lda level                   ; the clock stops in the last room
     cmp #30
-    bcs @clock
+    bcs .clock
     inc seconds
     lda seconds
     cmp #60
-    bcc @clock
+    bcc .clock
     lda #0
     sta seconds
     inc minutes
-@clock:
+.clock:
 
     lda music_timer             ; the cart's music_timer: when it runs out the
-    beq @nomusictimer           ; climb comes back. Only the orb sets it, so
+    beq .nomusictimer           ; climb comes back. Only the orb sets it, so
     dec music_timer             ; nothing in stage 1 starts this countdown -
-    bne @nomusictimer           ; the mechanism is here, its trigger is not
+    bne .nomusictimer           ; the mechanism is here, its trigger is not
     lda #MUS_ORB
     jsr music_play
-@nomusictimer:
+.nomusictimer:
 
     lda sfx_timer
-    beq @nosfxtimer
+    beq .nosfxtimer
     dec sfx_timer
-@nosfxtimer:
+.nosfxtimer:
 
     lda freeze                  ; the dash freeze: skip the whole update
-    beq @nofreeze
+    beq .nofreeze
     dec freeze
     rts
-@nofreeze:
+.nofreeze:
 
     lda shake
-    beq @noshake
+    beq .noshake
     dec shake
     lda shake
-    beq @noshake
+    beq .noshake
     lda SPR_RND                 ; -2 + rnd(5), on both axes
     and #3
-    sec
-    sbc #2
+    sub #2
     sta shake_x
     lda SPR_RND
     and #3
-    sec
-    sbc #2
+    sub #2
     sta shake_y
-    jmp @restart
-@noshake:
+    jmp .restart
+.noshake:
     lda #0
     sta shake_x
     sta shake_y
 
-@restart:
+.restart:
     lda will_restart
-    beq @objects
+    beq .objects
     lda delay_restart
-    beq @objects
+    beq .objects
     dec delay_restart
-    bne @objects
+    bne .objects
     lda #0
     sta will_restart
     jsr restart_room
     rts
 
-@objects:
+.objects:
     jsr fx_update
     jsr obj_update_all
     ; fall through to the title screen's state machine
@@ -212,48 +213,46 @@ update_frame:
 ; ------------------------------------------------------------------------------
 title_tick:
     jsr is_title
-    beq @title
+    beq .title
     rts
-@title:
+.title:
     lda start_game
-    bne @flashing
+    bne .flashing
 
     lda btn                     ; btn(k_jump) or btn(k_dash)
     and #BTN_JUMP|BTN_DASH
-    beq @done
+    beq .done
     jsr music_stop              ; music(-1): cut, no fade
-    lda #50
-    sta start_game_flash
-    lda #1
-    sta start_game
+    mov start_game_flash, #50
+    mov start_game, #1
     lda #38
     jmp sfx_play
 
-@flashing:
+.flashing:
     dec start_game_flash
     lda start_game_flash
-    bpl @done                   ; still counting down through zero
+    bpl .done                   ; still counting down through zero
     cmp #<(-29)                 ; start_game_flash <= -30
-    bcs @done
+    bcs .done
     jmp begin_game
-@done:
+.done:
     rts
 
 ; ------------------------------------------------------------------------------
 ; The generated files come first: their .defines (sheet slot numbers, room
 ; count) are textual, so every user of them has to be assembled afterwards.
-    .include "gfx.asm"
-    .include "rooms.asm"
-    .include "audio.asm"
+    #include "gfx.asm"
+    #include "rooms.asm"
+    #include "audio.asm"
 
-    .include "math.asm"
-    .include "obj.asm"
-    .include "collide.asm"
-    .include "player.asm"
-    .include "room.asm"
-    .include "draw.asm"
-    .include "fx.asm"
-    .include "sound.asm"
+    #include "math.asm"
+    #include "obj.asm"
+    #include "collide.asm"
+    #include "player.asm"
+    #include "room.asm"
+    #include "draw.asm"
+    #include "fx.asm"
+    #include "sound.asm"
 
 
 ; ------------------------------------------------------------------------------
@@ -266,11 +265,11 @@ title_tick:
 ; ------------------------------------------------------------------------------
 palette_upload:
     ldx #15
-@entry:
-    lda draw_palette,x
-    sta SPR_DPAL,x
+.entry:
+    lda draw_palette, x
+    sta SPR_DPAL, x
     dex
-    bpl @entry
+    bpl .entry
     rts
 
 ; ------------------------------------------------------------------------------
@@ -281,33 +280,30 @@ sheet_upload:
     lda #0
     sta SPR_SHADDR_LO
     sta SPR_SHADDR_HI
-    lda #<celeste_sheet
-    sta pSrc
-    lda #>celeste_sheet
-    sta pSrc+1
-    lda #<SHEET_BYTES
-    sta t0
+    mov pSrc, #<celeste_sheet
+    mov pSrc+1, #>celeste_sheet
+    mov t0, #<SHEET_BYTES
     lda #>SHEET_BYTES
     sta t1
     ldy #0
-@byte:
-    lda (pSrc),y
+.byte:
+    lda (pSrc), y
     sta SPR_SHDATA
     inc pSrc
-    bne @nohi
+    bne .nohi
     inc pSrc+1
-@nohi:
+.nohi:
     lda t0
-    bne @low
+    bne .low
     dec t1
-@low:
+.low:
     dec t0
     lda t0
     ora t1
-    bne @byte
+    bne .byte
     rts
 
-.segment "VECTORS"
-    .word reset                 ; NMI
-    .word reset                 ; RESET
-    .word reset                 ; IRQ
+#bank vec
+    #d8 (reset)[7:0], (reset)[15:8]                 ; NMI
+    #d8 (reset)[7:0], (reset)[15:8]                 ; RESET
+    #d8 (reset)[7:0], (reset)[15:8]                 ; IRQ

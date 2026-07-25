@@ -255,14 +255,39 @@
 ; 16-bit address as an 8-bit immediate). Not part of customasm's stdlib,
 ; which expects `label[7:0]`/`label[15:8]` instead; the corpus uses the
 ; ca65 spelling, so match it directly rather than rewriting every site.
+; `v` is i32 rather than u16 because ca65's `<` and `>` take a byte out of a
+; two's-complement value: the celeste corpus writes `cmp #<(-29)`. Slicing
+; [7:0] or [15:8] of a positive value is unchanged, so every existing encoding
+; is byte-for-byte the same.
+; `v` is i32 rather than u16 because ca65's `<` and `>` take a byte out of a
+; two's-complement value: the celeste corpus writes `cmp #<(-29)`, which u16
+; cannot hold. Slicing [7:0] or [15:8] of a positive value is unchanged, so
+; every existing encoding stays byte-for-byte the same.
 #ruledef cpu6502_immediate_lohi
 {
-	lda #<{v: u16} => 0xa9 @ v[7:0]
-	lda #>{v: u16} => 0xa9 @ v[15:8]
-	ldx #<{v: u16} => 0xa2 @ v[7:0]
-	ldx #>{v: u16} => 0xa2 @ v[15:8]
-	ldy #<{v: u16} => 0xa0 @ v[7:0]
-	ldy #>{v: u16} => 0xa0 @ v[15:8]
-	adc #<{v: u16} => 0x69 @ v[7:0]
-	adc #>{v: u16} => 0x69 @ v[15:8]
+	lda #<{v: i32} => 0xa9 @ v[7:0]
+	lda #>{v: i32} => 0xa9 @ v[15:8]
+	ldx #<{v: i32} => 0xa2 @ v[7:0]
+	ldx #>{v: i32} => 0xa2 @ v[15:8]
+	ldy #<{v: i32} => 0xa0 @ v[7:0]
+	ldy #>{v: i32} => 0xa0 @ v[15:8]
+	adc #<{v: i32} => 0x69 @ v[7:0]
+	adc #>{v: i32} => 0x69 @ v[15:8]
+	; The rest of the immediate group, added for the celeste migration: ca65
+	; accepts `<`/`>` on any immediate operand, so a corpus written for it uses
+	; `cmp #<(-29)` and `and #<~PB_JUMP` as freely as `lda #<label`.
+	sbc #<{v: i32} => 0xe9 @ v[7:0]
+	sbc #>{v: i32} => 0xe9 @ v[15:8]
+	cmp #<{v: i32} => 0xc9 @ v[7:0]
+	cmp #>{v: i32} => 0xc9 @ v[15:8]
+	cpx #<{v: i32} => 0xe0 @ v[7:0]
+	cpx #>{v: i32} => 0xe0 @ v[15:8]
+	cpy #<{v: i32} => 0xc0 @ v[7:0]
+	cpy #>{v: i32} => 0xc0 @ v[15:8]
+	and #<{v: i32} => 0x29 @ v[7:0]
+	and #>{v: i32} => 0x29 @ v[15:8]
+	ora #<{v: i32} => 0x09 @ v[7:0]
+	ora #>{v: i32} => 0x09 @ v[15:8]
+	eor #<{v: i32} => 0x49 @ v[7:0]
+	eor #>{v: i32} => 0x49 @ v[15:8]
 }

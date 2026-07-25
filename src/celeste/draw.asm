@@ -24,35 +24,34 @@ draw_frame:
     lda #0
     sta nspr
     jsr is_title                ; the cart draws no clouds on the title screen
-    beq @nosky
+    beq .nosky
     jsr fx_draw_clouds
-@nosky:
+.nosky:
     lda nspr                    ; everything staged so far is background
     sta SPR_SPLIT
-    lda #1                      ; clouds leave a repeat count staged; the
-    sta SPR_REP                 ; player, hair and smoke are single cells
+    mov SPR_REP, #1  ; player, hair and smoke are single cells
 
     lda #0
     sta obj_slot
-@loop:
+.loop:
     lda obj_slot
     jsr obj_ptr
     ldy #O_TYPE
-    lda (pObj),y
-    beq @next
+    lda (pObj), y
+    beq .next
     tax
-    lda type_draw_lo-1,x
+    lda type_draw_lo-1, x
     sta pFn
-    lda type_draw_hi-1,x
+    lda type_draw_hi-1, x
     sta pFn+1
     ora pFn
-    beq @next
+    beq .next
     jsr call_fn
-@next:
+.next:
     inc obj_slot
     lda obj_slot
     cmp #OBJ_MAX
-    bne @loop
+    bne .loop
 
     jsr fx_draw_particles       ; in front of everything, title screen included
     lda nspr
@@ -72,70 +71,68 @@ draw_frame:
 ; ------------------------------------------------------------------------------
 flash_palette:
     lda start_game
-    beq @ident                  ; not flashing at all
+    beq .ident                  ; not flashing at all
 
     lda start_game_flash        ; c = 10, 7, 2, 1 or 0 as the flash decays
-    bmi @black                  ; past zero: c = 0
+    bmi .black                  ; past zero: c = 0
     cmp #11
-    bcc @mid
+    bcc .mid
                                 ; > 10: white for five frames in every ten.
     lda frames                  ; frames is 0..29, so one subtract of 20 and
     cmp #20                     ; one of 10 is the whole of `frames % 10`
-    bcc @lt20
-    sec
-    sbc #20
-    jmp @lt10
-@lt20:
+    bcc .lt20
+    sub #20
+    jmp .lt10
+.lt20:
     cmp #10
-    bcc @lt10
-    sec
-    sbc #10
-@lt10:
+    bcc .lt10
+    sub #10
+.lt10:
     cmp #5
-    bcc @white
+    bcc .white
                                 ; the cart's c = 10, which is "no pal() call at
                                 ; all" - and since it calls pal() every frame,
                                 ; that means the IDENTITY palette, not whatever
                                 ; the previous frame left behind.
-@ident:
+.ident:
     ldx #5
-@identloop:
-    ldy flash_slot,x
+.identloop:
+    ldy flash_slot, x
     tya
-    sta SPR_SPAL,y              ; entry n holds n
+    sta SPR_SPAL, y              ; entry n holds n
     dex
-    bpl @identloop
+    bpl .identloop
     rts
 
-@white:
+.white:
     lda #7
-    bne @apply
-@mid:
+    bne .apply
+.mid:
     lda start_game_flash
     cmp #6
-    bcs @two
+    bcs .two
     cmp #1
-    bcs @one
-@black:
+    bcs .one
+.black:
     lda #0
-    beq @apply
-@two:
+    beq .apply
+.two:
     lda #2
-    bne @apply
-@one:
+    bne .apply
+.one:
     lda #1
-@apply:
+.apply:
     ldx #5
-@set:
-    ldy flash_slot,x
-    sta SPR_SPAL,y
+.set:
+    ldy flash_slot, x
+    sta SPR_SPAL, y
     dex
-    bpl @set
+    bpl .set
     rts
 
 ; The six colours the cart recolours: pal(6) pal(12) pal(13) pal(5) pal(1) pal(7)
 flash_slot:
-    .byte 6, 12, 13, 5, 1, 7
+    #d8 6, 12, 13, 5, 1, 7
 
 ; ------------------------------------------------------------------------------
 ; stage_sprite: A = pattern base, t3 = attributes, t4 = screen x, t5 = screen y.
@@ -148,11 +145,11 @@ flash_slot:
 stage_sprite:
     ldx nspr
     cpx #128
-    bcs @drop
+    bcs .drop
     ldy t5
-    bmi @drop
+    bmi .drop
     cpy #120
-    bcs @drop
+    bcs .drop
     stx SPR_INDEX
     sta SPR_BASE
     lda t4
@@ -161,7 +158,7 @@ stage_sprite:
     lda t3
     sta SPR_FLAGS               ; the write commits the staged entry
     inc nspr
-@drop:
+.drop:
     rts
 
 ; ------------------------------------------------------------------------------
@@ -172,36 +169,34 @@ stage_sprite:
 ; place, here. Two families is all stage 1 has - the player's seven frames and
 ; smoke's three.
 ; ------------------------------------------------------------------------------
-.if SPR_SMOKE_STRIDE <> 1
-.error "smoke frames are no longer adjacent; draw_obj_sprite needs a multiply"
-.endif
+; ca65 .if -> #assert below: SPR_SMOKE_STRIDE != 1
+; "smoke frames are no longer adjacent; draw_obj_sprite needs a multiply"
+;
 
 draw_obj_sprite:
     ldy #O_SPR
-    lda (pObj),y
-    beq @done                   ; the cart's `elseif obj.spr > 0`
+    lda (pObj), y
+    beq .done                   ; the cart's `elseif obj.spr > 0`
     cmp #29
-    bcs @smoke
+    bcs .smoke
     tax                         ; the player's frames are no longer a fixed
-    lda player_slot-1,x         ; stride apart: bpp is chosen per pattern, so
+    lda player_slot-1, x         ; stride apart: bpp is chosen per pattern, so
     pha                         ; the generator emits their slots as a table
     lda #SPR_PLAYER_ATTR
-    jmp @flip
-@smoke:
-    sec
-    sbc #29
-    clc
-    adc #SPR_SMOKE_FIRST
+    jmp .flip
+.smoke:
+    sub #29
+    add #SPR_SMOKE_FIRST
     pha
     lda #SPR_SMOKE_ATTR
-@flip:
+.flip:
     ldy #O_FLIP
-    ora (pObj),y
+    ora (pObj), y
     sta t3
     jsr obj_screen_pos
     pla
     jmp stage_sprite
-@done:
+.done:
     rts
 
 ; ------------------------------------------------------------------------------
@@ -210,16 +205,13 @@ draw_obj_sprite:
 ; ------------------------------------------------------------------------------
 obj_screen_pos:
     ldy #O_X
-    lda (pObj),y
-    clc
-    adc shake_x
+    lda (pObj), y
+    add shake_x
     sta t4
     ldy #O_Y
-    lda (pObj),y
-    sec
-    sbc camera_y
-    clc
-    adc shake_y
+    lda (pObj), y
+    sub camera_y
+    add shake_y
     sta t5
     rts
 
@@ -238,28 +230,28 @@ obj_screen_pos:
 ; ------------------------------------------------------------------------------
 create_hair:
     ldy #O_X
-    lda (pObj),y
+    lda (pObj), y
     sta t3
     ldy #O_Y
-    lda (pObj),y
+    lda (pObj), y
     sta t4
     ldy #O_HAIR
     ldx #HAIR_NODES
-@node:
+.node:
     lda #0
-    sta (pObj),y
+    sta (pObj), y
     iny
     lda t3
-    sta (pObj),y
+    sta (pObj), y
     iny
     lda #0
-    sta (pObj),y
+    sta (pObj), y
     iny
     lda t4
-    sta (pObj),y
+    sta (pObj), y
     iny
     dex
-    bne @node
+    bne .node
     rts
 
 ; set_hair_color: A = djump, as the cart's set_hair_color(djump). Leaves the
@@ -270,72 +262,69 @@ create_hair:
 ; ask for.
 set_hair_color:
     cmp #1
-    beq @red
+    beq .red
     cmp #2
-    beq @flash
+    beq .flash
     lda #PAL_ATTR_12           ; no dash left: blue
-    jmp @done
-@red:
+    jmp .done
+.red:
     lda #PAL_ATTR_8
-    jmp @done
-@flash:
+    jmp .done
+.flash:
     ldx frames                  ; 7 + flr((frames/3)%2)*4, without a divide
-    lda hair_flash,x
-@done:
+    lda hair_flash, x
+.done:
     sta hair_col
     rts
 
 ; frames is 0..29 and the cart wants (frames/3) & 1. Thirty bytes is cheaper
 ; than a division by three, and the table is the specification.
 hair_flash:
-    .byte PAL_ATTR_7,PAL_ATTR_7,PAL_ATTR_7
-    .byte PAL_ATTR_11,PAL_ATTR_11,PAL_ATTR_11
-    .byte PAL_ATTR_7,PAL_ATTR_7,PAL_ATTR_7
-    .byte PAL_ATTR_11,PAL_ATTR_11,PAL_ATTR_11
-    .byte PAL_ATTR_7,PAL_ATTR_7,PAL_ATTR_7
-    .byte PAL_ATTR_11,PAL_ATTR_11,PAL_ATTR_11
-    .byte PAL_ATTR_7,PAL_ATTR_7,PAL_ATTR_7
-    .byte PAL_ATTR_11,PAL_ATTR_11,PAL_ATTR_11
-    .byte PAL_ATTR_7,PAL_ATTR_7,PAL_ATTR_7
-    .byte PAL_ATTR_11,PAL_ATTR_11,PAL_ATTR_11
+    #d8 PAL_ATTR_7, PAL_ATTR_7, PAL_ATTR_7
+    #d8 PAL_ATTR_11, PAL_ATTR_11, PAL_ATTR_11
+    #d8 PAL_ATTR_7, PAL_ATTR_7, PAL_ATTR_7
+    #d8 PAL_ATTR_11, PAL_ATTR_11, PAL_ATTR_11
+    #d8 PAL_ATTR_7, PAL_ATTR_7, PAL_ATTR_7
+    #d8 PAL_ATTR_11, PAL_ATTR_11, PAL_ATTR_11
+    #d8 PAL_ATTR_7, PAL_ATTR_7, PAL_ATTR_7
+    #d8 PAL_ATTR_11, PAL_ATTR_11, PAL_ATTR_11
+    #d8 PAL_ATTR_7, PAL_ATTR_7, PAL_ATTR_7
+    #d8 PAL_ATTR_11, PAL_ATTR_11, PAL_ATTR_11
 
 draw_hair:
     ldy #O_FLIP                 ; last.x = x + 4 - facing*2
-    lda (pObj),y
+    lda (pObj), y
     and #1
-    beq @faceright
+    beq .faceright
     lda #6
-    bne @lastx
-@faceright:
+    bne .lastx
+.faceright:
     lda #2
-@lastx:
+.lastx:
     ldy #O_X
     clc
-    adc (pObj),y
+    adc (pObj), y
     sta hair_lx+1
-    lda #0
-    sta hair_lx
+    mov hair_lx, #0
 
     lda btn                     ; last.y = y + (btn(down) and 4 or 3)
     and #BTN_D
-    beq @lastup
+    beq .lastup
     lda #4
-    bne @lasty
-@lastup:
+    bne .lasty
+.lastup:
     lda #3
-@lasty:
+.lasty:
     ldy #O_Y
     clc
-    adc (pObj),y
+    adc (pObj), y
     sta hair_ly+1
-    lda #$80                    ; the cart's last.y + 0.5
-    sta hair_ly
+    mov hair_ly, #$80
 
-    lda #0
-    sta hair_i
+    mov hair_i, #0
     lda #O_HAIR
     sta d_n                     ; field offset of the node being moved
-@node:
+.node:
     ldy d_n                     ; h.x += (last.x - h.x) * 0.625
     jsr obj_ldw
     lda hair_lx
@@ -351,8 +340,7 @@ draw_hair:
     sta hair_hx+1
 
     lda d_n
-    clc
-    adc #2
+    add #2
     tay
     jsr obj_ldw
     lda hair_ly
@@ -361,8 +349,7 @@ draw_hair:
     sta w1+1
     jsr hair_chase
     lda d_n
-    clc
-    adc #2
+    add #2
     tay
     jsr obj_stw
     lda w0
@@ -383,59 +370,50 @@ draw_hair:
     sta t3
     lda hair_i
     cmp #2
-    bcs @small
+    bcs .small
     lda hair_hx+1
-    sec
-    sbc #2
+    sub #2
     sta t4
     lda hair_hy+1
-    sec
-    sbc #2
+    sub #2
     sta t5
     lda #SPR_HAIR_BIG
-    jmp @plot
-@small:
+    jmp .plot
+.small:
     lda hair_hx+1
-    sec
-    sbc #1
+    sub #1
     sta t4
     lda hair_hy+1
-    sec
-    sbc #1
+    sub #1
     sta t5
     lda #SPR_HAIR_SMALL
-@plot:
+.plot:
     pha
     lda t4                      ; the hair is in world space like the object
-    clc
-    adc shake_x
+    add shake_x
     sta t4
     lda t5
-    sec
-    sbc camera_y
-    clc
-    adc shake_y
+    sub camera_y
+    add shake_y
     sta t5
     pla
     jsr stage_sprite
 
     lda d_n
-    clc
-    adc #4
+    add #4
     sta d_n
     inc hair_i
     lda hair_i
     cmp #HAIR_NODES
-    beq @done
-    jmp @node                   ; the node loop is longer than a branch reaches
-@done:
+    beq .done
+    jmp .node                   ; the node loop is longer than a branch reaches
+.done:
     rts
 
 ; hair_chase: w0 += (w1 - w0) * 0.625, as two shifts and an add.
 hair_chase:
     lda w1                      ; d = target - h
-    sec
-    sbc w0
+    sub w0
     sta w2
     lda w1+1
     sbc w0+1
@@ -452,15 +430,13 @@ hair_chase:
     jsr asr_w2
 
     lda w0
-    clc
-    adc w1
+    add w1
     sta w0
     lda w0+1
     adc w1+1
     sta w0+1
     lda w0
-    clc
-    adc w2
+    add w2
     sta w0
     lda w0+1
     adc w2+1
@@ -487,26 +463,24 @@ asr_w2:
 ; something in it changed, which for this program is once a second.
 ; ------------------------------------------------------------------------------
 ovl_init:
-    lda #<OVLSHADOW
-    sta pDst
+    mov pDst, #<OVLSHADOW
     lda #>OVLSHADOW
     sta pDst+1
     ldx #0
-@row:
+.row:
     lda pDst
-    sta OVLROW_LO,x
+    sta OVLROW_LO, x
     lda pDst+1
-    sta OVLROW_HI,x
+    sta OVLROW_HI, x
     lda pDst
-    clc
-    adc #OVL_STRIDE
+    add #OVL_STRIDE
     sta pDst
-    bcc @norow
+    bcc .norow
     inc pDst+1
-@norow:
+.norow:
     inx
     cpx #120
-    bne @row
+    bne .row
     jsr ovl_clear
     jmp ovl_mark_dirty
 
@@ -518,95 +492,95 @@ ovl_mark_dirty:
 ovl_clear:
     lda #0
     ldx #0
-@page:
-    sta OVLSHADOW+$000,x
-    sta OVLSHADOW+$100,x
-    sta OVLSHADOW+$200,x
-    sta OVLSHADOW+$300,x
-    sta OVLSHADOW+$400,x
-    sta OVLSHADOW+$500,x
-    sta OVLSHADOW+$600,x
-    sta OVLSHADOW+$700,x
-    sta OVLSHADOW+$800,x
+.page:
+    sta OVLSHADOW+$000, x
+    sta OVLSHADOW+$100, x
+    sta OVLSHADOW+$200, x
+    sta OVLSHADOW+$300, x
+    sta OVLSHADOW+$400, x
+    sta OVLSHADOW+$500, x
+    sta OVLSHADOW+$600, x
+    sta OVLSHADOW+$700, x
+    sta OVLSHADOW+$800, x
     inx
-    bne @page
-@tail:
-    sta OVLSHADOW+$900,x
+    bne .page
+.tail:
+    sta OVLSHADOW+$900, x
     inx
     cpx #96
-    bne @tail
+    bne .tail
     rts
 
 ; ovl_begin: decide whether this frame has to rebuild the overlay, and if so
 ; clear it and lay down the parts that are not an object's business.
 ovl_begin:
     ldx #0                      ; a live room title redraws every frame
-@find:
+.find:
     txa
     jsr obj_ptr
     ldy #O_TYPE
-    lda (pObj),y
+    lda (pObj), y
     cmp #T_TITLE
-    beq @yes
+    beq .yes
     inx
     cpx #OBJ_MAX
-    bne @find
-    jmp @check
-@yes:
+    bne .find
+    jmp .check
+.yes:
     jsr ovl_mark_dirty
-@check:
+.check:
     lda seconds                 ; and so does the clock, once a second
     cmp hud_secs
-    beq @nochange
+    beq .nochange
     sta hud_secs
     jsr ovl_mark_dirty
-@nochange:
+.nochange:
     lda ovl_dirty
-    beq @done
+    beq .done
     jsr ovl_clear
     jsr is_title                ; the title screen carries credits, not a HUD
-    bne @hud
+    bne .hud
     jmp title_credits
-@hud:
+.hud:
     jsr hud_draw
-@done:
+.done:
     rts
 
 ovl_end:
     lda ovl_dirty
-    bne @blit
+    bne .blit
     rts
-@blit:
+.blit:
     lda #0
     sta ovl_dirty
     ldx #0
-@page:
-    lda OVLSHADOW+$000,x
-    sta OVL+$000,x
-    lda OVLSHADOW+$100,x
-    sta OVL+$100,x
-    lda OVLSHADOW+$200,x
-    sta OVL+$200,x
-    lda OVLSHADOW+$300,x
-    sta OVL+$300,x
-    lda OVLSHADOW+$400,x
-    sta OVL+$400,x
-    lda OVLSHADOW+$500,x
-    sta OVL+$500,x
-    lda OVLSHADOW+$600,x
-    sta OVL+$600,x
-    lda OVLSHADOW+$700,x
-    sta OVL+$700,x
-    lda OVLSHADOW+$800,x
-    sta OVL+$800,x
+.page:
+    lda OVLSHADOW+$000, x
+    sta OVL+$000, x
+    lda OVLSHADOW+$100, x
+    sta OVL+$100, x
+    lda OVLSHADOW+$200, x
+    sta OVL+$200, x
+    lda OVLSHADOW+$300, x
+    sta OVL+$300, x
+    lda OVLSHADOW+$400, x
+    sta OVL+$400, x
+    lda OVLSHADOW+$500, x
+    sta OVL+$500, x
+    lda OVLSHADOW+$600, x
+    sta OVL+$600, x
+    lda OVLSHADOW+$700, x
+    sta OVL+$700, x
+    lda OVLSHADOW+$800, x
+    sta OVL+$800, x
     inx
-    bne @page
-@tail:
-    lda OVLSHADOW+$900,x
-    sta OVL+$900,x
+    bne .page
+.tail:
+    lda OVLSHADOW+$900, x
+    sta OVL+$900, x
     inx
     cpx #96
-    bne @tail
+    bne .tail
     rts
 
 ; ------------------------------------------------------------------------------
@@ -618,79 +592,74 @@ ovl_end:
 ; letters, 36 a colon, 37 a space - so there is no character translation at
 ; runtime and no font hole to check for.
 ; ------------------------------------------------------------------------------
-    .define G_COLON            36
-    .define G_SPACE            37
-    .define G_PLUS             38
-    .define G_END              $FF
+    G_COLON = 36
+    G_SPACE = 37
+    G_PLUS = 38
+    G_END = $FF
 
 ovl_putc:
     sta d_ch
     asl
     asl
-    clc
-    adc d_ch                    ; glyph * 5
+    add d_ch  ; glyph * 5
     tax
     lda #0
     sta d_row
-@row:
-    lda font3x5,x
-    sta d_bits
-    lda #0
-    sta d_n
+.row:
+    mov d_bits, font3x5 + x
+    mov d_n, #0
     lda d_x
     and #7
-    beq @placed
+    beq .placed
     tay
-@shift:
+.shift:
     asl d_bits
     rol d_n
     dey
-    bne @shift
-@placed:
+    bne .shift
+.placed:
     lda d_y
-    clc
-    adc d_row
+    add d_row
     tay
-    lda OVLROW_LO,y
+    lda OVLROW_LO, y
     sta pOvl
-    lda OVLROW_HI,y
+    lda OVLROW_HI, y
     sta pOvl+1
     lda d_x
     lsr
     lsr
     lsr
     tay
-    lda (pOvl),y
+    lda (pOvl), y
     ora d_bits
-    sta (pOvl),y
+    sta (pOvl), y
     iny
-    lda (pOvl),y
+    lda (pOvl), y
     ora d_n
-    sta (pOvl),y
+    sta (pOvl), y
     inx
     inc d_row
     lda d_row
     cmp #5
-    bne @row
+    bne .row
     lda d_x
-    clc
-    adc #4
+    add #4
     sta d_x
     rts
 
 ; ovl_text: print the glyph string at pSrc, starting at (d_x, d_y).
 ovl_text:
     ldy #0
-@ch:
-    lda (pSrc),y
+.ch:
+    lda (pSrc), y
     cmp #G_END
-    beq @done
+    beq .done
     sty d_i
     jsr ovl_putc
     ldy d_i
     iny
-    bne @ch
-@done:
+    bne .ch
+.done:
     rts
 
 ; ovl_str: A/X = string address, then print it.
@@ -707,14 +676,13 @@ ovl_str:
 ; with, because the tests read `seconds` and not the pixels.
 ovl_byte:
     ldx #0
-@tens:
+.tens:
     cmp #10
-    bcc @units
-    sec
-    sbc #10
+    bcc .units
+    sub #10
     inx
-    jmp @tens
-@units:
+    jmp .tens
+.units:
     sta t7
     txa
     jsr ovl_putc
@@ -727,18 +695,14 @@ ovl_byte:
 ; room starts - so this is the port using space the original did not have.
 ; ------------------------------------------------------------------------------
 hud_draw:
-    lda #132
-    sta d_x
-    lda #4
-    sta d_y
+    mov d_x, #132
+    mov d_y, #4
     lda #<str_time
     ldx #>str_time
     jsr ovl_str
 
-    lda #130
-    sta d_x
-    lda #11
-    sta d_y
+    mov d_x, #130
+    mov d_y, #11
     lda minutes
     jsr ovl_byte
     lda #G_COLON
@@ -746,18 +710,14 @@ hud_draw:
     lda seconds
     jsr ovl_byte
 
-    lda #132
-    sta d_x
-    lda #22
-    sta d_y
+    mov d_x, #132
+    mov d_y, #22
     lda #<str_dead
     ldx #>str_dead
     jsr ovl_str
 
-    lda #138
-    sta d_x
-    lda #29
-    sta d_y
+    mov d_x, #138
+    mov d_y, #29
     lda deaths
     jmp ovl_byte
 
@@ -771,26 +731,20 @@ hud_draw:
 ; 3x5 uppercase, so the names are capitalised.
 ; ------------------------------------------------------------------------------
 title_credits:
-    lda #58
-    sta d_x
-    lda #80
-    sta d_y
+    mov d_x, #58
+    mov d_y, #80
     lda #<str_xc
     ldx #>str_xc
     jsr ovl_str
 
-    lda #42
-    sta d_x
-    lda #96
-    sta d_y
+    mov d_x, #42
+    mov d_y, #96
     lda #<str_thorson
     ldx #>str_thorson
     jsr ovl_str
 
-    lda #46
-    sta d_x
-    lda #102
-    sta d_y
+    mov d_x, #46
+    mov d_y, #102
     lda #<str_berry
     ldx #>str_berry
     jmp ovl_str
@@ -806,17 +760,14 @@ title_credits:
 draw_room_title:
     lda level
     cmp #11
-    beq @oldsite
+    beq .oldsite
     cmp #30
-    beq @summit
+    beq .summit
 
-    lda #52
-    sta d_x
-    lda #62
-    sta d_y
+    mov d_x, #52
+    mov d_y, #62
     lda level
-    clc
-    adc #1
+    add #1
     jsr ovl_byte
     lda #0
     jsr ovl_putc
@@ -827,80 +778,76 @@ draw_room_title:
     lda #22                     ; 'M'
     jmp ovl_putc
 
-@oldsite:
-    lda #48
-    sta d_x
-    lda #62
-    sta d_y
+.oldsite:
+    mov d_x, #48
+    mov d_y, #62
     lda #<str_oldsite
     ldx #>str_oldsite
     jmp ovl_str
 
-@summit:
-    lda #52
-    sta d_x
-    lda #62
-    sta d_y
+.summit:
+    mov d_x, #52
+    mov d_y, #62
     lda #<str_summit
     ldx #>str_summit
     jmp ovl_str
 
 str_time:
-    .byte 29,18,22,14, G_END            ; TIME
+    #d8 29, 18, 22, 14, G_END            ; TIME
 str_dead:
-    .byte 13,14,10,13, G_END            ; DEAD
+    #d8 13, 14, 10, 13, G_END            ; DEAD
 str_oldsite:
-    .byte 24,21,13, G_SPACE, 28,18,29,14, G_END   ; OLD SITE
+    #d8 24, 21, 13, G_SPACE, 28, 18, 29, 14, G_END   ; OLD SITE
 str_summit:
-    .byte 28,30,22,22,18,29, G_END      ; SUMMIT
+    #d8 28, 30, 22, 22, 18, 29, G_END      ; SUMMIT
 str_xc:
-    .byte 33,38,12, G_END               ; X+C
+    #d8 33, 38, 12, G_END               ; X+C
 str_thorson:
-    .byte 22,10,29,29, G_SPACE, 29,17,24,27,28,24,23, G_END   ; MATT THORSON
+    #d8 22, 10, 29, 29, G_SPACE, 29, 17, 24, 27, 28, 24, 23, G_END   ; MATT THORSON
 str_berry:
-    .byte 23,24,14,21, G_SPACE, 11,14,27,27,34, G_END         ; NOEL BERRY
+    #d8 23, 24, 14, 21, G_SPACE, 11, 14, 27, 27, 34, G_END         ; NOEL BERRY
 
 ; ------------------------------------------------------------------------------
 ; The font: 3 pixels wide in a 4-pixel cell, 5 rows, bit 0 leftmost - which is
 ; the overlay's own bit order, so a row is a literal picture of itself.
 ; ------------------------------------------------------------------------------
 font3x5:
-    .byte %010,%101,%101,%101,%010      ; 0
-    .byte %010,%011,%010,%010,%111      ; 1
-    .byte %011,%100,%010,%001,%111      ; 2
-    .byte %011,%100,%010,%100,%011      ; 3
-    .byte %101,%101,%111,%100,%100      ; 4
-    .byte %111,%001,%011,%100,%011      ; 5
-    .byte %110,%001,%011,%101,%010      ; 6
-    .byte %111,%100,%010,%010,%010      ; 7
-    .byte %010,%101,%010,%101,%010      ; 8
-    .byte %010,%101,%110,%100,%011      ; 9
-    .byte %010,%101,%111,%101,%101      ; A
-    .byte %011,%101,%011,%101,%011      ; B
-    .byte %110,%001,%001,%001,%110      ; C
-    .byte %011,%101,%101,%101,%011      ; D
-    .byte %111,%001,%011,%001,%111      ; E
-    .byte %111,%001,%011,%001,%001      ; F
-    .byte %110,%001,%101,%101,%110      ; G
-    .byte %101,%101,%111,%101,%101      ; H
-    .byte %111,%010,%010,%010,%111      ; I
-    .byte %100,%100,%100,%101,%010      ; J
-    .byte %101,%101,%011,%101,%101      ; K
-    .byte %001,%001,%001,%001,%111      ; L
-    .byte %101,%111,%111,%101,%101      ; M
-    .byte %011,%101,%101,%101,%101      ; N
-    .byte %010,%101,%101,%101,%010      ; O
-    .byte %011,%101,%011,%001,%001      ; P
-    .byte %010,%101,%101,%011,%110      ; Q
-    .byte %011,%101,%011,%101,%101      ; R
-    .byte %110,%001,%010,%100,%011      ; S
-    .byte %111,%010,%010,%010,%010      ; T
-    .byte %101,%101,%101,%101,%010      ; U
-    .byte %101,%101,%101,%010,%010      ; V
-    .byte %101,%101,%111,%111,%101      ; W
-    .byte %101,%101,%010,%101,%101      ; X
-    .byte %101,%101,%010,%010,%010      ; Y
-    .byte %111,%100,%010,%001,%111      ; Z
-    .byte %000,%010,%000,%010,%000      ; :
-    .byte %000,%000,%000,%000,%000      ; space
-    .byte %000,%010,%111,%010,%000      ; +
+    #d8 %010, %101, %101, %101, %010      ; 0
+    #d8 %010, %011, %010, %010, %111      ; 1
+    #d8 %011, %100, %010, %001, %111      ; 2
+    #d8 %011, %100, %010, %100, %011      ; 3
+    #d8 %101, %101, %111, %100, %100      ; 4
+    #d8 %111, %001, %011, %100, %011      ; 5
+    #d8 %110, %001, %011, %101, %010      ; 6
+    #d8 %111, %100, %010, %010, %010      ; 7
+    #d8 %010, %101, %010, %101, %010      ; 8
+    #d8 %010, %101, %110, %100, %011      ; 9
+    #d8 %010, %101, %111, %101, %101      ; A
+    #d8 %011, %101, %011, %101, %011      ; B
+    #d8 %110, %001, %001, %001, %110      ; C
+    #d8 %011, %101, %101, %101, %011      ; D
+    #d8 %111, %001, %011, %001, %111      ; E
+    #d8 %111, %001, %011, %001, %001      ; F
+    #d8 %110, %001, %101, %101, %110      ; G
+    #d8 %101, %101, %111, %101, %101      ; H
+    #d8 %111, %010, %010, %010, %111      ; I
+    #d8 %100, %100, %100, %101, %010      ; J
+    #d8 %101, %101, %011, %101, %101      ; K
+    #d8 %001, %001, %001, %001, %111      ; L
+    #d8 %101, %111, %111, %101, %101      ; M
+    #d8 %011, %101, %101, %101, %101      ; N
+    #d8 %010, %101, %101, %101, %010      ; O
+    #d8 %011, %101, %011, %001, %001      ; P
+    #d8 %010, %101, %101, %011, %110      ; Q
+    #d8 %011, %101, %011, %101, %101      ; R
+    #d8 %110, %001, %010, %100, %011      ; S
+    #d8 %111, %010, %010, %010, %010      ; T
+    #d8 %101, %101, %101, %101, %010      ; U
+    #d8 %101, %101, %101, %010, %010      ; V
+    #d8 %101, %101, %111, %111, %101      ; W
+    #d8 %101, %101, %010, %101, %101      ; X
+    #d8 %101, %101, %010, %010, %010      ; Y
+    #d8 %111, %100, %010, %001, %111      ; Z
+    #d8 %000, %010, %000, %010, %000      ; :
+    #d8 %000, %000, %000, %000, %000      ; space
+    #d8 %000, %010, %111, %010, %000      ; +

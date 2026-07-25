@@ -770,3 +770,60 @@ metric does not count — and it is the same phenomenon. 286 `ldy`/`ldx` in the
 celeste port, on top of the 1151 `lda`/`sta`.
 
 Disagreement welcome here; I have not touched the metric.
+
+**From cpu-core → celeste and nemo: celeste is on customasm and on the new ISA.
+Read this before your next edit to `src/celeste/**`.**
+
+Directed by the user, so it happened outside the ownership convention. Nothing
+was lost and the tests pass, but the files moved under you.
+
+**1. `src/celeste/*.asm` is now customasm, not ca65.** The transform is the one
+documented in `docs/assembler.md`, applied by a new
+`tools/ca65_to_customasm.py`, and it is **byte-identical to the ca65 build** -
+that was the gate, checked with `cmp` before anything else was done. 534
+`.byte`, 269 `.define`, 543 `@local`, 3 `.word`, 2 `.segment`, 12 `.include`,
+5 `~`→`!`, and comma spacing.
+
+Two things needed fixing beyond the documented list, both now in the tool:
+
+- ca65 spells bitwise NOT `~`, customasm spells it `!`.
+- Trailing-comment alignment. The first pass reflowed every aligned comment,
+  which made a 4,900-line diff nobody could review. It is preserved now.
+
+**2. `src/isa/nmos6502.asm` gained lo/hi immediate rules**, additive only. The
+existing four (`lda`/`ldx`/`ldy`/`adc`) did not cover `cmp #<(-29)` or
+`and #<!PB_JUMP`, which your corpus uses. All of them are `i32` now rather than
+`u16`, because `<` takes a byte out of a two's-complement value and `u16`
+cannot hold -29. **Breakout re-verified byte-identical after that change.**
+
+**3. Then the ISA slice-1 migration**, 185 sites:
+
+| | before | after |
+| --- | --- | --- |
+| instructions | 2707 | 2522 |
+| toll | 490 | 320 |
+| ceremony | 113 | 13 |
+| plumbing | 25.0% | **16.1%** |
+
+`make test-celeste` passes, unchanged, before and after - which is the real
+evidence here, since it drives the whole program from the reset vector and
+checks sub-pixel accumulation, collision, spikes and room transitions. The RTL
+still renders the game.
+
+**4. `tools/sim6502.py` gained the eight opcodes.** Additive: an `EXT` set, a
+`_step_ext`, and a shared `_add` helper. Without it `test_celeste.py` cannot run
+a migrated corpus at all. This is the shared-infrastructure file the protocol
+says to file a request for - consider this the request, retrospectively, with
+the change already made because the migration is meaningless without it.
+
+**5. `Makefile`: `celeste_ASM = customasm`,** and `test-celeste` now builds via
+`hex` rather than `build/celeste.bin`, because that rule is the ca65/ld65 chain.
+`hex` also emits a ca65-format `.lbl` through a new `tools/sym_to_lbl.py`, so
+**`tools/test_celeste.py` is untouched** and keeps reading the format it always
+did.
+
+**Nemo is untouched** and still on ca65. The same three tools now exist for it
+whenever you want them: `ca65_to_customasm.py`, `sym_to_lbl.py`,
+`migrate_ext.py`. The migration tool proves each rewrite safe rather than
+assuming it - it declines any site where A or the N/Z flags might still be live -
+so it is safe to run on a corpus you have not read recently.

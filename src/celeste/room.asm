@@ -17,14 +17,10 @@ room_init:
     lda #0
     sta SPR_CLIPX0
     sta SPR_CLIPY0
-    lda #PLAYFIELD_W-1
-    sta SPR_CLIPX1
-    lda #119
-    sta SPR_CLIPY1
-    lda #$03                    ; tilemap + overlay
-    sta SPR_CTRL
-    lda #7                      ; the overlay is white; the cart's HUD text is
-    sta SPR_OVLCOL              ; colour 7 everywhere it matters
+    mov SPR_CLIPX1, #PLAYFIELD_W-1
+    mov SPR_CLIPY1, #119
+    mov SPR_CTRL, #$03
+    mov SPR_OVLCOL, #7  ; colour 7 everywhere it matters
     lda #1
     sta room_bank               ; load_room flips it, so the first room is 0
     rts
@@ -44,13 +40,10 @@ is_title:
 load_room:
     sta room_slot
     tax
-    lda room_levels,x
-    sta level
-    lda #0
-    sta has_dashed
-    lda room_ptr_lo,x
-    sta pSrc
-    lda room_ptr_hi,x
+    mov level, room_levels + x
+    mov has_dashed, #0
+    mov pSrc, room_ptr_lo + x
+    lda room_ptr_hi, x
     sta pSrc+1
 
     jsr obj_init                ; the cart's foreach(objects, destroy_object)
@@ -60,61 +53,57 @@ load_room:
     sta room_bank
 
     ldy #0                      ; the room's tile ids become this port's mget
-@copy:
-    lda (pSrc),y
-    sta ROOMTILES,y
+.copy:
+    lda (pSrc), y
+    sta ROOMTILES, y
     iny
-    bne @copy
+    bne .copy
 
-    lda #<MAP_LO                ; pDst = MAP_LO + bank*16
-    sta pDst
-    lda #>MAP_LO
-    sta pDst+1
+    mov pDst, #<MAP_LO
+    mov pDst+1, #>MAP_LO
     lda room_bank
-    beq @bank0
+    beq .bank0
     lda pDst
-    clc
-    adc #16
+    add #16
     sta pDst
-@bank0:
+.bank0:
     ldx #0                      ; X walks the 256 tile ids in order
     lda #ROOM_H
     sta t6
-@row:
+.row:
     ldy #0
-@col:
-    lda ROOMTILES,x
+.col:
+    lda ROOMTILES, x
     stx t5
     tax
-    lda tile_base,x
-    sta (pDst),y
-    lda tile_attr,x
+    lda tile_base, x
+    sta (pDst), y
+    lda tile_attr, x
     inc pDst+1                  ; the attribute plane is $200 higher
     inc pDst+1
-    sta (pDst),y
+    sta (pDst), y
     dec pDst+1
     dec pDst+1
     ldx t5
     inx
     iny
     cpy #ROOM_W
-    bne @col
+    bne .col
 
     lda pDst                    ; next cell row
-    clc
-    adc #MAP_STRIDE
+    add #MAP_STRIDE
     sta pDst
-    bcc @norow
+    bcc .norow
     inc pDst+1
-@norow:
+.norow:
     dec t6
-    bne @row
+    bne .row
 
     ldx #0                      ; spawn the objects the marker tiles ask for
-@spawn:
-    lda ROOMTILES,x
+.spawn:
+    lda ROOMTILES, x
     cmp #TILE_SPAWN
-    bne @nextspawn
+    bne .nextspawn
     txa
     and #15
     asl
@@ -130,28 +119,27 @@ load_room:
     sta spawn_type
     jsr init_object
     ldx ld_i
-@nextspawn:
+.nextspawn:
     inx
-    bne @spawn
+    bne .spawn
 
     lda room_bank               ; show the bank we just filled
-    beq @cam0
+    beq .cam0
     lda #PLAYFIELD_W
-@cam0:
+.cam0:
     sta t3
     jsr is_title                ; the cart draws the title room at x = -4:
-    bne @notitle                ;   map(room.x*16, room.y*16, off, 0, 16, 16, 2)
+    bne .notitle                ;   map(room.x*16, room.y*16, off, 0, 16, 16, 2)
     lda t3                      ; with off = -4. Scrolling the camera 4 to the
-    clc                         ; right is the same picture.
-    adc #4
+    add #4
     sta t3
     lda #PLAYFIELD_W-5          ; and clip 4 short, so the neighbouring bank
     sta SPR_CLIPX1              ; does not appear in the gap that opens up
-    jmp @cam
-@notitle:
+    jmp .cam
+.notitle:
     lda #PLAYFIELD_W-1
     sta SPR_CLIPX1
-@cam:
+.cam:
     lda t3
     sta SPR_CAMX
     lda #0
@@ -159,14 +147,13 @@ load_room:
     sta SPR_CAMY
 
     jsr is_title                ; the cart shows no room title on the title
-    beq @done                   ; screen: `if not is_title() then ... end`
-    lda #T_TITLE
-    sta spawn_type
+    beq .done                   ; screen: `if not is_title() then ... end`
+    mov spawn_type, #T_TITLE
     lda #0
     sta spawn_x
     sta spawn_y
     jsr init_object
-@done:
+.done:
     jmp ovl_mark_dirty
 
 ; ------------------------------------------------------------------------------
@@ -179,27 +166,26 @@ load_room:
 ; ------------------------------------------------------------------------------
 next_room:
     ldx #0                      ; the cart's four music cues, keyed on the room
-@cue:                           ; being LEFT - see the table below
-    lda cue_level,x
+.cue:                           ; being LEFT - see the table below
+    lda cue_level, x
     cmp level
-    beq @play
+    beq .play
     inx
     cpx #4
-    bne @cue
-    jmp @advance
-@play:
-    lda cue_music,x
+    bne .cue
+    jmp .advance
+.play:
+    lda cue_music, x
     ldx #FADE_500MS
     jsr music_fade
 
-@advance:
+.advance:
     lda room_slot
-    clc
-    adc #1
+    add #1
     cmp #ROOM_COUNT
-    bcc @go
+    bcc .go
     lda #1                      ; wrap to the first PLAYING room: slot 0 is the
-@go:                            ; title screen and is only reached from reset
+.go:                            ; title screen and is only reached from reset
     jmp load_room
 
 ; The cart's next_room() cues, by the level being left. All four are ported
@@ -209,9 +195,9 @@ next_room:
 ;   level 10 = room (2,1)   level 11 = room (3,1), "old site"
 ;   level 20 = room (4,2)   level 29 = room (5,3)
 cue_level:
-    .byte 10, 11, 20, 29
+    #d8 10, 11, 20, 29
 cue_music:
-    .byte 30, 20, 30, 30
+    #d8 30, 20, 30, 30
 
 restart_room:
     lda room_slot
@@ -225,33 +211,32 @@ restart_room:
 ; ------------------------------------------------------------------------------
 camera_update:
     ldx #0
-@find:
+.find:
     txa
     jsr obj_ptr
     ldy #O_TYPE
-    lda (pObj),y
+    lda (pObj), y
     cmp #T_PLAYER
-    beq @found
+    beq .found
     cmp #T_SPAWN
-    beq @found
+    beq .found
     inx
     cpx #OBJ_MAX
-    bne @find
+    bne .find
     rts                         ; no player: leave the camera where it is
-@found:
+.found:
     ldy #O_Y
-    lda (pObj),y
-    bmi @top                    ; above the room: show the top
-    sec
-    sbc #56
-    bcc @top
+    lda (pObj), y
+    bmi .top                    ; above the room: show the top
+    sub #56
+    bcc .top
     cmp #CAM_Y_MAX
-    bcc @set
+    bcc .set
     lda #CAM_Y_MAX
-    jmp @set
-@top:
+    jmp .set
+.top:
     lda #0
-@set:
+.set:
     sta camera_y
     sta SPR_CAMY
     rts

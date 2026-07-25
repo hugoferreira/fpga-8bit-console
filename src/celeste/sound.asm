@@ -17,27 +17,23 @@
 ; ------------------------------------------------------------------------------
 
 sound_init:
-    lda #$00                    ; PICO-8 address $3100: music, then SFX
-    sta PSG_ADDR_LO
-    lda #$31
-    sta PSG_ADDR_HI
-    lda #<audio_data
-    sta pSrc
+    mov PSG_ADDR_LO, #$00
+    mov PSG_ADDR_HI, #$31
+    mov pSrc, #<audio_data
     lda #>audio_data
     sta pSrc+1
     ldx #18                     ; 18 pages = 4608 bytes
     ldy #0
-@up:
-    lda (pSrc),y
+.up:
+    lda (pSrc), y
     sta PSG_DATA
     iny
-    bne @up
+    bne .up
     inc pSrc+1
     dex
-    bne @up
+    bne .up
 
-    lda #$07
-    sta PSG_MUSMASK
+    mov PSG_MUSMASK, #$07
     lda #0
     sta nextch
     rts
@@ -55,37 +51,36 @@ sfx_play:
     lda PSG_MUSMASK
     and #$0F
     cmp #$0F
-    beq @none                   ; music owns every channel: drop the sound
+    beq .none                   ; music owns every channel: drop the sound
 
     lda PSG_STATUS
     ora PSG_MUSMASK
     sta t0
     ldy #0
-@find:
-    lda chbit,y
+.find:
+    lda chbit, y
     and t0
-    beq @go
+    beq .go
     iny
     cpy #4
-    bne @find
-@steal:
+    bne .find
+.steal:
     lda nextch                  ; all busy: round-robin, skipping the music's
-    clc
-    adc #1
+    add #1
     and #3
     sta nextch
     tay
-    lda chbit,y
+    lda chbit, y
     and PSG_MUSMASK
-    bne @steal
-@go:
+    bne .steal
+.go:
     txa
-    sta PSG_CH,y
-@none:
+    sta PSG_CH, y
+.none:
     rts
 
 chbit:
-    .byte $01,$02,$04,$08
+    #d8 $01, $02, $04, $08
 
 ; ------------------------------------------------------------------------------
 ; psfx: the cart's psfx(n) - play unless a scripted sound is holding the
@@ -93,9 +88,9 @@ chbit:
 ; ------------------------------------------------------------------------------
 psfx:
     ldx sfx_timer
-    bne @skip
+    bne .skip
     jmp sfx_play
-@skip:
+.skip:
     rts
 
 ; ------------------------------------------------------------------------------

@@ -26,39 +26,38 @@
 ; ------------------------------------------------------------------------------
 obj_ptr:
     tax
-    lda obj_lo,x
-    sta pObj
-    lda obj_hi,x
+    mov pObj, obj_lo + x
+    lda obj_hi, x
     sta pObj+1
     rts
 
 obj_lo:
-    .byte $00,$40,$80,$C0, $00,$40,$80,$C0
-    .byte $00,$40,$80,$C0, $00,$40,$80,$C0
+    #d8 $00, $40, $80, $C0, $00, $40, $80, $C0
+    #d8 $00, $40, $80, $C0, $00, $40, $80, $C0
 obj_hi:
-    .byte >OBJPOOL,>OBJPOOL,>OBJPOOL,>OBJPOOL
-    .byte >(OBJPOOL+$100),>(OBJPOOL+$100),>(OBJPOOL+$100),>(OBJPOOL+$100)
-    .byte >(OBJPOOL+$200),>(OBJPOOL+$200),>(OBJPOOL+$200),>(OBJPOOL+$200)
-    .byte >(OBJPOOL+$300),>(OBJPOOL+$300),>(OBJPOOL+$300),>(OBJPOOL+$300)
+    #d8 (OBJPOOL)[15:8], (OBJPOOL)[15:8], (OBJPOOL)[15:8], (OBJPOOL)[15:8]
+    #d8 ((OBJPOOL+$100))[15:8], ((OBJPOOL+$100))[15:8], ((OBJPOOL+$100))[15:8], ((OBJPOOL+$100))[15:8]
+    #d8 ((OBJPOOL+$200))[15:8], ((OBJPOOL+$200))[15:8], ((OBJPOOL+$200))[15:8], ((OBJPOOL+$200))[15:8]
+    #d8 ((OBJPOOL+$300))[15:8], ((OBJPOOL+$300))[15:8], ((OBJPOOL+$300))[15:8], ((OBJPOOL+$300))[15:8]
 
 ; ------------------------------------------------------------------------------
 ; Per-type method tables, indexed by type id - 1. A zero entry means the type
 ; does not define that method, which is the cart's `if type.update ~= nil`.
 ; ------------------------------------------------------------------------------
 type_tile:
-    .byte 0, TILE_SPAWN, 0, 0
+    #d8 0, TILE_SPAWN, 0, 0
 type_init_lo:
-    .byte <player_init, <spawn_init, <smoke_init, <title_init
+    #d8 (player_init)[7:0], (spawn_init)[7:0], (smoke_init)[7:0], (title_init)[7:0]
 type_init_hi:
-    .byte >player_init, >spawn_init, >smoke_init, >title_init
+    #d8 (player_init)[15:8], (spawn_init)[15:8], (smoke_init)[15:8], (title_init)[15:8]
 type_update_lo:
-    .byte <player_update, <spawn_update, <smoke_update, <title_update
+    #d8 (player_update)[7:0], (spawn_update)[7:0], (smoke_update)[7:0], (title_update)[7:0]
 type_update_hi:
-    .byte >player_update, >spawn_update, >smoke_update, >title_update
+    #d8 (player_update)[15:8], (spawn_update)[15:8], (smoke_update)[15:8], (title_update)[15:8]
 type_draw_lo:
-    .byte <player_draw, <spawn_draw, <smoke_draw, <title_draw
+    #d8 (player_draw)[7:0], (spawn_draw)[7:0], (smoke_draw)[7:0], (title_draw)[7:0]
 type_draw_hi:
-    .byte >player_draw, >spawn_draw, >smoke_draw, >title_draw
+    #d8 (player_draw)[15:8], (spawn_draw)[15:8], (smoke_draw)[15:8], (title_draw)[15:8]
 
 ; ------------------------------------------------------------------------------
 ; obj_init: empty the pool. Clobbers A, X, Y.
@@ -66,17 +65,17 @@ type_draw_hi:
 obj_init:
     lda #0
     ldx #OBJ_MAX-1
-@slot:
+.slot:
     txa
     pha
     jsr obj_ptr
     ldy #O_TYPE
     lda #0
-    sta (pObj),y
+    sta (pObj), y
     pla
     tax
     dex
-    bpl @slot
+    bpl .slot
     rts
 
 ; ------------------------------------------------------------------------------
@@ -85,61 +84,61 @@ obj_init:
 ; ------------------------------------------------------------------------------
 init_object:
     ldx #0
-@find:
+.find:
     txa
     jsr obj_ptr
     ldy #O_TYPE
-    lda (pObj),y
-    beq @found
+    lda (pObj), y
+    beq .found
     inx
     cpx #OBJ_MAX
-    bne @find
+    bne .find
     lda #$FF                    ; pool full: the cart has no such case, this
     sta spawn_slot              ; console does. Dropping the object is the only
     rts                         ; option that cannot corrupt the list.
-@found:
+.found:
     stx spawn_slot
 
     ldy #O_SIZE-1               ; a fresh record starts empty, so every field
     lda #0                      ; the type does not set reads as the cart's nil
-@clear:
-    sta (pObj),y
+.clear:
+    sta (pObj), y
     dey
-    bpl @clear
+    bpl .clear
 
     lda spawn_type
     ldy #O_TYPE
-    sta (pObj),y
+    sta (pObj), y
     tax
-    lda type_tile-1,x           ; obj.spr = type.tile
+    lda type_tile-1, x           ; obj.spr = type.tile
     ldy #O_SPR
-    sta (pObj),y
+    sta (pObj), y
     lda spawn_x
     ldy #O_X
-    sta (pObj),y
+    sta (pObj), y
     lda spawn_y
     ldy #O_Y
-    sta (pObj),y
+    sta (pObj), y
 
     lda #8                      ; the cart's default hitbox {0,0,8,8}
     ldy #O_HBW
-    sta (pObj),y
+    sta (pObj), y
     ldy #O_HBH
-    sta (pObj),y
+    sta (pObj), y
     lda #F_COLLIDEABLE|F_SOLIDS
     ldy #O_FLAGS
-    sta (pObj),y
+    sta (pObj), y
 
     lda spawn_type              ; type.init(this)
     tax
-    lda type_init_lo-1,x
+    lda type_init_lo-1, x
     sta pFn
-    lda type_init_hi-1,x
+    lda type_init_hi-1, x
     sta pFn+1
     ora pFn
-    beq @noinit
+    beq .noinit
     jsr call_fn
-@noinit:
+.noinit:
     rts
 
 ; ------------------------------------------------------------------------------
@@ -183,7 +182,7 @@ spawn_smoke:
 destroy_object:
     lda #0
     ldy #O_TYPE
-    sta (pObj),y
+    sta (pObj), y
     rts
 
 ; ------------------------------------------------------------------------------
@@ -197,33 +196,33 @@ destroy_object:
 obj_update_all:
     lda #0
     sta obj_slot
-@loop:
+.loop:
     lda obj_slot
     jsr obj_ptr
     ldy #O_TYPE
-    lda (pObj),y
-    beq @next
+    lda (pObj), y
+    beq .next
 
     jsr obj_move                ; obj.move(obj.spd.x, obj.spd.y)
 
     lda obj_slot                ; the object may have been destroyed by its own
     jsr obj_ptr                 ; move (nothing in stage 1 does, but reloading
     ldy #O_TYPE                 ; pObj is a byte cheaper than proving it cannot)
-    lda (pObj),y
-    beq @next
+    lda (pObj), y
+    beq .next
     tax
-    lda type_update_lo-1,x
+    lda type_update_lo-1, x
     sta pFn
-    lda type_update_hi-1,x
+    lda type_update_hi-1, x
     sta pFn+1
     ora pFn
-    beq @next
+    beq .next
     jsr call_fn
-@next:
+.next:
     inc obj_slot
     lda obj_slot
     cmp #OBJ_MAX
-    bne @loop
+    bne .loop
     rts
 
 ; ------------------------------------------------------------------------------
@@ -256,10 +255,9 @@ obj_move:
     sta t0
 
     ldy #O_REMX+1               ; rem.x -= amount, in the high half only
-    lda (pObj),y
-    sec
-    sbc t0
-    sta (pObj),y
+    lda (pObj), y
+    sub t0
+    sta (pObj), y
 
     jsr move_x
 
@@ -279,10 +277,9 @@ obj_move:
     sta t0
 
     ldy #O_REMY+1
-    lda (pObj),y
-    sec
-    sbc t0
-    sta (pObj),y
+    lda (pObj), y
+    sub t0
+    sta (pObj), y
 
     jmp move_y
 
@@ -296,66 +293,61 @@ obj_move:
 ; ------------------------------------------------------------------------------
 move_x:
     ldy #O_FLAGS
-    lda (pObj),y
+    lda (pObj), y
     and #F_SOLIDS
-    bne @solid
+    bne .solid
 
     ldy #O_X                    ; not solid: x += amount, no collision at all
-    lda (pObj),y
-    clc
-    adc t0
-    sta (pObj),y
+    lda (pObj), y
+    add t0
+    sta (pObj), y
     rts
 
-@solid:
+.solid:
     lda t0                      ; step = sign(amount), and the loop count
-    bmi @neg
-    beq @zero
-    lda #1
-    sta t1
+    bmi .neg
+    beq .zero
+    mov t1, #1
     lda t0
     sta t2
-    jmp @loop
-@neg:
-    lda #$FF
-    sta t1
+    jmp .loop
+.neg:
+    mov t1, #$FF
     lda #0                      ; t2 = abs(amount)
-    sec
-    sbc t0
+    sub t0
     sta t2
-    jmp @loop
-@zero:
+    jmp .loop
+.zero:
     sta t1                      ; step 0: the cart still runs one iteration,
     sta t2                      ; which can only zero an already-stuck speed
 
-@loop:
+.loop:
     lda t1                      ; is_solid(step, 0)
     sta c_ox
     lda #0
     sta c_oy
     jsr is_solid
-    bne @blocked
+    bne .blocked
 
     ldy #O_X
-    lda (pObj),y
-    clc
-    adc t1
-    sta (pObj),y
+    lda (pObj), y
+    add t1
+    sta (pObj), y
 
     dec t2                      ; inclusive loop: t2 counts down through zero
-    bpl @loop
+    bpl .loop
     rts
 
-@blocked:
+.blocked:
     lda #0                      ; spd.x = 0, rem.x = 0
     ldy #O_SPDX
-    sta (pObj),y
+    sta (pObj), y
     iny
-    sta (pObj),y
+    sta (pObj), y
     ldy #O_REMX
-    sta (pObj),y
+    sta (pObj), y
     iny
-    sta (pObj),y
+    sta (pObj), y
     rts
 
 ; ------------------------------------------------------------------------------
@@ -363,64 +355,58 @@ move_x:
 ; ------------------------------------------------------------------------------
 move_y:
     ldy #O_FLAGS
-    lda (pObj),y
+    lda (pObj), y
     and #F_SOLIDS
-    bne @solid
+    bne .solid
 
     ldy #O_Y
-    lda (pObj),y
-    clc
-    adc t0
-    sta (pObj),y
+    lda (pObj), y
+    add t0
+    sta (pObj), y
     rts
 
-@solid:
+.solid:
     lda t0
-    bmi @neg
-    beq @zero
-    lda #1
-    sta t1
+    bmi .neg
+    beq .zero
+    mov t1, #1
     lda t0
     sta t2
-    jmp @loop
-@neg:
-    lda #$FF
-    sta t1
+    jmp .loop
+.neg:
+    mov t1, #$FF
     lda #0
-    sec
-    sbc t0
+    sub t0
     sta t2
-    jmp @loop
-@zero:
+    jmp .loop
+.zero:
     sta t1
     sta t2
 
-@loop:
-    lda #0
-    sta c_ox
+.loop:
+    mov c_ox, #0
     lda t1
     sta c_oy
     jsr is_solid
-    bne @blocked
+    bne .blocked
 
     ldy #O_Y
-    lda (pObj),y
-    clc
-    adc t1
-    sta (pObj),y
+    lda (pObj), y
+    add t1
+    sta (pObj), y
 
     dec t2
-    bpl @loop
+    bpl .loop
     rts
 
-@blocked:
+.blocked:
     lda #0
     ldy #O_SPDY
-    sta (pObj),y
+    sta (pObj), y
     iny
-    sta (pObj),y
+    sta (pObj), y
     ldy #O_REMY
-    sta (pObj),y
+    sta (pObj), y
     iny
-    sta (pObj),y
+    sta (pObj), y
     rts

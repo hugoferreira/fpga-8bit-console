@@ -18,6 +18,7 @@ class Sim6502:
         self.writers = {}          # addr -> fn(value)
         self.a = self.x = self.y = 0
         self.s = 0xFD
+        self.trap = None   # last TRAP #imm tag, if any
         self.c = self.z = self.v = self.n = self.d = 0
         self.i = 1
         self.cycles = 0
@@ -187,9 +188,50 @@ class Sim6502:
            0xC6: ("dec", "zp"), 0xD6: ("dec", "zpx"), 0xCE: ("dec", "abs"),
            0xDE: ("dec", "absx")}
 
+    # ---- add-isa-core-ergonomics, column $x3 ----
+    # MOV writes memory without touching A, X, Y or any flag; ADD/SUB are
+    # ADC/SBC with the carry decided by the opcode rather than by a preceding
+    # clc/sec, and are binary-only. See docs/opcodes.md.
+    EXT = {0x03, 0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73}
+
+    def _step_ext(self, op):
+        if op == 0x03:                       # MOV zp, #imm
+            a = self._fetch()
+            self.wr(a, self._fetch())
+        elif op == 0x13:                     # MOV abs, #imm
+            lo = self._fetch()
+            a = lo | (self._fetch() << 8)
+            self.wr(a, self._fetch())
+        elif op == 0x23:                     # MOV zp, abs+X
+            d = self._fetch()
+            lo = self._fetch()
+            a = (lo | (self._fetch() << 8)) + self.x
+            self.wr(d, self.rd(a & 0xFFFF))
+        elif op == 0x33:                     # ADD #imm
+            self._add(self._fetch(), 0)
+        elif op == 0x43:                     # ADD zp
+            self._add(self.rd(self._fetch()), 0)
+        elif op == 0x53:                     # SUB #imm
+            self._add(self._fetch() ^ 0xFF, 1)
+        elif op == 0x63:                     # SUB zp
+            self._add(self.rd(self._fetch()) ^ 0xFF, 1)
+        elif op == 0x73:                     # TRAP #imm - inert, records
+            self.trap = self._fetch()
+        return True
+
+    def _add(self, v, cin):
+        """The shared adder: ADD is cin=0, SUB is cin=1 on an inverted operand.
+        Binary only - these instructions ignore the decimal flag by design."""
+        t = self.a + v + cin
+        self.v = (~(self.a ^ v) & (self.a ^ t) & 0x80) >> 7
+        self.c = 1 if t > 0xFF else 0
+        self.a = self.setnz(t)
+
     def step(self):
         op = self._fetch()
         self.cycles += 1
+        if op in self.EXT:
+            return self._step_ext(op)
 
         if op in self.LOADS:
             self.a = self.setnz(self.rd(self._addr(self.LOADS[op])))

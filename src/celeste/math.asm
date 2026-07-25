@@ -24,9 +24,9 @@ cmp16:
     cmp w1
     lda w0+1
     sbc w1+1
-    bvc @done
+    bvc .done
     eor #$80                    ; overflow: the sign bit lies, flip it back
-@done:
+.done:
     rts
 
 ; ------------------------------------------------------------------------------
@@ -34,8 +34,7 @@ cmp16:
 ; ------------------------------------------------------------------------------
 add16:
     lda w0
-    clc
-    adc w1
+    add w1
     sta w0
     lda w0+1
     adc w1+1
@@ -44,8 +43,7 @@ add16:
 
 sub16:
     lda w0
-    sec
-    sbc w1
+    sub w1
     sta w0
     lda w0+1
     sbc w1+1
@@ -57,8 +55,7 @@ sub16:
 ; ------------------------------------------------------------------------------
 neg16:
     lda #0
-    sec
-    sbc w0
+    sub w0
     sta w0
     lda #0
     sbc w0+1
@@ -78,15 +75,15 @@ abs16:
 ; ------------------------------------------------------------------------------
 sign16:
     lda w0+1
-    bmi @neg
+    bmi .neg
     ora w0
-    beq @zero
+    beq .zero
     lda #1
     rts
-@neg:
+.neg:
     lda #$FF
     rts
-@zero:
+.zero:
     lda #0
     rts
 
@@ -100,34 +97,32 @@ sign16:
 ; ------------------------------------------------------------------------------
 appr:
     jsr cmp16
-    bmi @up                     ; val < target: approach from below
-@down:
+    bmi .up                     ; val < target: approach from below
+.down:
     lda w0                      ; val -= amount
-    sec
-    sbc w2
+    sub w2
     sta w0
     lda w0+1
     sbc w2+1
     sta w0+1
     jsr cmp16
-    bpl @done                   ; still >= target, keep it
-    jmp @clamp
-@up:
+    bpl .done                   ; still >= target, keep it
+    jmp .clamp
+.up:
     lda w0                      ; val += amount
-    clc
-    adc w2
+    add w2
     sta w0
     lda w0+1
     adc w2+1
     sta w0+1
     jsr cmp16
-    bmi @done                   ; still < target, keep it
-@clamp:
+    bmi .done                   ; still < target, keep it
+.clamp:
     lda w1
     sta w0
     lda w1+1
     sta w0+1
-@done:
+.done:
     rts
 
 ; ------------------------------------------------------------------------------
@@ -140,19 +135,19 @@ appr:
 ; Both clobber A and Y.
 ; ------------------------------------------------------------------------------
 obj_ldw:
-    lda (pObj),y
+    lda (pObj), y
     sta w0
     iny
-    lda (pObj),y
+    lda (pObj), y
     sta w0+1
     rts
 
 obj_stw:
     lda w0
-    sta (pObj),y
+    sta (pObj), y
     iny
     lda w0+1
-    sta (pObj),y
+    sta (pObj), y
     rts
 
 ; ------------------------------------------------------------------------------
@@ -160,10 +155,10 @@ obj_stw:
 ; pointer-to-a-pointer, because the caller always knows which register it means.
 ; ------------------------------------------------------------------------------
 obj_ldw1:
-    lda (pObj),y
+    lda (pObj), y
     sta w1
     iny
-    lda (pObj),y
+    lda (pObj), y
     sta w1+1
     rts
 

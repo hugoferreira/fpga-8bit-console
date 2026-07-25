@@ -38,28 +38,26 @@ is_ice:
 ; ------------------------------------------------------------------------------
 obj_box:
     ldy #O_X
-    lda (pObj),y
+    lda (pObj), y
     ldy #O_HBX
     clc
-    adc (pObj),y
-    clc
-    adc c_ox
+    adc (pObj), y
+    add c_ox
     sta c_x
 
     ldy #O_Y
-    lda (pObj),y
+    lda (pObj), y
     ldy #O_HBY
     clc
-    adc (pObj),y
-    clc
-    adc c_oy
+    adc (pObj), y
+    add c_oy
     sta c_y
 
     ldy #O_HBW
-    lda (pObj),y
+    lda (pObj), y
     sta c_w
     ldy #O_HBH
-    lda (pObj),y
+    lda (pObj), y
     sta c_h
     rts
 
@@ -69,11 +67,11 @@ obj_box:
 ; ------------------------------------------------------------------------------
 tile_flag_at:
     jsr box_tiles
-    bcc @miss                   ; the box does not touch the room at all
+    bcc .miss                   ; the box does not touch the room at all
 
     lda c_j
     sta t3
-@row:
+.row:
     lda t3                      ; the row base: j * 16, one shift short of free
     asl
     asl
@@ -82,30 +80,29 @@ tile_flag_at:
     sta t4
     lda c_i
     sta t5
-@col:
+.col:
     lda t4
-    clc
-    adc t5
+    add t5
     tay
-    lda ROOMTILES,y             ; mget
+    lda ROOMTILES, y             ; mget
     tay
-    lda tile_flags,y
+    lda tile_flags, y
     and c_mask
-    bne @hit
+    bne .hit
     inc t5
     lda t5
     cmp c_i1
-    bcc @col
-    beq @col
+    bcc .col
+    beq .col
     inc t3
     lda t3
     cmp c_j1
-    bcc @row
-    beq @row
-@miss:
+    bcc .row
+    beq .row
+.miss:
     lda #0
     rts
-@hit:
+.hit:
     rts
 
 ; ------------------------------------------------------------------------------
@@ -121,55 +118,51 @@ tile_flag_at:
 box_tiles:
     lda c_x                     ; i0 = max(0, x >> 3)
     jsr floor8
-    bpl @i0
+    bpl .i0
     lda #0
-@i0:
+.i0:
     sta c_i
 
     lda c_x                     ; i1 = min(15, (x + w - 1) >> 3)
-    clc
-    adc c_w
-    bvs @i1max                  ; signed overflow: off the right edge
-    sec
-    sbc #1
-    bmi @miss                   ; the whole box is left of the room
+    add c_w
+    bvs .i1max                  ; signed overflow: off the right edge
+    sub #1
+    bmi .miss                   ; the whole box is left of the room
     jsr floor8
     cmp #16
-    bcc @i1
-@i1max:
+    bcc .i1
+.i1max:
     lda #15
-@i1:
+.i1:
     sta c_i1
     cmp c_i
-    bcc @miss
+    bcc .miss
 
     lda c_y                     ; and the same vertically
     jsr floor8
-    bpl @j0
+    bpl .j0
     lda #0
-@j0:
+.j0:
     sta c_j
 
     lda c_y
-    clc
-    adc c_h
-    bvs @j1max
-    sec
-    sbc #1
-    bmi @miss
+    add c_h
+    bvs .j1max
+    sub #1
+    bmi .miss
     jsr floor8
     cmp #16
-    bcc @j1
-@j1max:
+    bcc .j1
+.j1max:
     lda #15
-@j1:
+.j1:
     sta c_j1
     cmp c_j
-    bcc @miss
+    bcc .miss
 
     sec
     rts
-@miss:
+.miss:
     clc
     rts
 
@@ -196,11 +189,11 @@ floor8:
 ; ------------------------------------------------------------------------------
 spikes_at:
     jsr box_tiles
-    bcc @miss
+    bcc .miss
 
     lda c_j
     sta t3
-@row:
+.row:
     lda t3
     asl
     asl
@@ -209,148 +202,140 @@ spikes_at:
     sta t4
     lda c_i
     sta t5
-@col:
+.col:
     lda t4
-    clc
-    adc t5
+    add t5
     tay
-    lda ROOMTILES,y
+    lda ROOMTILES, y
     ldx #0
-@which:
-    cmp spike_tile,x
-    beq @found
+.which:
+    cmp spike_tile, x
+    beq .found
     inx
     cpx #4
-    bne @which
-    jmp @next
-@found:
-    lda spike_test_lo,x
-    sta pFn
-    lda spike_test_hi,x
+    bne .which
+    jmp .next
+.found:
+    mov pFn, spike_test_lo + x
+    lda spike_test_hi, x
     sta pFn+1
     jsr call_fn
-    bne @hit
-@next:
+    bne .hit
+.next:
     inc t5
     lda t5
     cmp c_i1
-    bcc @col
-    beq @col
+    bcc .col
+    beq .col
     inc t3
     lda t3
     cmp c_j1
-    bcc @row
-    beq @row
-@miss:
+    bcc .row
+    beq .row
+.miss:
     lda #0
-@hit:
+.hit:
     rts
 
 spike_tile:
-    .byte TILE_SPIKE_D, TILE_SPIKE_U, TILE_SPIKE_R, TILE_SPIKE_L
+    #d8 TILE_SPIKE_D, TILE_SPIKE_U, TILE_SPIKE_R, TILE_SPIKE_L
 spike_test_lo:
-    .byte <spike_down, <spike_up, <spike_right, <spike_left
+    #d8 (spike_down)[7:0], (spike_up)[7:0], (spike_right)[7:0], (spike_left)[7:0]
 spike_test_hi:
-    .byte >spike_down, >spike_up, >spike_right, >spike_left
+    #d8 (spike_down)[15:8], (spike_up)[15:8], (spike_right)[15:8], (spike_left)[15:8]
 
 ; tile 17, pointing down: ((y+h-1)%8 >= 6 or y+h == j*8+8) and yspd >= 0
 spike_down:
     ldy #O_SPDY+1
-    lda (pObj),y
-    bmi @no
+    lda (pObj), y
+    bmi .no
     lda c_y
-    clc
-    adc c_h
+    add c_h
     sta t6                      ; y + h
-    sec
-    sbc #1
+    sub #1
     and #7
     cmp #6
-    bcs @yes
+    bcs .yes
     lda t3                      ; j*8 + 8
     asl
     asl
     asl
-    clc
-    adc #8
+    add #8
     cmp t6
-    beq @yes
-@no:
+    beq .yes
+.no:
     lda #0
     rts
-@yes:
+.yes:
     lda #1
     rts
 
 ; tile 27, pointing up: y%8 <= 2 and yspd <= 0
 spike_up:
     ldy #O_SPDY+1
-    lda (pObj),y
-    bmi @maybe
+    lda (pObj), y
+    bmi .maybe
     ldy #O_SPDY                 ; spd.y <= 0 means the whole word, not just the
-    lda (pObj),y                ; high byte: +0.004 is still moving down
+    lda (pObj), y                ; high byte: +0.004 is still moving down
     ldy #O_SPDY+1
-    ora (pObj),y
-    bne @no
-@maybe:
+    ora (pObj), y
+    bne .no
+.maybe:
     lda c_y
     and #7
     cmp #3
-    bcc @yes
-@no:
+    bcc .yes
+.no:
     lda #0
     rts
-@yes:
+.yes:
     lda #1
     rts
 
 ; tile 43, pointing right: x%8 <= 2 and xspd <= 0
 spike_right:
     ldy #O_SPDX+1
-    lda (pObj),y
-    bmi @maybe
+    lda (pObj), y
+    bmi .maybe
     ldy #O_SPDX
-    lda (pObj),y
+    lda (pObj), y
     ldy #O_SPDX+1
-    ora (pObj),y
-    bne @no
-@maybe:
+    ora (pObj), y
+    bne .no
+.maybe:
     lda c_x
     and #7
     cmp #3
-    bcc @yes
-@no:
+    bcc .yes
+.no:
     lda #0
     rts
-@yes:
+.yes:
     lda #1
     rts
 
 ; tile 59, pointing left: ((x+w-1)%8 >= 6 or x+w == i*8+8) and xspd >= 0
 spike_left:
     ldy #O_SPDX+1
-    lda (pObj),y
-    bmi @no
+    lda (pObj), y
+    bmi .no
     lda c_x
-    clc
-    adc c_w
+    add c_w
     sta t6
-    sec
-    sbc #1
+    sub #1
     and #7
     cmp #6
-    bcs @yes
+    bcs .yes
     lda t5
     asl
     asl
     asl
-    clc
-    adc #8
+    add #8
     cmp t6
-    beq @yes
-@no:
+    beq .yes
+.no:
     lda #0
     rts
-@yes:
+.yes:
     lda #1
     rts

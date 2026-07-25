@@ -31,69 +31,67 @@
 ; the list is not either.
 ; ------------------------------------------------------------------------------
 
-    .define CLOUD_N            17
-    .define PART_N             25
+    CLOUD_N = 17
+    PART_N = 25
 
 ; ------------------------------------------------------------------------------
 ; fx_init: seed both from the hardware LFSR. Clobbers A, X.
 ; ------------------------------------------------------------------------------
 fx_init:
     ldx #CLOUD_N-1
-@cloud:
+.cloud:
     lda SPR_RND                 ; x = rnd(128)
     and #$7F
-    sta CL_XH,x
+    sta CL_XH, x
     lda #0
-    sta CL_XL,x
+    sta CL_XL, x
     lda SPR_RND                 ; y = rnd(128)
     and #$7F
-    sta CL_Y,x
+    sta CL_Y, x
     lda SPR_RND                 ; w = 4..7 cells, the cart's 32..64 pixels
     and #3
-    clc
-    adc #4
-    sta CL_W,x
+    add #4
+    sta CL_W, x
     lda SPR_RND                 ; spd = 1 + rnd(4), in 8.8
     and #3
-    clc
-    adc #1
-    sta CL_SH,x
+    add #1
+    sta CL_SH, x
     lda SPR_RND
-    sta CL_SL,x
+    sta CL_SL, x
     dex
-    bpl @cloud
+    bpl .cloud
 
     ldx #PART_N-1
-@part:
+.part:
     lda SPR_RND
     and #$7F
-    sta PA_XH,x
+    sta PA_XH, x
     lda SPR_RND
-    sta PA_XL,x
+    sta PA_XL, x
     lda SPR_RND
     and #$7F
-    sta PA_YH,x
+    sta PA_YH, x
     lda SPR_RND
-    sta PA_YL,x
+    sta PA_YL, x
     lda SPR_RND                 ; spd = 0.25 + rnd(3), in 8.8
     and #3
-    sta PA_SH,x
+    sta PA_SH, x
     lda SPR_RND
     ora #$40
-    sta PA_SL,x
+    sta PA_SL, x
     lda SPR_RND                 ; the cart's c = 6 + flr(0.5 + rnd(1))
     and #1
-    beq @grey
+    beq .grey
     lda #PAL_ATTR_7
-    bne @setcol
-@grey:
+    bne .setcol
+.grey:
     lda #PAL_ATTR_6
-@setcol:
-    sta PA_ATTR,x
+.setcol:
+    sta PA_ATTR, x
     lda SPR_RND
-    sta PA_OFF,x
+    sta PA_OFF, x
     dex
-    bpl @part
+    bpl .part
     rts
 
 ; ------------------------------------------------------------------------------
@@ -102,92 +100,90 @@ fx_init:
 ; ------------------------------------------------------------------------------
 fx_update:
     ldx #CLOUD_N-1
-@cloud:
-    lda CL_XL,x                 ; x += spd
+.cloud:
+    lda CL_XL, x                 ; x += spd
     clc
-    adc CL_SL,x
-    sta CL_XL,x
-    lda CL_XH,x
-    adc CL_SH,x
-    sta CL_XH,x
+    adc CL_SL, x
+    sta CL_XL, x
+    lda CL_XH, x
+    adc CL_SH, x
+    sta CL_XH, x
 
     ; The cart's `if c.x > 128 then c.x = -c.w`. x is one byte here, so "past
     ; the right edge" and "off the left, drifting back on" are BOTH negative-
     ; looking values and have to be told apart: a cloud is at most 64 px wide,
     ; so anything at or above 192 is still entering from the left.
     cmp #129
-    bcc @nextcloud
+    bcc .nextcloud
     cmp #192
-    bcs @nextcloud
-    lda CL_W,x                  ; -w cells, in pixels
+    bcs .nextcloud
+    lda CL_W, x                  ; -w cells, in pixels
     asl
     asl
     asl
     eor #$FF
-    clc
-    adc #1
-    sta CL_XH,x
+    add #1
+    sta CL_XH, x
     lda #0
-    sta CL_XL,x
+    sta CL_XL, x
     lda SPR_RND
     and #$7F
     cmp #120
-    bcc @keepy
+    bcc .keepy
     lda #119
-@keepy:
-    sta CL_Y,x
-@nextcloud:
+.keepy:
+    sta CL_Y, x
+.nextcloud:
     dex
-    bpl @cloud
+    bpl .cloud
 
     ldx #PART_N-1
-@part:
-    lda PA_XL,x                 ; x += spd
+.part:
+    lda PA_XL, x                 ; x += spd
     clc
-    adc PA_SL,x
-    sta PA_XL,x
-    lda PA_XH,x
-    adc PA_SH,x
-    sta PA_XH,x
+    adc PA_SL, x
+    sta PA_XL, x
+    lda PA_XH, x
+    adc PA_SH, x
+    sta PA_XH, x
 
-    lda PA_OFF,x                ; off += spd/32, capped at the cart's 0.05
-    clc
-    adc #13
-    sta PA_OFF,x
+    lda PA_OFF, x                ; off += spd/32, capped at the cart's 0.05
+    add #13
+    sta PA_OFF, x
     lsr                         ; y += sin(off), from a 16-step table
     lsr
     lsr
     lsr
     tay
-    lda PA_YL,x
+    lda PA_YL, x
     clc
-    adc sin16_lo,y
-    sta PA_YL,x
-    lda PA_YH,x
-    adc sin16_hi,y
-    sta PA_YH,x
+    adc sin16_lo, y
+    sta PA_YL, x
+    lda PA_YH, x
+    adc sin16_hi, y
+    sta PA_YH, x
 
-    lda PA_XH,x                 ; if x > 132 then x = -4, y = rnd(128); same
+    lda PA_XH, x                 ; if x > 132 then x = -4, y = rnd(128); same
     cmp #133                    ; two-sided test as the clouds above
-    bcc @nextpart
+    bcc .nextpart
     cmp #192
-    bcs @nextpart
+    bcs .nextpart
     lda #$FC
-    sta PA_XH,x
+    sta PA_XH, x
     lda SPR_RND
     and #$7F
-    sta PA_YH,x
-@nextpart:
+    sta PA_YH, x
+.nextpart:
     dex
-    bpl @part
+    bpl .part
     rts
 
 ; sin(off) over a full turn, 8.8 signed. The cart adds sin() straight to y, so
 ; a particle bobs one pixel either way as it drifts.
 sin16_lo:
-    .byte $00,$62,$B5,$ED,$00,$ED,$B5,$62,$00,$9E,$4B,$13,$00,$13,$4B,$9E
+    #d8 $00, $62, $B5, $ED, $00, $ED, $B5, $62, $00, $9E, $4B, $13, $00, $13, $4B, $9E
 sin16_hi:
-    .byte $00,$00,$00,$00,$01,$00,$00,$00,$00,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+    #d8 $00, $00, $00, $00, $01, $00, $00, $00, $00, $FF, $FF, $FF, $FF, $FF, $FF, $FF
 
 ; ------------------------------------------------------------------------------
 ; fx_draw_clouds: staged FIRST, so that everything here lands below the
@@ -195,24 +191,21 @@ sin16_hi:
 ; ------------------------------------------------------------------------------
 fx_draw_clouds:
     ldx #0
-@cloud:
+.cloud:
     stx t6
-    lda CL_Y,x                  ; clouds do not scroll with the camera: they
-    sec                         ; are sky, and the cart's camera never moves
-    sbc camera_y
+    lda CL_Y, x                  ; clouds do not scroll with the camera: they
+    sub camera_y
     sta t5
-    lda #PAL_ATTR_1
-    sta t3
-    lda CL_XH,x
-    sta t4
-    lda CL_W,x                  ; the whole cloud is ONE entry: the compositor
+    mov t3, #PAL_ATTR_1
+    mov t4, CL_XH + x
+    lda CL_W, x                  ; the whole cloud is ONE entry: the compositor
     sta SPR_REP                 ; repeats the fetched row across its cells
     lda #SPR_SOLID
     jsr stage_sprite
     ldx t6
     inx
     cpx #CLOUD_N
-    bne @cloud
+    bne .cloud
     rts
 
 ; ------------------------------------------------------------------------------
@@ -224,20 +217,17 @@ fx_draw_particles:
     lda #1                      ; back to single cells for everything else
     sta SPR_REP
     ldx #0
-@part:
+.part:
     stx t6
-    lda PA_ATTR,x
-    sta t3
-    lda PA_XH,x
-    sta t4
-    lda PA_YH,x
-    sec
-    sbc camera_y
+    mov t3, PA_ATTR + x
+    mov t4, PA_XH + x
+    lda PA_YH, x
+    sub camera_y
     sta t5
     lda #SPR_DOT
     jsr stage_sprite
     ldx t6
     inx
     cpx #PART_N
-    bne @part
+    bne .part
     rts

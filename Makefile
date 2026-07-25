@@ -62,7 +62,7 @@ nemo_DESC = NEMO - Puzzle Pack II - PICO-8 port (mooon); ISA corpus
 celeste_SRC  = src/celeste/main.asm
 celeste_DEPS = $(wildcard src/celeste/*.asm)
 celeste_INC  = -I src/celeste
-celeste_ASM  = ca65
+celeste_ASM  = customasm
 celeste_DESC = Celeste Classic - PICO-8 port (Thorson/Berry); ISA corpus
 
 GAME_SRC  = $($(GAME)_SRC)
@@ -140,6 +140,7 @@ hex: check-customasm-version $(GAME_SRC) $(GAME_DEPS)
 	  -f binary -o $(GAME_BIN) -- \
 	  -f symbols -o $(GAME_SYM) -- \
 	  -f readmemh,width:8 -o ${ASM_HEX}
+	@python3 tools/sym_to_lbl.py $(GAME_SYM) build/$(GAME).lbl
 	@echo "rtl/ram.hex <- $(GAME_SRC) (customasm)"
 else
 hex: $(GAME_BIN)
@@ -423,8 +424,11 @@ test-nemo:
 # Celeste's suite: the whole program driven from the reset vector with the PPU
 # faked, checking the things a screenshot cannot - sub-pixel accumulation,
 # collision against the room data, spikes, room transitions.
+# `hex`, not `build/celeste.bin`: the $(GAME_BIN) rule is the ca65/ld65 chain,
+# and celeste is on customasm now. `hex` emits the binary, the symbols and a
+# ca65-format .lbl (via tools/sym_to_lbl.py) so this test tool is unchanged.
 test-celeste:
-	$(MAKE) GAME=celeste build/celeste.bin
+	$(MAKE) GAME=celeste hex
 	python3 tools/test_celeste.py build/celeste.bin build/celeste.lbl
 
 metrics:
