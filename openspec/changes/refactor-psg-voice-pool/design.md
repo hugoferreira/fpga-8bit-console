@@ -81,28 +81,52 @@ echo counter are the other things to check against this rule before section 3.
 
 The 336 bits are not all touched at the same rate.
 
-**Per-sample state (~133 bits/voice)** — read and written every one of the
-22 050 samples per second: `phase`, `phase2`, `eff_inc`, `eff_vol`, `lp`,
-`brown`, `nz_hold`, `nz_ph`, `snd_wave`, `snd_wt`, `snd_wtb`, and the `ch_*`
-filter bits. 16 × 133 = ~2 100 flops, 28% of an HX8K. Keep this as the rotating
-ring it already is.
+Measured exactly (task 2.1), not estimated:
 
-**Per-tick state (~200 bits/voice)** — touched once per *tick*, and a tick is
-183 samples, i.e. ~29 000 clocks: `row`, `fcnt`, `tcnt`, `sp`, `lps`, `lpe`,
-`cur_pitch`, `prev_pitch`, `cur_wave`, `cur_vol`, `cur_fx`, `prev_vol`,
-`sfx_id`, `trg_row`, `trg_len`, `play_len`, `released`, and the whole `ins_*`
-custom-instrument block. 16 × 200 = 3 200 bits — **one `SB_RAM40_4K`**, with
-four orders of magnitude more clocks available than the walk needs.
+**Per-sample state - 147 bits/voice.** Touched by the synthesis pipeline every
+one of the 22 050 samples per second: `phase`(24), `phase2`(24), `eff_inc`(24),
+`lp`(16), `brown`(13), `snd_wtb`(13), `eff_vol`(8), `nz_hold`(8), `nz_ph`(4),
+`snd_wave`(3), and the single bits `playing`, `snd_wt`, `ch_noiz`, `ch_buzz`
+plus `ch_det`/`ch_rev`/`ch_damp`(2 each). 16 x 147 = 2352 flops, 31% of an
+HX8K. This stays in registers - streaming it from BRAM would need ~10 word
+reads and 10 writes per voice per sample, which does not fit the 4-clock
+per-voice budget.
 
-That split is the whole trick: it turns the expensive half of the state into
-one block RAM and leaves the cheap half where it is. Sixteen voices then cost
-about 2 100 flops plus 1 BRAM, against 1 344 flops for four voices today —
-roughly the same silicon for four times the polyphony.
+**Per-tick state - 189 bits/voice.** Touched only by the sequencer walk, once
+per tick, and a tick is 183 samples (~29 000 clocks). This splits again, and
+the split matters:
 
-The sequencer walk already visits channels one at a time in a fixed order, so
-it maps onto a BRAM register file almost directly: read voice *v*'s record,
-run the existing per-tick states against a single working copy, write it back.
-The `[0:3]` rotation disappears in favour of an explicit voice index.
+- **Bulk note and instrument state, ~154 bits** - `sp`, `lps`, `lpe`, `fcnt`,
+  `tcnt`, `play_len`, `cur_pitch`, `prev_pitch`, `cur_wave`, `cur_vol`,
+  `cur_fx`, `prev_vol`, the `bf_*` filter bits and the whole `ins_*` block.
+  Every one of these is only ever reached through the ring's index 0, i.e.
+  only for the voice currently being walked. 16 x 154 = 2464 bits: **one
+  `SB_RAM40_4K`**, read at the start of a voice's visit and written back at the
+  end.
+- **Control state, ~35 bits** - `playing`, `music_owned`, `launched`,
+  `trig_req`, `sfx_id`, `row`, `trg_row`, `trg_len`, `released`, `sav_*`.
+  These are addressed *randomly*: the CPU writes them by channel number, and
+  the music FSM loops over all of them at once (`trig_req != 0`, `ML_LD`,
+  `W_MUS`). They cannot come from a single working copy and stay in flops -
+  16 x 35 = 560, which is cheap.
+
+So sixteen voices cost about **2900 flops plus one BRAM** (38% of an HX8K),
+against 1344 flops for four voices today. More than the 2100 first estimated,
+because the randomly-addressed control state cannot go to BRAM, but still four
+times the polyphony for roughly twice the silicon.
+
+The refactor falls out of the existing structure. The rotated arrays are
+already a working copy - index 0 *is* the voice being walked, and the rotation
+is how the next voice is brought into it. So `name[0]` becomes a plain working
+register `w_name`, and the rotation becomes a BRAM read and write-back. The
+`[0:3]` rings disappear in favour of an explicit voice index.
+
+**Order of work.** Do the de-rotation first and keep the backing store in flops
+(behaviour-preserving, testable at four voices), then scale the pool and prove
+allocation, then swap the backing store for BRAM. That way the audible change
+lands and is verifiable before the storage rework, and if the BRAM port turns
+out tighter than estimated the fallback is 8 voices in flops with nothing else
+rewritten.
 
 ### Alternative considered: 8 voices
 

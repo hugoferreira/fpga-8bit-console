@@ -40,14 +40,30 @@ be at 121%.
 
 ## 2. Partition the voice state by rate
 
-- [ ] 2.1 Classify every `[0:3]` array in `rtl/psg.sv` as per-sample or
-      per-tick, and write the split into design.md if it differs from the
-      estimate (~133 vs ~200 bits per voice)
-- [ ] 2.2 Move the per-tick half into a BRAM-backed register file addressed by
-      voice index: read the record, run the existing per-tick states against a
-      single working copy, write it back
-- [ ] 2.3 Replace the `[0:3]` ring rotation with an explicit voice index in the
-      sequencer walk
+- [x] 2.1 Classify every `[0:3]` array in `rtl/psg.sv` as per-sample or
+      per-tick. Measured 147 / 189 bits per voice against the estimated
+      133 / 200, and the per-tick half splits again: ~154 bits of bulk note and
+      instrument state that only the walked voice ever touches (BRAM), and
+      ~35 bits of control state that the CPU and the music FSM address randomly
+      (must stay in flops). design.md updated; total is ~2900 flops + 1 BRAM
+- [x] 2.1a (found during 2.1, not originally scoped) **The noise gain was
+      being looked up by the wrong channel's pitch.** `e_pitch` is derived from
+      the sequencer's rotating ring, which only advances on ticks, so during
+      synthesis it holds channel 0's note no matter which channel is being
+      synthesised - every channel got channel 0's noise gain. Latched
+      `snd_pitch` per channel alongside `snd_wave`/`snd_wt`/`snd_wtb` instead.
+      Test 20c covers it. NEMO's music moves +0.05% RMS, so it was inaudible
+      here, but it would not have been for a cart with noise on two channels at
+      different pitches. Exactly the class of fault the de-rotation removes by
+      construction, which is why it surfaced while classifying the state
+- [ ] 2.3 Replace the `[0:3]` ring rotation with an explicit voice index:
+      `name[0]` becomes a working register `w_name`, loaded at the start of a
+      voice's visit and stored at the end, still backed by flops. Behaviour
+      must not change - this is pure restructuring
+- [ ] 2.2 Swap the backing store for the bulk note/instrument state to BRAM.
+      **Deliberately after section 3**: de-rotate, scale the pool, prove
+      allocation, and only then rework storage, so the audible change is
+      verifiable before the risky part and 8-voices-in-flops stays a fallback
 - [ ] 2.4 Confirm `make test-psg` still passes with four voices - the
       partition must not change behaviour, only storage
 - [ ] 2.5 Synthesise and confirm one `SB_RAM40_4K` covers the per-tick state

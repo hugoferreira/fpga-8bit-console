@@ -158,6 +158,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   logic [2:0]  snd_wave[0:3];
   logic        snd_wt[0:3];
   logic [12:0] snd_wtb[0:3];
+  // The pitch the noise gain is looked up by, latched per channel alongside
+  // the other synthesis-path values. It cannot be read from the sequencer's
+  // ring: that ring only advances on ticks, so during synthesis it holds
+  // channel 0's note whatever channel is being synthesised, and every channel
+  // was getting channel 0's noise gain (test 20c).
+  logic [5:0]  snd_pitch[0:3];
 
   // Per-channel filter state: bf_* comes from the played SFX's filter byte
   // at trigger, ch_* is that folded together with the instrument's
@@ -559,6 +565,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
         snd_wave[i] <= 0;
         snd_wt[i] <= 0;
         snd_wtb[i] <= 0;
+        snd_pitch[i] <= 0;
         bf_noiz[i] <= 0;
         bf_buzz[i] <= 0;
         bf_det[i] <= 0;
@@ -904,6 +911,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
                          : (ins_on[0] && ins_wt[0]) ? 3'd0 : cur_wave[0];
             snd_wt[c]   <= ins_on[0] & ins_wt[0];
             snd_wtb[c]  <= ins_base;
+            snd_pitch[c] <= e_pitch;
             sst <= K_ROT;
           end else begin
             m_a   <= mul_a;
@@ -1233,7 +1241,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   // nz_hold * nz_gain[key] / 256, saturated. The gain runs 87/256 at the
   // bottom of the range to 222/256 at the top; it used to be a flat 192/256
   // (0.75), which made low-pitched noise about twice as loud as PICO-8's.
-  wire signed [15:0] nz_mul = $signed(nz_hold[0]) * $signed({1'b0, nz_gain[e_pitch]});
+  wire signed [15:0] nz_mul = $signed(nz_hold[0])
+                            * $signed({1'b0, nz_gain[snd_pitch[pc_ch]]});
   wire signed [7:0] nz_scaled =
       (nz_mul >>> 8) > 16'sd127  ?  8'sd127 :
       (nz_mul >>> 8) < -16'sd127 ? -8'sd127 : 8'(nz_mul >>> 8);

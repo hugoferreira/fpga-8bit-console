@@ -460,6 +460,13 @@ module psg_tb;
     set_meta(25, 16, 0, 0); set_filter(25, 224);
     // pattern 3: all four channels enabled, for the reservation test
     set_pat(3, 8'h06, 8'h06, 8'h06, 8'h06);
+    // 40: high-pitched noise; 41: a silent note at the bottom of the range.
+    // 41 contributes nothing to the mix but does set channel 0's cur_pitch,
+    // which is the whole point of test 20c.
+    for (int r = 0; r < 32; r++) set_note(40, r, 60, 6, 7, 0);
+    set_meta(40, 16, 0, 0); set_filter(40, 2);          // noiz -> white noise
+    for (int r = 0; r < 32; r++) set_note(41, r, 0, 0, 0, 0);
+    set_meta(41, 16, 0, 0);
     upload;
 
     // ---- 14. sfx(n, ch, offset, length) -----------------------------
@@ -625,6 +632,34 @@ module psg_tb;
       check(dut.mus_pat == pat0,
             "the sound effect ending did not end the pattern");
       wr(8'h20, 8'h80);
+      ticks(1);
+    end
+
+    // ---- 20c. noise gain must follow the noise channel's own pitch ---
+    //
+    // The gain applied to noise is looked up by pitch, and that pitch is taken
+    // from the sequencer walk's ring rather than the channel being synthesised.
+    // The two rings only line up on channel 0, so this checks that a noise
+    // channel is not being given some other channel's pitch.
+    $display("[20c] noise gain follows the noise channel, not channel 0");
+    begin
+      int pk_alone, pk_with_ch0;
+      wr(8'h20, 8'h80);
+      for (int i = 0; i < 4; i++) wr(8'h10 + i, 8'h80);
+      ticks(1);
+      wr(8'h12, 8'd40);                  // high-pitched noise on channel 2
+      ticks(2);
+      peak_dev(4000, pk_alone);
+
+      // Same noise, but channel 0 now holds a silent note at the bottom of the
+      // pitch range. It adds nothing to the mix, so the peak must not move.
+      wr(8'h10, 8'd41);
+      ticks(2);
+      peak_dev(4000, pk_with_ch0);
+      check(pk_alone > 20, "the noise is audible on its own");
+      check(pk_with_ch0 * 10 > pk_alone * 8,
+            "a silent low note on channel 0 does not change channel 2's noise");
+      for (int i = 0; i < 4; i++) wr(8'h10 + i, 8'h80);
       ticks(1);
     end
 
