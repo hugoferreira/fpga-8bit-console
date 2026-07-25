@@ -314,11 +314,15 @@ text buffer, font) already wants most of that. Roughly 640 kbit asked for
 against 128 kbit available. Yosys cannot map it, falls back to logic, and the
 netlist explodes.
 
-That memory was never meant to be on-chip: the BlackIce MX has external RAM.
-What is missing is the abstraction - a memory interface the CPU and the arbiter
-talk to, with BRAM behind it for the small windows and the board's external RAM
-behind the 64 KB map. `rtl/top.pcf` has no memory pins at all, so nothing has
-ever been wired to a real chip.
+That memory was never meant to be on-chip: the BlackIce MX carries a 16 Mbit,
+16-bit-wide SDRAM rated at 143 MHz. What is missing is the abstraction - a
+memory interface the CPU and the arbiter talk to, with the board's SDRAM behind
+the 64 KB map. `rtl/top.pcf` has no memory pins at all, so nothing has ever been
+wired to a real chip. Written up in
+[`docs/memory-subsystem.md`](memory-subsystem.md), including why the CPU need
+not slow down for it: at 100 MHz against a 40 ns CPU cycle a row-hit read fits
+inside one CPU cycle, so main memory keeps looking the way this core already
+assumes.
 
 Until that exists:
 
