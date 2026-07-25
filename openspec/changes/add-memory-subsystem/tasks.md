@@ -22,12 +22,17 @@
 
 ## 3. Split the map
 
-- [ ] 3.1 Keep `$0000-$01FF` on-chip. Measure the row-miss rate with and without
-      the split before committing to it
+- [ ] 3.1 Pin bank 0's open row to `$0000-$01FF` — 512 bytes is exactly one row,
+      so zero page and the stack never pay an activate. Measure the row-miss
+      rate with and without before committing to it.
+      **Not BRAM**: the PPU holds 16 of the 32 blocks and the PSG the other 16,
+      measured off the netlist, so there is none spare
 - [ ] 3.2 Decide where the video/PPU working set lives; it already bypasses main
       memory, so confirm rather than assume
 - [ ] 3.3 Record the resulting BRAM budget against the device's 32 blocks, with
-      the PSG's and PPU's existing claims itemised
+      the PSG's and PPU's existing claims itemised. Today they account for all
+      32 (`tools/ppu_bram.py`), so any on-chip memory this change wants has to
+      come out of one of them — state where, or use none
 
 ## 4. The SDRAM controller
 

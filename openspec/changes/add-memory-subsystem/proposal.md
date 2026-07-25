@@ -59,10 +59,18 @@ one-access-per-cycle model.
   arbiter talks to, with the CPU's `RDY` driven from `stall`.
 - Backends behind it: `mem_bram` (small maps and simulation), `mem_sdram` (the
   BlackIce MX part), and room for `mem_sram` (BlackIce II and similar).
-- **Zero page and the stack (`$0000-$01FF`) stay in BRAM.** 512 bytes, one block,
-  and the hottest 0.8% of the address space — every `(zp),Y`, every push, every
-  `JSR`. Keeping them on-chip is what stops a two-bank open-row policy from
-  thrashing.
+- **Zero page and the stack (`$0000-$01FF`) get a pinned SDRAM row.** They are
+  the hottest 0.8% of the address space — every `(zp),Y`, every push, every
+  `JSR` — and a two-bank open-row policy would thrash without special treatment.
+  512 bytes is **exactly one SDRAM row**, so pinning bank 0's row to
+  `$0000-$01FF` and letting bank 1 rotate for code and data costs no block RAM
+  at all and never needs re-activating.
+
+  > This replaces an earlier plan to keep them in BRAM. The PPU agent measured
+  > the device off the yosys netlist: **the PPU takes 16 of the 32 block RAMs
+  > and the PSG takes the other 16. There is no spare block RAM today.** The
+  > pinned-row scheme is better anyway — it is free, and it does not compete
+  > with the video and audio paths for a resource that is already exhausted.
 - **The 16-bit bus becomes a free two-byte prefetch.** Every read returns a word
   for one 8-bit access; holding the other half satisfies the next sequential
   fetch with no memory traffic. On a corpus averaging 1.9 bytes per instruction

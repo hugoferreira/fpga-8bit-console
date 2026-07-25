@@ -39,15 +39,24 @@ multi-cycle handshake and roughly doubles effective CPI. Running the CPU at
 50 MHz halves the SDRAM clocks available per CPU cycle and turns row hits into
 wait states too; it is only worth it once the row-miss rate is measured.
 
-### Decision: split the map rather than cache it
+### Decision: pin a row rather than cache, and rather than spend BRAM
 
 A row is 512 bytes and only two can be open. A 6502 working set — zero page,
-stack, code, data — would thrash that. Keeping `$0000-$01FF` in BRAM removes the
-most interleaved 512 bytes in the machine for the price of one block, and leaves
-sequential instruction fetch to hold a row for long stretches.
+stack, code, data — would thrash that.
 
-This is measurable before it is committed to: task 3.1 requires the row-miss rate
-with and without.
+`$0000-$01FF` is 512 bytes: **exactly one row**. Pinning bank 0's open row there
+gives zero page and the stack a permanent home that never pays an activate,
+while bank 1 rotates for code and data, where sequential fetch holds a row for
+long stretches.
+
+An earlier draft put those 512 bytes in BRAM instead. That was wrong on the
+facts: the PPU holds 16 of the device's 32 block RAMs and the PSG the other 16,
+measured off the netlist rather than estimated, so there is none spare. The
+pinned row is the better answer regardless — it costs nothing and does not
+compete with video and audio for an exhausted resource.
+
+Measurable before it is committed to: task 3.1 requires the row-miss rate with
+and without.
 
 ### Decision: the unused half of each 16-bit read is held, not discarded
 
