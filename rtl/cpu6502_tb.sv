@@ -85,18 +85,22 @@ module cpu6502_tb();
     // Give CPU time to read reset vector and start execution
     repeat(50) @(posedge clk);
     
-    // Check if CPU is at the correct address
+    // Check if CPU is at the correct address.
+    //
+    // This used to $display "TEST FAILED" and carry on, so `make test` exited
+    // 0 whether it passed or not - which is why nothing in this repo could be
+    // regressed against it. $fatal makes the check a check.
     $display("TB: After reset, CPU address bus showing: $%04X", AB);
-    if (AB == 16'h0300) begin
-      $display("TEST PASSED: CPU reset to correct address $0300");
-    end else begin
+    if (AB != 16'h0300) begin
       $display("TEST FAILED: CPU did not reset to expected address");
       $display("  Expected: $0300, Actual: $%04X", AB);
+      $fatal(1);
     end
-    
+    $display("TEST PASSED: CPU reset to correct address $0300");
+
     // Run for a bit longer to see execution of program
     repeat(50) @(posedge clk);
-    
+
     $display("TB: Test complete after %0d cycles", cycle_count);
     $finish;
   end
