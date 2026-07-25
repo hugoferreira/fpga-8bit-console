@@ -12,11 +12,9 @@
  *     hierarchical references, so the core itself needs no test ports. This is
  *     a read-only coupling to the core's internals and it is the ONLY one.
  *
- *   - a retire marker. `o_sync` is high during the cycle that fetches an
- *     opcode, which is how the harness knows where one case's instruction
- *     ends. `o_decode` is high during the cycle that opcode is decoded in,
- *     which for the Arlet core is where the *previous* instruction's register
- *     and flag writes land - so the harness samples state at the end of it.
+ *   - a retire marker. `o_decode` is high during the cycle a fetched opcode is
+ *     decoded in, which is how the harness knows where one case's instruction
+ *     ends.
  *
  * State is *set* through the bus (see the preamble in harness.cpp), not
  * through this interface, so the harness stays usable on a core that has no
@@ -52,10 +50,10 @@ module cpu6502_sst (
     output logic        o_sync,    // this cycle is an opcode fetch
     output logic        o_decode,  // this cycle decodes a fetched opcode
     // 1 if the architectural state above is only final at the END of the
-    // decode cycle (the Arlet core retires the previous instruction there);
-    // 0 if it is already final when the decode cycle begins. The harness reads
-    // this once and samples accordingly, so neither core needs a special case
-    // in C++.
+    // decode cycle; 0 if it is already final when the decode cycle begins.
+    // The harness reads this once and samples accordingly. It is 0 for this
+    // core and exists because the core it replaced needed 1 - kept so that a
+    // future core with deferred writeback does not need a C++ change.
     output logic        o_late_writeback,
     output logic        o_trap
 );

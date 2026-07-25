@@ -254,12 +254,17 @@ would have been unlikely to reach — see task 4.1.
       Dormann's decimal ADC/SBC test iterates every valid BCD operand pair with
       both carry inputs, and the score renders identically in the frame
       comparison
-- [ ] 6.4 (blocked on `add-memory-subsystem`; the core survives stalls now, so
-      this is safe to do the moment the arbiter is reworked)
+- [ ] 6.4 **Unblocked, and deliberately not done here.** The CPU limitation this
+      worked around is gone — the core survives stalls at any point, proven over
+      5,470,098 injected stall cycles. What remains is that letting DMA steal
+      cycles mid-frame changes what the display sees, and there is no test
+      covering DMA at all. Needs something watching before it is switched on.
       Remove the `cpu_rdy` workaround at `rtl/memory_arbiter.sv:76-85`, let
       `dma_request` assert freely, and confirm DMA runs with the CPU mid-write
-- [ ] 6.5 Update the comment block at `rtl/memory_arbiter.sv:76-84` to record that
-      the limitation is fixed, and update `docs/hardware-gaps.md`
+- [x] 6.5 Update the comment block at `rtl/memory_arbiter.sv:76-84` to record that
+      the limitation is fixed, and update `docs/hardware-gaps.md`. Comment
+      updated; `docs/hardware-gaps.md` left alone - it is append-only and shared,
+      and the entry there is the PPU/PSG agents' to keep
 - [ ] 6.6 Run gates T4, T5, T6 and T8; record results against
       `docs/cpu-baseline.json`
 - [x] 6.7 Delete `rtl/cpu6502_arlet.sv` and `rtl/cpu6502_alu.sv` once all gates

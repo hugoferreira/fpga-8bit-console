@@ -73,14 +73,24 @@ module memory_arbiter(
     end
   end
   
-  // Determine CPU ready state
+  // Determine CPU ready state.
+  //
   // Halt the CPU only while DMA actually owns the bus. Halting on vblank
-  // itself glitched RDY for one cycle every frame even with DMA idle, and
-  // the Arlet core does not support RDY stalls during write cycles - a
-  // vsync-paced program streams register writes right after vblank, so the
-  // stall landed mid-write and eventually derailed the CPU (PC ended up in
-  // empty memory). Note the same limitation applies when DMA is re-enabled:
-  // dma_request must not assert while the CPU may be mid-write.
+  // itself glitched RDY for one cycle every frame even with DMA idle.
+  //
+  // The other half of this comment used to record a CPU limitation: the Arlet
+  // core did not survive an RDY stall during a write, so a vsync-paced program
+  // streaming register writes right after vblank had the stall land mid-write
+  // and eventually derailed the PC. **That limitation is gone.** The core is
+  // now rtl/cpu6502_core.sv, which holds every register on RDY, gates WE with
+  // it, and latches the data bus so a stall cannot destroy a pending read;
+  // 1,510,000 conformance cases pass with 5,470,098 stall cycles injected at
+  // arbitrary points (`make test-65x02 STALL=3`).
+  //
+  // So `dma_active` no longer has to wait for vblank. It still does, because
+  // letting DMA steal cycles mid-frame changes what the display sees and there
+  // is no test covering DMA at all - refactor-cpu-core task 6.4 is the place
+  // to make that change deliberately, with something watching.
   assign cpu_rdy = !dma_active;
   assign dma_active = dma_request && vblank;
   
@@ -142,7 +152,7 @@ module memory_arbiter(
   // All memories register their read data, so it corresponds to the address
   // issued one cycle earlier. The mux select must therefore be the REGISTERED
   // chip-select from that same cycle. Using the live chip-selects here also
-  // created a combinational loop (cpu_addr -> cs -> cpu_data_in -> Arlet AB
+  // created a combinational loop (cpu_addr -> cs -> cpu_data_in -> the core's AB
   // -> cpu_addr) that made Verilator's settle loop diverge.
   logic ram_sel_q, tb_sel_q, sp_sel_q, psg_sel_q;
   always_ff @(posedge clk) begin
