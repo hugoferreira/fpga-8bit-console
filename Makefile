@@ -312,24 +312,49 @@ test-psg:
 #   make ppu-check PPUARGS=+inject  flip one pixel, to prove the net still bites
 #   make ppu-synth                  logic, block RAM and Fmax for the PPU alone
 #
-# PPU_RTL is a wildcard so the module split does not have to touch this file
-# every step; the testbench is the one rtl/ppu_*.sv that is not design source.
-PPU_RTL = rtl/sprite_compositor.sv \
-          $(filter-out rtl/ppu_golden_tb.sv,$(wildcard rtl/ppu_*.sv))
+# sprite_compositor.sv `include`s its submodules, the way chip.sv includes it,
+# so the tools are handed one file. PPU_RTL is the wildcard that make watches
+# for rebuilds; the testbench is the one rtl/ppu_*.sv that is not design source.
+PPU_TOP = rtl/sprite_compositor.sv
+PPU_RTL = $(PPU_TOP) $(filter-out rtl/ppu_golden_tb.sv,$(wildcard rtl/ppu_*.sv))
 PPUARGS ?=
 
 build/ppu_golden.vvp: rtl/ppu_golden_tb.sv $(PPU_RTL) rtl/sprite_pattern.bin
 	@mkdir -p build
-	iverilog -g2012 -I. -o $@ rtl/ppu_golden_tb.sv $(PPU_RTL) 2>&1 | grep -v 'sorry:' || true
+	iverilog -g2012 -I. -Irtl -o $@ rtl/ppu_golden_tb.sv $(PPU_TOP) 2>&1 | grep -v 'sorry:' || true
 	@test -f $@
 
 ppu-check: build/ppu_golden.vvp
 	@mkdir -p rtl/golden
 	vvp $< $(PPUARGS)
 
-ppu-synth:
+# What the engine actually spends a scanline on, while a real game runs. The
+# three optimisations in section 4 of the change are each gated on a number
+# from here rather than on the reading of the FSM that suggested them.
+#
+#   make ppu-probe GAME=nemo FRAMES=400
+#   make ppu-probe GAME=celeste FRAMES=400 WARMUP=150 KEYS=30:x,60:o
+#
+# WARMUP skips the opening frames, which matters: celeste's title screen is
+# nearly empty and measuring it says the engine is idle when gameplay runs at
+# 87% of the line budget.
+WARMUP ?= 8
+PPU_PROBE = build/obj_probe/ppu_probe
+$(PPU_PROBE): sim/ppu_probe.cpp rtl/*.sv rtl/*.bin rtl/*.hex
+	verilator --cc rtl/top_simulator.sv --top-module top -Irtl -O2 \
+		--public-flat-rw --x-assign fast --x-initial fast -Wno-DEFOVERRIDE \
+		--exe $(abspath sim/ppu_probe.cpp) -o ppu_probe --build -j 8 \
+		-Mdir build/obj_probe -CFLAGS "-O2"
+
+ppu-probe: hex ${FONT_HEX}
+	@$(MAKE) -s $(PPU_PROBE)
+	@echo "=== $(GAME) ==="
+	@$(PPU_PROBE) --frames $(FRAMES) --warmup $(WARMUP) \
+	  $(if $(KEYS),--keys $(KEYS),) | grep -v '^CPU Reset\|^Clocks:\|^RAM:'
+
+ppu-synth: $(PPU_RTL)
 	@mkdir -p build/ppu
-	yosys -p "read_verilog -Irtl -sv $(PPU_RTL); synth_ice40 -top sprite_compositor -json build/ppu/ppu.json" > build/ppu/synth.log 2>&1
+	yosys -p "read_verilog -Irtl -sv $(PPU_TOP); synth_ice40 -top sprite_compositor -json build/ppu/ppu.json" > build/ppu/synth.log 2>&1
 	@python3 tools/ppu_bram.py build/ppu/ppu.json
 	@nextpnr-ice40 --hx8k --package tq144:4k --json build/ppu/ppu.json \
 	  --asc build/ppu/ppu.asc --freq 50 --seed 1 > build/ppu/pnr.log 2>&1
@@ -402,7 +427,7 @@ clean:
 .PHONY: all games hex hex-ca65 asm asm-ca65 check-customasm-version run shot \
         timing stat upload clean font tools test \
         sim debug debug_custom test_ram test-nemo test-celeste metrics \
-        ppu-check ppu-synth
+        ppu-check ppu-synth ppu-probe
 
 # ------------------------------------------------------------------------------
 # 65x02 conformance suite (openspec/changes/refactor-cpu-core)
@@ -463,7 +488,12 @@ $(SST_BIN): tools/65x02/harness.cpp $(SST_SRC)
 	    --exe $(abspath tools/65x02/harness.cpp) -o harness --build -j 8 \
 	    -Mdir build/obj_65x02 -CFLAGS "-O2"
 
-test-65x02: $(SST_BIN) $(SST_FIXTURE)
+# The decode table and the opcode registry must agree before any result from
+# the harness means anything (task 3.2).
+check-decode:
+	python3 tools/65x02/check_decode.py
+
+test-65x02: $(SST_BIN) $(SST_FIXTURE) check-decode
 	$(SST_BIN) $(SST_FLAGS)
 
 # The cycle table is a RECORD of what the core does, not a target it has to
@@ -472,4 +502,16 @@ cpu-timing: $(SST_BIN) $(SST_FIXTURE)
 	$(SST_BIN) --fixture $(SST_FIXTURE) --cases 0 --tier3 --max-report 0 \
 	    --timing docs/cpu-timing-$(SST_CORE).json
 
-.PHONY: test-65x02 cpu-timing
+# Static mean CPI over a corpus, weighted by the instructions it contains.
+# Assembles to a listing directly rather than through `hex`, so it never
+# re-stamps rtl/ram.hex out from under whatever game is resident.
+cpu-static-cpi: build/$(GAME).lst
+	python3 tools/65x02/static_cpi.py build/$(GAME).lst \
+	    docs/cpu-timing-arlet.json docs/cpu-timing-v2.json
+
+build/$(GAME).lst: $(GAME_SRC) $(GAME_DEPS)
+	@mkdir -p build
+	$(CUSTOMASM) $(GAME_SRC) -t 10 --color=off --legacy=off \
+	    -f annotated -o $(abspath build/$(GAME).lst)
+
+.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi

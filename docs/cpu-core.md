@@ -1,8 +1,9 @@
 # The 6502 core and its conformance net
 
-Working notes for `openspec/changes/refactor-cpu-core`. Written during phase 1,
-which builds the golden-suite harness and runs it against the *existing* Arlet
-core before any new core exists.
+Working notes for `openspec/changes/refactor-cpu-core`. Phases 1 and 3 are done:
+the golden-suite harness exists and was validated against the *existing* Arlet
+core before the new core was written, and the new core now passes the full
+sweep. Phase 2 (the Fmax baseline) and phase 4 (pipelining) are not.
 
 ## Why a net first
 
@@ -13,7 +14,8 @@ there was no way to tell a correct change from an incorrect one.
 
 `tools/65x02/` replaces that with 1.51 M per-opcode cases from
 [SingleStepTests/65x02](https://github.com/SingleStepTests/65x02), pinned at
-commit `2f6980a2`. The full sweep runs in **17 seconds**.
+commit `2f6980a2`. The full sweep runs in 17 s against the old core and
+3.5 s against the new one.
 
 ```
 make test-65x02                 # fast subset, CASES per opcode (default 100)
@@ -22,6 +24,8 @@ make test-65x02 OPCODE=91       # one opcode
 make test-65x02 TIER3=1         # report cycle activity as well
 make test-65x02 SST_CORE=v2     # run it against the new core
 make cpu-timing                 # rewrite docs/cpu-timing-<core>.json
+make check-decode               # decode table vs the opcode registry
+make cpu-static-cpi             # static mean CPI over a corpus
 ```
 
 The suite is 1,082 MB of JSON and is never vendored. `make` clones it sparsely
@@ -90,15 +94,21 @@ starts, which undoes the byte `PHA` pushed through and the reset vector the
 harness borrowed. Cost: ~25 cycles per case, which at 90 k cases/s is invisible.
 
 The payoff is that the harness works on **any** 6502 core, with or without a
-forcing interface. The new core will still expose `PC`/`S`/`A`/`X`/`Y`/`P` as a
-documented test interface (task 3.5), but the harness will not depend on it.
+forcing interface. The new core does expose `PC`/`S`/`A`/`X`/`Y`/`P` as a documented test
+interface, but the harness does not depend on it - it only reads state out, and
+sets it the same way on both cores.
 
 **Knowing when the instruction ended.** `rtl/cpu6502_sst.sv` exposes `o_decode`,
 high during the cycle in which a fetched opcode is decoded. The *second* such
 cycle after a case starts belongs to the next instruction, so that is where the
-instruction retires. That cycle is still clocked - its edge is where Arlet lands
-the register and flag writes of the instruction under test - but its bus
-activity is not recorded.
+instruction retires. Its bus activity is not recorded.
+
+Where the state is *sampled* differs between the two cores, and the shim says
+which through `o_late_writeback` rather than the harness special-casing them:
+Arlet retires the previous instruction's register and flag writes at the END of
+the decode cycle, so that edge is clocked before sampling; the new core has
+everything final before the decode cycle begins, and must be sampled before it -
+its implied instructions execute entirely within that cycle.
 
 `o_pc` is defined as *the address the opcode being decoded was fetched from*,
 valid only while `o_decode` is high. Stating it that way rather than "the PC
@@ -194,6 +204,101 @@ all of it.
 The new core is free to drop more: fewer cycles per opcode is a win, not a
 regression, and the same is true of internal states. The table is a record of
 what a core does, never a shape it has to reproduce.
+
+## The new core
+
+`rtl/cpu6502_core.sv` plus `rtl/cpu6502_decode.sv`. Selected with
+`make test-65x02 SST_CORE=v2`; nothing in `rtl/top.sv` reaches it yet.
+
+```
+cases        : 1510000 run, 1510000 passed, 0 failed
+opcodes      : 151 run, 105 skipped (of 256)
+PASS
+```
+
+**All 1.51 M cases pass Tiers 1 and 2**, including the 529 `BRK` cases the
+previous core failed. The full sweep takes 3.5 s.
+
+### Shape
+
+The decode is one file, one row per opcode:
+
+```
+8'h15: d = row(AM_ZPX,  OP_ORA,  R_A,    D_A);      // ORA zp,X
+8'h16: d = row(AM_ZPX,  OP_ASL,  R_NONE, D_MEM);    // ASL zp,X
+```
+
+Four fields - addressing mode, operation, register operand, destination - and
+the flag-write set derived from the operation by `fwset`, because it is a
+property of the operation and writing it 151 times is 151 chances to write it
+wrong. `make check-decode` fails if the table and the opcode registry disagree
+about any opcode's presence, mnemonic or mode; `make test-65x02` runs it first.
+
+Adding an instruction is adding a row. Nothing outside `cpu6502_decode.sv`
+pattern-matches on instruction bits except the branch condition, which is three
+opcode bits by construction. The 105 unclaimed slots decode to `AM_TRAP`: the
+core stops and names the opcode and the PC on `dbg_trap_ir` / `dbg_trap_pc`
+rather than executing undocumented behaviour.
+
+The sequencer has a state per *addressing-mode step*, not per T-state, and the
+effective-address access is issued from one shared block - so a new addressing
+mode produces an `ea` and inherits load, store and read-modify-write for free.
+
+### The address is combinational, deliberately
+
+`ram_async.sv` answers the address presented in cycle N on DI in cycle N+1. A
+core that registers its address therefore pays a *second* cycle on every
+data-dependent address - compute, present, receive - and can only get it back by
+overlapping instructions, which is phase 4 of this change. Measured on the
+sequences here that would have cost roughly 2x the cycles (`LDA zp` 5 instead of
+3, `LDA (zp),Y` 9 instead of 5).
+
+So this core keeps one access per cycle and attacks the critical path by making
+the DI -> AB route *narrow* instead: at most an 8-bit adder and a small mux,
+against the 12-arm `AB` mux plus `DIMUX` plus arbiter mux a byte used to travel
+through. Every address that does not depend on DI comes straight from a
+register. Whether that is enough is a question for the phase 2 measurement,
+which has not been run; registering the address stays available if it is not.
+
+### Cycles
+
+There are no dummy cycles at all: no read-modify-write dummy write, no
+un-indexed zero-page read, no page-cross penalty, no dummy stack access.
+
+| | NMOS | here |
+| --- | --- | --- |
+| implied (`INX`, `CLC`, `TAX`, `NOP`) | 2 | **1** |
+| `PLA` / `PLP` | 4 | **2** |
+| `PHA` / `PHP` | 3 | **2** |
+| branch, taken / not taken | 3 (4 across a page) / 2 | **2 / 2** |
+| `RTS` | 6 | **3** |
+| `RTI` | 6 | **4** |
+| `JSR` | 6 | **5** |
+| `INC zp` | 5 | **4** |
+| `LDA abs,X` | 4, 5 across a page | **4** |
+| `LDA zp` / `LDA abs` / `LDA (zp),Y` | 3 / 4 / 5 | 3 / 4 / 5 |
+
+Over the 151 documented opcodes: **mean CPI 3.278 against NMOS's 4.010, 18.2%
+fewer cycles, 108 opcodes faster, 43 equal and none slower.** Weighted by the
+instructions Breakout actually contains (1,928 of them, `make cpu-static-cpi`),
+static mean CPI is **2.6234 against the old core's 3.0334** - comfortably inside
+the 3.08 the ISA slices were budgeted against, with 13.5% of headroom to spare
+before any Fmax gain is counted.
+
+`docs/cpu-timing-v2.json` records it per opcode. It is a record, not a target:
+the tiers that gate are timing-free, and an ISA slice that makes an instruction
+shorter is not breaking anything.
+
+### What is not done yet
+
+- **Interrupts.** `IRQ` and `NMI` are accepted and ignored. 65x02 does not test
+  interrupts at all, so gate T3's directed testbench is the only evidence this
+  path will ever have (task 5.1).
+- **Stalling.** `RDY` holds every register and gates `WE`, so a stalled write is
+  presented once on release rather than repeatedly while it waits. That is the
+  intent, but `cpu6502_stall_tb` (gate T7) has not been written, so it is not
+  yet evidence.
+- **Integration.** `rtl/cpu6502_wrapper.sv` still points at the old core.
 
 ## `make test`
 

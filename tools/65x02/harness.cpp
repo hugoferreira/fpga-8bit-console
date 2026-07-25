@@ -211,6 +211,12 @@ struct Harness {
 
   uint64_t mask_hits[N_MASK_RULES] = {0, 0, 0};
   uint64_t t3_exact = 0, t3_prefetch = 0, t3_differs = 0;
+  bool     late_writeback = true;   // read from the shim at startup
+  uint8_t  got_a = 0, got_x = 0, got_y = 0, got_s = 0, got_p = 0;
+  void sample() {
+    got_a = top->o_a; got_x = top->o_x; got_y = top->o_y;
+    got_s = top->o_s; got_p = top->o_p;
+  }
   int last_t3 = 0;   // 0 not measured, 1 exact, 2 exact+prefetch, 3 differs
   int last_cpi = 0;  // decode-to-decode cycles of the case just run
   bool trace = false;
@@ -403,8 +409,11 @@ struct Harness {
       if (trace) fprintf(OUT, "    C %3ld  %04X %s %02X%s\n", k, b.a,
                          b.w ? "w" : "r", b.d, b.dec ? "  <decode>" : "");
       if (b.dec && ++decode_count == 2) {
-        got_pc = top->o_pc;   // valid only while o_decode is high
+        // o_pc is only meaningful while o_decode is high, on either core.
+        got_pc = top->o_pc;
+        if (!late_writeback) sample();   // state is already final
         commit(b, false);
+        if (late_writeback) sample();    // ... or it lands on this edge
         retired = true;
         break;
       }
@@ -413,7 +422,9 @@ struct Harness {
       commit(b, true);
     }
     if (!retired) {
-      fails.push_back({"setup", "instruction did not retire within the cycle cap"});
+      fails.push_back({"setup", top->o_trap
+          ? "the core trapped: undefined opcode"
+          : "instruction did not retire within the cycle cap"});
       return false;
     }
 
@@ -436,7 +447,7 @@ struct Harness {
     bool decimal_nv = is_adc_sbc(op) && (c.initial.p & 0x08);
     if (decimal_nv) pmask &= ~0xC0;
 
-    uint8_t got_p = top->o_p, want_p = c.final_.p;
+    uint8_t got_p = this->got_p, want_p = c.final_.p;
     if ((got_p ^ want_p) & 0x30) mask_hits[MASK_PBITS45]++;
     if (decimal_nv && ((got_p ^ want_p) & 0xC0)) mask_hits[MASK_DECIMAL_NV]++;
 
@@ -452,10 +463,10 @@ struct Harness {
       fails.push_back({"T1", buf});
       ok = false;
     }
-    cmp8("A", top->o_a, c.final_.a);
-    cmp8("X", top->o_x, c.final_.x);
-    cmp8("Y", top->o_y, c.final_.y);
-    cmp8("S", top->o_s, c.final_.s);
+    cmp8("A", got_a, c.final_.a);
+    cmp8("X", got_x, c.final_.x);
+    cmp8("Y", got_y, c.final_.y);
+    cmp8("S", got_s, c.final_.s);
     if ((got_p & pmask) != (want_p & pmask)) {
       snprintf(buf, sizeof buf, "P: got $%02X want $%02X (mask $%02X, diff $%02X)",
                got_p, want_p, pmask, (uint8_t)((got_p ^ want_p) & pmask));
@@ -633,6 +644,10 @@ int main(int argc, char **argv) {
   Vcpu6502_sst *top = new Vcpu6502_sst;
   Harness h(top, o.max_cycles);
   h.trace = o.trace;
+  top->eval();
+  h.late_writeback = top->o_late_writeback;
+  fprintf(OUT, "core reports state final %s the decode cycle's edge\n",
+          h.late_writeback ? "after" : "before");
 
   uint64_t ran = 0, passed = 0;
   int cpi_min[N_OPCODES], cpi_max[N_OPCODES], nmos_min[N_OPCODES], nmos_max[N_OPCODES];

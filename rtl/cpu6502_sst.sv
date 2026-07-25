@@ -55,25 +55,32 @@ module cpu6502_sst (
     output logic [7:0]  o_p,
     // Cycle markers.
     output logic        o_sync,    // this cycle is an opcode fetch
-    output logic        o_decode   // this cycle decodes a fetched opcode
+    output logic        o_decode,  // this cycle decodes a fetched opcode
+    // 1 if the architectural state above is only final at the END of the
+    // decode cycle (the Arlet core retires the previous instruction there);
+    // 0 if it is already final when the decode cycle begins. The harness reads
+    // this once and samples accordingly, so neither core needs a special case
+    // in C++.
+    output logic        o_late_writeback,
+    output logic        o_trap
 );
 
 `ifdef SST_CORE_V2
 
+  // The new core has a real test interface, so nothing here reaches into it.
   cpu6502_core u_cpu (
       .clk(clk), .reset(reset),
       .AB(ab), .DI(di), .DO(dout), .WE(we),
-      .IRQ(irq), .NMI(nmi), .RDY(rdy)
+      .IRQ(irq), .NMI(nmi), .RDY(rdy),
+      .dbg_pc(o_pc), .dbg_a(o_a), .dbg_x(o_x), .dbg_y(o_y),
+      .dbg_s(o_s), .dbg_p(o_p),
+      .dbg_sync(o_decode), .dbg_trap(o_trap),
+      .dbg_trap_ir(), .dbg_trap_pc()
   );
 
-  assign o_pc     = u_cpu.PC;
-  assign o_a      = u_cpu.A;
-  assign o_x      = u_cpu.X;
-  assign o_y      = u_cpu.Y;
-  assign o_s      = u_cpu.S;
-  assign o_p      = u_cpu.P;
-  assign o_sync   = u_cpu.sync;
-  assign o_decode = u_cpu.sync;   // no separate decode cycle
+  assign o_sync           = o_decode;
+  // Every register write lands before the decode cycle it retires into.
+  assign o_late_writeback = 1'b0;
 
 `else
 
@@ -105,8 +112,10 @@ module cpu6502_sst (
   // the one that matters: Arlet writes the previous instruction's register
   // result and flags at the END of DECODE (cpu6502_arlet.sv:518-520, 730-813),
   // so that is where the architectural state above becomes final.
-  assign o_decode = (u_cpu.state == DECODE);
-  assign o_sync   = 1'b0;
+  assign o_decode         = (u_cpu.state == DECODE);
+  assign o_sync           = 1'b0;
+  assign o_trap           = 1'b0;
+  assign o_late_writeback = 1'b1;
 
 `endif
 

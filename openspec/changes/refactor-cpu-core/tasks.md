@@ -72,24 +72,50 @@ against Arlet before the new core exists, exactly as the bring-up plan asks.
 
 ## 3. New core, non-pipelined
 
-- [ ] 3.1 Write `rtl/cpu6502_decode.sv`: one row per opcode — addressing mode,
+- [x] 3.1 Write `rtl/cpu6502_decode.sv`: one row per opcode — addressing mode,
       operation, operand source and destination, flag write set — with a default
       row that traps
-- [ ] 3.2 Add a check that the decode table and `docs/opcodes.md` agree on every
-      implemented opcode, failing on any disagreement
-- [ ] 3.3 Write `rtl/cpu6502.sv`: registered address and write-data outputs, an
-      addressing-mode sequencer, and the ALU. No pipelined decode yet
-- [ ] 3.4 Compute the BCD adjust inside the ALU's registered stage from the
+- [x] 3.2 Add a check that the decode table and `docs/opcodes.md` agree on every
+      implemented opcode, failing on any disagreement. `make check-decode`,
+      run as a prerequisite of `make test-65x02`. Against
+      `tools/65x02/opcodes.txt` until `docs/opcodes.md` exists
+- [x] 3.3 Write `rtl/cpu6502.sv`: registered address and write-data outputs, an
+      addressing-mode sequencer, and the ALU. No pipelined decode yet.
+      **Built as `rtl/cpu6502_core.sv` with a COMBINATIONAL address**, decided
+      with the user: `ram_async` answers in the next cycle, so a registered
+      address costs a second cycle on every data-dependent address and only
+      overlapping instructions (phase 4) wins it back - roughly 2x the cycles
+      in the meantime. The path is attacked by narrowing it instead (an 8-bit
+      adder and a small mux). Registering it stays available if phase 2's
+      measurement says the narrow path is not enough
+- [x] 3.4 Compute the BCD adjust inside the ALU's registered stage from the
       pre-flop carry and half-carry — never as adders hanging off the flopped
       result on the way to the register file
-- [ ] 3.5 Expose `PC`, `S`, `A`, `X`, `Y`, `P` as a documented, synthesis-inert
+- [x] 3.5 Expose `PC`, `S`, `A`, `X`, `Y`, `P` as a documented, synthesis-inert
       test interface
-- [ ] 3.6 Implement the undefined-opcode trap, sharing `TRAP` semantics with
+- [x] 3.6 Implement the undefined-opcode trap, sharing `TRAP` semantics with
       `add-isa-core-ergonomics`, and report opcode and `PC` in the simulator
-- [ ] 3.7 Pass Tiers 1 and 2 on the fast subset, then on the full 1.51 M sweep
+- [x] 3.7 Pass Tiers 1 and 2 on the fast subset, then on the full 1.51 M sweep
       (**gate T1**)
-- [ ] 3.8 Record the non-pipelined core's cycle table and confirm static mean CPI
-      ≤ 3.08 over the corpus
+- [x] 3.8 Record the non-pipelined core's cycle table and confirm static mean CPI
+      ≤ 3.08 over the corpus. `docs/cpu-timing-v2.json`; static mean CPI
+      **2.6234** over Breakout's 1,928 instructions against the old core's
+      3.0334 (`make cpu-static-cpi`). Uniform mean over the 151 opcodes is
+      3.278 vs 4.010 - 108 opcodes faster, 43 equal, none slower
+
+### Phase 3 result
+
+`make test-65x02 SST_CORE=v2 CASES=0`: **1,510,000 / 1,510,000 pass** Tiers 1
+and 2, in 3.5 s - including the 529 `BRK` cases the Arlet core fails. Gate T1 is
+met for the documented subset.
+
+18.2% fewer cycles than NMOS across the 151 opcodes and 13.5% fewer than the old
+core weighted by the corpus, with no opcode slower than NMOS. There are no dummy
+cycles: no RMW dummy write, no un-indexed zero-page read, no page-cross penalty,
+no dummy stack access.
+
+Not yet done and not claimed: interrupts (accepted and ignored), the stall
+testbench, and integration. `rtl/cpu6502_wrapper.sv` still points at Arlet.
 
 ## 4. Pipeline it
 
