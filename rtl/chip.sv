@@ -15,6 +15,10 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
             output logic [7:0] audio);
 
   parameter RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
+  // Master-clock frequency, threaded to the PSG so its 22050 Hz virtual
+  // sample rate is derived correctly on any board (default: the simulator's
+  // 161*121*3*60 Hz pixel clock). REVERB=0 drops the reverb delay BRAM.
+  parameter CLK_HZ = 32'd3_506_580, REVERB = 1;
 
   // CPU signals
   wire  [15:0] cpu_addr;
@@ -182,7 +186,7 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
 
   // PSG: PICO-8-equivalent audio chip; all timing derived internally
   // from CLK_HZ (22050 Hz virtual sample rate, 120.49 Hz sequencer tick)
-  psg psg0(
+  psg #(.CLK_HZ(CLK_HZ), .REVERB(REVERB)) psg0(
     .clk(clk),
     .reset(reset),
     .cs(psg_cs),

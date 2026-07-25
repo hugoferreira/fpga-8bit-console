@@ -16,11 +16,19 @@ palette fades/flashes, chain multiplier, sudden death, and pervasive SFX.
    ticks/row), all 8 waveforms (wave ROM + pitched LFSR noise + dual-osc
    phaser), all 8 note effects (slide/vibrato/drop/fades/arpeggios), loop
    and length-only conventions, and a hardware music sequencer with
-   loop-start/loop-back/stop flow control. Remaining for full fidelity:
-   the filter byte (NOIZ/BUZZ/DETUNE/REVERB/DAMPEN), custom SFX/wavetable
-   instruments, auto channel selection, music fades, and a PWM/delta-sigma
-   output stage for real hardware (the simulator samples the 22050 Hz PCM
-   at 44.1 kHz via SDL).
+   loop-start/loop-back/stop flow control. The filter byte is interpreted
+   too (add-psg-filters-output): per-channel DAMPEN (one-pole low-pass),
+   DETUNE (second voice on the phase-2 accumulator), NOIZ/BUZZ noise modes
+   (white/pitched/brown), BUZZ duty-shift on square/pulse, and a shared
+   REVERB echo (behind a compile-time parameter). The board output stage
+   exists: rtl/dsigma.sv (first-order delta-sigma, 8-bit PCM -> 1-bit
+   audio_pwm pin, RC-reconstructed off-board), and CLK_HZ is a chip/top
+   parameter so the 22050 Hz rate is right on any master clock. Remaining
+   for full fidelity: custom SFX/wavetable instruments, auto channel
+   selection (sfx -1/-2), music fades, and per-channel (not shared) reverb.
+   Two board knobs an operator sets for their wiring: top.sv's BOARD_CLK_HZ
+   (the actual master clock) and top.pcf's audio_pwm pin. The simulator
+   samples the 22050 Hz PCM at 44.1 kHz via SDL.
 2. **Sprite-vs-tilemap priority.** DONE (behind-split register $4036):
    the list is PARTITIONED, not flagged - entries below the split composite
    before the tile layer, the rest after. Zero extra scan cost (the list is

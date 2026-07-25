@@ -27,7 +27,7 @@ tools/target/
 tools/__pycache__/
 
 # Standalone testbench builds
-rtl/obj_dir/
+rtl/obj_*/
 
 # Vendored/cloned dependencies
 rust/verilated-rs/

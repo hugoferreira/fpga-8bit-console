@@ -9,3 +9,7 @@ set_io cs 139
 set_io tx 62
 
 set_io yellow_led 55
+
+# Audio: 1-bit delta-sigma out. Pin 63 is a placeholder next to tx (62) -
+# change it to whichever pin your board breaks out to the audio jack/header.
+set_io audio_pwm 63

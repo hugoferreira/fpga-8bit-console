@@ -34,7 +34,7 @@
 //   $20 write: start music at pattern m (0-63); $80 stops music
 //       read: current pattern
 //   $21 music channel mask (bit c: music may use channel c; reset $0F)
-module psg #(parameter CLK_HZ = 32'd3_506_580)
+module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           (input bit clk, input bit reset,
            input bit cs, input bit rw, input logic [7:0] addr, input logic [7:0] di,
            output logic [7:0] dout,
@@ -101,6 +101,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
   logic signed [7:0] nz_hold[0:3];
   logic [3:0]  nz_ph[0:3];
 
+  // Per-channel filter state, decoded from the SFX filter byte at trigger
+  logic        ch_noiz[0:3], ch_buzz[0:3];
+  logic [1:0]  ch_det[0:3], ch_rev[0:3], ch_damp[0:3];
+  logic signed [15:0] lp[0:3];     // dampen one-pole state, Q8
+  logic signed [12:0] brown[0:3];  // brown-noise integrator
+
   logic [3:0]  trig_req;
 
   // Music state
@@ -118,7 +124,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
   // ------------------------------------------------------------------
   typedef enum logic [4:0] {
     S_IDLE,
-    T_SP, T_LS, T_LE, T_NL, T_NH, T_LD,
+    T_FL, T_SP, T_LS, T_LE, T_NL, T_NH, T_LD,
     K_ADV, K_NL, K_NH, K_LD, K_ARP, K_ARPC, K_FX,
     W_MUS,
     ML_STOP, ML_RD0, ML_RD1, ML_RD2, ML_RD3, ML_LD, M_TCH,
@@ -151,6 +157,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
   always_comb begin
     seq_addr = 13'd0;
     case (sst)
+      T_FL:   seq_addr = ch_base + 13'd64;
       T_SP:   seq_addr = ch_base + 13'd65;
       T_LS:   seq_addr = ch_base + 13'd66;
       T_LE:   seq_addr = ch_base + 13'd67;
@@ -169,6 +176,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
   end
   always_ff @(posedge clk)
     seq_q <= aram[seq_addr];
+
+  // Filter-byte decode (mixed-radix), valid when seq_q holds the byte at
+  // record offset 64: noiz=bit1, buzz=bit2, then base-3 digits det/rev/damp
+  wire [5:0] fbv    = {1'b0, seq_q[7:3]};
+  wire [5:0] fdiv9  = fbv / 6'd9;
+  wire [1:0] f_det  = 2'(fbv % 6'd3);
+  wire [1:0] f_rev  = 2'((fbv / 6'd3) % 6'd3);
+  wire [1:0] f_damp = (fdiv9 > 6'd2) ? 2'd2 : fdiv9[1:0];
 
   // Per-tick effect evaluation (feeds eff_inc/eff_vol in K_FX)
   wire [23:0] fx_u24 = ({16'b0, fcnt[c]} * {8'b0, recip[sp[c]]}) >> 8;
@@ -257,6 +272,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
         prev_vol[i] <= 0;
         eff_inc[i] <= 0;
         eff_vol[i] <= 0;
+        ch_noiz[i] <= 0;
+        ch_buzz[i] <= 0;
+        ch_det[i] <= 0;
+        ch_rev[i] <= 0;
+        ch_damp[i] <= 0;
       end
       for (int i = 0; i < 3; i++)
         pb[i] <= 0;
@@ -270,7 +290,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
             walk <= 0;
             c <= trig_req[0] ? 2'd0 : trig_req[1] ? 2'd1 :
                  trig_req[2] ? 2'd2 : 2'd3;
-            sst <= T_SP;
+            sst <= T_FL;
           end else if (mus_launch) begin
             mus_launch <= 0;
             sst <= ML_STOP;
@@ -285,8 +305,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
           end
         end
 
-        // ---- trigger: load record metadata, then note 0 --------------
-        T_SP: begin
+        // ---- trigger: filter byte, metadata, then note 0 -------------
+        T_FL: begin
           trig_req[c] <= 0;
           row[c] <= 0;
           fcnt[c] <= 0;
@@ -294,6 +314,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
           prev_pitch[c] <= 6'd24;
           prev_vol[c] <= 0;
           playing[c] <= 1;
+          lp[c] <= 0;
+          brown[c] <= 0;
+          sst <= T_SP;
+        end
+        T_SP: begin
+          ch_noiz[c] <= seq_q[1];
+          ch_buzz[c] <= seq_q[2];
+          ch_det[c]  <= f_det;
+          ch_rev[c]  <= f_rev;
+          ch_damp[c] <= f_damp;
           sst <= T_LS;
         end
         T_LS: begin
@@ -520,8 +550,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
 
   // ------------------------------------------------------------------
   // Synthesis: channels serialized through one datapath per sample.
-  // Per channel: pst0 advance phase + issue main wave read, pst1 issue
-  // detuned read + capture main, pst2 capture detuned + hand to mixer.
+  // Per channel: pst0 advance phase(s) + issue main wave read, pst1 issue
+  // second-voice read + capture main, pst2 capture second + hand to mixer.
   // ------------------------------------------------------------------
   logic [14:0] lfsr;
   logic [1:0]  pc_ch, pst;
@@ -529,19 +559,24 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
   logic signed [7:0] wq, smp_a, smp_b;
   logic [10:0] wrom_addr;
 
+  wire [2:0] wbank = (cur_wave[pc_ch] == 3'd7) ? 3'd0 : cur_wave[pc_ch];
   always_comb begin
     if (pst == 2'd1)
-      wrom_addr = {3'd0, phase2[pc_ch][23:16]};   // phaser's detuned voice
+      wrom_addr = {wbank, phase2[pc_ch][23:16]};    // second voice
     else
-      wrom_addr = {(cur_wave[pc_ch] == 3'd7) ? 3'd0 : cur_wave[pc_ch],
-                   phase[pc_ch][23:16]};
+      wrom_addr = {wbank, phase[pc_ch][23:16]};      // main voice
   end
   always_ff @(posedge clk)
     wq <= wrom[wrom_addr];
 
-  // Detuned increment for the phaser: ~0.99 of the main frequency
-  wire [23:0] einc  = eff_inc[pc_ch];
-  wire [23:0] einc2 = einc - {7'b0, einc[23:7]} - {9'b0, einc[23:9]};
+  // Second voice: phaser preset (~109/110) on wave 7, else the detune ratio
+  wire [23:0] einc = eff_inc[pc_ch];
+  wire [23:0] v2inc =
+      (cur_wave[pc_ch] == 3'd7) ? (einc - {7'b0, einc[23:7]} - {9'b0, einc[23:9]}) :
+      (ch_det[pc_ch] == 2'd1)   ? (einc + {7'b0, einc[23:7]}) :   // ~+14 cents
+      (ch_det[pc_ch] == 2'd2)   ? {einc[22:0], 1'b0} :            // +1 octave
+                                  24'd0;
+  wire v2_on = (cur_wave[pc_ch] == 3'd7) || (ch_det[pc_ch] != 0);
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -556,6 +591,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
         phase2[i] <= 0;
         nz_hold[i] <= 0;
         nz_ph[i] <= 0;
+        brown[i] <= 0;
       end
     end else begin
       lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
@@ -566,14 +602,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
         pst <= 0;
       end else if (prun) begin
         case (pst)
-          2'd0: begin                    // advance phase, issue main read
+          2'd0: begin                    // advance phase(s), issue main read
             if (playing[pc_ch]) begin
-              phase[pc_ch] <= phase[pc_ch] + eff_inc[pc_ch];
-              phase2[pc_ch] <= phase2[pc_ch] + einc2;
-              if (phase[pc_ch][23:20] != nz_ph[pc_ch]) begin
+              phase[pc_ch] <= phase[pc_ch] + einc;
+              if (v2_on)
+                phase2[pc_ch] <= phase2[pc_ch] + v2inc;
+              // noise: white every sample when NOIZ, else pitched S&H
+              if (ch_noiz[pc_ch] || phase[pc_ch][23:20] != nz_ph[pc_ch]) begin
                 nz_ph[pc_ch] <= phase[pc_ch][23:20];
                 nz_hold[pc_ch] <= $signed(lfsr[7:0]);
               end
+              // brown integrator (leaky low-pass of white) for BUZZ noise
+              brown[pc_ch] <= brown[pc_ch]
+                            - {{5{brown[pc_ch][12]}}, brown[pc_ch][12:5]}
+                            + $signed({{5{lfsr[7]}}, lfsr[7:0]});
             end
             pst <= 2'd1;
           end
@@ -582,7 +624,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
             pst <= 2'd2;
           end
           2'd2: begin
-            smp_b <= wq;                 // detuned sample (phaser only)
+            smp_b <= wq;                 // second-voice sample
             pst <= 2'd0;
             if (pc_ch == 2'd3) prun <= 0;
             pc_ch <= pc_ch + 1;
@@ -597,42 +639,131 @@ module psg #(parameter CLK_HZ = 32'd3_506_580)
   logic [1:0]  mix_ch;
   logic        mix_go, mix_fin;
   logic signed [10:0] mixacc;
+  logic [1:0]  rev_max;
+
+  // BUZZ square/pulse: shifted duty straight from the phase counter
+  wire [7:0] mph = phase[mix_ch][23:16];
+  wire signed [7:0] buzzsq =
+      (cur_wave[mix_ch] == 3'd3) ? (mph < 8'd102 ? 8'sd63 : -8'sd63)   // ~40%
+                                 : (mph < 8'd65  ? 8'sd63 : -8'sd63);  // ~25%
+  // phaser / detune voice sums
+  wire signed [10:0] ph_sum =
+      $signed({smp_a[7], smp_a, 1'b0}) + $signed({{3{smp_b[7]}}, smp_b});
+  wire signed [8:0] det_sum =
+      $signed({smp_a[7], smp_a}) + $signed({{2{smp_b[7]}}, smp_b[7:1]});
+  wire signed [7:0] det_clip =
+      det_sum > 9'sd127 ? 8'sd127 : det_sum < -9'sd127 ? -8'sd127 : det_sum[7:0];
 
   logic signed [7:0] samp;
-  logic signed [10:0] ph_sum;
   always_comb begin
-    ph_sum = $signed({smp_a[7], smp_a, 1'b0}) + $signed({{3{smp_b[7]}}, smp_b});
     case (cur_wave[mix_ch])
-      3'd6:    samp = (nz_hold[mix_ch] + (nz_hold[mix_ch] >>> 1)) >>> 1;
-      3'd7:    samp = 8'((ph_sum * 11'sd85) >>> 8);
-      default: samp = smp_a;
+      3'd6: samp = (ch_buzz[mix_ch] && !ch_noiz[mix_ch])
+                     ? brown[mix_ch][12:5]                          // brown
+                     : (nz_hold[mix_ch] + (nz_hold[mix_ch] >>> 1)) >>> 1;
+      3'd7: samp = 8'((ph_sum * 11'sd85) >>> 8);                    // phaser
+      3'd3, 3'd4:
+            samp = ch_buzz[mix_ch] ? buzzsq
+                 : (ch_det[mix_ch] != 0) ? det_clip : smp_a;
+      default:
+            samp = (ch_det[mix_ch] != 0) ? det_clip : smp_a;
     endcase
   end
-  wire signed [16:0] contrib = samp * $signed({1'b0, eff_vol[mix_ch]});
 
+  // DAMPEN: per-channel one-pole low-pass (Q8), shift by damp level
+  wire signed [15:0] samp_q8 = signed'({samp, 8'b0});
+  wire signed [15:0] lp_next =
+      lp[mix_ch] + ((samp_q8 - lp[mix_ch]) >>> ch_damp[mix_ch]);
+  wire signed [7:0] samp_d = (ch_damp[mix_ch] == 0) ? samp : lp_next[15:8];
+
+  wire signed [16:0] contrib = samp_d * $signed({1'b0, eff_vol[mix_ch]});
+
+  logic signed [7:0] dry8;
+  logic        dry_valid;
   always_ff @(posedge clk) begin
     if (reset) begin
       mix_ch <= 0;
       mix_go <= 0;
       mix_fin <= 0;
       mixacc <= 0;
-      pcm <= 8'h80;
+      rev_max <= 0;
+      dry8 <= 0;
+      dry_valid <= 0;
     end else begin
       mix_go <= prun && pst == 2'd2;
       mix_ch <= pc_ch;
       mix_fin <= 0;
-      if (sample_en)
+      dry_valid <= 0;
+      if (sample_en) begin
         mixacc <= 0;
+        rev_max <= 0;
+      end
       if (mix_go) begin
-        if (playing[mix_ch])
+        if (playing[mix_ch]) begin
           mixacc <= mixacc + 11'($signed(contrib[16:8]));
+          if (ch_damp[mix_ch] != 0)
+            lp[mix_ch] <= lp_next;
+          if (ch_rev[mix_ch] > rev_max)
+            rev_max <= ch_rev[mix_ch];
+        end
         if (mix_ch == 2'd3) mix_fin <= 1;
       end
-      if (mix_fin)
-        pcm <= 8'd128 + 8'((mixacc > 11'sd255 ?  11'sd255 :
-                            mixacc < -11'sd255 ? -11'sd255 : mixacc) >>> 1);
+      if (mix_fin) begin
+        dry8 <= 8'((mixacc > 11'sd255 ?  11'sd255 :
+                    mixacc < -11'sd255 ? -11'sd255 : mixacc) >>> 1);
+        dry_valid <= 1;
+      end
     end
   end
+
+  // Output stage: direct, or a shared feed-forward reverb echo (2/4-tick
+  // delay at the strongest level any active channel requested)
+  generate
+  if (REVERB) begin : g_reverb
+    logic signed [7:0] revbuf[0:731];
+    logic [9:0] widx, ridx;
+    logic signed [7:0] rev_q, dry_l;
+    logic [1:0] rst, rlvl_l;
+    logic signed [9:0] rev_outv;
+    wire [9:0] dlen = (rev_max == 2'd1) ? 10'd366 :
+                      (rev_max == 2'd2) ? 10'd732 : 10'd0;
+    always_ff @(posedge clk)
+      rev_q <= revbuf[ridx];
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        widx <= 0; ridx <= 0; rst <= 0; pcm <= 8'h80;
+        dry_l <= 0; rlvl_l <= 0;
+      end else begin
+        case (rst)
+          2'd0: if (dry_valid) begin
+            dry_l <= dry8;
+            rlvl_l <= rev_max;
+            ridx <= (dlen == 0) ? widx :
+                    (widx >= dlen) ? widx - dlen : widx + 10'd732 - dlen;
+            rst <= 2'd1;
+          end
+          2'd1: rst <= 2'd2;                     // revbuf read settles
+          2'd2: begin
+            rev_outv = (rlvl_l == 2'd0)
+                         ? $signed({{2{dry_l[7]}}, dry_l})
+                         : $signed({{2{dry_l[7]}}, dry_l}) +
+                           $signed({{3{rev_q[7]}}, rev_q[7:1]});
+            pcm <= 8'd128 + 8'(rev_outv > 10'sd127 ? 10'sd127 :
+                               rev_outv < -10'sd127 ? -10'sd127 : rev_outv);
+            revbuf[widx] <= dry_l;
+            widx <= (widx == 10'd731) ? 10'd0 : widx + 1;
+            rst <= 2'd0;
+          end
+          default: rst <= 2'd0;
+        endcase
+      end
+    end
+  end else begin : g_direct
+    always_ff @(posedge clk) begin
+      if (reset) pcm <= 8'h80;
+      else if (dry_valid) pcm <= 8'd128 + dry8;
+    end
+  end
+  endgenerate
 
   // ------------------------------------------------------------------
   // CPU interface: upload port, music mask, status reads
