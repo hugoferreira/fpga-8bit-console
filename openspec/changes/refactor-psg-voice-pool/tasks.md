@@ -44,8 +44,11 @@ be at 121%.
       per-tick. Measured 147 / 189 bits per voice against the estimated
       133 / 200, and the per-tick half splits again: ~154 bits of bulk note and
       instrument state that only the walked voice ever touches (BRAM), and
-      ~35 bits of control state that the CPU and the music FSM address randomly
-      (must stay in flops). design.md updated; total is ~2900 flops + 1 BRAM
+      ~12 bits of control state. The CPU never addresses a voice - its map is
+      four channels - so that control state is just 16-bit vectors plus 2-bit
+      tags, and the pending trigger parameters are per-channel, not per-voice.
+      design.md updated; total is **2492 flops + 0.65 of one BRAM** (32% of an
+      HX8K), not the ~2900 first written
 - [x] 2.1a (found during 2.1, not originally scoped) **The noise gain was
       being looked up by the wrong channel's pitch.** `e_pitch` is derived from
       the sequencer's rotating ring, which only advances on ticks, so during
@@ -56,10 +59,17 @@ be at 121%.
       here, but it would not have been for a cart with noise on two channels at
       different pitches. Exactly the class of fault the de-rotation removes by
       construction, which is why it surfaced while classifying the state
-- [ ] 2.3 Replace the `[0:3]` ring rotation with an explicit voice index:
-      `name[0]` becomes a working register `w_name`, loaded at the start of a
-      voice's visit and stored at the end, still backed by flops. Behaviour
-      must not change - this is pure restructuring
+- [x] 2.3 Replace the ring rotation with an explicit voice index. Done more
+      simply than planned: index 0 during a visit to voice *v* already *is*
+      voice *v*, so `name[0]` became `name[c]` (walk) and `name[pc_ch]`
+      (synthesis) and both rotations were deleted outright - no working-copy
+      registers needed. 34 rotation lines removed, 171 accesses now name their
+      voice, both games render bit-identically, `make test-psg` and
+      `make test-nemo` green.
+      **This is what removes the noise-gain class of bug by construction**: the
+      synthesis path contains no `[c]` index at all now (statically checked),
+      so it cannot read the sequencer's voice, and any future attempt to would
+      be a visible `[c]` in a `pc_ch` block rather than an invisible `[0]`
 - [ ] 2.2 Swap the backing store for the bulk note/instrument state to BRAM.
       **Deliberately after section 3**: de-rotate, scale the pool, prove
       allocation, and only then rework storage, so the audible change is

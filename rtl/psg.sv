@@ -244,19 +244,19 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   logic [5:0]  arp_p;
 
   wire [12:0] ch_base  = 13'd256 + {1'b0, sfx_id[c], 6'b0} + {5'b0, sfx_id[c], 2'b0};
-  wire [12:0] ins_base = 13'd256 + {4'b0, ins_id[0], 6'b0} + {8'b0, ins_id[0], 2'b0};
+  wire [12:0] ins_base = 13'd256 + {4'b0, ins_id[c], 6'b0} + {8'b0, ins_id[c], 2'b0};
 
   // The note's instrument voice: a playhead (ins_use) or a wavetable
-  wire ins_use = ins_on[0] & ~ins_wt[0];
+  wire ins_use = ins_on[c] & ~ins_wt[c];
 
   // Effect 3 on a custom-instrument note means "retrigger", not "drop"; the
   // instrument's own effect is used when the note carries none of its own.
-  wire [2:0] nfx      = (ins_on[0] && cur_fx[0] == 3'd3) ? 3'd0 : cur_fx[0];
-  wire       e_insfx  = ins_use && nfx == 3'd0 && ins_fx[0] != 3'd0;
-  wire [2:0] e_fx     = e_insfx ? ins_fx[0]   : nfx;
-  wire [7:0] e_fcnt   = e_insfx ? ins_fcnt[0] : fcnt[0];
-  wire [7:0] e_sp     = e_insfx ? ins_sp[0]   : sp[0];
-  wire [7:0] e_tcnt   = e_insfx ? ins_tcnt[0] : tcnt[0];
+  wire [2:0] nfx      = (ins_on[c] && cur_fx[c] == 3'd3) ? 3'd0 : cur_fx[c];
+  wire       e_insfx  = ins_use && nfx == 3'd0 && ins_fx[c] != 3'd0;
+  wire [2:0] e_fx     = e_insfx ? ins_fx[c]   : nfx;
+  wire [7:0] e_fcnt   = e_insfx ? ins_fcnt[c] : fcnt[c];
+  wire [7:0] e_sp     = e_insfx ? ins_sp[c]   : sp[c];
+  wire [7:0] e_tcnt   = e_insfx ? ins_tcnt[c] : tcnt[c];
 
   // Arpeggio source row: (tick / period) & 3, period from fx and speed
   logic [1:0] arp_idx;
@@ -291,14 +291,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       K_NL:   seq_addr = ch_base + {7'b0, row[c], 1'b0};
       T_NH,
       K_NH:   seq_addr = ch_base + {7'b0, row[c], 1'b1};
-      K_ARP:  seq_addr = e_insfx ? ins_base + {7'b0, ins_row[0][4:2], arp_idx, 1'b0}
+      K_ARP:  seq_addr = e_insfx ? ins_base + {7'b0, ins_row[c][4:2], arp_idx, 1'b0}
                                  : ch_base  + {7'b0, row[c][4:2],     arp_idx, 1'b0};
       I_TR0:  seq_addr = ins_base + 13'd64;
       I_TR1:  seq_addr = ins_base + 13'd65;
       I_TR2:  seq_addr = ins_base + 13'd66;
       I_TR3:  seq_addr = ins_base + 13'd67;
-      I_NL:   seq_addr = ins_base + {7'b0, ins_row[0], 1'b0};
-      I_NH:   seq_addr = ins_base + {7'b0, ins_row[0], 1'b1};
+      I_NL:   seq_addr = ins_base + {7'b0, ins_row[c], 1'b0};
+      I_NH:   seq_addr = ins_base + {7'b0, ins_row[c], 1'b1};
       ML_RD0: seq_addr = {5'b0, mus_pat, 2'd0};
       ML_RD1: seq_addr = {5'b0, mus_pat, 2'd1};
       ML_RD2: seq_addr = {5'b0, mus_pat, 2'd2};
@@ -337,12 +337,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       5'd30: fdec = 6'b000100;  default: fdec = 6'b000101;
     endcase
   endfunction
-  // Rows an SFX record plays before it ends, valid in T_NL where lps[0] holds
+  // Rows an SFX record plays before it ends, valid in T_NL where lps[c] holds
   // the loop start and seq_q the loop end. Mirrors the end-of-record rule the
   // per-tick walk applies, so a pattern's tick length matches the sound that
   // paces it.
-  wire [5:0] pat_rows = (lps[0] != 0 && seq_q == 0)
-                          ? ((lps[0] < 8'd32) ? lps[0][5:0] : 6'd32) : 6'd32;
+  wire [5:0] pat_rows = (lps[c] != 0 && seq_q == 0)
+                          ? ((lps[c] < 8'd32) ? lps[c][5:0] : 6'd32) : 6'd32;
 
   wire [5:0] fdv    = fdec(seq_q[7:3]);
   wire [1:0] f_det  = fdv[1:0];
@@ -356,15 +356,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
     pclamp = (v < 9'sd0) ? 6'd0 : (v > 9'sd63) ? 6'd63 : 6'(v);
   endfunction
 
-  wire signed [8:0] pc_raw = $signed({3'b0, cur_pitch[0]})
-                           + $signed({3'b0, ins_pitch[0]}) - 9'sd24;
-  wire signed [8:0] pp_raw = $signed({3'b0, prev_pitch[0]})
-                           + $signed({3'b0, ins_prev_pitch[0]}) - 9'sd24;
-  wire [5:0] e_pitch = ins_use ? pclamp(pc_raw) : cur_pitch[0];
-  wire [5:0] e_prevp = ins_use ? pclamp(pp_raw) : prev_pitch[0];
+  wire signed [8:0] pc_raw = $signed({3'b0, cur_pitch[c]})
+                           + $signed({3'b0, ins_pitch[c]}) - 9'sd24;
+  wire signed [8:0] pp_raw = $signed({3'b0, prev_pitch[c]})
+                           + $signed({3'b0, ins_prev_pitch[c]}) - 9'sd24;
+  wire [5:0] e_pitch = ins_use ? pclamp(pc_raw) : cur_pitch[c];
+  wire [5:0] e_prevp = ins_use ? pclamp(pp_raw) : prev_pitch[c];
 
-  wire [5:0] vmul  = 6'(cur_vol[0]  * ins_vol[0]);
-  wire [5:0] pvmul = 6'(prev_vol[0] * ins_prev_vol[0]);
+  wire [5:0] vmul  = 6'(cur_vol[c]  * ins_vol[c]);
+  wire [5:0] pvmul = 6'(prev_vol[c] * ins_prev_vol[c]);
 
   // Pitch and reciprocal tables are read through one synchronous port
   // each, so both infer as block RAM instead of ~750 LUTs of address mux.
@@ -378,8 +378,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   // Declared here rather than below its first use: iverilog rejects
   // declaration-after-use, which kept rtl/psg_tb.sv from building.
   wire signed [8:0] arp_raw =
-      e_insfx ? ($signed({3'b0, cur_pitch[0]}) + $signed({3'b0, arp_p}) - 9'sd24)
-    : ins_use ? ($signed({3'b0, arp_p}) + $signed({3'b0, ins_pitch[0]}) - 9'sd24)
+      e_insfx ? ($signed({3'b0, cur_pitch[c]}) + $signed({3'b0, arp_p}) - 9'sd24)
+    : ins_use ? ($signed({3'b0, arp_p}) + $signed({3'b0, ins_pitch[c]}) - 9'sd24)
               :  $signed({3'b0, arp_p});
   wire [5:0] e_arp = pclamp(arp_raw);
 
@@ -397,9 +397,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
 
   wire [23:0] base_inc = base_r;
   wire [23:0] prev_inc = prev_r;
-  wire [7:0]  vol_direct  = ins_done[0] ? 8'd0
-                          : {cur_vol[0], 5'b0} + {3'b0, cur_vol[0], 2'b0};
-  wire [7:0]  pvol_direct = {prev_vol[0], 5'b0} + {3'b0, prev_vol[0], 2'b0};
+  wire [7:0]  vol_direct  = ins_done[c] ? 8'd0
+                          : {cur_vol[c], 5'b0} + {3'b0, cur_vol[c], 2'b0};
+  wire [7:0]  pvol_direct = {prev_vol[c], 5'b0} + {3'b0, prev_vol[c], 2'b0};
 
   // The arpeggiating voice contributes arp_p; the other voice still adds
   // its pitch relative to 24, so an arpeggio inside an instrument
@@ -622,26 +622,26 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
         T_FL: begin
           trig_req[c] <= 0;
           row[c] <= trg_row[c];             // sfx(n, ch, offset, length)
-          play_len[0] <= trg_len[c];
+          play_len[c] <= trg_len[c];
           trg_row[c] <= 0;                  // parameters are one-shot
           trg_len[c] <= 0;
           released[c] <= 0;
-          fcnt[0] <= 0;
-          tcnt[0] <= 0;
-          prev_pitch[0] <= 6'd24;
-          prev_vol[0] <= 0;
+          fcnt[c] <= 0;
+          tcnt[c] <= 0;
+          prev_pitch[c] <= 6'd24;
+          prev_vol[c] <= 0;
           playing[c] <= 1;
-          ins_on[0] <= 0;
-          ins_done[0] <= 0;
+          ins_on[c] <= 0;
+          ins_done[c] <= 0;
           clr_tog[c] <= ~clr_tog[c];        // synth walk clears lp/brown
           sst <= T_SP;
         end
         T_SP: begin
-          bf_noiz[0] <= seq_q[1];
-          bf_buzz[0] <= seq_q[2];
-          bf_det[0]  <= f_det;
-          bf_rev[0]  <= f_rev;
-          bf_damp[0] <= f_damp;
+          bf_noiz[c] <= seq_q[1];
+          bf_buzz[c] <= seq_q[2];
+          bf_det[c]  <= f_det;
+          bf_rev[c]  <= f_rev;
+          bf_damp[c] <= f_damp;
           ch_noiz[c] <= seq_q[1];
           ch_buzz[c] <= seq_q[2];
           ch_det[c]  <= f_det;
@@ -650,18 +650,18 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           sst <= T_LS;
         end
         T_LS: begin
-          sp[0] <= (seq_q == 0) ? 8'd1 : seq_q;
+          sp[c] <= (seq_q == 0) ? 8'd1 : seq_q;
           // vibrato/arpeggio phase follows the row's place in the record,
           // so a slice started at an offset sounds like the whole record
-          tcnt[0] <= 8'({3'b0, row[c]} * ((seq_q == 0) ? 8'd1 : seq_q));
+          tcnt[c] <= 8'({3'b0, row[c]} * ((seq_q == 0) ? 8'd1 : seq_q));
           sst <= T_LE;
         end
         T_LE: begin
-          lps[0] <= seq_q;
+          lps[c] <= seq_q;
           sst <= T_NL;
         end
         T_NL: begin
-          lpe[0] <= seq_q;
+          lpe[c] <= seq_q;
           // The pattern's length is taken from its left-most launched
           // non-looping channel; the walk reaches channels in order, so the
           // first one that qualifies wins. An all-looping pattern falls back
@@ -674,11 +674,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           if (launched[c]) begin
             if (!ptick_seen) begin
               ptick_seen <= 1;
-              ptick_tgt <= {sp[0], 5'b0};
+              ptick_tgt <= {sp[c], 5'b0};
             end
-            if (!tch_seen && !(lps[0] < seq_q)) begin
+            if (!tch_seen && !(lps[c] < seq_q)) begin
               tch_seen <= 1;
-              ptick_tgt <= 13'(sp[0] * pat_rows);
+              ptick_tgt <= 13'(sp[c] * pat_rows);
             end
           end
           sst <= T_NH;
@@ -688,13 +688,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           sst <= T_LD;
         end
         T_LD: begin
-          cur_pitch[0] <= note_lo[5:0];
-          cur_wave[0]  <= {seq_q[0], note_lo[7:6]};
-          cur_vol[0]   <= seq_q[3:1];
-          cur_fx[0]    <= seq_q[6:4];
+          cur_pitch[c] <= note_lo[5:0];
+          cur_wave[c]  <= {seq_q[0], note_lo[7:6]};
+          cur_vol[c]   <= seq_q[3:1];
+          cur_fx[c]    <= seq_q[6:4];
           if (seq_q[7]) begin               // custom instrument: always new
-            ins_on[0] <= 1;
-            ins_id[0] <= {seq_q[0], note_lo[7:6]};
+            ins_on[c] <= 1;
+            ins_id[c] <= {seq_q[0], note_lo[7:6]};
             sst <= I_TR0;
           end else
             sst <= K_ARP;
@@ -708,15 +708,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
             if (!playing[c]) eff_vol[c] <= 0;
             sst <= K_ROT;
           end else begin
-            tcnt[0] <= tcnt[0] + 1;
-            if ({1'b0, fcnt[0]} + 9'd1 >= {1'b0, sp[0]}) begin
+            tcnt[c] <= tcnt[c] + 1;
+            if ({1'b0, fcnt[c]} + 9'd1 >= {1'b0, sp[c]}) begin
               // row finished: loop, stop, or advance, then refetch
-              prev_pitch[0] <= cur_pitch[0];
-              prev_vol[0] <= cur_vol[0];
-              fcnt[0] <= 0;
-              if (play_len[0] != 0) begin
+              prev_pitch[c] <= cur_pitch[c];
+              prev_vol[c] <= cur_vol[c];
+              fcnt[c] <= 0;
+              if (play_len[c] != 0) begin
                 // an explicit length overrides the record's loop points
-                if (play_len[0] == 6'd1 || row[c] == 5'd31) begin
+                if (play_len[c] == 6'd1 || row[c] == 5'd31) begin
                   if (sav_valid[c]) begin
                     sfx_id[c] <= sav_sfx[c];
                     trg_row[c] <= sav_row[c];
@@ -730,17 +730,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
                   end
                   sst <= K_ROT;
                 end else begin
-                  play_len[0] <= play_len[0] - 1;
+                  play_len[c] <= play_len[c] - 1;
                   row[c] <= row[c] + 1;
                   sst <= K_NL;
                 end
-              end else if (lps[0] < lpe[0] && !released[c] &&
-                           {3'b0, row[c]} + 8'd1 >= lpe[0]) begin
-                row[c] <= lps[0][4:0];
+              end else if (lps[c] < lpe[c] && !released[c] &&
+                           {3'b0, row[c]} + 8'd1 >= lpe[c]) begin
+                row[c] <= lps[c][4:0];
                 sst <= K_NL;
               end else if ({3'b0, row[c]} + 8'd1 >=
-                           ((lps[0] != 0 && lpe[0] == 0)
-                              ? ((lps[0] < 8'd32) ? lps[0] : 8'd32)
+                           ((lps[c] != 0 && lpe[c] == 0)
+                              ? ((lps[c] < 8'd32) ? lps[c] : 8'd32)
                               : 8'd32)) begin
                 if (sav_valid[c]) begin
                   sfx_id[c] <= sav_sfx[c];
@@ -759,9 +759,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
                 sst <= K_NL;
               end
             end else begin
-              fcnt[0] <= fcnt[0] + 1;
+              fcnt[c] <= fcnt[c] + 1;
               // the row holds, but the instrument playhead still advances
-              sst <= sst_t'((ins_on[0] && !ins_wt[0]) ? I_ADV : K_ARP);
+              sst <= sst_t'((ins_on[c] && !ins_wt[c]) ? I_ADV : K_ARP);
             end
           end
         end
@@ -771,91 +771,91 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           sst <= K_LD;
         end
         K_LD: begin
-          cur_pitch[0] <= note_lo[5:0];
-          cur_wave[0]  <= {seq_q[0], note_lo[7:6]};
-          cur_vol[0]   <= seq_q[3:1];
-          cur_fx[0]    <= seq_q[6:4];
+          cur_pitch[c] <= note_lo[5:0];
+          cur_wave[c]  <= {seq_q[0], note_lo[7:6]};
+          cur_vol[c]   <= seq_q[3:1];
+          cur_fx[c]    <= seq_q[6:4];
           if (seq_q[7]) begin
-            ins_on[0] <= 1;
-            ins_id[0] <= {seq_q[0], note_lo[7:6]};
+            ins_on[c] <= 1;
+            ins_id[c] <= {seq_q[0], note_lo[7:6]};
             // retrigger on a pitch change, after a silent note, on a new
             // instrument, or when the note asks for it with effect 3
-            if (!ins_on[0] || ins_id[0] != {seq_q[0], note_lo[7:6]} ||
-                note_lo[5:0] != prev_pitch[0] || prev_vol[0] == 0 ||
+            if (!ins_on[c] || ins_id[c] != {seq_q[0], note_lo[7:6]} ||
+                note_lo[5:0] != prev_pitch[c] || prev_vol[c] == 0 ||
                 seq_q[6:4] == 3'd3)
               sst <= I_TR0;
             else
-              sst <= sst_t'(ins_wt[0] ? K_ARP : I_ADV);
+              sst <= sst_t'(ins_wt[c] ? K_ARP : I_ADV);
           end else begin
-            ins_on[0] <= 0;                 // back to the note's own filters
-            ch_noiz[c] <= bf_noiz[0];
-            ch_buzz[c] <= bf_buzz[0];
-            ch_det[c]  <= bf_det[0];
-            ch_rev[c]  <= bf_rev[0];
-            ch_damp[c] <= bf_damp[0];
+            ins_on[c] <= 0;                 // back to the note's own filters
+            ch_noiz[c] <= bf_noiz[c];
+            ch_buzz[c] <= bf_buzz[c];
+            ch_det[c]  <= bf_det[c];
+            ch_rev[c]  <= bf_rev[c];
+            ch_damp[c] <= bf_damp[c];
             sst <= K_ARP;
           end
         end
 
         // ---- custom instrument: retrigger, then per-tick advance -------
         I_TR0: begin
-          ins_row[0] <= 0;
-          ins_fcnt[0] <= 0;
-          ins_tcnt[0] <= 0;
-          ins_done[0] <= 0;
-          ins_prev_pitch[0] <= 6'd24;
-          ins_prev_vol[0] <= 0;
+          ins_row[c] <= 0;
+          ins_fcnt[c] <= 0;
+          ins_tcnt[c] <= 0;
+          ins_done[c] <= 0;
+          ins_prev_pitch[c] <= 6'd24;
+          ins_prev_vol[c] <= 0;
           sst <= I_TR1;
         end
         I_TR1: begin                        // the instrument's filters join
-          ch_noiz[c] <= bf_noiz[0] | seq_q[1];
-          ch_buzz[c] <= bf_buzz[0] | seq_q[2];
-          ch_det[c]  <= (f_det  > bf_det[0])  ? f_det  : bf_det[0];
-          ch_rev[c]  <= (f_rev  > bf_rev[0])  ? f_rev  : bf_rev[0];
-          ch_damp[c] <= (f_damp > bf_damp[0]) ? f_damp : bf_damp[0];
+          ch_noiz[c] <= bf_noiz[c] | seq_q[1];
+          ch_buzz[c] <= bf_buzz[c] | seq_q[2];
+          ch_det[c]  <= (f_det  > bf_det[c])  ? f_det  : bf_det[c];
+          ch_rev[c]  <= (f_rev  > bf_rev[c])  ? f_rev  : bf_rev[c];
+          ch_damp[c] <= (f_damp > bf_damp[c]) ? f_damp : bf_damp[c];
           sst <= I_TR2;
         end
         I_TR2: begin
-          ins_sp[0]   <= (seq_q == 0) ? 8'd1 : seq_q;
-          ins_bass[0] <= seq_q[0];          // wavetable: down an octave
+          ins_sp[c]   <= (seq_q == 0) ? 8'd1 : seq_q;
+          ins_bass[c] <= seq_q[0];          // wavetable: down an octave
           sst <= I_TR3;
         end
         I_TR3: begin
-          ins_lps[0] <= seq_q;
-          ins_wt[0]  <= seq_q[7];           // loop start bit 7 = wavetable
+          ins_lps[c] <= seq_q;
+          ins_wt[c]  <= seq_q[7];           // loop start bit 7 = wavetable
           sst <= I_TR4;
         end
         I_TR4: begin
-          ins_lpe[0] <= seq_q;
-          if (ins_wt[0]) begin              // no playhead: the record is PCM
-            ins_pitch[0] <= 6'd24;
-            ins_prev_pitch[0] <= 6'd24;
-            ins_vol[0] <= 3'd7;
-            ins_prev_vol[0] <= 3'd7;
-            ins_fx[0] <= 0;
-            ins_wave[0] <= 0;
+          ins_lpe[c] <= seq_q;
+          if (ins_wt[c]) begin              // no playhead: the record is PCM
+            ins_pitch[c] <= 6'd24;
+            ins_prev_pitch[c] <= 6'd24;
+            ins_vol[c] <= 3'd7;
+            ins_prev_vol[c] <= 3'd7;
+            ins_fx[c] <= 0;
+            ins_wave[c] <= 0;
             sst <= K_ARP;
           end else
             sst <= I_NL;
         end
         I_ADV: begin
-          ins_tcnt[0] <= ins_tcnt[0] + 1;
-          if ({1'b0, ins_fcnt[0]} + 9'd1 >= {1'b0, ins_sp[0]}) begin
-            ins_prev_pitch[0] <= ins_pitch[0];
-            ins_prev_vol[0] <= ins_vol[0];
-            ins_fcnt[0] <= 0;
-            if (ins_lps[0] < ins_lpe[0] &&
-                {3'b0, ins_row[0]} + 8'd1 >= ins_lpe[0])
-              ins_row[0] <= ins_lps[0][4:0];
-            else if ({3'b0, ins_row[0]} + 8'd1 >=
-                     ((ins_lps[0] != 0 && ins_lpe[0] == 0)
-                        ? ((ins_lps[0] < 8'd32) ? ins_lps[0] : 8'd32)
+          ins_tcnt[c] <= ins_tcnt[c] + 1;
+          if ({1'b0, ins_fcnt[c]} + 9'd1 >= {1'b0, ins_sp[c]}) begin
+            ins_prev_pitch[c] <= ins_pitch[c];
+            ins_prev_vol[c] <= ins_vol[c];
+            ins_fcnt[c] <= 0;
+            if (ins_lps[c] < ins_lpe[c] &&
+                {3'b0, ins_row[c]} + 8'd1 >= ins_lpe[c])
+              ins_row[c] <= ins_lps[c][4:0];
+            else if ({3'b0, ins_row[c]} + 8'd1 >=
+                     ((ins_lps[c] != 0 && ins_lpe[c] == 0)
+                        ? ((ins_lps[c] < 8'd32) ? ins_lps[c] : 8'd32)
                         : 8'd32))
-              ins_done[0] <= 1;             // instrument over: note silent
+              ins_done[c] <= 1;             // instrument over: note silent
             else
-              ins_row[0] <= ins_row[0] + 1;
+              ins_row[c] <= ins_row[c] + 1;
           end else
-            ins_fcnt[0] <= ins_fcnt[0] + 1;
+            ins_fcnt[c] <= ins_fcnt[c] + 1;
           sst <= I_NL;
         end
         I_NL: sst <= I_NH;
@@ -864,10 +864,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           sst <= I_LD;
         end
         I_LD: begin
-          ins_pitch[0] <= ins_note_lo[5:0];
-          ins_wave[0]  <= {seq_q[0], ins_note_lo[7:6]};
-          ins_vol[0]   <= seq_q[3:1];
-          ins_fx[0]    <= seq_q[6:4];
+          ins_pitch[c] <= ins_note_lo[5:0];
+          ins_wave[c]  <= {seq_q[0], ins_note_lo[7:6]};
+          ins_vol[c]   <= seq_q[3:1];
+          ins_fx[c]    <= seq_q[6:4];
           sst <= K_ARP;
         end
 
@@ -894,7 +894,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           if (xs == 0) arp_r <= pinc_q;
           case (xs)
             3'd1: u_r    <= p8;
-            3'd2: vol_r  <= ins_use ? (ins_done[0] ? 8'd0 : p8) : vol_direct;
+            3'd2: vol_r  <= ins_use ? (ins_done[c] ? 8'd0 : p8) : vol_direct;
             3'd3: pvol_r <= ins_use ? p8 : pvol_direct;
             3'd4: fxi_r  <= fxi_next;
             3'd5: fxv_r  <= fxv_next;
@@ -903,13 +903,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           if (xs == 3'd6) begin
             xs <= 0;
             // a wavetable instrument's bass flag drops it an octave
-            eff_inc[c] <= (ins_on[0] && ins_wt[0] && ins_bass[0])
+            eff_inc[c] <= (ins_on[c] && ins_wt[c] && ins_bass[c])
                             ? {1'b0, fxi_r[23:1]} : fxi_r;
             // music channels ride the fade gain
             eff_vol[c] <= music_owned[c] ? p8 : fxv_r;
-            snd_wave[c] <= ins_use ? ins_wave[0]
-                         : (ins_on[0] && ins_wt[0]) ? 3'd0 : cur_wave[0];
-            snd_wt[c]   <= ins_on[0] & ins_wt[0];
+            snd_wave[c] <= ins_use ? ins_wave[c]
+                         : (ins_on[c] && ins_wt[c]) ? 3'd0 : cur_wave[c];
+            snd_wt[c]   <= ins_on[c] & ins_wt[c];
             snd_wtb[c]  <= ins_base;
             snd_pitch[c] <= e_pitch;
             sst <= K_ROT;
@@ -925,40 +925,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
         // Four rotations per pass leave it where it started, so channel k
         // is always at index k while the sequencer is idle.
         K_ROT: begin
-          fcnt[0] <= fcnt[1]; fcnt[1] <= fcnt[2]; fcnt[2] <= fcnt[3]; fcnt[3] <= fcnt[0];
-          tcnt[0] <= tcnt[1]; tcnt[1] <= tcnt[2]; tcnt[2] <= tcnt[3]; tcnt[3] <= tcnt[0];
-          sp[0] <= sp[1]; sp[1] <= sp[2]; sp[2] <= sp[3]; sp[3] <= sp[0];
-          lps[0] <= lps[1]; lps[1] <= lps[2]; lps[2] <= lps[3]; lps[3] <= lps[0];
-          lpe[0] <= lpe[1]; lpe[1] <= lpe[2]; lpe[2] <= lpe[3]; lpe[3] <= lpe[0];
-          cur_pitch[0] <= cur_pitch[1]; cur_pitch[1] <= cur_pitch[2]; cur_pitch[2] <= cur_pitch[3]; cur_pitch[3] <= cur_pitch[0];
-          prev_pitch[0] <= prev_pitch[1]; prev_pitch[1] <= prev_pitch[2]; prev_pitch[2] <= prev_pitch[3]; prev_pitch[3] <= prev_pitch[0];
-          cur_wave[0] <= cur_wave[1]; cur_wave[1] <= cur_wave[2]; cur_wave[2] <= cur_wave[3]; cur_wave[3] <= cur_wave[0];
-          cur_vol[0] <= cur_vol[1]; cur_vol[1] <= cur_vol[2]; cur_vol[2] <= cur_vol[3]; cur_vol[3] <= cur_vol[0];
-          cur_fx[0] <= cur_fx[1]; cur_fx[1] <= cur_fx[2]; cur_fx[2] <= cur_fx[3]; cur_fx[3] <= cur_fx[0];
-          prev_vol[0] <= prev_vol[1]; prev_vol[1] <= prev_vol[2]; prev_vol[2] <= prev_vol[3]; prev_vol[3] <= prev_vol[0];
-          play_len[0] <= play_len[1]; play_len[1] <= play_len[2]; play_len[2] <= play_len[3]; play_len[3] <= play_len[0];
-          ins_on[0] <= ins_on[1]; ins_on[1] <= ins_on[2]; ins_on[2] <= ins_on[3]; ins_on[3] <= ins_on[0];
-          ins_wt[0] <= ins_wt[1]; ins_wt[1] <= ins_wt[2]; ins_wt[2] <= ins_wt[3]; ins_wt[3] <= ins_wt[0];
-          ins_bass[0] <= ins_bass[1]; ins_bass[1] <= ins_bass[2]; ins_bass[2] <= ins_bass[3]; ins_bass[3] <= ins_bass[0];
-          ins_done[0] <= ins_done[1]; ins_done[1] <= ins_done[2]; ins_done[2] <= ins_done[3]; ins_done[3] <= ins_done[0];
-          ins_id[0] <= ins_id[1]; ins_id[1] <= ins_id[2]; ins_id[2] <= ins_id[3]; ins_id[3] <= ins_id[0];
-          ins_row[0] <= ins_row[1]; ins_row[1] <= ins_row[2]; ins_row[2] <= ins_row[3]; ins_row[3] <= ins_row[0];
-          ins_fcnt[0] <= ins_fcnt[1]; ins_fcnt[1] <= ins_fcnt[2]; ins_fcnt[2] <= ins_fcnt[3]; ins_fcnt[3] <= ins_fcnt[0];
-          ins_tcnt[0] <= ins_tcnt[1]; ins_tcnt[1] <= ins_tcnt[2]; ins_tcnt[2] <= ins_tcnt[3]; ins_tcnt[3] <= ins_tcnt[0];
-          ins_sp[0] <= ins_sp[1]; ins_sp[1] <= ins_sp[2]; ins_sp[2] <= ins_sp[3]; ins_sp[3] <= ins_sp[0];
-          ins_lps[0] <= ins_lps[1]; ins_lps[1] <= ins_lps[2]; ins_lps[2] <= ins_lps[3]; ins_lps[3] <= ins_lps[0];
-          ins_lpe[0] <= ins_lpe[1]; ins_lpe[1] <= ins_lpe[2]; ins_lpe[2] <= ins_lpe[3]; ins_lpe[3] <= ins_lpe[0];
-          ins_pitch[0] <= ins_pitch[1]; ins_pitch[1] <= ins_pitch[2]; ins_pitch[2] <= ins_pitch[3]; ins_pitch[3] <= ins_pitch[0];
-          ins_prev_pitch[0] <= ins_prev_pitch[1]; ins_prev_pitch[1] <= ins_prev_pitch[2]; ins_prev_pitch[2] <= ins_prev_pitch[3]; ins_prev_pitch[3] <= ins_prev_pitch[0];
-          ins_wave[0] <= ins_wave[1]; ins_wave[1] <= ins_wave[2]; ins_wave[2] <= ins_wave[3]; ins_wave[3] <= ins_wave[0];
-          ins_vol[0] <= ins_vol[1]; ins_vol[1] <= ins_vol[2]; ins_vol[2] <= ins_vol[3]; ins_vol[3] <= ins_vol[0];
-          ins_fx[0] <= ins_fx[1]; ins_fx[1] <= ins_fx[2]; ins_fx[2] <= ins_fx[3]; ins_fx[3] <= ins_fx[0];
-          ins_prev_vol[0] <= ins_prev_vol[1]; ins_prev_vol[1] <= ins_prev_vol[2]; ins_prev_vol[2] <= ins_prev_vol[3]; ins_prev_vol[3] <= ins_prev_vol[0];
-          bf_noiz[0] <= bf_noiz[1]; bf_noiz[1] <= bf_noiz[2]; bf_noiz[2] <= bf_noiz[3]; bf_noiz[3] <= bf_noiz[0];
-          bf_buzz[0] <= bf_buzz[1]; bf_buzz[1] <= bf_buzz[2]; bf_buzz[2] <= bf_buzz[3]; bf_buzz[3] <= bf_buzz[0];
-          bf_det[0] <= bf_det[1]; bf_det[1] <= bf_det[2]; bf_det[2] <= bf_det[3]; bf_det[3] <= bf_det[0];
-          bf_rev[0] <= bf_rev[1]; bf_rev[1] <= bf_rev[2]; bf_rev[2] <= bf_rev[3]; bf_rev[3] <= bf_rev[0];
-          bf_damp[0] <= bf_damp[1]; bf_damp[1] <= bf_damp[2]; bf_damp[2] <= bf_damp[3]; bf_damp[3] <= bf_damp[0];
+          // Nothing rotates any more: every voice is named by its index. The
+          // ring made a cross-walk read look innocent - the synthesis pipeline
+          // reading the sequencer's index 0 got channel 0 whatever voice it
+          // was on, which is how the noise gain bug (test 20c) hid.
           if (c == 2'd3) begin
             c <= 0;
             sst <= W_MUS;
@@ -1185,9 +1155,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   wire [2:0] wbank = (snd_wave[pc_ch] == 3'd7) ? 3'd0 : snd_wave[pc_ch];
   always_comb begin
     if (pst == 2'd1)
-      wrom_addr = {wbank, phase2[0][23:16]};        // second voice
+      wrom_addr = {wbank, phase2[pc_ch][23:16]};        // second voice
     else
-      wrom_addr = {wbank, phase[0][23:16]};         // main voice
+      wrom_addr = {wbank, phase[pc_ch][23:16]};         // main voice
   end
   always_ff @(posedge clk)
     wq <= wrom[wrom_addr];
@@ -1216,17 +1186,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
     if (prun && snd_wt[pc_ch] && playing[pc_ch]) begin
       if (pst == 2'd0) begin
         syn_rd   = 1'b1;
-        syn_addr = snd_wtb[pc_ch] + {7'b0, phase[0][23:18]};
+        syn_addr = snd_wtb[pc_ch] + {7'b0, phase[pc_ch][23:18]};
       end else if (pst == 2'd1 && v2_on) begin
         syn_rd   = 1'b1;
-        syn_addr = snd_wtb[pc_ch] + {7'b0, phase2[0][23:18]};
+        syn_addr = snd_wtb[pc_ch] + {7'b0, phase2[pc_ch][23:18]};
       end
     end
   end
 
   // ---- waveform selection (head of the ring = this channel) ----------
   // BUZZ square/pulse: shifted duty straight from the phase counter
-  wire [7:0] mph = phase[0][23:16];
+  wire [7:0] mph = phase[pc_ch][23:16];
   wire signed [7:0] buzzsq =
       (snd_wave[pc_ch] == 3'd3) ? (mph < 8'd102 ? 8'sd63 : -8'sd63)   // ~40%
                                 : (mph < 8'd65  ? 8'sd63 : -8'sd63);  // ~25%
@@ -1241,7 +1211,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   // nz_hold * nz_gain[key] / 256, saturated. The gain runs 87/256 at the
   // bottom of the range to 222/256 at the top; it used to be a flat 192/256
   // (0.75), which made low-pitched noise about twice as loud as PICO-8's.
-  wire signed [15:0] nz_mul = $signed(nz_hold[0])
+  wire signed [15:0] nz_mul = $signed(nz_hold[pc_ch])
                             * $signed({1'b0, nz_gain[snd_pitch[pc_ch]]});
   wire signed [7:0] nz_scaled =
       (nz_mul >>> 8) > 16'sd127  ?  8'sd127 :
@@ -1251,7 +1221,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   always_comb begin
     case (snd_wave[pc_ch])
       3'd6: samp = (ch_buzz[pc_ch] && !ch_noiz[pc_ch])
-                     ? brown[0][12:5]                               // brown
+                     ? brown[pc_ch][12:5]                               // brown
                      : nz_scaled;
       // Phaser. The multiply MUST be done at full width: ph_sum is 11 bits and
       // so was the constant, so the product was evaluated modulo 2^11 and
@@ -1270,7 +1240,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   // DAMPEN: per-channel one-pole low-pass (Q8), shift by damp level
   wire signed [15:0] samp_q8 = signed'({samp, 8'b0});
   wire signed [15:0] lp_next =
-      lp[0] + ((samp_q8 - lp[0]) >>> ch_damp[pc_ch]);
+      lp[pc_ch] + ((samp_q8 - lp[pc_ch]) >>> ch_damp[pc_ch]);
   wire signed [7:0] samp_d = (ch_damp[pc_ch] == 0) ? samp : lp_next[15:8];
 
   // Sample x volume. This used to be an 8-iteration shift-add unit, to avoid
@@ -1375,23 +1345,24 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
             // noise independent of the pipeline's timing.
             lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
             if (playing[pc_ch]) begin
-              phase[0] <= phase[0] + einc;
+              phase[pc_ch] <= phase[pc_ch] + einc;
               if (v2_on)
-                phase2[0] <= phase2[0] + v2inc;
+                phase2[pc_ch] <= phase2[pc_ch] + v2inc;
               // noise: white every sample when NOIZ, else pitched S&H
-              if (ch_noiz[pc_ch] || phase[0][23:20] != nz_ph[0]) begin
-                nz_ph[0] <= phase[0][23:20];
-                nz_hold[0] <= $signed(lfsr[7:0]);
+              if (ch_noiz[pc_ch] || phase[pc_ch][23:20] != nz_ph[pc_ch]) begin
+                nz_ph[pc_ch] <= phase[pc_ch][23:20];
+                nz_hold[pc_ch] <= $signed(lfsr[7:0]);
               end
               // brown integrator (leaky low-pass of white) for BUZZ noise
-              brown[0] <= brown[0] - {{5{brown[0][12]}}, brown[0][12:5]}
-                                   + $signed({{5{lfsr[7]}}, lfsr[7:0]});
+              brown[pc_ch] <= brown[pc_ch]
+                            - {{5{brown[pc_ch][12]}}, brown[pc_ch][12:5]}
+                            + $signed({{5{lfsr[7]}}, lfsr[7:0]});
             end
             // a trigger asked for this channel's filter state to be reset
             if (clr_tog[pc_ch] != clr_ack[pc_ch]) begin
               clr_ack[pc_ch] <= clr_tog[pc_ch];
-              lp[0] <= 0;
-              brown[0] <= 0;
+              lp[pc_ch] <= 0;
+              brown[pc_ch] <= 0;
             end
             pst <= 2'd1;
           end
@@ -1409,25 +1380,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
             mx_damp <= ch_damp[pc_ch];
             pst <= 2'd3;
           end
-          2'd3: begin                    // accumulate and rotate the ring
+          2'd3: begin                    // accumulate, then next voice
             if (mx_play) begin
               mixacc <= mixacc + n_contrib;
               if (mx_rev > rev_max) rev_max <= mx_rev;
             end
-            phase[0]   <= phase[1];   phase[1]   <= phase[2];
-            phase[2]   <= phase[3];   phase[3]   <= phase[0];
-            phase2[0]  <= phase2[1];  phase2[1]  <= phase2[2];
-            phase2[2]  <= phase2[3];  phase2[3]  <= phase2[0];
-            nz_hold[0] <= nz_hold[1]; nz_hold[1] <= nz_hold[2];
-            nz_hold[2] <= nz_hold[3]; nz_hold[3] <= nz_hold[0];
-            nz_ph[0]   <= nz_ph[1];   nz_ph[1]   <= nz_ph[2];
-            nz_ph[2]   <= nz_ph[3];   nz_ph[3]   <= nz_ph[0];
-            brown[0]   <= brown[1];   brown[1]   <= brown[2];
-            brown[2]   <= brown[3];   brown[3]   <= brown[0];
-            lp[0]      <= lp[1];      lp[1]      <= lp[2];
-            lp[2]      <= lp[3];
-            // the dampen state rotates out updated
-            lp[3]      <= (mx_play && mx_damp != 0) ? mx_lp : lp[0];
+            // the dampen state is the only thing this stage writes back
+            if (mx_play && mx_damp != 0) lp[pc_ch] <= mx_lp;
             pst <= 2'd0;
             if (pc_ch == 2'd3) begin
               prun <= 0;

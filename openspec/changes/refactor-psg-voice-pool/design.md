@@ -103,17 +103,46 @@ the split matters:
   only for the voice currently being walked. 16 x 154 = 2464 bits: **one
   `SB_RAM40_4K`**, read at the start of a voice's visit and written back at the
   end.
-- **Control state, ~35 bits** - `playing`, `music_owned`, `launched`,
-  `trig_req`, `sfx_id`, `row`, `trg_row`, `trg_len`, `released`, `sav_*`.
-  These are addressed *randomly*: the CPU writes them by channel number, and
-  the music FSM loops over all of them at once (`trig_req != 0`, `ML_LD`,
-  `W_MUS`). They cannot come from a single working copy and stay in flops -
-  16 x 35 = 560, which is cheap.
+- **Control state, ~12 bits** - `playing`, `music_owned`, `launched`,
+  `trig_req` and the voice's channel tag. **The CPU never addresses a voice.**
+  Its register map is four channels (`addr[1:0]`), and voices are entirely
+  internal, so nothing outside needs to index sixteen of anything. What is left
+  is genuinely small:
 
-So sixteen voices cost about **2900 flops plus one BRAM** (38% of an HX8K),
-against 1344 flops for four voices today. More than the 2100 first estimated,
-because the randomly-addressed control state cannot go to BRAM, but still four
-times the polyphony for roughly twice the silicon.
+  - The four one-bit-per-voice sets are just 16-bit vectors. Allocation is
+    "find a clear bit in `playing`"; the music FSM's `trig_req != 0` and its
+    loops over owned voices are vector operations. 16 x 4 = **64 flops**.
+  - The channel tag is 16 x 2 = **32 flops**. An explicit `sfx(n, c)` has to
+    find the voice carrying tag c, but that happens once per CPU write with
+    thousands of clocks in hand, not once per sample.
+  - `trg_row` and `trg_len` are not per-voice at all. They are parameters of a
+    *pending request*, which the CPU addresses by channel, so four sets suffice
+    however many voices exist: 4 x 11 = **44 flops**.
+  - `sfx_id`, `row` and `released` go in the BRAM record with everything else.
+    They are read back through `$14-$17` for a channel, which is a single
+    indexed read, not a scan.
+  - `sav_sfx`/`sav_row`/`sav_valid` are deleted outright by section 5.
+
+So the corrected budget:
+
+| | flops |
+| --- | ---: |
+| per-sample state, 16 x 147 | 2352 |
+| voice set bits, 16 x 4 | 64 |
+| voice channel tags, 16 x 2 | 32 |
+| pending trigger params, 4 channels x 11 | 44 |
+| **total** | **2492 (32% of an HX8K)** |
+
+plus a BRAM record of 166 bits x 16 voices = 2656 bits, comfortably inside one
+`SB_RAM40_4K`. Against 1344 flops for four voices today, that is four times the
+polyphony for well under twice the silicon.
+
+An earlier draft of this section put the total at ~2900 flops by assuming the
+control state had to be randomly addressable at voice granularity. It does not:
+that only looked necessary while thinking of voices as channels. Keeping the
+distinction sharp - **the CPU addresses channels, the PSG addresses voices** -
+is what makes the pool cheap, and it is the same distinction that makes
+`sfx(n,-1)` safe.
 
 The refactor falls out of the existing structure. The rotated arrays are
 already a working copy - index 0 *is* the voice being walked, and the rotation
