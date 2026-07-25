@@ -299,6 +299,17 @@ module cpu6502_core (
 
     // ---- sequencer ----------------------------------------------------
 
+    // PC control. In every arm of the sequencer that moves PC, the new PC is
+    // the address bus plus one - because this core always drives AB with the
+    // address it is about to consume, and PC trails it. Verified over all 16
+    // arms that touch PC. So instead of ~20 arms each muxing a 16-bit
+    // expression into `pc_n`, an arm says only *whether* PC moves, and one
+    // incrementer does the work.
+    //
+    // BRK's decode cycle is the single exception: it advances PC while AB goes
+    // to the stack, so it asks for the increment to come from PC instead.
+    logic        pc_upd;      // PC moves this cycle
+    logic        pc_from_pc;  // ... incrementing PC rather than the address bus
     logic        commit;      // write the ALU result and flags this cycle
     logic [15:0] ea;          // effective address, once fully assembled
     logic        ea_go;       // ... and it is ready this cycle
@@ -310,8 +321,9 @@ module cpu6502_core (
     wire [15:0] brk_pc = pc + 16'd1;   // BRK pushes the byte after its signature
 
     always_comb begin
-        st_n      = st;
-        pc_n      = pc;
+        st_n       = st;
+        pc_upd     = 1'b0;
+        pc_from_pc = 1'b0;
         a_n       = a;  x_n = x;  y_n = y;  s_n = s;
         fn_n     = fn; fv_n = fv; fd_n = fd;
         fi_n     = fi;  fz_n = fz; fc_n = fc;
@@ -338,7 +350,7 @@ module cpu6502_core (
         S_RST1: begin adl_n = di_eff; ab_c = 16'hFFFD; st_n = S_RST2; end
         S_RST2: begin
             ab_c = {di_eff, adl};
-            pc_n = {di_eff, adl} + 16'd1;
+            pc_upd = 1'b1;
             st_n = S_DECODE;
         end
 
@@ -354,19 +366,19 @@ module cpu6502_core (
                 AM_IMP, AM_ACC: begin
                     ab_c = pc; st_n = S_IMP;
                 end
-                AM_IMM:  begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_EXEC;  end
-                AM_ZP:   begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_ZP;    end
+                AM_IMM:  begin ab_c = pc; pc_upd = 1'b1; st_n = S_EXEC;  end
+                AM_ZP:   begin ab_c = pc; pc_upd = 1'b1; st_n = S_ZP;    end
                 AM_ZPX,
-                AM_ZPY:  begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_ZPI;   end
+                AM_ZPY:  begin ab_c = pc; pc_upd = 1'b1; st_n = S_ZPI;   end
                 AM_ABS,
                 AM_JMPA,
-                AM_JMPI: begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_ABS0;  end
+                AM_JMPI: begin ab_c = pc; pc_upd = 1'b1; st_n = S_ABS0;  end
                 AM_ABSX,
-                AM_ABSY: begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_ABSI0; end
-                AM_INDX: begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_INDX0; end
-                AM_INDY: begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_INDY0; end
-                AM_REL:  begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_BRANCH; end
-                AM_JSR:  begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_JSR0;  end
+                AM_ABSY: begin ab_c = pc; pc_upd = 1'b1; st_n = S_ABSI0; end
+                AM_INDX: begin ab_c = pc; pc_upd = 1'b1; st_n = S_INDX0; end
+                AM_INDY: begin ab_c = pc; pc_upd = 1'b1; st_n = S_INDY0; end
+                AM_REL:  begin ab_c = pc; pc_upd = 1'b1; st_n = S_BRANCH; end
+                AM_JSR:  begin ab_c = pc; pc_upd = 1'b1; st_n = S_JSR0;  end
 
                 AM_PUSH: begin
                     ab_c = {8'h01, s}; we_c = 1'b1; do_c = push_val;
@@ -382,7 +394,7 @@ module cpu6502_core (
                     ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1; st_n = S_RTI0;
                 end
                 AM_BRK:  begin
-                    pc_n = brk_pc;              // skip the signature byte
+                    pc_upd = 1'b1; pc_from_pc = 1'b1;              // skip the signature byte
                     ab_c = {8'h01, s}; we_c = 1'b1; do_c = brk_pc[15:8];
                     s_n = s - 8'd1; st_n = S_BRK0;
                 end
@@ -394,7 +406,7 @@ module cpu6502_core (
                     trap_ir_n  = di_eff;
                     trap_pc_n  = pc - 16'd1;
                     trapped_n  = 1'b1;
-                    ab_c = pc; pc_n = pc + 16'd1; st_n = S_DECODE;
+                    ab_c = pc; pc_upd = 1'b1; st_n = S_DECODE;
                 end
             endcase
         end
@@ -403,10 +415,10 @@ module cpu6502_core (
         S_ZP:  begin ea = {8'h00, di_eff};       ea_go = 1'b1; end
         S_ZPI: begin ea = {8'h00, di_eff + idx}; ea_go = 1'b1; end
 
-        S_ABS0: begin adl_n = di_eff; ab_c = pc; pc_n = pc + 16'd1; st_n = S_ABS1; end
+        S_ABS0: begin adl_n = di_eff; ab_c = pc; pc_upd = 1'b1; st_n = S_ABS1; end
         S_ABS1: begin
             if (dec_r.am == AM_JMPA) begin
-                ab_c = {di_eff, adl}; pc_n = {di_eff, adl} + 16'd1; st_n = S_DECODE;
+                ab_c = {di_eff, adl}; pc_upd = 1'b1; st_n = S_DECODE;
             end else if (dec_r.am == AM_JMPI) begin
                 ab_c = {di_eff, adl}; adr_n = {di_eff, adl}; st_n = S_JMPI0;
             end else begin
@@ -416,7 +428,7 @@ module cpu6502_core (
 
         S_ABSI0: begin
             {cy_n, adl_n} = {1'b0, di_eff} + {1'b0, idx};
-            ab_c = pc; pc_n = pc + 16'd1; st_n = S_ABSI1;
+            ab_c = pc; pc_upd = 1'b1; st_n = S_ABSI1;
         end
         S_ABSI1: begin ea = {di_eff + {7'b0, cy}, adl}; ea_go = 1'b1; end
 
@@ -436,26 +448,26 @@ module cpu6502_core (
         // docs/cpu-core.md.
         S_JMPI0: begin adl_n = di_eff; ab_c = adr + 16'd1; st_n = S_JMPI1; end
         S_JMPI1: begin
-            ab_c = {di_eff, adl}; pc_n = {di_eff, adl} + 16'd1; st_n = S_DECODE;
+            ab_c = {di_eff, adl}; pc_upd = 1'b1; st_n = S_DECODE;
         end
 
         // ---- execute ----
         S_EXEC: begin
             commit = 1'b1;
-            ab_c = pc; pc_n = pc + 16'd1; st_n = S_DECODE;
+            ab_c = pc; pc_upd = 1'b1; st_n = S_DECODE;
         end
         S_RMW: begin
             commit = 1'b1;                       // flags only: dst is D_MEM
             ab_c = adr; we_c = 1'b1; do_c = alu_r;
             st_n = S_LAST;
         end
-        S_LAST: begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_DECODE; end
+        S_LAST: begin ab_c = pc; pc_upd = 1'b1; st_n = S_DECODE; end
 
         // Implied and accumulator instructions, one cycle after their opcode
         // arrived. Every ALU input here comes from a register.
         S_IMP: begin
             commit = 1'b1;
-            ab_c = pc; pc_n = pc + 16'd1; st_n = S_DECODE;
+            ab_c = pc; pc_upd = 1'b1; st_n = S_DECODE;
         end
 
         S_PULL: begin
@@ -465,16 +477,16 @@ module cpu6502_core (
             end else begin
                 commit = 1'b1;
             end
-            ab_c = pc; pc_n = pc + 16'd1; st_n = S_DECODE;
+            ab_c = pc; pc_upd = 1'b1; st_n = S_DECODE;
         end
 
         // ---- branches: 2 cycles whether taken or not, no page penalty ----
         S_BRANCH: begin
             if (cond) begin
                 ab_c = pc + {{8{di_eff[7]}}, di_eff};
-                pc_n = pc + {{8{di_eff[7]}}, di_eff} + 16'd1;
+                pc_upd = 1'b1;
             end else begin
-                ab_c = pc; pc_n = pc + 16'd1;
+                ab_c = pc; pc_upd = 1'b1;
             end
             st_n = S_DECODE;
         end
@@ -489,9 +501,9 @@ module cpu6502_core (
             ab_c = {8'h01, s}; we_c = 1'b1; do_c = pc[7:0];
             s_n = s - 8'd1; st_n = S_JSR2;
         end
-        S_JSR2: begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_JSR3; end
+        S_JSR2: begin ab_c = pc; pc_upd = 1'b1; st_n = S_JSR3; end
         S_JSR3: begin
-            ab_c = {di_eff, adl}; pc_n = {di_eff, adl} + 16'd1; st_n = S_DECODE;
+            ab_c = {di_eff, adl}; pc_upd = 1'b1; st_n = S_DECODE;
         end
 
         S_RTS0: begin
@@ -499,7 +511,7 @@ module cpu6502_core (
         end
         S_RTS1: begin
             ab_c = {di_eff, adl} + 16'd1;
-            pc_n = {di_eff, adl} + 16'd2;
+            pc_upd = 1'b1;
             st_n = S_DECODE;
         end
 
@@ -512,7 +524,7 @@ module cpu6502_core (
             adl_n = di_eff; ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1; st_n = S_RTI2;
         end
         S_RTI2: begin
-            ab_c = {di_eff, adl}; pc_n = {di_eff, adl} + 16'd1; st_n = S_DECODE;
+            ab_c = {di_eff, adl}; pc_upd = 1'b1; st_n = S_DECODE;
         end
 
         S_BRK0: begin
@@ -526,7 +538,7 @@ module cpu6502_core (
         S_BRK2: begin ab_c = 16'hFFFE; st_n = S_BRK3; end
         S_BRK3: begin adl_n = di_eff; ab_c = 16'hFFFF; st_n = S_BRK4; end
         S_BRK4: begin
-            ab_c = {di_eff, adl}; pc_n = {di_eff, adl} + 16'd1; st_n = S_DECODE;
+            ab_c = {di_eff, adl}; pc_upd = 1'b1; st_n = S_DECODE;
         end
 
         default: begin ab_c = pc; st_n = S_DECODE; end
@@ -546,6 +558,11 @@ module cpu6502_core (
                 if (is_rmw) st_n = S_RMW; else st_n = S_EXEC;
             end
         end
+
+        // One incrementer and a 2:1 mux, in place of the twenty-arm 16-bit mux
+        // this used to be. Placed after the shared operand-access block, since
+        // that block is the last thing that can move `ab_c`.
+        pc_n = pc_upd ? ((pc_from_pc ? pc : ab_c) + 16'd1) : pc;
 
         if (commit) begin
             case (dec_r.dst)
