@@ -9,20 +9,30 @@
     "target_freq_status": "aspirational: rtl/pll.v is generated for 50 MHz but rtl/top.sv never instantiates it, so the board runs the raw 25 MHz pin"
   },
   "whole_chip": {
-    "status": "unbuildable",
-    "reason": "ram_async #(.A(16)) infers a 64 KB on-chip memory; hx8k has 32 x 4 kbit BRAM = 16 KB total. yosys cannot map it, falls back to logic and emits 1,727,271 AND gates / 4,954,853 wires, then never finishes ABC9.",
-    "bram_required_bits_approx": 640000,
-    "bram_available_bits": 131072,
+    "status": "synthesises, does not fit",
+    "measured": "2026-07-25, after the PPU agent guarded ram_async's $display dumps behind `ifdef VERILATOR` (a $display reading mem[] is an async read port to yosys, which blocked BRAM inference) and temporarily shrank the main RAM to 8 KB via RAM_ADDR_BITS=13",
+    "yosys": "completes in 45 s and emits 7,869 SB_LUT4 and 48 SB_RAM40_4K",
+    "nextpnr": "FAILS: ICESTORM_LC 10731/7680 (139%), ICESTORM_RAM 48/32 (150%)",
+    "attribution_lut4": {
+      "chip.psg0": 5044,
+      "chip.s0 (ppu)": 1789,
+      "chip.cpu0": 720,
+      "chip.dma": 45,
+      "chip.ram": 37,
+      "chip.arbiter": 27,
+      "other": 207
+    },
+    "attribution_bram": {
+      "chip.psg0": 16,
+      "chip.s0 (ppu)": 16,
+      "chip.ram": 16
+    },
+    "reading": "The CPU is 720 of 7,869 LUT4 - 9% of the design. The PSG is 5,044, or 64%. Removing the main RAM's 16 blocks (add-memory-subsystem) brings BRAM to exactly 32/32; logic would still be 139% over. Logic, not memory, is the harder capacity problem, and the CPU is not where it lives.",
     "blocked_gates": [
       "T4 critical path relocated",
-      "T5 Fmax",
-      "T8 area"
+      "T5 whole-chip Fmax"
     ],
-    "blocked_tasks": [
-      "2.1",
-      "2.3 (whole-chip part)",
-      "2.5"
-    ]
+    "note_t8": "T8 asked whether the CPU's area crowds out the remaining ISA slices. At 9% of the design it does not; the question is whether anything fits at all."
   },
   "core_only": {
     "harness": "rtl/cpu_fmax_top.sv: one core plus a 2 KB synchronous-read RAM with ram_async's timing. No memory arbiter, so a difference between runs is a difference between cores.",
