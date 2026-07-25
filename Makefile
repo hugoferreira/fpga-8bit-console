@@ -543,6 +543,19 @@ $(SST_BIN): tools/65x02/harness.cpp $(SST_SRC)
 	    --exe $(abspath tools/65x02/harness.cpp) -o harness --build -j 8 \
 	    -Mdir build/obj_65x02 -CFLAGS "-O2"
 
+# docs/opcodes.md is the ISA programme's registry and the thing gate G2 checks
+# against. Generated from the decode table so it cannot claim an instruction the
+# hardware does not have; the allocation policy lives in the generator.
+opcodes:
+	python3 tools/65x02/gen_opcodes_md.py
+
+# Cost a 6502 idiom on this core and on NMOS, so gate G4 can be re-scored. The
+# slices were written against NMOS timing and this core is cheaper in places.
+#   make isa-seq SEQ="lda zp ; sta zp"
+SEQ ?= lda zp ; sta zp
+isa-seq:
+	@python3 tools/65x02/isa_seq.py "$(SEQ)"
+
 # The decode table and the opcode registry must agree before any result from
 # the harness means anything (task 3.2).
 check-decode:
@@ -589,7 +602,7 @@ build/$(GAME).lst: $(GAME_SRC) $(GAME_DEPS)
 	$(CUSTOMASM) $(GAME_SRC) -t 10 --color=off --legacy=off \
 	    -f annotated -o $(abspath build/$(GAME).lst)
 
-.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi cpu-fmax test-functional cpu-bandwidth
+.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi cpu-fmax test-functional cpu-bandwidth opcodes isa-seq
 
 # ------------------------------------------------------------------------------
 # Per-subsystem synthesis targets (openspec/changes/refactor-build-targets)

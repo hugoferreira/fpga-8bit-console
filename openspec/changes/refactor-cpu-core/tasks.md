@@ -314,14 +314,36 @@ Repairs made on the way through, all of which were pre-existing:
 - [ ] 7.2 Add `refactor-cpu-core` to the roadmap table in
       `openspec/changes/add-isa-ergonomic-gates/design.md` at position 2 and
       renumber the slices after it
-- [ ] 7.3 Re-derive the "Was" cycle columns in the `design.md` of
+- [~] 7.3 Re-derive the "Was" cycle columns in the `design.md` of
       `add-isa-core-ergonomics`, `add-isa-test-and-branch`, `add-isa-word-ops`,
-      `add-isa-pointer-ops` and `add-isa-frame-pointer` against the frozen table
+      `add-isa-pointer-ops` and `add-isa-frame-pointer` against the frozen table.
+      **Tool built and the answer measured** (`make isa-seq`,
+      `tools/65x02/isa_seq.py`). The slices split cleanly:
+
+      | idiom | now | NMOS | |
+      | --- | --- | --- | --- |
+      | `lda #/sta zp`, `lda zp/sta zp`, `clc/adc zp` | 5,6,5 | 5,6,5 | unchanged |
+      | `lda zp/cmp #/bne` | 7.00 | 7.63 | −0.63 |
+      | `inc zp/bne` | 6.00 | 7.63 | −1.63 |
+      | `pha/…/pla` | 9.00 | 12.00 | **−3.00** |
+      | `jsr/rts` | 8.00 | 12.00 | **−4.00** |
+
+      So **slice 3 (`add-isa-core-ergonomics`) is unaffected** — its whole case
+      is `lda`/`sta`/`clc`/`adc`, which sit at the bus floor on both cores.
+      Slices 4-7 all lose margin, and slice 7 loses most: this core already
+      removed a third of the cost of a call and half the cost of a push/pull,
+      which is a large part of what a frame pointer was going to buy. Each
+      slice's own `design.md` still needs its table restated - that is the
+      remainder of this task
 - [ ] 7.4 Write `docs/cpu-core.md`: the pipeline structure, what each register
       holds, the stall rule, the decode-table format and how a slice adds a row,
       the flag mask with reasons, and the cycle accounting
-- [ ] 7.5 Record in `docs/opcodes.md` that the 105 undefined slots trap, and that
-      the reservation policy still governs which a slice may claim
+- [x] 7.5 Record in `docs/opcodes.md` that the 105 undefined slots trap, and that
+      the reservation policy still governs which a slice may claim.
+      `docs/opcodes.md` now exists and is generated (`make opcodes`): 151
+      implemented, 58 reserved for 65C02 compatibility, 33 extension slots
+      assigned, 14 unallocated. The generator fails on a policy conflict rather
+      than emitting a registry that contradicts the hardware
 - [ ] 7.6 Decide the open question on generating both the customasm `#ruledef` and
       the decode table from `docs/opcodes.md`; if adopted, raise it as its own
       change rather than expanding this one
