@@ -13,8 +13,16 @@
     "reason": "ram_async #(.A(16)) infers a 64 KB on-chip memory; hx8k has 32 x 4 kbit BRAM = 16 KB total. yosys cannot map it, falls back to logic and emits 1,727,271 AND gates / 4,954,853 wires, then never finishes ABC9.",
     "bram_required_bits_approx": 640000,
     "bram_available_bits": 131072,
-    "blocked_gates": ["T4 critical path relocated", "T5 Fmax", "T8 area"],
-    "blocked_tasks": ["2.1", "2.3 (whole-chip part)", "2.5"]
+    "blocked_gates": [
+      "T4 critical path relocated",
+      "T5 Fmax",
+      "T8 area"
+    ],
+    "blocked_tasks": [
+      "2.1",
+      "2.3 (whole-chip part)",
+      "2.5"
+    ]
   },
   "core_only": {
     "harness": "rtl/cpu_fmax_top.sv: one core plus a 2 KB synchronous-read RAM with ram_async's timing. No memory arbiter, so a difference between runs is a difference between cores.",
@@ -24,30 +32,43 @@
       "icestorm_lc": 818,
       "icestorm_ram": 4,
       "critical_path": "starts at a registered decode signal (V) -> store -> write_back -> inc -> index_y -> dst_reg -> regfile -> ALU half-carry -> PC. 11.75 ns logic.",
-      "critical_path_starts_at_memory": false
+      "critical_path_starts_at_memory": false,
+      "fmax_mhz_seeds": [
+        54.71,
+        52.66,
+        51.65
+      ],
+      "fmax_mhz_mean": 53.01
     },
     "v2": {
-      "fmax_mhz": 37.94,
-      "icestorm_lc": 1323,
+      "fmax_mhz": 50.18,
+      "icestorm_lc": 1378,
       "icestorm_ram": 4,
-      "critical_path": "starts at the BRAM read data: RDATA -> di -> combinational decode (ir) -> flag/ALU select -> store data -> carry chain -> C flag. 14.12 ns logic.",
-      "critical_path_starts_at_memory": true
-    }
+      "critical_path": "after phase 4: starts at the memory read data but ends at the state register - RDATA -> di -> decode table -> next state. The ALU and flag paths now start at the registered decode row, not at DI.",
+      "critical_path_starts_at_memory": true,
+      "fmax_mhz_seeds": [
+        50.79,
+        50.01,
+        49.75
+      ],
+      "fmax_mhz_mean": 50.18
+    },
+    "note_seeds": "Fmax varies with the placement seed; three seeds are reported so a 2% difference is not read as a result."
   },
   "throughput": {
-    "note": "static mean CPI over Breakout's 1,928 instructions, from docs/cpu-timing-*.json",
+    "note": "static mean CPI over Breakout's 1,928 instructions",
     "arlet_cpi": 3.0334,
-    "v2_cpi": 2.6234,
+    "v2_cpi": 2.7552,
     "at_board_clock_25mhz": {
       "both_meet_timing": true,
       "arlet_minsn_per_s": 8.24,
-      "v2_minsn_per_s": 9.53,
-      "v2_advantage_pct": 15.6
+      "v2_minsn_per_s": 9.07,
+      "v2_advantage_pct": 10.1
     },
     "at_each_core_own_fmax": {
-      "arlet_minsn_per_s": 16.81,
-      "v2_minsn_per_s": 14.46,
-      "v2_advantage_pct": -14.0
+      "arlet_minsn_per_s": 17.48,
+      "v2_minsn_per_s": 18.21,
+      "v2_advantage_pct": 4.2
     }
   },
   "other_clock_consumers": {
@@ -59,5 +80,15 @@
   "psg_register_reads": {
     "side_effects": false,
     "evidence": "rtl/psg.sv CPU-interface block only assigns dout; no register read alters sequencer or channel state. So the corpus's one indexed MMIO site (sta PSG_CH,y at src/main.asm:2479) is safe against a spurious read."
+  },
+  "phase4": {
+    "change": "registered the decode row (dec_r); implied/accumulator instructions moved to their own state; added a data-bus hold register so a stall cannot destroy a pending read",
+    "fmax_before_mhz": 37.94,
+    "fmax_after_mhz": 50.18,
+    "fmax_gain_pct": 32.3,
+    "static_cpi_before": 2.6234,
+    "static_cpi_after": 2.7552,
+    "t1_full_sweep": "1510000/1510000 pass",
+    "t7_full_sweep": "1510000/1510000 pass with 5,470,098 stall cycles injected"
   }
 }

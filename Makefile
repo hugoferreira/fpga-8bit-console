@@ -529,8 +529,12 @@ TIER3       ?=
 # the target red, so a NEW failure is not lost in a permanently broken gate.
 # The new core starts with an empty list and is expected to keep it empty.
 SST_KNOWN   ?= $(if $(filter v2,$(SST_CORE)),,00)
+# STALL=N drops RDY for 1..3 cycles, one chance in N per cycle, and requires
+# every case to come out identical (gate T7).
+STALL       ?=
 SST_FLAGS    = --fixture $(SST_FIXTURE) --cases $(CASES) \
                $(if $(OPCODE),--opcode $(OPCODE),) $(if $(TIER3),--tier3,) \
+               $(if $(STALL),--stall $(STALL),) \
                $(if $(SST_KNOWN),--known-failures $(SST_KNOWN),)
 
 $(SST_CACHE)/6502/v1/ff.json:

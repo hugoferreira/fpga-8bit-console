@@ -158,19 +158,72 @@ testbench, and integration. `rtl/cpu6502_wrapper.sv` still points at Arlet.
 
 ## 4. Pipeline it
 
-- [ ] 4.1 Design the global stall first, not last: a single `stall` term gating
+- [x] 4.1 Design the global stall first, not last: a single `stall` term gating
       every state element including the write path, with a documented rule for what
-      each register holds while stalled
-- [ ] 4.2 Register the decode: latch the opcode and its decoded control signals, so
-      no 256-way decode hangs off a memory output
-- [ ] 4.3 Re-run the full sweep unchanged (**gate T1**) — this is the payoff of
-      building the net first
-- [ ] 4.4 Regenerate `docs/cpu-timing.json` and confirm CPI is still ≤ 3.08, or
-      that T6 covers the difference in wall-clock terms
-- [ ] 4.5 Write `rtl/cpu6502_stall_tb.sv`: drop `RDY` for 1..3 cycles in each
-      reachable state and assert execution matches the unstalled run (**gate T7**)
+      each register holds while stalled. **Done, and it found a real defect**:
+      the RAM's read port keeps clocking while the CPU is held, so the byte
+      answering the pending request is overwritten by the answer to the address
+      the stalled core is still presenting. Without a hold register, RDY
+      silently corrupts the instruction in flight — 22,537 of 30,200 cases
+      failed. `di_hold`/`di_held` latch DI on the first stalled cycle
+- [x] 4.2 Register the decode: latch the opcode and its decoded control signals, so
+      no 256-way decode hangs off a memory output. Split in two: `dec_c` is
+      combinational and used only in S_DECODE to pick the next state and the
+      register a push reads; `dec_r` is registered and feeds everything that
+      reaches the ALU, the flags or a store. Implied/accumulator instructions
+      moved to S_IMP and cost one more cycle. **Fmax 37.94 → 50.18 MHz, +32%**
+- [x] 4.3 Re-run the full sweep unchanged (**gate T1**) — this is the payoff of
+      building the net first. **1,510,000 / 1,510,000 pass**, unchanged
+- [x] 4.4 Regenerate `docs/cpu-timing.json` and confirm CPI is still ≤ 3.08, or
+      that T6 covers the difference in wall-clock terms. Static mean CPI
+      2.6234 → **2.7552**, still 9.2% inside the old core's 3.0334, and
+      wall-clock is ahead on both clocks (see the phase 4 result)
+- [x] 4.5 Write `rtl/cpu6502_stall_tb.sv`: drop `RDY` for 1..3 cycles in each
+      reachable state and assert execution matches the unstalled run (**gate T7**).
+      **Done as `make test-65x02 STALL=N` rather than a directed testbench.**
+      Dropping RDY for 1..3 cycles at a pseudo-random 1-in-N rate across the
+      whole 65x02 sweep reaches every state the suite reaches and checks the
+      full architectural result of each, not just that execution "matches":
+      **1,510,000 / 1,510,000 pass with 5,470,098 stall cycles injected**, and
+      `WE` asserted while `RDY` is low is itself a failure. A directed
+      testbench over 50 states could not have covered as much
+
+### Phase 4 result
+
+Registering the decode was the measured fix and it delivered: **Fmax 37.94 →
+50.18 MHz, +32%** (mean of three placement seeds), for 0.13 cycles of static CPI.
+The remaining path is `memory → decode table → next state`; the ALU and flag
+paths now start at a flop.
+
+Against the core being replaced: 50.18 vs 53.01 MHz Fmax (−5%), 2.7552 vs 3.0334
+static CPI (−9.2%), which is **+4.2% instructions per second at each core's own
+Fmax and +10.1% at the board's actual 25 MHz**. Area is the remaining
+regression: 1378 vs 818 logic cells (+68%), which the BRAM-ROM idea in phase 2's
+notes would address if T8 ever binds.
+
+Gate T7 is met, and getting there found a real defect that a directed testbench
+would have been unlikely to reach — see task 4.1.
 
 ## 5. Interrupts
+
+> **Note, before anyone starts here.** Two things changed under this section.
+>
+> 1. **`add-memory-subsystem` makes the interrupt path harder to get right, and
+>    should probably land first.** External memory means row misses and refresh
+>    stall the CPU, so an interrupt can now arrive while the core is held. The
+>    entry sequence has to be correct across a stall, not just in isolation.
+>    Gate T7 already covers stalls for ordinary instructions
+>    (`make test-65x02 STALL=3`), but the suite contains no interrupt cases at
+>    all, so nothing extends that evidence to the entry sequence.
+> 2. **The harness can carry most of this.** `--stall` showed that driving a pin
+>    across the whole 65x02 sweep finds what directed tests miss. The same trick
+>    applies: assert `IRQ`/`NMI` pseudo-randomly and require that the *only*
+>    difference from the unstalled run is a well-formed interrupt entry — vectors
+>    fetched, `P` pushed with `B` clear, `I` set, `PC` correct. That is a much
+>    stronger T3 than a directed testbench, and it reuses machinery that exists.
+>
+> The core accepts `IRQ` and `NMI` today and ignores them
+> (`rtl/cpu6502_core.sv`, the `_unused` wire). Nothing is half-done.
 
 - [ ] 5.1 Write `rtl/cpu6502_irq_tb.sv` covering `IRQ`/`NMI` entry, relative
       priority, `I`-flag masking, vector fetch, the `BRK`-vs-hardware `B`-flag

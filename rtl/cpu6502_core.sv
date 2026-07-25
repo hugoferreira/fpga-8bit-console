@@ -70,10 +70,39 @@ module cpu6502_core (
     output logic [15:0] dbg_trap_pc
 );
 
+    // ---- holding the data bus across a stall -------------------------
+    //
+    // The RAM's read port is registered and keeps clocking while the CPU is
+    // stalled, so the byte answering the request issued one cycle ago is on DI
+    // for exactly one cycle and is then overwritten by the answer to the
+    // address the stalled core is still presenting. Without capturing it, RDY
+    // silently corrupts the instruction in flight - which the 65x02 suite with
+    // --stall demonstrates in 75% of cases.
+    //
+    // So: latch DI on the first stalled cycle, when it is still valid, and use
+    // the latched copy for the rest of the stall and for the cycle that
+    // resumes. This is gate T7's requirement that every access happen exactly
+    // once, in order.
+    logic [7:0] di_hold;
+    logic       di_held;
+    wire  [7:0] di_eff = di_held ? di_hold : DI;
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            di_held <= 1'b0;
+            di_hold <= 8'h00;
+        end else if (!RDY && !di_held) begin
+            di_hold <= DI;          // still the answer to the pending request
+            di_held <= 1'b1;
+        end else if (RDY) begin
+            di_held <= 1'b0;
+        end
+    end
+
     typedef enum logic [5:0] {
         S_RST0, S_RST1, S_RST2,
         S_DECODE,
-        S_EXEC, S_RMW, S_LAST,
+        S_EXEC, S_RMW, S_LAST, S_IMP,
         S_ZP, S_ZPI,
         S_ABS0, S_ABS1,
         S_ABSI0, S_ABSI1,
@@ -84,8 +113,7 @@ module cpu6502_core (
         S_RTS0, S_RTS1,
         S_RTI0, S_RTI1, S_RTI2,
         S_BRK0, S_BRK1, S_BRK2, S_BRK3, S_BRK4,
-        S_JMPI0, S_JMPI1,
-        S_TRAP
+        S_JMPI0, S_JMPI1
     } state_t;
 
     // ---- architectural state ----
@@ -101,27 +129,40 @@ module cpu6502_core (
     logic [7:0]  zpa, zpa_n;    // zero-page pointer address, for (zp,X)/(zp),Y
     logic        cy, cy_n;      // carry out of the index add
     logic [15:0] adr, adr_n;    // effective address, held for an RMW writeback
+    logic        trapped, trapped_n;
     logic [7:0]  trap_ir, trap_ir_n;
     logic [15:0] trap_pc, trap_pc_n;
 
     // ---- decode ----
-    // In S_DECODE the opcode is on DI and has not been registered yet; every
-    // other state works from the registered IR. This is the one unregistered
-    // decode in the core, and it is what phase 4 of refactor-cpu-core moves
-    // behind a flop.
-    logic [7:0] dec_in;
-    dec_t       dec;
-    assign dec_in = (st == S_DECODE) ? DI : ir;
-    cpu6502_decode u_dec (.ir(dec_in), .d(dec));
+    //
+    // Phase 2 measured the critical path of the previous arrangement: it began
+    // at the memory read data and ran di_eff -> combinational decode -> ALU select
+    // -> carry chain -> C flag, 14.12 ns of logic, and cost 13 MHz against the
+    // core it replaced. The decode is now split in two.
+    //
+    //   dec_c  combinational decode of the byte arriving right now. Used ONLY
+    //          in S_DECODE, and only to pick the next state and the register a
+    //          push reads. Shallow: di_eff -> table -> a state mux.
+    //   dec_r  the same row, registered. Everything that reaches the ALU, the
+    //          flags or a store uses this, so those paths start at a flop.
+    //
+    // The price is that an implied instruction can no longer execute in the
+    // cycle its opcode arrives, because its ALU control is not registered yet.
+    // It gets S_IMP, and goes from 1 cycle to 2 - the same as NMOS. Measured
+    // over the corpus that is 13.2% of instructions and moves static CPI from
+    // 2.6234 to 2.7552, still well inside the 3.0334 of the core being replaced.
+    dec_t dec_c;
+    dec_t dec_r, dec_r_n;
+    cpu6502_decode u_dec (.ir(di_eff), .d(dec_c));
 
-    wire is_store = (dec.dst == D_MEM) && (dec.op == OP_PASS);
-    wire is_rmw   = (dec.dst == D_MEM) && (dec.op != OP_PASS);
+    wire is_store = (dec_r.dst == D_MEM) && (dec_r.op == OP_PASS);
+    wire is_rmw   = (dec_r.dst == D_MEM) && (dec_r.op != OP_PASS);
 
     wire [7:0] p_byte = {fn, fv, 2'b11, fd, fi, fz, fc};
 
     logic [7:0] ra_val;
     always_comb begin
-        case (dec.ra)
+        case (dec_r.ra)
             R_A:     ra_val = a;
             R_X:     ra_val = x;
             R_Y:     ra_val = y;
@@ -132,7 +173,7 @@ module cpu6502_core (
     end
 
     // The index register for an indexed mode.
-    wire [7:0] idx = (dec.am == AM_ZPY || dec.am == AM_ABSY) ? y : x;
+    wire [7:0] idx = (dec_r.am == AM_ZPY || dec_r.am == AM_ABSY) ? y : x;
 
     // ---- ALU ----------------------------------------------------------
     //
@@ -142,7 +183,7 @@ module cpu6502_core (
     // the binary result - not as adders hanging off an already-flopped sum.
 
     logic [7:0] opb;
-    assign opb = (st == S_DECODE) ? ra_val : DI;
+    assign opb = (st == S_IMP) ? ra_val : di_eff;
 
     logic [7:0] alu_r;
     logic       alu_n, alu_v, alu_z, alu_c, alu_i, alu_d;
@@ -177,7 +218,7 @@ module cpu6502_core (
         alu_i = fi;
         alu_d = fd;
 
-        case (dec.op)
+        case (dec_r.op)
             OP_ORA: begin alu_r = ra_val | opb; alu_n = alu_r[7]; alu_z = (alu_r == 0); end
             OP_AND: begin alu_r = ra_val & opb; alu_n = alu_r[7]; alu_z = (alu_r == 0); end
             OP_EOR: begin alu_r = ra_val ^ opb; alu_n = alu_r[7]; alu_z = (alu_r == 0); end
@@ -265,6 +306,7 @@ module cpu6502_core (
     logic [7:0]  do_c;
     logic        we_c;
 
+    wire [7:0]  push_val = (dec_c.ra == R_P) ? p_byte : a;
     wire [15:0] brk_pc = pc + 16'd1;   // BRK pushes the byte after its signature
 
     always_comb begin
@@ -280,6 +322,8 @@ module cpu6502_core (
         adr_n     = adr;
         trap_ir_n = trap_ir;
         trap_pc_n = trap_pc;
+        trapped_n = trapped;
+        dec_r_n   = dec_r;
 
         ab_c   = pc;
         do_c   = 8'h00;
@@ -291,20 +335,24 @@ module cpu6502_core (
         case (st)
         // ---- reset: read the vector, start executing. No stack traffic. ----
         S_RST0: begin ab_c = 16'hFFFC; st_n = S_RST1; end
-        S_RST1: begin adl_n = DI; ab_c = 16'hFFFD; st_n = S_RST2; end
+        S_RST1: begin adl_n = di_eff; ab_c = 16'hFFFD; st_n = S_RST2; end
         S_RST2: begin
-            ab_c = {DI, adl};
-            pc_n = {DI, adl} + 16'd1;
+            ab_c = {di_eff, adl};
+            pc_n = {di_eff, adl} + 16'd1;
             st_n = S_DECODE;
         end
 
-        // ---- decode: DI is the opcode, PC already points past it ----
+        // ---- decode: di_eff is the opcode, PC already points past it ----
         S_DECODE: begin
-            ir_n = DI;
-            case (dec.am)
-                AM_IMP, AM_ACC: begin           // executes entirely here: 1 cycle
-                    commit = 1'b1;
-                    ab_c = pc; pc_n = pc + 16'd1; st_n = S_DECODE;
+            ir_n = di_eff;
+            dec_r_n = dec_c;
+            case (dec_c.am)
+                // Executes in S_IMP, one cycle later, so its ALU control comes
+                // from a flop. The opcode fetch is issued here and re-issued
+                // there: the same address twice, which costs nothing but a
+                // cycle and keeps the access footprint unchanged.
+                AM_IMP, AM_ACC: begin
+                    ab_c = pc; st_n = S_IMP;
                 end
                 AM_IMM:  begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_EXEC;  end
                 AM_ZP:   begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_ZP;    end
@@ -321,7 +369,7 @@ module cpu6502_core (
                 AM_JSR:  begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_JSR0;  end
 
                 AM_PUSH: begin
-                    ab_c = {8'h01, s}; we_c = 1'b1; do_c = ra_val;
+                    ab_c = {8'h01, s}; we_c = 1'b1; do_c = push_val;
                     s_n = s - 8'd1; st_n = S_LAST;
                 end
                 AM_PULL: begin
@@ -339,52 +387,56 @@ module cpu6502_core (
                     s_n = s - 8'd1; st_n = S_BRK0;
                 end
                 default: begin                  // AM_TRAP
-                    trap_ir_n = DI;
-                    trap_pc_n = pc - 16'd1;
-                    ab_c = pc;
-                    st_n = S_TRAP;
+                    // Inert, sticky and recoverable: the opcode and its address
+                    // are latched and dbg_trap stays asserted, but the core
+                    // continues as if the byte were a NOP. Halting here would
+                    // be an unrecoverable state, which the spec forbids.
+                    trap_ir_n  = di_eff;
+                    trap_pc_n  = pc - 16'd1;
+                    trapped_n  = 1'b1;
+                    ab_c = pc; pc_n = pc + 16'd1; st_n = S_DECODE;
                 end
             endcase
         end
 
         // ---- operand address assembly ----
-        S_ZP:  begin ea = {8'h00, DI};       ea_go = 1'b1; end
-        S_ZPI: begin ea = {8'h00, DI + idx}; ea_go = 1'b1; end
+        S_ZP:  begin ea = {8'h00, di_eff};       ea_go = 1'b1; end
+        S_ZPI: begin ea = {8'h00, di_eff + idx}; ea_go = 1'b1; end
 
-        S_ABS0: begin adl_n = DI; ab_c = pc; pc_n = pc + 16'd1; st_n = S_ABS1; end
+        S_ABS0: begin adl_n = di_eff; ab_c = pc; pc_n = pc + 16'd1; st_n = S_ABS1; end
         S_ABS1: begin
-            if (dec.am == AM_JMPA) begin
-                ab_c = {DI, adl}; pc_n = {DI, adl} + 16'd1; st_n = S_DECODE;
-            end else if (dec.am == AM_JMPI) begin
-                ab_c = {DI, adl}; adr_n = {DI, adl}; st_n = S_JMPI0;
+            if (dec_r.am == AM_JMPA) begin
+                ab_c = {di_eff, adl}; pc_n = {di_eff, adl} + 16'd1; st_n = S_DECODE;
+            end else if (dec_r.am == AM_JMPI) begin
+                ab_c = {di_eff, adl}; adr_n = {di_eff, adl}; st_n = S_JMPI0;
             end else begin
-                ea = {DI, adl}; ea_go = 1'b1;
+                ea = {di_eff, adl}; ea_go = 1'b1;
             end
         end
 
         S_ABSI0: begin
-            {cy_n, adl_n} = {1'b0, DI} + {1'b0, idx};
+            {cy_n, adl_n} = {1'b0, di_eff} + {1'b0, idx};
             ab_c = pc; pc_n = pc + 16'd1; st_n = S_ABSI1;
         end
-        S_ABSI1: begin ea = {DI + {7'b0, cy}, adl}; ea_go = 1'b1; end
+        S_ABSI1: begin ea = {di_eff + {7'b0, cy}, adl}; ea_go = 1'b1; end
 
-        S_INDX0: begin zpa_n = DI + x; ab_c = {8'h00, DI + x}; st_n = S_INDX1; end
-        S_INDX1: begin adl_n = DI; ab_c = {8'h00, zpa + 8'd1}; st_n = S_INDX2; end
-        S_INDX2: begin ea = {DI, adl}; ea_go = 1'b1; end
+        S_INDX0: begin zpa_n = di_eff + x; ab_c = {8'h00, di_eff + x}; st_n = S_INDX1; end
+        S_INDX1: begin adl_n = di_eff; ab_c = {8'h00, zpa + 8'd1}; st_n = S_INDX2; end
+        S_INDX2: begin ea = {di_eff, adl}; ea_go = 1'b1; end
 
-        S_INDY0: begin zpa_n = DI; ab_c = {8'h00, DI}; st_n = S_INDY1; end
+        S_INDY0: begin zpa_n = di_eff; ab_c = {8'h00, di_eff}; st_n = S_INDY1; end
         S_INDY1: begin
-            {cy_n, adl_n} = {1'b0, DI} + {1'b0, y};
+            {cy_n, adl_n} = {1'b0, di_eff} + {1'b0, y};
             ab_c = {8'h00, zpa + 8'd1}; st_n = S_INDY2;
         end
-        S_INDY2: begin ea = {DI + {7'b0, cy}, adl}; ea_go = 1'b1; end
+        S_INDY2: begin ea = {di_eff + {7'b0, cy}, adl}; ea_go = 1'b1; end
 
         // JMP (abs) crosses the page when the pointer ends in $FF. NMOS wraps
         // within the page; that bug is not reproduced here - see
         // docs/cpu-core.md.
-        S_JMPI0: begin adl_n = DI; ab_c = adr + 16'd1; st_n = S_JMPI1; end
+        S_JMPI0: begin adl_n = di_eff; ab_c = adr + 16'd1; st_n = S_JMPI1; end
         S_JMPI1: begin
-            ab_c = {DI, adl}; pc_n = {DI, adl} + 16'd1; st_n = S_DECODE;
+            ab_c = {di_eff, adl}; pc_n = {di_eff, adl} + 16'd1; st_n = S_DECODE;
         end
 
         // ---- execute ----
@@ -399,10 +451,17 @@ module cpu6502_core (
         end
         S_LAST: begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_DECODE; end
 
+        // Implied and accumulator instructions, one cycle after their opcode
+        // arrived. Every ALU input here comes from a register.
+        S_IMP: begin
+            commit = 1'b1;
+            ab_c = pc; pc_n = pc + 16'd1; st_n = S_DECODE;
+        end
+
         S_PULL: begin
-            if (dec.dst == D_P) begin
+            if (dec_r.dst == D_P) begin
                 {fn_n, fv_n, fd_n, fi_n, fz_n, fc_n} =
-                    {DI[7], DI[6], DI[3], DI[2], DI[1], DI[0]};
+                    {di_eff[7], di_eff[6], di_eff[3], di_eff[2], di_eff[1], di_eff[0]};
             end else begin
                 commit = 1'b1;
             end
@@ -412,8 +471,8 @@ module cpu6502_core (
         // ---- branches: 2 cycles whether taken or not, no page penalty ----
         S_BRANCH: begin
             if (cond) begin
-                ab_c = pc + {{8{DI[7]}}, DI};
-                pc_n = pc + {{8{DI[7]}}, DI} + 16'd1;
+                ab_c = pc + {{8{di_eff[7]}}, di_eff};
+                pc_n = pc + {{8{di_eff[7]}}, di_eff} + 16'd1;
             end else begin
                 ab_c = pc; pc_n = pc + 16'd1;
             end
@@ -422,7 +481,7 @@ module cpu6502_core (
 
         // ---- JSR / RTS / RTI / BRK ----
         S_JSR0: begin
-            adl_n = DI;
+            adl_n = di_eff;
             ab_c = {8'h01, s}; we_c = 1'b1; do_c = pc[15:8];
             s_n = s - 8'd1; st_n = S_JSR1;
         end
@@ -432,28 +491,28 @@ module cpu6502_core (
         end
         S_JSR2: begin ab_c = pc; pc_n = pc + 16'd1; st_n = S_JSR3; end
         S_JSR3: begin
-            ab_c = {DI, adl}; pc_n = {DI, adl} + 16'd1; st_n = S_DECODE;
+            ab_c = {di_eff, adl}; pc_n = {di_eff, adl} + 16'd1; st_n = S_DECODE;
         end
 
         S_RTS0: begin
-            adl_n = DI; ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1; st_n = S_RTS1;
+            adl_n = di_eff; ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1; st_n = S_RTS1;
         end
         S_RTS1: begin
-            ab_c = {DI, adl} + 16'd1;
-            pc_n = {DI, adl} + 16'd2;
+            ab_c = {di_eff, adl} + 16'd1;
+            pc_n = {di_eff, adl} + 16'd2;
             st_n = S_DECODE;
         end
 
         S_RTI0: begin
             {fn_n, fv_n, fd_n, fi_n, fz_n, fc_n} =
-                {DI[7], DI[6], DI[3], DI[2], DI[1], DI[0]};
+                {di_eff[7], di_eff[6], di_eff[3], di_eff[2], di_eff[1], di_eff[0]};
             ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1; st_n = S_RTI1;
         end
         S_RTI1: begin
-            adl_n = DI; ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1; st_n = S_RTI2;
+            adl_n = di_eff; ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1; st_n = S_RTI2;
         end
         S_RTI2: begin
-            ab_c = {DI, adl}; pc_n = {DI, adl} + 16'd1; st_n = S_DECODE;
+            ab_c = {di_eff, adl}; pc_n = {di_eff, adl} + 16'd1; st_n = S_DECODE;
         end
 
         S_BRK0: begin
@@ -465,14 +524,12 @@ module cpu6502_core (
             s_n = s - 8'd1; fi_n = 1'b1; st_n = S_BRK2;
         end
         S_BRK2: begin ab_c = 16'hFFFE; st_n = S_BRK3; end
-        S_BRK3: begin adl_n = DI; ab_c = 16'hFFFF; st_n = S_BRK4; end
+        S_BRK3: begin adl_n = di_eff; ab_c = 16'hFFFF; st_n = S_BRK4; end
         S_BRK4: begin
-            ab_c = {DI, adl}; pc_n = {DI, adl} + 16'd1; st_n = S_DECODE;
+            ab_c = {di_eff, adl}; pc_n = {di_eff, adl} + 16'd1; st_n = S_DECODE;
         end
 
-        // An undefined opcode stops the core and names itself. Inert in
-        // hardware; the simulator reports dbg_trap_ir and dbg_trap_pc.
-        default: begin ab_c = pc; st_n = S_TRAP; end
+        default: begin ab_c = pc; st_n = S_DECODE; end
         endcase
 
         // The operand access, shared by every addressing mode that assembles a
@@ -490,19 +547,19 @@ module cpu6502_core (
         end
 
         if (commit) begin
-            case (dec.dst)
+            case (dec_r.dst)
                 D_A: a_n = alu_r;
                 D_X: x_n = alu_r;
                 D_Y: y_n = alu_r;
                 D_S: s_n = alu_r;
                 default: ;                      // D_MEM, D_NONE: no register
             endcase
-            if (dec.fw[5]) fn_n = alu_n;
-            if (dec.fw[4]) fv_n = alu_v;
-            if (dec.fw[3]) fd_n = alu_d;
-            if (dec.fw[2]) fi_n = alu_i;
-            if (dec.fw[1]) fz_n = alu_z;
-            if (dec.fw[0]) fc_n = alu_c;
+            if (dec_r.fw[5]) fn_n = alu_n;
+            if (dec_r.fw[4]) fv_n = alu_v;
+            if (dec_r.fw[3]) fd_n = alu_d;
+            if (dec_r.fw[2]) fi_n = alu_i;
+            if (dec_r.fw[1]) fz_n = alu_z;
+            if (dec_r.fw[0]) fc_n = alu_c;
         end
     end
 
@@ -519,7 +576,8 @@ module cpu6502_core (
             fi  <= 1'b1; fz <= 1'b0; fc <= 1'b0;
             ir  <= 8'h00;
             adl <= 8'h00; zpa <= 8'h00; cy <= 1'b0; adr <= 16'h0000;
-            trap_ir <= 8'h00; trap_pc <= 16'h0000;
+            trap_ir <= 8'h00; trap_pc <= 16'h0000; trapped <= 1'b0;
+            dec_r <= '0;
         end else if (RDY) begin
             st  <= st_n;
             pc  <= pc_n;
@@ -529,6 +587,7 @@ module cpu6502_core (
             ir  <= ir_n;
             adl <= adl_n; zpa <= zpa_n; cy <= cy_n; adr <= adr_n;
             trap_ir <= trap_ir_n; trap_pc <= trap_pc_n;
+            trapped <= trapped_n; dec_r <= dec_r_n;
         end
     end
 
@@ -543,7 +602,7 @@ module cpu6502_core (
     assign dbg_s       = s;
     assign dbg_p       = p_byte;
     assign dbg_sync    = (st == S_DECODE);
-    assign dbg_trap    = (st == S_TRAP);
+    assign dbg_trap    = trapped;
     assign dbg_trap_ir = trap_ir;
     assign dbg_trap_pc = trap_pc;
 

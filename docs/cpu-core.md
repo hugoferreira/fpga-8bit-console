@@ -289,15 +289,79 @@ before any Fmax gain is counted.
 the tiers that gate are timing-free, and an ISA slice that makes an instruction
 shorter is not breaking anything.
 
+### Phase 4: registering the decode
+
+Phase 2 measured that the new core's critical path started at the memory read
+data and ran through the combinational decode into the ALU. Phase 4 split the
+decode in two:
+
+- `dec_c` — combinational, used **only** in `S_DECODE`, and only to pick the
+  next state and the register a push reads. `DI -> table -> state mux`.
+- `dec_r` — the same row, registered. Everything reaching the ALU, the flags or
+  a store reads this, so those paths start at a flop.
+
+The price is that an implied instruction can no longer execute in the cycle its
+opcode arrives: it gets `S_IMP` and costs 2 cycles instead of 1, the same as
+NMOS. That is 13.2% of the corpus and 0.13 of static CPI.
+
+**Fmax 37.94 → 50.18 MHz, +32%** (mean of three placement seeds). The remaining
+path is `memory -> decode table -> next state`; going further would mean
+deriving the addressing mode from opcode bits rather than the table, which is
+the extensibility this core exists to have. Not worth 8% against a board that
+runs at 25 MHz.
+
+### The stall found a real defect
+
+Gate T7 is `make test-65x02 STALL=N`: drop `RDY` for 1..3 cycles at a
+pseudo-random rate across the whole sweep, and require every case to come out
+identical. `WE` asserted while `RDY` is low is itself a failure.
+
+The first run failed **22,537 of 30,200 cases**. The RAM's read port keeps
+clocking while the CPU is held, so the byte answering the pending request is on
+`DI` for exactly one cycle and is then overwritten by the answer to the address
+the stalled core is still presenting. `RDY` silently corrupted the instruction
+in flight.
+
+`di_hold`/`di_held` latch `DI` on the first stalled cycle, when it is still
+valid, and serve it for the rest of the stall and the cycle that resumes. This
+is what Arlet's `DIHOLD`/`DIMUX` is for; the shape of the bug is a property of a
+registered-read memory, not of either core.
+
+**1,510,000 / 1,510,000 pass with 5,470,098 stall cycles injected.** A directed
+testbench over 50 states would not have covered as much, and would have been
+unlikely to find this at all.
+
+This matters more than it looks: `add-memory-subsystem` makes stalls routine
+(row misses and refresh), so T7 stops being a formality. It also retires the
+arbiter's workaround at `memory_arbiter.sv:76-85`, which exists precisely
+because the old core cannot be stalled mid-write.
+
+### Where the two cores stand
+
+| | old core | new core |
+| --- | --- | --- |
+| Fmax, mean of 3 seeds | 53.01 MHz | 50.18 MHz |
+| logic cells | 818 | 1378 |
+| static mean CPI (Breakout) | 3.0334 | 2.7552 |
+| instructions/s at own Fmax | 17.48 M | **18.21 M** (+4.2%) |
+| instructions/s at the board's 25 MHz | 8.24 M | **9.07 M** (+10.1%) |
+| 65x02 full sweep | 1,509,471 / 1.51 M | **1,510,000 / 1.51 M** |
+| under injected stalls | not attempted | **1,510,000 / 1.51 M** |
+
+Area is the remaining regression, +68%. The decode table is 256 x 22 bits =
+5,632 bits, so inferring it as a BRAM ROM would return most of it — at the cost
+of a cycle, because a BRAM read is registered. Worth doing only if T8 binds.
+
 ### What is not done yet
 
 - **Interrupts.** `IRQ` and `NMI` are accepted and ignored. 65x02 does not test
-  interrupts at all, so gate T3's directed testbench is the only evidence this
-  path will ever have (task 5.1).
-- **Stalling.** `RDY` holds every register and gates `WE`, so a stalled write is
-  presented once on release rather than repeatedly while it waits. That is the
-  intent, but `cpu6502_stall_tb` (gate T7) has not been written, so it is not
-  yet evidence.
+  interrupts at all. Two notes for whoever picks this up: `add-memory-subsystem`
+  should probably land first, because an interrupt can then arrive while the
+  core is stalled and the entry sequence has to be correct across that; and the
+  `--stall` result suggests the harness, not a directed testbench, is the right
+  vehicle — assert `IRQ`/`NMI` pseudo-randomly across the sweep and require the
+  only difference to be a well-formed entry.
+- **Stalling.** Done and proven — see above.
 - **Integration.** `rtl/cpu6502_wrapper.sv` still points at the old core.
 
 ## Phase 2: what the FPGA flow actually says

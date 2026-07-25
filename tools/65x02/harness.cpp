@@ -186,6 +186,7 @@ struct Opts {
   bool verilog_stdout  = false;
   long max_cycles      = 200;
   bool trace           = false;
+  long stall           = 0;      // 0 off; else 1-in-N cycles gets a stall
   const char *timing   = nullptr;
   const char *known    = "";   // opcodes whose failures are recorded, not new
 };
@@ -220,6 +221,10 @@ struct Harness {
   int last_t3 = 0;   // 0 not measured, 1 exact, 2 exact+prefetch, 3 differs
   int last_cpi = 0;  // decode-to-decode cycles of the case just run
   bool trace = false;
+  long stall_rate = 0;   // gate T7: drop RDY 1 cycle in N
+  uint32_t rng = 1;
+  uint64_t stalls_injected = 0;
+  inline uint32_t next_rand() { rng = rng * 1664525u + 1013904223u; return rng >> 16; }
 
   Harness(Vcpu6502_sst *t, long mc) : top(t), max_cycles(mc) {
     memset(mem, 0, sizeof mem);
@@ -351,6 +356,7 @@ struct Harness {
     }
 
     top->reset = 1; top->rdy = 1; top->irq = 0; top->nmi = 0;
+    rng = (uint32_t)(c.initial.pc * 2654435761u) | 1u;
     di_reg = 0xFF;
     for (int i = 0; i < 3; i++) cycle(false);
     top->reset = 0;
@@ -405,6 +411,24 @@ struct Harness {
     bool retired = false;
     uint16_t got_pc = 0;
     for (long k = 0; k < max_cycles; k++) {
+      // Gate T7. Drop RDY for 1..3 cycles before an arbitrary cycle and
+      // require the instruction to come out identical. The core gates WE with
+      // RDY, so a stalled write presents nothing; a stalled cycle re-drives
+      // the same address, which is why it is not recorded.
+      if (stall_rate && (next_rand() % (uint32_t)stall_rate) == 0) {
+        int n = 1 + (int)(next_rand() % 3);
+        top->rdy = 0;
+        for (int i = 0; i < n; i++) {
+          Bus sb = probe();
+          if (sb.w) {
+            fails.push_back({"T7", "WE asserted while RDY was low"});
+            return false;
+          }
+          commit(sb, false);
+          stalls_injected++;
+        }
+        top->rdy = 1;
+      }
       Bus b = probe();
       if (trace) fprintf(OUT, "    C %3ld  %04X %s %02X%s\n", k, b.a,
                          b.w ? "w" : "r", b.d, b.dec ? "  <decode>" : "");
@@ -594,13 +618,14 @@ int main(int argc, char **argv) {
     else if (a == "--max-cycles")     o.max_cycles = atol(next());
     else if (a == "--verilog-stdout") o.verilog_stdout = true;
     else if (a == "--trace")          o.trace = true;
+    else if (a == "--stall")          o.stall = atol(next());
     else if (a == "--timing")         o.timing = next();
     else if (a == "--known-failures") o.known = next();
     else if (a == "--help" || a == "-h") {
       printf("usage: %s --fixture F [--cases N] [--opcode HH] [--all-opcodes]\n"
              "          [--tier3] [--opcodes FILE] [--max-report N]\n"
              "          [--max-cycles N] [--verilog-stdout] [--trace]\n"
-             "          [--timing FILE] [--known-failures HH,HH]\n"
+             "          [--timing FILE] [--known-failures HH,HH] [--stall N]\n"
              "  --cases 0 runs every case in the fixture.\n", argv[0]);
       return 0;
     }
@@ -646,6 +671,7 @@ int main(int argc, char **argv) {
   h.trace = o.trace;
   top->eval();
   h.late_writeback = top->o_late_writeback;
+  h.stall_rate = o.stall;
   fprintf(OUT, "core reports state final %s the decode cycle's edge\n",
           h.late_writeback ? "after" : "before");
 
@@ -736,6 +762,10 @@ int main(int argc, char **argv) {
       fprintf(OUT, "    %-14s %llu\n", t.first.c_str(),
               (unsigned long long)t.second);
   }
+  if (o.stall)
+    fprintf(OUT, "stall (T7)   : RDY dropped 1..3 cycles, 1 chance in %ld per cycle;\n"
+                 "               %llu stall cycles injected\n",
+            o.stall, (unsigned long long)h.stalls_injected);
   fprintf(OUT, "accepted divergences (counted, never silent):\n");
   for (int i = 0; i < N_MASK_RULES; i++)
     fprintf(OUT, "  %-10llu %s\n", (unsigned long long)h.mask_hits[i],
