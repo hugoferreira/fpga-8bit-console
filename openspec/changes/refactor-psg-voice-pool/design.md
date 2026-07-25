@@ -172,6 +172,62 @@ that is 139% over. Per-domain Fmax is therefore blocked behind area, not behind
 clocking - and 112.5 MHz for the PSG stays a target rather than a measurement
 until then.
 
+## The BRAM register file: layout and state flow
+
+Concrete plan, so the conversion is mechanical rather than exploratory.
+
+**Storage.** One memory, 16-bit words, addressed `{voice, word}`:
+
+    logic [15:0] vmem [0:NV*W-1];
+    always_ff @(posedge clk) begin
+      if (vwe) vmem[vaddr] <= vwdata;
+      vq <= vmem[vaddr];            // synchronous read - required for
+    end                             // SB_RAM40_4K inference
+
+Synchronous read is the part that matters: an asynchronous read forces yosys
+into LUTs, which is exactly what these arrays are today.
+
+**Record layout**, 336 bits = 21 words per voice. The `ins_*` group is 76 bits
+and converts first because it is cleanly separable - every name starts `ins_`,
+nothing outside the walk touches it:
+
+| word | contents |
+| ---: | --- |
+| 0 | `ins_sp[8]`, `ins_lps[8]` |
+| 1 | `ins_lpe[8]`, `ins_fcnt[8]` |
+| 2 | `ins_tcnt[8]`, `ins_pitch[6]`, `ins_on`, `ins_wt` |
+| 3 | `ins_prev_pitch[6]`, `ins_row[5]`, `ins_id[3]`, `ins_bass`, `ins_done` |
+| 4 | `ins_wave[3]`, `ins_vol[3]`, `ins_fx[3]`, `ins_prev_vol[3]`, 4 spare |
+
+**State flow.** A voice visit becomes load, work, store. The walk already has
+exactly one entry and one exit per voice, so there are only two places to
+splice: `S_IDLE`/`K_ROT` both jump to `K_ADV`, and `K_ROT` advances `c`.
+
+    S_IDLE / K_ROT  ->  V_LD (W+1 cycles)  ->  K_ADV ... (unchanged)
+                    ->  K_ROT  ->  V_ST (W cycles)  ->  next voice
+
+`ins_X[c]` becomes a working register `w_ins_X` throughout - 104 references,
+all inside the walk, including the module-level wires at psg.sv:265-277 and the
+`seq_addr` cases at 312-316 which are walk-context too.
+
+**Two things to get right, both of which will pass tests if got wrong:**
+
+1. *Reset.* A BRAM cannot be reset the way an array of flops can. `ins_on`
+   decides whether the instrument path runs at all, so garbage there before the
+   first trigger would matter. It is safe only because `playing[c]` is 0 after
+   reset and `K_ADV` skips the note path entirely when a voice is not playing -
+   verify that, do not assume it.
+2. *Cost before benefit.* At NV=4 the record is 20 words. Yosys will not spend
+   a 4096-bit BRAM on 320 bits, so it stays in LUTs and the added address logic
+   and states make area slightly **worse**. The win only appears once every
+   group is converted and NV is 16. Intermediate measurements will look like
+   regressions and should not be treated as failures.
+
+**Verification at each step** is the render comparison, not the tests: the
+testbench passes with a good deal of this wrong, whereas NEMO and Celeste
+rendering bit-identically through a pure restructuring is a real check. That is
+what caught nothing so far and would catch this.
+
 ## Clocking: the PSG gets its own PLL
 
 Sixteen voices streamed from BRAM need ~320 clocks per sample. The board has
