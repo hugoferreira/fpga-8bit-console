@@ -33,6 +33,7 @@
     .define PSG_ADDR_LO        $4100
     .define PSG_ADDR_HI        $4101
     .define PSG_DATA           $4102
+    .define PSG_STATUS         $4103  ; read: bits 0-3 channel playing, bit7 music
     .define PSG_CH             $4110  ; +ch: write cart SFX # to play, $80 stops
     .define PSG_MUSIC          $4120  ; write pattern # to start music, $80 stops
 
@@ -153,6 +154,7 @@
     .define ncmb    $5D    ; brick_hit: 1 = no score/chain (explosions)
     .define hittype $5E    ; brick_hit: type code seen at entry
     .define expn    $5F    ; explosion queue depth
+    .define nextch  $60    ; sfx_play round-robin steal cursor
 
     ; Particle pool (12), one page
     .define PPX     $2100
@@ -1483,21 +1485,9 @@ brick_hit:
     dey
     bne @mul
     cld
-    lda chain
-    cmp #7
-    bcs @cmax
-    inc chain
-    lda chain
-    cmp #7
-    bne @cmax
-    txa
-    pha
-    ldx #SND_CHAIN
-    ldy #3
-    jsr sfx_play
-    pla
-    tax
-@cmax:
+    ; refresh the chain window; the chain boost and its rising-pitch smash
+    ; and fanfare happen at the destroy site below, matching the original
+    ; (sfx(2+chain) fires with the pre-boost chain, then boostchain)
     lda #44
     sta chaint
 @nopts:
@@ -1547,27 +1537,38 @@ brick_hit:
     sta ptr2+1
     lda type_hi,x
     sta (ptr2),y           ; MAP_HI
-    ; sound: shatter when destroyed, blip otherwise (hardware sequencer,
-    ; so this is 4 register writes either way)
+    ; sound (matching the original): a destroyed brick plays the rising
+    ; smash sfx(2+chain) AND the shatter sfx(13), layered on auto-picked
+    ; channels; a surviving brick (invincible or a hardened first hit) just
+    ; clinks sfx(10). Combo destroys then boost the chain, with the
+    ; max-chain fanfare sfx(44) on the 6->7 step.
     txa
-    pha
-    txa                    ; X here is the NEW type: 0 = destroyed
-    bne @sndhit
-    ldx #SND_SHATTER
-    bne @sndgo
-@sndhit:
-    ; the cart's rising combo blips: sfx 2+chain (chain clamped to 6)
-    lda chain
-    cmp #7
-    bcc @chok
-    lda #6
-@chok:
+    pha                    ; save the NEW type across the sound calls
+    bne @clink             ; new type != 0 -> brick survived
+    lda chain              ; smash pitch rises with the chain (sfx 3..9)
     clc
     adc #2
     tax
-@sndgo:
-    ldy #0
     jsr sfx_play
+    ldx #SND_SHATTER       ; layered shatter (sfx 13)
+    jsr sfx_play
+    lda ncmb               ; explosion side-hits do not boost the chain
+    bne @snddone
+    lda chain
+    cmp #6
+    bne @chinc
+    ldx #SND_CHAIN         ; max-chain fanfare on the 6->7 step (sfx 44)
+    jsr sfx_play
+@chinc:
+    lda chain
+    cmp #7
+    bcs @snddone           ; already maxed, clamp
+    inc chain
+    jmp @snddone
+@clink:
+    ldx #SND_INVINC        ; invincible / hardened clink (sfx 10)
+    jsr sfx_play
+@snddone:
     pla
     tax
     ; game feel: shards + shake + 4 sparks from the brick center
@@ -2439,9 +2440,31 @@ zone_vx_hi: .byte $FE, $FF, $00, $00, $01
 zone_vy_lo: .byte $40, $C0, $80, $C0, $40
 zone_vy_hi: .byte $FF, $FE, $FE, $FE, $FF
 
-; sfx_play: X = cart SFX number, Y = channel 0-3. One register write;
-; the chip fetches the record and sequences it in hardware.
+; sfx_play: X = cart SFX number. Auto-picks a channel the way PICO-8's
+; sfx(n) (default channel -1) does - the lowest channel whose playing bit
+; is clear, so sounds layer instead of cutting each other off; if all four
+; are busy it steals round-robin. Y is ignored (kept for old call sites).
 sfx_play:
+    lda PSG_STATUS         ; bits 0-3 = channel playing flags
+    ldy #0
+    lsr                    ; ch0 -> carry
+    bcc @go
+    iny
+    lsr                    ; ch1
+    bcc @go
+    iny
+    lsr                    ; ch2
+    bcc @go
+    iny
+    lsr                    ; ch3
+    bcc @go
+    lda nextch             ; all busy: round-robin steal
+    clc
+    adc #1
+    and #3
+    sta nextch
+    tay
+@go:
     txa
     sta PSG_CH,y
     rts

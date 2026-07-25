@@ -789,8 +789,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       endcase
     end else if (cs && !rw) begin
       case (addr)
+        // A pending trigger (written this cycle, not yet processed by the
+        // sequencer) already reads as busy, so back-to-back sfx() calls
+        // that auto-pick a channel never collide on the same one.
         8'h03: dout <= {mus_playing, 3'b0,
-                        playing[3], playing[2], playing[1], playing[0]};
+                        playing[3] | trig_req[3], playing[2] | trig_req[2],
+                        playing[1] | trig_req[1], playing[0] | trig_req[0]};
         8'h20: dout <= {2'b0, mus_pat};
         8'h21: dout <= {4'b0, mus_mask};
         default:
