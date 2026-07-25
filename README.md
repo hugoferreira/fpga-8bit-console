@@ -48,7 +48,13 @@ A complete 8-bit console implementation on FPGA, featuring a 6502 CPU, video sys
   # Arch-based
   pamac build verilator
   ```
-- [cc65](https://cc65.github.io/) - 6502 Assembler/Compiler
+- [customasm](https://github.com/hlorenzi/customasm) - 6502 assembler, `#ruledef`-based
+  ```bash
+  cargo install customasm --version 0.14.1
+  ```
+- [cc65](https://cc65.github.io/) - 6502 Assembler/Compiler, only needed for
+  `nemo`/`celeste` (`make asm-ca65`; see `docs/assembler.md`), not for
+  building the console's own primary software
   ```bash
   # MacOS
   brew install cc65
@@ -63,9 +69,12 @@ A complete 8-bit console implementation on FPGA, featuring a 6502 CPU, video sys
 make asm
 ```
 This will:
-1. Compile the 6502 assembly code in `src/main.asm`
-2. Link it according to the memory configuration in `src/memory.cfg`
-3. Generate a hex file (`rtl/ram.hex`) that will be loaded into the FPGA's memory
+1. Assemble `src/main.asm` with customasm, using the instruction set and
+   memory map defined in `src/isa/` (replacing `src/memory.cfg`)
+2. Generate a hex file (`rtl/ram.hex`) and a symbol file (`build/breakout.sym`)
+   that will be loaded into the FPGA's memory / used by the simulator
+
+See `docs/assembler.md` for the ca65 → customasm migration and syntax map.
 
 ### Simulation
 ```bash
@@ -102,7 +111,7 @@ This will:
 │   └── build.rs      # Build script
 ├── src/              # Assembly source code
 │   ├── main.asm      # Main assembly program
-│   └── memory.cfg    # Memory configuration
+│   └── isa/          # Instruction set, memory map, register constants
 └── bin/              # Binary files and resources
 ```
 
@@ -136,7 +145,9 @@ The system uses a 16-bit address space, typical for 6502-based systems, allowing
   - 0x4000: Example I/O port used in the demo program
 
 ### Memory Configuration
-The memory layout is defined in `src/memory.cfg`, which is used by the linker (ld65) to place the compiled assembly code at the correct addresses. The file specifies the size and location of each memory segment.
+The memory layout is defined in `src/isa/memmap.asm` as customasm `#bankdef`s,
+which place the assembled code at the correct addresses. The file specifies
+the size and location of each memory region (zero page, stack, RAM, vectors).
 
 ### Memory Loading
 At system startup:
@@ -145,13 +156,17 @@ At system startup:
 3. The program in the CODE segment begins running, interacting with I/O devices through memory-mapped registers
 
 ## Assembly Build Process
-The project uses cc65 to build the 6502 assembly code:
+The project uses [customasm](https://github.com/hlorenzi/customasm) to build
+the 6502 assembly code (see `docs/assembler.md` for the full picture):
 
-1. `ca65` assembles the source code into an object file
-2. `ld65` links the object file according to the memory configuration
-3. `hexdump` converts the binary to a hex format compatible with Verilog's `$readmemh`
+1. `customasm` assembles `src/main.asm` directly, in one command - no
+   intermediate object file or linker step
+2. It emits three outputs in the same invocation: `build/breakout.bin`
+   (binary), `build/breakout.sym` (symbol table), and `rtl/ram.hex`
+   (`$readmemh`-format hex, loaded into the FPGA's memory at startup)
 
-The generated hex file (`rtl/ram.hex`) contains 16 bytes per line in hexadecimal format, which is loaded into the FPGA's memory at startup.
+`nemo` and `celeste` are unmigrated ISA corpora and still build with the
+ca65/ld65/hexdump chain via `make asm-ca65 GAME=nemo`.
 
 ## Contributing
 Pull requests are welcome! The project particularly needs:
