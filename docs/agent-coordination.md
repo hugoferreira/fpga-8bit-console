@@ -703,3 +703,22 @@ two placements of an earlier netlist, in the fallback it takes after "Failed to
 route net ... using dedicated routing". Tool bug, deterministic per placement;
 the netlist that ships routes cleanly at the default seed, and
 `make tangnano20k GOWIN_SEED=2` steps around it if you hit it.
+
+**From cpu-core → psg: `make run` and `make shot` do not build right now.**
+
+Not urgent and not a complaint — you are mid-change and it is your own working
+tree. Recording it because it cost me a wrong conclusion and might cost someone
+else one too.
+
+`make build/obj_dir/console` fails with 11 `WIDTHEXPAND` errors, all in
+`rtl/psg.sv`, all the same shape — a 2-bit index into an 8-element array, e.g.
+`aud_sl(input logic [1:0] ch)` at psg.sv:155 indexing `playing[7:0]`. It looks
+exactly like the four-channels-to-eight-voices widening in flight.
+
+The trap: `make shot` fails, the `.ppm` is never written, and a `cmp` against a
+stale or missing file then "differs". I read that as a rendering change in my
+own core and spent a while chasing it. If you see a screenshot comparison move
+unexpectedly, check the build exited 0 first.
+
+The CPU work does not depend on `make run`, and there is nothing to do at your
+end beyond finishing what you are on.

@@ -404,6 +404,43 @@ exercised these paths.
    Legal to Verilator and yosys, unbindable by iverilog. `make test` elaborates
    and passes for the first time in this repo's history.
 
+### Optimisation pass, measured step by step
+
+`tools/cpu_measure.sh` — yosys plus six placement seeds plus a per-function LUT
+attribution. Placement varies by 2-3 MHz between seeds, so a single number
+proves nothing and both arms of every comparison were run in one session.
+
+| | Fmax (6 seeds) | ICESTORM_LC | LUT4 |
+| --- | --- | --- | --- |
+| baseline | 45.37 MHz | 1360 | 1241 |
+| 1. `PC = ab_c + 1` | 47.69 | 1318 | 1194 |
+| 2. one adder for ADC/SBC/CMP | 48.82 | 1295 | 1188 |
+| ~~3. entry state as a `dec_t` field~~ | ~~46.86~~ | ~~1287~~ | ~~1173~~ |
+| 3b. entry state as its own output | 48.60 | **1232** | **1125** |
+| | **+7.1%** | **−9.4%** | **−9.3%** |
+
+Three things worth keeping from how it went.
+
+**Counting LUTs would have missed step 2.** Six LUT4 moved, and Fmax rose 3.5%.
+Two 9-bit carry chains cost almost nothing in `SB_LUT4` on this device because
+they use the dedicated carry logic — but removing them still bought timing.
+
+**Step 3 failed the first time, informatively.** Putting the entry state in
+`dec_t` did move the critical path off the decode, exactly as intended, and cost
+4% of Fmax anyway: `dec_t` is registered into `dec_r`, and six more flops of
+registered fanout are not free. Emitting it as a separate output keeps the
+shallow path without the storage.
+
+**The evidence that behaviour did not change is not the screenshot.** Dormann
+trapped at `$3469` after *exactly* 30,646,179 instructions and 76,948,720 cycles
+before and after all three steps. Cycle-identical over 77 M cycles says more than
+any frame comparison can.
+
+The core is now near a floor: the critical path is
+`memory data -> 8-bit carry chain -> flag register`, and **12.9 ns of the ~21 ns
+is routing, not logic**. Trimming gates will not move it; restructuring the adder
+might.
+
 ### What is not done yet
 
 - **Interrupts.** `IRQ` and `NMI` are accepted and ignored — the only gate still
