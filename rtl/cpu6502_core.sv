@@ -99,23 +99,6 @@ module cpu6502_core (
         end
     end
 
-    typedef enum logic [5:0] {
-        S_RST0, S_RST1, S_RST2,
-        S_DECODE,
-        S_EXEC, S_RMW, S_LAST, S_IMP,
-        S_ZP, S_ZPI,
-        S_ABS0, S_ABS1,
-        S_ABSI0, S_ABSI1,
-        S_INDX0, S_INDX1, S_INDX2,
-        S_INDY0, S_INDY1, S_INDY2,
-        S_BRANCH, S_PULL,
-        S_JSR0, S_JSR1, S_JSR2, S_JSR3,
-        S_RTS0, S_RTS1,
-        S_RTI0, S_RTI1, S_RTI2,
-        S_BRK0, S_BRK1, S_BRK2, S_BRK3, S_BRK4,
-        S_JMPI0, S_JMPI1
-    } state_t;
-
     // ---- architectural state ----
     state_t      st, st_n;
     logic [15:0] pc, pc_n;
@@ -153,7 +136,8 @@ module cpu6502_core (
     // 2.6234 to 2.7552, still well inside the 3.0334 of the core being replaced.
     dec_t dec_c;
     dec_t dec_r, dec_r_n;
-    cpu6502_decode u_dec (.ir(di_eff), .d(dec_c));
+    state_t dec_c_st1;
+    cpu6502_decode u_dec (.ir(di_eff), .d(dec_c), .st1(dec_c_st1));
 
     wire is_store = (dec_r.dst == D_MEM) && (dec_r.op == OP_PASS);
     wire is_rmw   = (dec_r.dst == D_MEM) && (dec_r.op != OP_PASS);
@@ -381,45 +365,50 @@ module cpu6502_core (
         S_DECODE: begin
             ir_n = di_eff;
             dec_r_n = dec_c;
+            // The next state comes straight out of the table. The case below
+            // only produces this cycle's side effects - the address it drives,
+            // whether it writes, and what it does to S - so no logic sits
+            // between the decode and the state register.
+            st_n = dec_c_st1;
             case (dec_c.am)
                 // Executes in S_IMP, one cycle later, so its ALU control comes
                 // from a flop. The opcode fetch is issued here and re-issued
                 // there: the same address twice, which costs nothing but a
                 // cycle and keeps the access footprint unchanged.
                 AM_IMP, AM_ACC: begin
-                    ab_c = pc; st_n = S_IMP;
+                    ab_c = pc;
                 end
-                AM_IMM:  begin ab_c = pc; pc_upd = 1'b1; st_n = S_EXEC;  end
-                AM_ZP:   begin ab_c = pc; pc_upd = 1'b1; st_n = S_ZP;    end
+                AM_IMM:  begin ab_c = pc; pc_upd = 1'b1;  end
+                AM_ZP:   begin ab_c = pc; pc_upd = 1'b1;    end
                 AM_ZPX,
-                AM_ZPY:  begin ab_c = pc; pc_upd = 1'b1; st_n = S_ZPI;   end
+                AM_ZPY:  begin ab_c = pc; pc_upd = 1'b1;   end
                 AM_ABS,
                 AM_JMPA,
-                AM_JMPI: begin ab_c = pc; pc_upd = 1'b1; st_n = S_ABS0;  end
+                AM_JMPI: begin ab_c = pc; pc_upd = 1'b1;  end
                 AM_ABSX,
-                AM_ABSY: begin ab_c = pc; pc_upd = 1'b1; st_n = S_ABSI0; end
-                AM_INDX: begin ab_c = pc; pc_upd = 1'b1; st_n = S_INDX0; end
-                AM_INDY: begin ab_c = pc; pc_upd = 1'b1; st_n = S_INDY0; end
-                AM_REL:  begin ab_c = pc; pc_upd = 1'b1; st_n = S_BRANCH; end
-                AM_JSR:  begin ab_c = pc; pc_upd = 1'b1; st_n = S_JSR0;  end
+                AM_ABSY: begin ab_c = pc; pc_upd = 1'b1; end
+                AM_INDX: begin ab_c = pc; pc_upd = 1'b1; end
+                AM_INDY: begin ab_c = pc; pc_upd = 1'b1; end
+                AM_REL:  begin ab_c = pc; pc_upd = 1'b1; end
+                AM_JSR:  begin ab_c = pc; pc_upd = 1'b1;  end
 
                 AM_PUSH: begin
                     ab_c = {8'h01, s}; we_c = 1'b1; do_c = push_val;
-                    s_n = s - 8'd1; st_n = S_LAST;
+                    s_n = s - 8'd1;
                 end
                 AM_PULL: begin
-                    ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1; st_n = S_PULL;
+                    ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1;
                 end
                 AM_RTS:  begin
-                    ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1; st_n = S_RTS0;
+                    ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1;
                 end
                 AM_RTI:  begin
-                    ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1; st_n = S_RTI0;
+                    ab_c = {8'h01, s + 8'd1}; s_n = s + 8'd1;
                 end
                 AM_BRK:  begin
                     pc_upd = 1'b1; pc_from_pc = 1'b1;              // skip the signature byte
                     ab_c = {8'h01, s}; we_c = 1'b1; do_c = brk_pc[15:8];
-                    s_n = s - 8'd1; st_n = S_BRK0;
+                    s_n = s - 8'd1;
                 end
                 default: begin                  // AM_TRAP
                     // Inert, sticky and recoverable: the opcode and its address
@@ -429,7 +418,7 @@ module cpu6502_core (
                     trap_ir_n  = di_eff;
                     trap_pc_n  = pc - 16'd1;
                     trapped_n  = 1'b1;
-                    ab_c = pc; pc_upd = 1'b1; st_n = S_DECODE;
+                    ab_c = pc; pc_upd = 1'b1;
                 end
             endcase
         end

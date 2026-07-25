@@ -75,6 +75,29 @@ localparam logic [5:0] FW_I    = 6'b000100;
 localparam logic [5:0] FW_Z    = 6'b000010;
 localparam logic [5:0] FW_C    = 6'b000001;
 
+// The sequencer's states live here rather than in the core, because which
+// sequence an opcode enters is a property of the row. The decode module emits
+// that entry state as a SEPARATE output rather than a field of dec_t: S_DECODE
+// takes its next state straight from the table, with no logic on top, but the
+// core does not have to carry six more flops through dec_r to get it - which
+// measured 4% of Fmax when it did.
+typedef enum logic [5:0] {
+    S_RST0, S_RST1, S_RST2,
+    S_DECODE,
+    S_EXEC, S_RMW, S_LAST, S_IMP,
+    S_ZP, S_ZPI,
+    S_ABS0, S_ABS1,
+    S_ABSI0, S_ABSI1,
+    S_INDX0, S_INDX1, S_INDX2,
+    S_INDY0, S_INDY1, S_INDY2,
+    S_BRANCH, S_PULL,
+    S_JSR0, S_JSR1, S_JSR2, S_JSR3,
+    S_RTS0, S_RTS1,
+    S_RTI0, S_RTI1, S_RTI2,
+    S_BRK0, S_BRK1, S_BRK2, S_BRK3, S_BRK4,
+    S_JMPI0, S_JMPI1
+} state_t;
+
 typedef struct packed {
     amode_t  am;
     aluop_t  op;
@@ -88,7 +111,8 @@ typedef struct packed {
 /* verilator lint_off DECLFILENAME */
 module cpu6502_decode (
     input  logic [7:0] ir,
-    output dec_t       d
+    output dec_t       d,
+    output state_t     st1     // entry state; used combinationally, never latched
 );
 
     // The flag-write set is a property of the operation. TXS is the one case
@@ -113,13 +137,38 @@ module cpu6502_decode (
         endcase
     endfunction
 
-    // Built as one concatenation rather than field by field: yosys cannot
-    // infer a width for a struct member assigned inside a function, and this
-    // table has to synthesise, not just simulate. The order here is the field
-    // order of dec_t.
+    // Which sequence an addressing mode enters. Derived rather than written per
+    // row, for the same reason the flag set is: 151 chances to get it wrong.
+    function automatic state_t st_of(amode_t am);
+        case (am)
+            AM_IMP, AM_ACC:            st_of = S_IMP;
+            AM_IMM:                    st_of = S_EXEC;
+            AM_ZP:                     st_of = S_ZP;
+            AM_ZPX, AM_ZPY:            st_of = S_ZPI;
+            AM_ABS, AM_JMPA, AM_JMPI:  st_of = S_ABS0;
+            AM_ABSX, AM_ABSY:          st_of = S_ABSI0;
+            AM_INDX:                   st_of = S_INDX0;
+            AM_INDY:                   st_of = S_INDY0;
+            AM_REL:                    st_of = S_BRANCH;
+            AM_JSR:                    st_of = S_JSR0;
+            AM_PUSH:                   st_of = S_LAST;
+            AM_PULL:                   st_of = S_PULL;
+            AM_RTS:                    st_of = S_RTS0;
+            AM_RTI:                    st_of = S_RTI0;
+            AM_BRK:                    st_of = S_BRK0;
+            default:                   st_of = S_DECODE;   // AM_TRAP: inert
+        endcase
+    endfunction
+
+    // Built as one concatenation rather than field by field: yosys cannot infer
+    // a width for a struct member assigned inside a function, and this table has
+    // to synthesise, not just simulate. The order here is the field order of
+    // dec_t.
     function automatic dec_t row(amode_t am, aluop_t op, rsel_t ra, dsel_t dst);
         row = dec_t'({am, op, ra, dst, fwset(op, dst)});
     endfunction
+
+    assign st1 = st_of(d.am);
 
     always_comb begin
         unique case (ir)
