@@ -70,7 +70,16 @@ be at 121%.
       synthesis path contains no `[c]` index at all now (statically checked),
       so it cannot read the sequencer's voice, and any future attempt to would
       be a visible `[c]` in a `pc_ch` block rather than an invisible `[0]`
-- [ ] 2.2 Swap the backing store for the bulk note/instrument state to BRAM.
+- [ ] 2.2 Move **all** per-voice state to a BRAM register file, not just the
+      per-tick half. Synthesis (3.5) shows the marginal cost of a voice is 366
+      LUT4 + 316 flops and 336 bits is one voice's state: the muxes to reach
+      per-voice registers are the whole scaling cost, and the datapath is
+      already shared. Target ~3900 LUT4 / ~1100 flops / ~18 BRAM for sixteen
+      voices - cheaper than today's four
+- [ ] 2.2a Give the simulator a clock model matching the board. At 159
+      clocks/sample it cannot run sixteen voices streamed from BRAM (201% of
+      budget) - this blocks all testing of the pool and is no longer optional
+- [ ] 2.2b (superseded) Swap only the bulk note/instrument state to BRAM.
       **Deliberately after section 3**: de-rotate, scale the pool, prove
       allocation, and only then rework storage, so the audible change is
       verifiable before the risky part and 8-voices-in-flops stays a fallback
@@ -81,16 +90,21 @@ be at 121%.
 
 ## 3. Scale the pool to sixteen voices
 
-- [ ] 3.1 Widen the voice arrays and the walk from 4 to 16
-- [ ] 3.2 Add the two-bit logical channel tag per voice
+- [x] 3.1 Widen the voice arrays and the walk from 4 to 16
+- [x] 3.2 Add the two-bit logical channel tag per voice
 - [ ] 3.3 Point the music sequencer at voices tagged 0-3 rather than at
       channels 0-3 directly
 - [ ] 3.4 Map the CPU-facing `$10-$17` channel registers onto "the voice
       carrying this tag", so an explicitly addressed channel behaves exactly
       as it does today
-- [ ] 3.5 Synthesise and record LC/BRAM usage against design.md's estimate of
-      ~2100 flops + 1 BRAM (**gate P3**: total device usage must leave room
-      for the PPU, compositor and CPU)
+- [x] 3.5 Synthesise and record LC/BRAM usage (**gate P3 FAILED as built, and
+      that is the useful result**): 4 voices = 4991 LUT4 / 2023 flops, 8 =
+      6285 / 3287, 16 = 9378 / 5811, against an HX8K's 7680 LCs which must also
+      hold the CPU, PPU and compositor. Sixteen voices in flip-flops does not
+      fit. `NV` is therefore left at 4 in the tree - the parameterisation is
+      done and proven, the count moves once 2.2 lands. Whole-chip synthesis
+      could not be run: `bin/toplevel.json` currently depends on the other
+      agent's in-flight `rtl/golden/*.v`
 
 ## 4. Hardware auto-allocation
 

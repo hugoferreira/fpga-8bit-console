@@ -77,7 +77,61 @@ must be driven by the sample tick or the voice walk, or it will not survive the
 voice count changing. `brown` (the brown-noise integrator) and the `rev_ttl`
 echo counter are the other things to check against this rule before section 3.
 
-## Key decision: partition voice state by rate
+## Key decision: share the datapath, keep state in RAM
+
+The first version of this design partitioned voice state *by rate* and kept the
+per-sample half in registers. Synthesis says that is the wrong axis. Measured
+standalone with `yosys`/`synth_ice40`:
+
+| voices | LUT4 | flops | BRAM |
+| ---: | ---: | ---: | ---: |
+| 4 (today) | 4991 | 2023 | 16 |
+| 8 | 6285 | 3287 | 16 |
+| 16 | 9378 | 5811 | 16 |
+
+An HX8K has 7680 LCs, and it also has to hold a CPU, a PPU and a sprite
+compositor. Sixteen voices in flip-flops does not fit, and the reason is not
+the arithmetic: **the marginal cost of a voice is 366 LUT4 and 316 flops**, and
+336 bits is exactly one voice's state. Every extra LUT is a wider mux to reach
+that state; every extra flop is the state itself. The datapath does not grow at
+all - it is already time-shared across voices, one `pst` walk per sample.
+
+So the rule is: **share the hardware, store the state.** Anything that is
+per-voice belongs in RAM, not in registers, and the split by rate matters only
+for deciding how often it is streamed - not for deciding what stays in flops.
+
+Putting every per-voice bit in BRAM drives the marginal cost per voice to
+roughly zero, so sixteen voices cost about what one does:
+
+| | LUT4 | flops | BRAM |
+| --- | ---: | ---: | ---: |
+| today, 4 voices | 4991 | 2023 | 16 |
+| 16 voices, state in BRAM | ~3900 | ~1100 | ~18 |
+
+That is **sixteen voices for less silicon than today's four**, which is the
+outcome worth having. 5376 bits of voice state is 1.3 `SB_RAM40_4K`, and an
+HX8K has 32 of them against 7680 LCs - block RAM is the resource this design
+has spare.
+
+### What it costs: clocks
+
+Streaming ~336 bits per voice through a 16-bit BRAM port is roughly 20
+accesses per voice per sample:
+
+| | clocks/sample | 16 voices x 20 |
+| --- | ---: | ---: |
+| board today, 25 MHz | 1134 | 28% |
+| board on the spare PLL, 50 MHz | 2268 | 14% |
+| simulator, 3.51 MHz | 159 | **201%** |
+
+The board affords it twice over, and one of the two unused PLLs buys a further
+2x if the streaming turns out wider than estimated. The simulator does not, and
+this is no longer a detail that can be deferred: its console ties the video and
+master clocks together and runs ~7x slower than the board, so **fixing the
+simulator's clock model becomes part of this change**, not an aside. Without it
+there is no way to test sixteen voices before hardware.
+
+## Superseded: partition voice state by rate
 
 The 336 bits are not all touched at the same rate.
 

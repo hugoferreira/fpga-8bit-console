@@ -116,73 +116,91 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   // ------------------------------------------------------------------
   // Channel state
   // ------------------------------------------------------------------
-  logic        playing[0:3], music_owned[0:3];
-  logic [5:0]  sfx_id[0:3];
-  logic [4:0]  row[0:3];
-  logic [7:0]  fcnt[0:3];            // ticks into the current row
-  logic [7:0]  tcnt[0:3];            // ticks into the record (vibrato/arp)
-  logic [7:0]  sp[0:3], lps[0:3], lpe[0:3];
-  logic [5:0]  cur_pitch[0:3], prev_pitch[0:3];
-  logic [2:0]  cur_wave[0:3], cur_vol[0:3], cur_fx[0:3], prev_vol[0:3];
-  logic [23:0] eff_inc[0:3];
-  logic [7:0]  eff_vol[0:3];
-  logic [23:0] phase[0:3], phase2[0:3];
-  logic signed [7:0] nz_hold[0:3];
-  logic [3:0]  nz_ph[0:3];
+  // Voices, not channels. PICO-8's four "channels" are logical tags on a pool
+  // of sixteen mixer voices; the CPU only ever names a channel. Voices 0-3
+  // carry tags 0-3 permanently and are what the music sequencer and the
+  // channel registers act on, so they behave exactly as the four channels did.
+  // Voices 4-15 are the auto-allocation pool.
+  // NV is 4 until the bulk per-tick state moves to BRAM (voice-pool change,
+  // task 2.2). Measured standalone with yosys/synth_ice40: 4 voices = 4991
+  // LUT4 / 2023 flops, 8 = 6285 / 3287, 16 = 9378 / 5811 - and an HX8K has
+  // 7680 LCs, so sixteen voices in flip-flops does not fit. The cost is not
+  // mainly the flops: naming voices explicitly turned the old rotation's shift
+  // wiring into 16:1 muxes, and those muxes are what blow the LUT budget.
+  // Moving that state to BRAM removes the flops *and* the muxes together.
+  localparam int NV = 4;               // voices
+  localparam int VW = 2;               // bits to index one
+  logic        playing[0:NV-1], music_owned[0:NV-1];
+  // Which cart-visible channel a voice belongs to. Voices 0-3 are pinned to
+  // tags 0-3; a pool voice takes the tag of whatever asked for it, so status
+  // readback can still answer per channel.
+  logic [1:0]  vtag[0:NV-1];
+  logic [5:0]  sfx_id[0:NV-1];
+  logic [4:0]  row[0:NV-1];
+  logic [7:0]  fcnt[0:NV-1];            // ticks into the current row
+  logic [7:0]  tcnt[0:NV-1];            // ticks into the record (vibrato/arp)
+  logic [7:0]  sp[0:NV-1], lps[0:NV-1], lpe[0:NV-1];
+  logic [5:0]  cur_pitch[0:NV-1], prev_pitch[0:NV-1];
+  logic [2:0]  cur_wave[0:NV-1], cur_vol[0:NV-1], cur_fx[0:NV-1], prev_vol[0:NV-1];
+  logic [23:0] eff_inc[0:NV-1];
+  logic [7:0]  eff_vol[0:NV-1];
+  logic [23:0] phase[0:NV-1], phase2[0:NV-1];
+  logic signed [7:0] nz_hold[0:NV-1];
+  logic [3:0]  nz_ph[0:NV-1];
 
   // Trigger parameters latched for the next trigger on a channel, and the
   // resulting play limits (sfx(n, ch, offset, length) / release from loop)
-  logic [4:0]  trg_row[0:3];
+  logic [4:0]  trg_row[0:NV-1];
   // Borrowed-music restore. PICO-8 lets an SFX take a channel the music is
   // using: the displaced music SFX is remembered and relaunched when the SFX
   // ends (zepto-8 / fake-08 Audio.cpp store it as `sfx_music`). Without this a
   // cart's own channel mask is not enough - see docs/hardware-gaps.md - and a
   // game has to reserve every channel its patterns touch.
-  logic [5:0]  sav_sfx[0:3];
-  logic [4:0]  sav_row[0:3];
-  logic [3:0]  sav_valid;
-  logic [5:0]  trg_len[0:3], play_len[0:3];
-  logic        released[0:3];
+  logic [5:0]  sav_sfx[0:NV-1];
+  logic [4:0]  sav_row[0:NV-1];
+  logic [NV-1:0] sav_valid;
+  logic [5:0]  trg_len[0:NV-1], play_len[0:NV-1];
+  logic        released[0:NV-1];
 
   // Custom-instrument playhead: SFX 0-7 running underneath the note
-  logic        ins_on[0:3], ins_wt[0:3], ins_bass[0:3], ins_done[0:3];
-  logic [2:0]  ins_id[0:3];
-  logic [4:0]  ins_row[0:3];
-  logic [7:0]  ins_fcnt[0:3], ins_tcnt[0:3];
-  logic [7:0]  ins_sp[0:3], ins_lps[0:3], ins_lpe[0:3];
-  logic [5:0]  ins_pitch[0:3], ins_prev_pitch[0:3];
-  logic [2:0]  ins_wave[0:3], ins_vol[0:3], ins_fx[0:3], ins_prev_vol[0:3];
+  logic        ins_on[0:NV-1], ins_wt[0:NV-1], ins_bass[0:NV-1], ins_done[0:NV-1];
+  logic [2:0]  ins_id[0:NV-1];
+  logic [4:0]  ins_row[0:NV-1];
+  logic [7:0]  ins_fcnt[0:NV-1], ins_tcnt[0:NV-1];
+  logic [7:0]  ins_sp[0:NV-1], ins_lps[0:NV-1], ins_lpe[0:NV-1];
+  logic [5:0]  ins_pitch[0:NV-1], ins_prev_pitch[0:NV-1];
+  logic [2:0]  ins_wave[0:NV-1], ins_vol[0:NV-1], ins_fx[0:NV-1], ins_prev_vol[0:NV-1];
 
   // What the synthesis datapath sounds: the note's waveform, or the
   // instrument's, or a wavetable at snd_wtb (audio RAM record base)
-  logic [2:0]  snd_wave[0:3];
-  logic        snd_wt[0:3];
-  logic [12:0] snd_wtb[0:3];
+  logic [2:0]  snd_wave[0:NV-1];
+  logic        snd_wt[0:NV-1];
+  logic [12:0] snd_wtb[0:NV-1];
   // The pitch the noise gain is looked up by, latched per channel alongside
   // the other synthesis-path values. It cannot be read from the sequencer's
   // ring: that ring only advances on ticks, so during synthesis it holds
   // channel 0's note whatever channel is being synthesised, and every channel
   // was getting channel 0's noise gain (test 20c).
-  logic [5:0]  snd_pitch[0:3];
+  logic [5:0]  snd_pitch[0:NV-1];
 
   // Per-channel filter state: bf_* comes from the played SFX's filter byte
   // at trigger, ch_* is that folded together with the instrument's
-  logic        bf_noiz[0:3], bf_buzz[0:3];
-  logic [1:0]  bf_det[0:3], bf_rev[0:3], bf_damp[0:3];
-  logic        ch_noiz[0:3], ch_buzz[0:3];
-  logic [1:0]  ch_det[0:3], ch_rev[0:3], ch_damp[0:3];
-  logic signed [15:0] lp[0:3];     // dampen one-pole state, Q8
-  logic signed [12:0] brown[0:3];  // brown-noise integrator
+  logic        bf_noiz[0:NV-1], bf_buzz[0:NV-1];
+  logic [1:0]  bf_det[0:NV-1], bf_rev[0:NV-1], bf_damp[0:NV-1];
+  logic        ch_noiz[0:NV-1], ch_buzz[0:NV-1];
+  logic [1:0]  ch_det[0:NV-1], ch_rev[0:NV-1], ch_damp[0:NV-1];
+  logic signed [15:0] lp[0:NV-1];     // dampen one-pole state, Q8
+  logic signed [12:0] brown[0:NV-1];  // brown-noise integrator
 
-  logic [3:0]  trig_req;
-  logic [3:0]  clr_tog;   // toggled to ask the synth walk to reset lp/brown
+  logic [NV-1:0] trig_req;
+  logic [NV-1:0] clr_tog;   // toggled to ask the synth walk to reset lp/brown
 
   // Music state
   logic        mus_playing, mus_launch;
   logic [5:0]  mus_pat;
   logic [3:0]  mus_mask;
   logic [7:0]  pb[0:2];
-  logic [3:0]  launched;
+  logic [NV-1:0] launched;
   logic        tch_seen, ptick_seen, f_lb, f_stop;
   // A pattern's length in ticks, fixed when the pattern launches, and the
   // tick position within it. PICO-8 paces a song the same way - the song
@@ -236,7 +254,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   } sst_t;
   sst_t sst;
 
-  logic [1:0]  c;                    // channel being processed
+  logic [VW-1:0] c;                  // voice being processed
   logic        walk_tick;            // this pass was started by a tick
   logic        tickpend;
   logic [5:0]  scan_p;
@@ -521,9 +539,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       fade_step <= 0;
       fade_len <= 0;
       mus_gain <= 8'd255;
-      for (int i = 0; i < 4; i++) begin
+      for (int i = 0; i < NV; i++) begin
         playing[i] <= 0;
         music_owned[i] <= 0;
+        vtag[i] <= 2'(i);
         sfx_id[i] <= 0;
         row[i] <= 0;
         fcnt[i] <= 0;
@@ -929,7 +948,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           // ring made a cross-walk read look innocent - the synthesis pipeline
           // reading the sequencer's index 0 got channel 0 whatever voice it
           // was on, which is how the noise gain bug (test 20c) hid.
-          if (c == 2'd3) begin
+          if (c == VW'(NV-1)) begin
             c <= 0;
             sst <= W_MUS;
           end else begin
@@ -949,7 +968,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
             if (trig_req == 0 && pticks >= ptick_tgt) begin
               if (f_stop) begin
                 mus_playing <= 0;
-                for (int i = 0; i < 4; i++)
+                for (int i = 0; i < NV; i++)
                   if (music_owned[i]) begin
                     playing[i] <= 0;
                     eff_vol[i] <= 0;
@@ -960,7 +979,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
                 sst <= MS_RD;
               end else if (mus_pat == 6'd63) begin
                 mus_playing <= 0;
-                for (int i = 0; i < 4; i++)
+                for (int i = 0; i < NV; i++)
                   if (music_owned[i]) begin
                     playing[i] <= 0;
                     eff_vol[i] <= 0;
@@ -988,7 +1007,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
 
         // ---- music: launch pattern mus_pat ---------------------------
         ML_STOP: begin
-          for (int i = 0; i < 4; i++) begin
+          for (int i = 0; i < NV; i++) begin
             if (music_owned[i]) begin
               playing[i] <= 0;
               eff_vol[i] <= 0;
@@ -1041,7 +1060,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
             if (fade_dir == 2'd2) begin       // faded out: stop the music
               mus_playing <= 0;
               mus_launch <= 0;
-              for (int i = 0; i < 4; i++)
+              for (int i = 0; i < NV; i++)
                 if (music_owned[i]) begin
                   playing[i] <= 0;
                   eff_vol[i] <= 0;
@@ -1106,7 +1125,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
             mus_launch <= 0;
             fade_dir <= 0;
             mus_gain <= 8'd255;
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < NV; i++)
               if (music_owned[i]) begin
                 playing[i] <= 0;
                 eff_vol[i] <= 0;
@@ -1146,11 +1165,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   //        slot the ring is about to rotate it into, and step on
   // ------------------------------------------------------------------
   logic [14:0] lfsr;
-  logic [1:0]  pc_ch, pst;
+  logic [VW-1:0] pc_ch;
+  logic [1:0]  pst;
   logic        prun;
   logic signed [7:0] wq, smp_a, smp_b;
   logic [10:0] wrom_addr;
-  logic [3:0]  clr_ack;              // pairs with the sequencer's clr_tog
+  logic [NV-1:0] clr_ack;              // pairs with the sequencer's clr_tog
 
   wire [2:0] wbank = (snd_wave[pc_ch] == 3'd7) ? 3'd0 : snd_wave[pc_ch];
   always_comb begin
@@ -1260,10 +1280,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   // so (127*36)>>8 = 17 levels - 4.2 bits. Two thirds of NEMO's title music is
   // volume 1 or 2. Keeping the low half makes those 12.2 and 13.2 bits.
   logic [15:0] n_res;
-  wire signed [18:0] n_contrib = mx_neg ? -$signed({3'b0, n_res})
-                                        :  $signed({3'b0, n_res});
+  wire signed [21:0] n_contrib = mx_neg ? -$signed({6'b0, n_res})
+                                        :  $signed({6'b0, n_res});
 
-  logic signed [18:0] mixacc;   // 4 channels x 32512 needs 19 bits
+  // 16 voices x 32512 needs 21 bits signed. The clamp below is still the
+  // four-channel one - correct while only the four channel voices ever play,
+  // and replaced wholesale by PICO-8's pairwise soft_add tree (section 6),
+  // which is what a sixteen-voice mix actually needs. Widening it now just
+  // stops the accumulator wrapping once allocation turns on.
+  logic signed [21:0] mixacc;
   logic [1:0]  rev_max;
   // The echo has to outlive the note that asked for it, so the level any
   // playing channel requests is held for a full delay line after the last
@@ -1296,7 +1321,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       dry_pend <= 0;
       dry16 <= 0;
       dry_valid <= 0;
-      for (int i = 0; i < 4; i++) begin
+      for (int i = 0; i < NV; i++) begin
         phase[i] <= 0;
         phase2[i] <= 0;
         nz_hold[i] <= 0;
@@ -1313,8 +1338,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
         // (zepto-8 synth: chan = waveform * vol * 0.5, mix = clamp(sum, +-1)).
         // One channel at full volume peaks at 32512, so >>> 2 puts it at a
         // quarter of full scale and four sum to full scale without clipping.
-        dry16 <= 16'((mixacc > 19'sd131068 ?  19'sd131068 :
-                      mixacc < -19'sd131068 ? -19'sd131068 : mixacc) >>> 2);
+        dry16 <= 16'((mixacc >  22'sd131068 ?  22'sd131068 :
+                      mixacc < -22'sd131068 ? -22'sd131068 : mixacc) >>> 2);
         dry_valid <= 1;
         // hold the requested echo level for one delay line past the last
         // request, so a note that ends still gets its own echo back
@@ -1388,7 +1413,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
             // the dampen state is the only thing this stage writes back
             if (mx_play && mx_damp != 0) lp[pc_ch] <= mx_lp;
             pst <= 2'd0;
-            if (pc_ch == 2'd3) begin
+            if (pc_ch == VW'(NV-1)) begin
               prun <= 0;
               dry_pend <= 1;
             end
