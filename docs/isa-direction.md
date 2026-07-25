@@ -28,21 +28,52 @@ the Lua means it (16.16), compiled `-Os`, against the same job in the shipped
 6502 port (`obj_move` + `obj_update_all`, excluding the solid-tile lookup which
 the C calls out to):
 
-| | RV32I | RV32IMC | 6502 port |
-| --- | --- | --- | --- |
-| instructions | 61 | 61 | 64 |
-| code bytes | 244 | **172** | **142** |
-| loads/stores | 22 | 22 | 33 (52% of instructions) |
-| ALU width | 32 | 32 | 8 |
-| fixed point | 16.16 | 16.16 | **8.8** |
+| | RV32I | RV32IMC | Z80 | Z80 | 6502 port |
+| --- | --- | --- | --- | --- | --- |
+| how | compiled | compiled | compiled | compiled | **hand-written** |
+| fixed point | 16.16 | 16.16 | 16.16 | 8.8 | **8.8** |
+| instructions | 61 | 61 | 331 | 225 | 64 |
+| code bytes | 244 | **172** | 668 | 388 | **142** |
+| loads/stores | 22 | 22 | 223 | 145 | 33 |
+| ALU width | 32 | 32 | 8 | 8 | 8 |
 
-Two things fall out of this that are worth stating plainly.
+The Z80 columns are `sdcc 4.6.0 -mz80 --std-c99`; RISC-V is
+`riscv64-unknown-elf-gcc -Os`; the 6502 is the shipped port. `long` is 32-bit on
+both compiled targets, which `int` is not — the first version of this
+measurement compared 32-bit RISC-V against 16-bit Z80 without noticing.
+
+Two controls make the table readable, because it contains three different
+variables at once.
+
+**A compiler on an 8-bit machine costs about 3.5x.** Z80 compiled at 8.8 is 225
+instructions and 388 bytes; the 6502 hand-written at the same precision for the
+same job is 64 and 142. Same width, same work, different author. That ratio is
+the price of "just write it in C" on an 8-bit target, and it is paid in exactly
+the currency this machine is short of.
+
+**32-bit arithmetic on an 8-bit machine costs about 1.7x.** Z80 at 16.16 is 331
+instructions against 225 at 8.8, 668 bytes against 388. That is what native
+PICO-8 precision costs a byte-wide ALU, and it is why the port chose 8.8.
+
+**RISC-V pays neither.** 61 instructions, 172 bytes, compiled, at full 16.16.
+
+So the two things one might want most from a change of ISA — *a compiler* and
+*the cart's own arithmetic* — are precisely the two things an 8-bit data path
+charges for, and they multiply: 5.4x the instructions and 3.9x the bytes of
+RV32IMC once you ask for both.
+
+Three things fall out of this that are worth stating plainly.
 
 **The 6502 is denser than RISC-V.** 142 bytes against 172 compressed, and
 against 244 uncompressed. On a machine where instruction fetch is **77% of all
 bus traffic** (`make cpu-bandwidth`), density is not an aesthetic preference, it
 is the performance model. Un-compressed RV32I would be a *regression* here.
 RVC is not optional for this design.
+
+**The compiler and the 8-bit bus are in direct conflict.** That is the finding
+that was not obvious before measuring. An 8-bit machine can be compact *or* it
+can be compiled, and this corpus wants 16.16 as well, which is a third demand on
+the same 8 bits.
 
 **But the 6502 is doing half the arithmetic.** Normalising celeste's 8.8 up to
 the cart's 16.16 roughly doubles the arithmetic without touching the control
@@ -85,8 +116,9 @@ index instruction (286 `ldy`/`ldx` in celeste), and cheaper locals. Preserves
 the verified core, the harness, the assembler and three ports. Keeps the best
 code density available, which is what a bandwidth-bound machine wants.
 
-**Against.** No compiler, and no realistic path to one. Every game stays
-hand-written. `add-isa-word-ops` gets to 16 bits, not 32, so 16.16 stays out of
+**Against.** No compiler worth having: the Z80 measurement above is the
+evidence, and the Z80 is a *more* compiler-friendly 8-bit target than the 6502.
+Every game stays hand-written. `add-isa-word-ops` gets to 16 bits, not 32, so 16.16 stays out of
 reach and the precision loss stands. Seven slices of work.
 
 ### C. A 16-bit successor in the 6502 family
@@ -124,6 +156,21 @@ density gap reopens.
 
 Option A argues for the Tang Nano and a wide fetch. Options B and C work on both.
 See `docs/memory-subsystem.md` and `openspec/changes/add-cpu-prefetch`.
+
+## Caveats on the Z80 columns
+
+- **`sdcc`'s Z80 backend is not a strong optimiser**, and 32-bit arithmetic is
+  its worst case. `z88dk`'s `zsdcc` with full optimisation would narrow the gap,
+  and a hand-written Z80 version would narrow it much further — the 3.5x is a
+  compiler-quality figure, not an ISA figure.
+- **The 8.8 control was produced by rewriting the shifts and the type**, and the
+  16.16 constants no longer fit, so `sdcc` warned about constant overflow. Its
+  arithmetic is therefore indicative of *shape and width*, not numerically the
+  same program.
+- **No `(IX+d)` advantage shows up** the way the earlier hand-argument predicted:
+  46 indexed accesses at 8.8, 116 at 16.16, but they are `sdcc` spilling a stack
+  frame, not the field-access idiom the intent analysis pointed at. A hand-written
+  Z80 would use them very differently.
 
 ## What this document is not
 

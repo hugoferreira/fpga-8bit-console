@@ -1,10 +1,10 @@
 /* The core of a PICO-8 physics step, written as the Lua means it:
    16.16 fixed point, an object list, per-object accumulate/clamp/collide.
    This is celeste's move() plus its speed clamping, transcribed. */
-typedef signed int   fx;      /* 16.16 */
+typedef signed long  fx;      /* 16.16 */
 typedef unsigned char u8;
 
-#define FX(a,b) (((a)<<16)|(b))
+#define FX(a,b) (((fx)(a)<<16)|(b))
 
 struct obj { fx x, y, spdx, spdy; u8 type, flip, alive, pad; };
 extern struct obj objs[16];
