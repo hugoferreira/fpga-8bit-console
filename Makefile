@@ -15,8 +15,6 @@ PLL_FILE = rtl/pll.v
 # Simulation Settings
 SIM_TOP = cpu6502_tb
 SIM_FILES = rtl/cpu6502_tb.sv
-DEBUG_TEST = debug_test
-DEBUG_FILES = rtl/debug_test.sv
 IVERILOG = iverilog
 VVP = vvp
 IVERILOG_FLAGS = -g2012 -I. -y rtl
@@ -283,18 +281,11 @@ bin/sim_debug_${SIM_TOP}: ${SIM_FILES}
 	mkdir -p bin
 	${IVERILOG} ${IVERILOG_FLAGS} -DSIMULATION -DDEBUG -o $@ ${SIM_FILES}
 
-bin/sim_${DEBUG_TEST}: ${DEBUG_FILES}
-	mkdir -p bin
-	${IVERILOG} ${IVERILOG_FLAGS} -DSIMULATION -DDEBUG -o $@ ${DEBUG_FILES}
-
 sim: bin/sim_${SIM_TOP}
 	${VVP} bin/sim_${SIM_TOP}
 
 debug: bin/sim_debug_${SIM_TOP}
 	${VVP} bin/sim_debug_${SIM_TOP}
-
-debug_custom: bin/sim_${DEBUG_TEST}
-	${VVP} bin/sim_${DEBUG_TEST}
 
 # The PSG's own regression suite. It had stopped building under iverilog (two
 # declaration-after-use / cast issues Verilator tolerates), so it had not run
@@ -410,18 +401,14 @@ test_ram: rtl/ram_test_tb.v rtl/ram_async.sv rtl/ram.hex
 	iverilog -g2012 -o ram_test.vvp rtl/ram_test_tb.v rtl/ram_async.sv
 	vvp ram_test.vvp
 
-# The testbench now $fatal's on a failed check instead of printing "TEST
-# FAILED" and exiting 0 (refactor-cpu-core task 1.1), and rtl/ram_async.sv is
-# on the command line because `-y ./rtl` only searches for `.v`.
+# The reset-vector check. It $fatal's on failure instead of printing "TEST
+# FAILED" and exiting 0 (task 1.1), and it elaborates again: ram_async.sv now
+# declares its parameters before the ports that use them, and the enum casts
+# iverilog objected to went out with the core that had them.
 #
-# This target still does not elaborate under iverilog: ram_async.sv declares
-# its parameters after the port list that uses them, and cpu6502_arlet.sv has
-# ~14 enum assignments iverilog wants explicit casts for (Verilator accepts
-# both). Neither is fixed here - the Arlet core is deleted at the end of this
-# change, and `make test-65x02` is a far stronger net than this reset check.
-# See docs/cpu-core.md.
+# `make test-65x02` is the real net; this is a smoke test.
 test:
-	iverilog -DSIMULATION -g2012 -y ./rtl -s cpu6502_tb rtl/cpu6502_defs.sv rtl/cpu6502_alu.sv rtl/cpu6502_wrapper.sv rtl/cpu6502_arlet.sv rtl/ram_async.sv rtl/cpu6502_tb.sv && ./a.out
+	iverilog -DSIMULATION -g2012 -I rtl -y ./rtl -s cpu6502_tb rtl/cpu6502_core.sv rtl/ram_async.sv rtl/cpu6502_tb.sv && ./a.out
 
 # NEMO's own suites: routine-level checks and a full main-loop drive, both
 # against the assembled binary under tools/sim6502.py.
@@ -469,18 +456,17 @@ timing: bin/toplevel.asc
 # cores. This is the only timing measurement available until the memory map is
 # abstracted behind an interface the board's external RAM can back.
 #
-#   make cpu-fmax SST_CORE=arlet
-#   make cpu-fmax SST_CORE=v2
+#   make cpu-fmax
 cpu-fmax: rtl/cpu_fmax_top.sv $(SST_SRC)
 	@mkdir -p build/fmax
-	yosys -q -p "read_verilog -Irtl -sv $(SST_DEFS) rtl/cpu_fmax_top.sv; \
-	    synth_ice40 -top cpu_fmax_top -json build/fmax/$(SST_CORE).json" \
-	    > build/fmax/$(SST_CORE).yosys.log 2>&1
+	yosys -q -p "read_verilog -Irtl -sv rtl/cpu_fmax_top.sv; \
+	    synth_ice40 -top cpu_fmax_top -json build/fmax/cpu.json" \
+	    > build/fmax/cpu.yosys.log 2>&1
 	@nextpnr-ice40 --${FPGA_TYPE} --package ${FPGA_PKG} --freq ${TARGET_FREQ} \
-	    --json build/fmax/$(SST_CORE).json --asc build/fmax/$(SST_CORE).asc \
-	    > build/fmax/$(SST_CORE).pnr.log 2>&1 || true
+	    --json build/fmax/cpu.json --asc build/fmax/cpu.asc \
+	    > build/fmax/cpu.pnr.log 2>&1 || true
 	@grep -E "Max frequency for clock|ICESTORM_LC:|ICESTORM_RAM:" \
-	    build/fmax/$(SST_CORE).pnr.log | tail -4
+	    build/fmax/cpu.pnr.log | tail -4
 
 stat: bin/toplevel.asc
 	icebox_stat -v bin/toplevel.asc
@@ -496,7 +482,7 @@ clean:
 
 .PHONY: all games hex hex-ca65 asm asm-ca65 check-customasm-version run shot \
         timing stat upload clean font tools test \
-        sim debug debug_custom test_ram test-nemo test-celeste metrics \
+        sim debug test_ram test-nemo test-celeste metrics \
         ppu-check ppu-lint ppu-synth ppu-probe ppu-timing
 
 # ------------------------------------------------------------------------------
@@ -511,7 +497,6 @@ clean:
 #   make test-65x02 CASES=0         the full 1.51 M sweep (~17 s)
 #   make test-65x02 OPCODE=91       one opcode
 #   make test-65x02 TIER3=1         report cycle activity too
-#   make test-65x02 SST_CORE=v2     run it against the new core
 #   make cpu-timing                 rewrite docs/cpu-timing-$(SST_CORE).json
 #
 # The suite is 1,082 MB of JSON and is never vendored: it is cloned sparsely at
@@ -521,20 +506,16 @@ clean:
 SST_COMMIT   = 2f6980a2d95757486c7bee24355c360e40e2a224
 SST_CACHE    = $(HOME)/.cache/65x02
 SST_FIXTURE  = $(HOME)/.cache/65x02-fixture/6502-v1.fx
-SST_CORE    ?= arlet
 SST_BIN      = build/obj_65x02/harness
-SST_DEFS     = $(if $(filter v2,$(SST_CORE)),-DSST_CORE_V2,)
-SST_SRC      = rtl/cpu6502_sst.sv rtl/cpu6502_defs.sv \
-               $(if $(filter v2,$(SST_CORE)),rtl/cpu6502_core.sv rtl/cpu6502_decode.sv,\
-                                             rtl/cpu6502_arlet.sv rtl/cpu6502_alu.sv)
+SST_DEFS     =
+SST_SRC      = rtl/cpu6502_sst.sv rtl/cpu6502_core.sv rtl/cpu6502_decode.sv
 CASES       ?= 100
 OPCODE      ?=
 TIER3       ?=
 # Opcodes whose failures are already understood and written up in
-# docs/cpu-core.md. They still run and are still printed; they just do not turn
-# the target red, so a NEW failure is not lost in a permanently broken gate.
-# The new core starts with an empty list and is expected to keep it empty.
-SST_KNOWN   ?= $(if $(filter v2,$(SST_CORE)),,00)
+# docs/cpu-core.md. Empty, and expected to stay empty - the one entry it ever
+# had was the BRK defect in the core that was replaced.
+SST_KNOWN   ?=
 # STALL=N drops RDY for 1..3 cycles, one chance in N per cycle, and requires
 # every case to come out identical (gate T7).
 STALL       ?=
@@ -570,11 +551,25 @@ check-decode:
 test-65x02: $(SST_BIN) $(SST_FIXTURE) check-decode
 	$(SST_BIN) $(SST_FLAGS)
 
+# Dormann's 6502_functional_test: ~30 M instructions of self-checking coverage
+# of every documented behaviour, decimal mode included. Timing-independent, so
+# it is the right check after a core swap (refactor-cpu-core gate T2).
+FUNCTEST_DIR = $(HOME)/.cache/6502-functional-test
+FUNCTEST_BIN = $(FUNCTEST_DIR)/6502_functional_test.bin
+FUNCTEST_URL = https://github.com/Klaus2m5/6502_65C02_functional_tests/raw/master/bin_files
+
+$(FUNCTEST_BIN):
+	@mkdir -p $(FUNCTEST_DIR)
+	curl -sfL -o $@ $(FUNCTEST_URL)/6502_functional_test.bin
+
+test-functional: $(SST_BIN) $(FUNCTEST_BIN)
+	$(SST_BIN) --fixture $(SST_FIXTURE) --functest $(FUNCTEST_BIN)
+
 # The cycle table is a RECORD of what the core does, not a target it has to
 # hit: fewer cycles than NMOS is the point of the rebuild.
 cpu-timing: $(SST_BIN) $(SST_FIXTURE)
 	$(SST_BIN) --fixture $(SST_FIXTURE) --cases 0 --tier3 --max-report 0 \
-	    --timing docs/cpu-timing-$(SST_CORE).json
+	    --timing docs/cpu-timing-v2.json
 
 # Static mean CPI over a corpus, weighted by the instructions it contains.
 # Assembles to a listing directly rather than through `hex`, so it never
@@ -588,4 +583,216 @@ build/$(GAME).lst: $(GAME_SRC) $(GAME_DEPS)
 	$(CUSTOMASM) $(GAME_SRC) -t 10 --color=off --legacy=off \
 	    -f annotated -o $(abspath build/$(GAME).lst)
 
-.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi cpu-fmax
+.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi cpu-fmax test-functional
+
+# ------------------------------------------------------------------------------
+# Per-subsystem synthesis targets (openspec/changes/refactor-build-targets)
+#
+# Four independently compilable top-level circuits, so a subsystem's area and
+# timing can be measured without the other two - and without the whole console
+# having to fit, which it does not:
+#
+#   make synth-cpu            CPU in its real bus (arbiter + DMA + RAM)
+#   make synth-psg            the PSG, and a CPU that can drive it
+#   make synth-ppu            the PPU, and a CPU that can drive it
+#   make synth-soc            the whole console
+#   make synth-all            all four, as one table
+#   make synth-psg SYNTH_SEEDS=5   report Fmax over 5 placements, not one
+#
+# Each rtl/target_*.sv is one instantiation of the SAME chip.sv that top.sv and
+# top_simulator.sv use, with subsystems switched off by parameter - so these
+# measure the shipping design and cannot drift from it. That is the whole point;
+# see rtl/target_harness.sv.
+#
+# Why this is not called `<unit>-synth`: `ppu-synth` already exists above and
+# means the compositor ALONE, with baselines committed in
+# openspec/changes/refactor-ppu-core/design.md. Re-pointing it would leave every
+# command working while changing what the numbers mean. Both are kept.
+#
+# WHAT THIS FOUND: the PSG closes at 28.24 MHz and rtl/clocks.sv drives it at
+# 112.5. See docs/hardware-gaps.md.
+# ------------------------------------------------------------------------------
+SYNTH_UNITS = cpu psg ppu soc
+SYNTH_DIR   = build/targets
+# Private to this block: `SEEDS` above belongs to ppu-timing and defaults to 5.
+SYNTH_SEEDS ?= 1
+# Every design file, so a change anywhere re-synthesises. The target tops pull
+# what they need through `include, the way chip.sv does.
+SYNTH_DEPS  = $(wildcard rtl/*.sv) $(wildcard rtl/*.v) $(wildcard rtl/*.hex) \
+              $(wildcard rtl/*.bin)
+
+# Reports utilisation whether or not placement succeeded: `soc` is expected to
+# fail until add-memory-subsystem lands, and "139% of the device" is a result,
+# not an error. nextpnr's exit status is therefore not the gate here.
+define SYNTH_RULES
+$(SYNTH_DIR)/$(1).json: rtl/target_$(1).sv $$(SYNTH_DEPS)
+	@mkdir -p $(SYNTH_DIR)
+	@yosys -p "read_verilog -Irtl -sv rtl/target_$(1).sv; \
+	    synth_ice40 -top target_$(1) -json $$@" \
+	  > $(SYNTH_DIR)/$(1).synth.log 2>&1 \
+	  || { echo "synth-$(1): yosys FAILED, see $(SYNTH_DIR)/$(1).synth.log"; \
+	       tail -5 $(SYNTH_DIR)/$(1).synth.log; exit 1; }
+
+synth-$(1): $(SYNTH_DIR)/$(1).json
+	@echo "=== $(1) ==="
+	@# Three agents edit rtl/ concurrently, so a number without a fingerprint
+	@# is not reproducible and two runs of the same target can legitimately
+	@# disagree. Quote the fingerprint whenever a measurement is recorded.
+	@printf "  rtl %s @ %s\n" \
+	  "$$$$(cat rtl/*.sv rtl/*.v 2>/dev/null | shasum | cut -c1-12)" \
+	  "$$$$(git rev-parse --short HEAD 2>/dev/null || echo no-git)"
+	@nextpnr-ice40 --$(FPGA_TYPE) --package $(FPGA_PKG) \
+	    --json $(SYNTH_DIR)/$(1).json --asc $(SYNTH_DIR)/$(1).asc \
+	    --freq $(TARGET_FREQ) --seed 1 > $(SYNTH_DIR)/$(1).pnr.log 2>&1 || true
+	@# Anchor on the "N/M" shape of the utilisation table. A bare
+	@# 'ICESTORM_LC:' also matches the placer's per-iteration log lines
+	@# ("type ICESTORM_LC: wirelen solved = 55"), which silently replaced the
+	@# utilisation figures with placer noise.
+	@grep -E '(ICESTORM_LC|ICESTORM_RAM|SB_IO): +[0-9]+/' $(SYNTH_DIR)/$(1).pnr.log \
+	  | tail -3 | sed 's/^Info:/ /'
+	@# nextpnr reports Fmax twice per clock (after placement, after routing);
+	@# keep the LAST figure for each clock name, which is the routed one.
+	@grep 'Max frequency for clock' $(SYNTH_DIR)/$(1).pnr.log \
+	  | awk '{ last[$$$$6] = $$$$0 } END { for (c in last) print " " last[c] }' \
+	  | sed 's/Info://' || true
+	@# nextpnr calls BOTH "could not place" and "missed the frequency target"
+	@# an ERROR. Only the first means the design does not fit, and conflating
+	@# them reports a placed-but-slow design as unbuildable.
+	@if grep '^ERROR' $(SYNTH_DIR)/$(1).pnr.log | grep -qv 'Max frequency'; then \
+	   echo "  DOES NOT PLACE:"; \
+	   grep '^ERROR' $(SYNTH_DIR)/$(1).pnr.log | grep -v 'Max frequency' \
+	     | head -2 | sed 's/^/    /'; \
+	 else \
+	   echo "  critical path (source -> sink):"; \
+	   awk '/Critical path report for clock/,/ns logic/' $(SYNTH_DIR)/$(1).pnr.log \
+	     | grep 'Source ' | head -1 | sed 's/^Info: */    /'; \
+	   awk '/Critical path report for clock/,/ns logic/' $(SYNTH_DIR)/$(1).pnr.log \
+	     | grep 'Sink ' | tail -1 | sed 's/^Info: */    /'; \
+	 fi
+	@if [ "$(SYNTH_SEEDS)" != "1" ]; then $$(MAKE) -s synth-seeds-$(1); fi
+
+# Placement is seed-dependent with about a 5 MHz spread on this design - wider
+# than most deltas worth chasing - so a single number cannot support "timing did
+# not regress".
+synth-seeds-$(1): $(SYNTH_DIR)/$(1).json
+	@for s in $$$$(seq 1 $(SYNTH_SEEDS)); do \
+	   nextpnr-ice40 --$(FPGA_TYPE) --package $(FPGA_PKG) \
+	     --json $(SYNTH_DIR)/$(1).json --asc /dev/null \
+	     --freq $(TARGET_FREQ) --seed $$$$s 2>&1 | \
+	     grep 'Max frequency for clock' | tail -1 | \
+	     sed -E 's/.*: ([0-9.]+) MHz.*/\1/'; \
+	 done | sort -n | awk 'NF{a[++n]=$$$$1} END { if (n) \
+	   printf "  Fmax over %d seeds: min %.2f  median %.2f  max %.2f MHz\n", \
+	          n, a[1], a[int((n+1)/2)], a[n]; \
+	   else print "  Fmax over seeds: design does not place" }'
+endef
+
+$(foreach u,$(SYNTH_UNITS),$(eval $(call SYNTH_RULES,$(u))))
+
+synth-all: $(foreach u,$(SYNTH_UNITS),synth-$(u))
+
+.PHONY: synth-all $(foreach u,$(SYNTH_UNITS),synth-$(u) synth-seeds-$(u))
+
+# ------------------------------------------------------------------------------
+# Board: Sipeed Tang Nano 20K (Gowin GW2AR-LV18QN88C8/I7)
+#
+# The second board this design targets. Everything above builds for the myStorm
+# BlackIce MX (iCE40 HX8K) through icestorm; this block builds for the Tang
+# Nano 20K through the Gowin open-source chain, from the SAME RTL. Only the
+# top, the PLL primitive and the constraints differ - rtl/top_tangnano20k.sv,
+# rtl/pll_gowin.v, rtl/tangnano20k.cst.
+#
+#   make boards               what the two boards are, and what they cost
+#   make tangnano20k          bin/toplevel.fs, the bitstream
+#   make tangnano20k-synth    area report only, no place-and-route
+#   make tangnano20k-prog     load into SRAM (volatile, gone at power-off)
+#   make tangnano20k-flash    write to the onboard 64 Mbit flash (persistent)
+#
+# GAME selects the program exactly as it does everywhere else, because the
+# bitstream depends on `hex`:
+#
+#   make tangnano20k GAME=nemo
+#
+# Toolchain (none of it is the icestorm chain):
+#
+#   yosys                 synth_gowin, same yosys as the iCE40 path
+#   nextpnr-himbaechel    place and route, with the gowin uarch
+#   gowin_pack            bitstream, from Project Apicula (pip install apycula)
+#   openFPGALoader        programming, over the onboard BL616 debugger
+#
+# The easiest way to get a matched set on macOS or Linux is the YosysHQ
+# oss-cad-suite tarball, which ships all four. See docs/boards.md.
+# ------------------------------------------------------------------------------
+GOWIN_TOP     = rtl/top_tangnano20k.sv
+GOWIN_CST     = rtl/tangnano20k.cst
+# The part as nextpnr names it, the die as apicula names it. The GW2AR-18C is
+# the GW2A-18C die with 64 Mbit of SDRAM in the package, so the chipdb and the
+# packer both want the plain GW2A-18C.
+GOWIN_DEVICE  = GW2AR-LV18QN88C8/I7
+GOWIN_FAMILY  = GW2A-18C
+GOWIN_DIE     = GW2A-18C
+NEXTPNR_GOWIN = nextpnr-himbaechel
+GOWIN_PACK    = gowin_pack
+OFL           = openFPGALoader
+OFL_BOARD     = tangnano20k
+
+# `delete t:$print` strips the $display cells yosys keeps out of the `initial`
+# blocks in ram_async.sv and clocks.sv. They are simulation artifacts with no
+# hardware meaning, and handing them to a place-and-route tool is asking it to
+# find a cell type it has no bel for.
+# Not INCLUDE_FILES: that is `rtl/**/*.v`, and make does not know `**`, so it
+# globs to `rtl/*/*.v` and then demands a rule for the literal `rtl/golden/*.v`
+# when no file matches. The design is one flat directory, so say so.
+GOWIN_SRC = $(wildcard rtl/*.sv) $(wildcard rtl/*.v) \
+            $(wildcard rtl/*.hex) $(wildcard rtl/*.bin)
+
+build/gowin/top.json: ${GOWIN_TOP} ${GOWIN_SRC} ${FONT_HEX} hex
+	@mkdir -p build/gowin
+	yosys -p "read_verilog -Irtl -sv ${GOWIN_TOP}; \
+	          synth_gowin -top top -json $@; \
+	          delete t:\$$print; \
+	          write_json $@" > build/gowin/synth.log 2>&1
+
+# Area against the datasheet's numbers, with block RAM broken down by consumer
+# - which is the interesting column, because block RAM is what this device is
+# nearly out of (45 of 46) and logic is not (49%).
+tangnano20k-synth: build/gowin/top.json
+	@python3 tools/gowin_stat.py $<
+
+build/gowin/top_pnr.json: build/gowin/top.json ${GOWIN_CST}
+	${NEXTPNR_GOWIN} --json $< --write $@ \
+	    --device ${GOWIN_DEVICE} \
+	    --vopt family=${GOWIN_FAMILY} \
+	    --vopt cst=${GOWIN_CST} > build/gowin/pnr.log 2>&1
+	@grep -E 'Max frequency|Info: Device utilisation' -A 12 build/gowin/pnr.log \
+	   | sed 's/^Info:/ /' || true
+
+bin/toplevel.fs: build/gowin/top_pnr.json
+	@mkdir -p bin
+	${GOWIN_PACK} -d ${GOWIN_DIE} -o $@ $<
+
+tangnano20k: bin/toplevel.fs
+
+# SRAM, not flash: this is the one to use while iterating, and the board comes
+# back up with whatever is in flash after a power cycle.
+tangnano20k-prog: bin/toplevel.fs
+	${OFL} -b ${OFL_BOARD} bin/toplevel.fs
+
+tangnano20k-flash: bin/toplevel.fs
+	${OFL} -b ${OFL_BOARD} -f bin/toplevel.fs
+
+boards:
+	@echo "Boards this design targets:"
+	@echo
+	@printf '  %-14s %s\n' 'blackice' 'myStorm BlackIce MX - iCE40 HX8K, 25 MHz  [default]'
+	@printf '  %-14s %s\n' ''         '  make all / make upload'
+	@printf '  %-14s %s\n' ''         '  8 KB RAM only: 64 KB does not fit, so it cannot run a game'
+	@echo
+	@printf '  %-14s %s\n' 'tangnano20k' 'Sipeed Tang Nano 20K - Gowin GW2AR-18C, 27 MHz'
+	@printf '  %-14s %s\n' ''           '  make tangnano20k / make tangnano20k-prog'
+	@printf '  %-14s %s\n' ''           '  the full 64 KB RAM, in 32 of the 46 block RAMs'
+	@echo
+	@echo "  make tangnano20k-synth       area report, no place-and-route"
+	@echo "  See docs/boards.md for the toolchain and the pin map."
+
+.PHONY: boards tangnano20k tangnano20k-synth tangnano20k-prog tangnano20k-flash

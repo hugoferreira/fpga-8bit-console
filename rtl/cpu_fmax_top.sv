@@ -16,18 +16,12 @@
  * so that a difference between two runs is a difference between two cores.
  * The arbiter's mux sits on the same path in the real chip and adds to both.
  *
- *   make cpu-fmax SST_CORE=arlet
- *   make cpu-fmax SST_CORE=v2
+ *   make cpu-fmax
  *
  * Hugo Sereno, <bytter@gmail.com>
  */
 
-`ifdef SST_CORE_V2
-  `include "cpu6502_core.sv"
-`else
-  `include "cpu6502_arlet.sv"
-  `include "cpu6502_alu.sv"
-`endif
+`include "cpu6502_core.sv"
 
 /* verilator lint_off DECLFILENAME */
 
@@ -57,7 +51,6 @@ module cpu_fmax_top (
     end
     assign di = rdata;
 
-`ifdef SST_CORE_V2
     cpu6502_core u_cpu (
         .clk(clk), .reset(rst),
         .AB(ab), .DI(di), .DO(dout), .WE(we),
@@ -65,13 +58,6 @@ module cpu_fmax_top (
         .dbg_pc(), .dbg_a(), .dbg_x(), .dbg_y(), .dbg_s(), .dbg_p(),
         .dbg_sync(), .dbg_trap(), .dbg_trap_ir(), .dbg_trap_pc()
     );
-`else
-    cpu u_cpu (
-        .clk(clk), .reset(rst),
-        .AB(ab), .DI(di), .DO(dout), .WE(we),
-        .IRQ(1'b0), .NMI(1'b0), .RDY(rdy_in)
-    );
-`endif
 
     // Reduce every core output to one pin so nothing is trimmed away, and so
     // the comparison is not distorted by differing I/O counts.

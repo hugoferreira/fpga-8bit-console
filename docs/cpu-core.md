@@ -352,17 +352,68 @@ Area is the remaining regression, +68%. The decode table is 256 x 22 bits =
 5,632 bits, so inferring it as a BRAM ROM would return most of it — at the cost
 of a cycle, because a BRAM read is registered. Worth doing only if T8 binds.
 
+### The console runs on it
+
+`rtl/cpu6502_wrapper.sv` instantiates `cpu6502_core`. `cpu6502_arlet.sv` and
+`cpu6502_alu.sv` are gone, along with `cpu6502_defs.sv`, `cpu_reset_tb.sv`,
+`debug_test.sv` and the two `run_test*.sh` scripts that drove them. They are at
+commit `ae37bbc` if ever wanted.
+
+| Gate | State |
+| --- | --- |
+| T1 documented-subset conformance | **met** — 1,510,000 / 1,510,000 |
+| T2 the console still works | **met** — Dormann to `$3469`, Breakout renders |
+| T3 interrupts proven | not started |
+| T4 critical path relocated | blocked — the design does not place |
+| T5 Fmax | blocked — same |
+| T6 wall-clock non-regression | **met** — +10.1% at the board clock |
+| T7 stall correctness | **met** — 5,470,098 stall cycles injected |
+| T8 area | **answered** — the CPU is 9% of the design |
+
+**Dormann's `6502_functional_test`** trapped at `$3469`, the success address,
+after 30,646,179 instructions. That is ~30 M instructions of self-checking
+coverage of every documented behaviour, decimal mode included, and unlike a
+screenshot it does not care how fast the core is. `make test-functional`.
+
+**Breakout renders identically except for the dust.** 30 of 19,200 pixels differ
+from the old core, and they are the drifting dust particles:
+`src/main.asm:153` says *"seed the dust from the hardware LFSR"* and reads
+`SPR_RND`, which free-runs. Any core with different timing reads it at a
+different point and seeds the dust differently — permanently, which is why the
+same 30 pixels differ at frames 18, 19, 20, 21 and 22 rather than drifting. All
+30 are 2x2 blocks in exactly two colours. Nothing else on screen moves.
+
+### Three pre-existing defects the swap uncovered
+
+None were caused by the new core; all were found because something finally
+exercised these paths.
+
+1. **`rtl/test_ram.hex` never described its own contents.** It laid out a memory
+   map in comments — "Address 0x0300-0x030F: Program code", "repeated lines of
+   zeros omitted" — while `$readmemh` loads sequentially. The program claimed to
+   be at `$0300` loaded at `$0030`, and the reset vector never reached `$FFFC`.
+   Rewritten with `@` directives.
+2. **`cpu6502_tb.sv` could not fail, three ways over.** It wired `rw` inverted
+   against `chip.sv`, so the RAM never drove a read and the bus stayed X; it
+   compared with `!=` rather than `!==`, and `X != 16'h0300` is X, which `if`
+   treats as false — so an all-X bus printed `TEST PASSED`; and it asserted
+   where the PC was at a fixed cycle count, which measures speed, not
+   correctness. It now latches whether `$0300` was ever fetched and whether the
+   program reached its loop.
+3. **`ram_async.sv` declared its parameters after the ports that use them.**
+   Legal to Verilator and yosys, unbindable by iverilog. `make test` elaborates
+   and passes for the first time in this repo's history.
+
 ### What is not done yet
 
-- **Interrupts.** `IRQ` and `NMI` are accepted and ignored. 65x02 does not test
-  interrupts at all. Two notes for whoever picks this up: `add-memory-subsystem`
+- **Interrupts.** `IRQ` and `NMI` are accepted and ignored — the only gate still
+  unstarted. 65x02 does not test interrupts at all. Two notes for whoever picks this up: `add-memory-subsystem`
   should probably land first, because an interrupt can then arrive while the
   core is stalled and the entry sequence has to be correct across that; and the
   `--stall` result suggests the harness, not a directed testbench, is the right
   vehicle — assert `IRQ`/`NMI` pseudo-randomly across the sweep and require the
   only difference to be a well-formed entry.
 - **Stalling.** Done and proven — see above.
-- **Integration.** `rtl/cpu6502_wrapper.sv` still points at the old core.
 
 ## Phase 2: what the FPGA flow actually says
 

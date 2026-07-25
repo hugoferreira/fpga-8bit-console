@@ -1,11 +1,13 @@
 /*
- * SystemVerilog wrapper for Arlet Ottens' 6502 CPU implementation.
+ * Adapts the 6502 core to the signal names the rest of the chip uses.
  *
- * This wrapper adapts the more complete Arlet implementation to the
- * interface used in the current design.
+ * The core is `rtl/cpu6502_core.sv` with its decode table in
+ * `rtl/cpu6502_decode.sv`. It replaced Arlet Ottens' implementation, which
+ * this project ran from the beginning and which is recorded, with its measured
+ * behaviour and the one defect the golden suite found in it, in
+ * docs/cpu-core.md.
  *
- * Original implementation by Arlet Ottens, <arlet@c-scape.nl>
- * Wrapper by Hugo Sereno, <bytter@gmail.com>
+ * Hugo Sereno, <bytter@gmail.com>
  */
 
 /* verilator lint_off PINCONNECTEMPTY */
@@ -14,11 +16,13 @@
 /* verilator lint_off MODDUP */
 /* verilator lint_off UNUSED */
 
-// Include files conditionally - Verilator needs them, iverilog gets them via command line
-`ifdef VERILATOR
-  // Include the Arlet 6502 implementation directly to ensure Verilator finds it
-  `include "cpu6502_arlet.sv"
-  `include "cpu6502_alu.sv"
+// Pull the core in for every tool that resolves modules through includes,
+// which both yosys and Verilator do. Only iverilog is excluded: it gets these
+// files on its command line and would see duplicate modules.
+// (Do not start a comment line with the word Verilator - it is read as a
+// pragma and the build fails with BADVLTPRAGMA.)
+`ifndef __ICARUS__
+  `include "cpu6502_core.sv"
 `endif
 
 module cpu6502(
@@ -32,23 +36,25 @@ module cpu6502(
   input  bit         rdy
 );
 
-  // Additional signals required by Arlet's implementation
-  wire IRQ = 1'b0;  // Always keep IRQ disabled 
-  wire NMI = 1'b0;  // Always keep NMI disabled
-  // RDY is now controlled externally
-  
-  // Instantiate Arlet's 6502 CPU with appropriate signal mappings
-  // The module in cpu6502_arlet.sv is named "cpu"
-  cpu cpu_arlet(
+  // Interrupts are accepted by the core and not yet acted on; the vectors are
+  // unused by every game in this repo. refactor-cpu-core section 5 wires them.
+  wire IRQ = 1'b0;
+  wire NMI = 1'b0;
+
+  cpu6502_core core(
     .clk(clk),
     .reset(reset),
     .AB(address),     // Address bus
     .DI(data_in),     // Data in
     .DO(data_out),    // Data out
     .WE(write),       // Write enable
-    .IRQ(IRQ),        // Interrupt request (always 0)
-    .NMI(NMI),        // Non-maskable interrupt (always 0)
-    .RDY(rdy)         // Ready signal - now controlled by memory arbiter
+    .IRQ(IRQ),
+    .NMI(NMI),
+    .RDY(rdy),        // Ready - the memory arbiter stalls the core with this
+
+    // Test interface. Synthesis trims it; the simulator can watch it.
+    .dbg_pc(), .dbg_a(), .dbg_x(), .dbg_y(), .dbg_s(), .dbg_p(),
+    .dbg_sync(), .dbg_trap(), .dbg_trap_ir(), .dbg_trap_pc()
   );
 
 endmodule

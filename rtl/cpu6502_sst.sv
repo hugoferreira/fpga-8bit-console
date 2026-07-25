@@ -28,12 +28,7 @@
 /* verilator lint_off DECLFILENAME */
 /* verilator lint_off UNUSED */
 
-`ifdef SST_CORE_V2
-  `include "cpu6502_core.sv"
-`else
-  `include "cpu6502_arlet.sv"
-  `include "cpu6502_alu.sv"
-`endif
+`include "cpu6502_core.sv"
 
 module cpu6502_sst (
     input  logic        clk,
@@ -65,7 +60,6 @@ module cpu6502_sst (
     output logic        o_trap
 );
 
-`ifdef SST_CORE_V2
 
   // The new core has a real test interface, so nothing here reaches into it.
   cpu6502_core u_cpu (
@@ -82,42 +76,6 @@ module cpu6502_sst (
   // Every register write lands before the decode cycle it retires into.
   assign o_late_writeback = 1'b0;
 
-`else
-
-  cpu u_cpu (
-      .clk(clk), .reset(reset),
-      .AB(ab), .DI(di), .DO(dout), .WE(we),
-      .IRQ(irq), .NMI(nmi), .RDY(rdy)
-  );
-
-  // SEL_A=0, SEL_S=1, SEL_X=2, SEL_Y=3 (reg_sel_t in cpu6502_arlet.sv).
-  //
-  // o_pc is the address the opcode now being decoded was fetched from, and is
-  // only meaningful while o_decode is high - which is the only time the
-  // harness reads it. Arlet's PC register has already stepped past that
-  // opcode by then, hence the -1. Stating it this way rather than "the PC
-  // register" is what makes PHA/PHP/PLA/PLP come out right: those hold a
-  // prefetched opcode in IRHOLD without advancing PC further, so PC-1 still
-  // names the byte being decoded.
-  assign o_pc = u_cpu.PC - 16'd1;
-  assign o_a  = u_cpu.AXYS[0];
-  assign o_s  = u_cpu.AXYS[1];
-  assign o_x  = u_cpu.AXYS[2];
-  assign o_y  = u_cpu.AXYS[3];
-  assign o_p  = u_cpu.P;
-
-  // Arlet has no sync pin. DECODE is the cycle after an opcode fetch, so an
-  // opcode fetch is "the cycle before the core enters DECODE" - which the
-  // harness reconstructs by keeping the previous cycle's address. o_decode is
-  // the one that matters: Arlet writes the previous instruction's register
-  // result and flags at the END of DECODE (cpu6502_arlet.sv:518-520, 730-813),
-  // so that is where the architectural state above becomes final.
-  assign o_decode         = (u_cpu.state == DECODE);
-  assign o_sync           = 1'b0;
-  assign o_trap           = 1'b0;
-  assign o_late_writeback = 1'b1;
-
-`endif
 
 endmodule
 

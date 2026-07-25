@@ -25,23 +25,31 @@ module cpu6502_tb();
   
   // Test control
   int cycle_count = 0;
+  // Latched rather than sampled: "the CPU is at $0300 exactly 50 cycles after
+  // reset" is an assertion about how fast the core is, not about whether it
+  // honoured the reset vector. A faster core is not a broken one.
+  bit saw_reset_target = 0;
+  bit saw_program_loop = 0;
   
   // Instantiate the RAM module - using a parameter to pass the hex file name
   ram_async #(
     .A(16),
     .D(8),
-    .FILE("test_ram.hex")  // This file should be pre-created before running the test
+    .FILE("rtl/test_ram.hex")  // relative to the working directory, not to this file
   ) ram (
     .clk(clk),
     .cs(1'b1),        // Always selected in testbench
-    .rw(~WE),         // rw=1 for read, WE=0 for read
+    .rw(WE),          // ram_async reads on ~rw, so rw follows WE - as
+                      // chip.sv wires it. This bench had it inverted, so
+                      // the RAM never drove a read and the bus stayed X.
     .addr(AB),
     .di(DO),
     .dout(DI)
   );
   
-  // Instantiate the 6502 CPU - module name is "cpu" in cpu6502_arlet.sv
-  cpu cpu_inst(
+  // The core, driven directly rather than through the wrapper, so this bench
+  // sees the same signal names the conformance harness does.
+  cpu6502_core cpu_inst(
     .clk(clk),
     .reset(reset),
     .AB(AB),        // Address bus
@@ -50,7 +58,9 @@ module cpu6502_tb();
     .WE(WE),        // Write enable
     .IRQ(IRQ),
     .NMI(NMI),
-    .RDY(RDY)
+    .RDY(RDY),
+    .dbg_pc(), .dbg_a(), .dbg_x(), .dbg_y(), .dbg_s(), .dbg_p(),
+    .dbg_sync(), .dbg_trap(), .dbg_trap_ir(), .dbg_trap_pc()
   );
   
   // Clock generation - 10ns period (100MHz)
@@ -58,6 +68,11 @@ module cpu6502_tb();
   
   // Count cycles on positive clock edge
   always @(posedge clk) cycle_count = cycle_count + 1;
+
+  always @(posedge clk) if (!reset) begin
+    if (AB === 16'h0300) saw_reset_target <= 1;   // reset vector honoured
+    if (AB === 16'h0314) saw_program_loop <= 1;   // reached the JMP at the end
+  end
   
   // Test sequence
   initial begin
@@ -90,16 +105,19 @@ module cpu6502_tb();
     // This used to $display "TEST FAILED" and carry on, so `make test` exited
     // 0 whether it passed or not - which is why nothing in this repo could be
     // regressed against it. $fatal makes the check a check.
+    // Run long enough for any plausible core to get through the program.
+    repeat(50) @(posedge clk);
+
     $display("TB: After reset, CPU address bus showing: $%04X", AB);
-    if (AB != 16'h0300) begin
-      $display("TEST FAILED: CPU did not reset to expected address");
-      $display("  Expected: $0300, Actual: $%04X", AB);
+    if (!saw_reset_target) begin
+      $display("TEST FAILED: CPU never fetched from $0300 - reset vector not honoured");
       $fatal(1);
     end
-    $display("TEST PASSED: CPU reset to correct address $0300");
-
-    // Run for a bit longer to see execution of program
-    repeat(50) @(posedge clk);
+    if (!saw_program_loop) begin
+      $display("TEST FAILED: CPU reached $0300 but never got to the JMP at $0314");
+      $fatal(1);
+    end
+    $display("TEST PASSED: reset vector honoured and the program ran to its loop");
 
     $display("TB: Test complete after %0d cycles", cycle_count);
     $finish;

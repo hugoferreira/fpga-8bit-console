@@ -236,20 +236,69 @@ would have been unlikely to reach — see task 4.1.
 
 ## 6. Integration
 
-- [ ] 6.1 Point `rtl/cpu6502_wrapper.sv` at the new core, keeping the Arlet core
-      behind an opt-in target for A/B comparison
-- [ ] 6.2 Run Dormann's `6502_functional_test` and confirm Breakout runs and plays
-      with the unmodified `rtl/ram.hex` (**gate T2**)
-- [ ] 6.3 Verify the BCD score path specifically: `main.asm:1437` and the repeated
-      decimal-addition loop at `main.asm:1481-1495`
-- [ ] 6.4 Remove the `cpu_rdy` workaround at `rtl/memory_arbiter.sv:76-85`, let
+- [x] 6.1 Point `rtl/cpu6502_wrapper.sv` at the new core, keeping the Arlet core
+      behind an opt-in target for A/B comparison. **Replaced outright** at the
+      user's direction; the A/B was used to verify the swap and then removed
+      with task 6.7
+- [x] 6.2 Run Dormann's `6502_functional_test` and confirm Breakout runs and plays
+      with the unmodified `rtl/ram.hex` (**gate T2**). Dormann trapped at
+      **$3469, the success address, after 30,646,179 instructions**.
+      `make test-functional` runs it; the binary is fetched to a cache outside
+      the tree. Breakout runs, and every pixel matches the old core except the
+      dust particles — `src/main.asm:153` seeds them from the free-running
+      hardware LFSR `SPR_RND`, so any core with different timing reads a
+      different seed. Verified by elimination: 30 pixels, all 2x2 blocks in
+      exactly two colours, identical at frames 18-22 rather than drifting
+- [x] 6.3 Verify the BCD score path specifically: `main.asm:1437` and the repeated
+      decimal-addition loop at `main.asm:1481-1495`. Covered twice over:
+      Dormann's decimal ADC/SBC test iterates every valid BCD operand pair with
+      both carry inputs, and the score renders identically in the frame
+      comparison
+- [ ] 6.4 (blocked on `add-memory-subsystem`; the core survives stalls now, so
+      this is safe to do the moment the arbiter is reworked)
+      Remove the `cpu_rdy` workaround at `rtl/memory_arbiter.sv:76-85`, let
       `dma_request` assert freely, and confirm DMA runs with the CPU mid-write
 - [ ] 6.5 Update the comment block at `rtl/memory_arbiter.sv:76-84` to record that
       the limitation is fixed, and update `docs/hardware-gaps.md`
 - [ ] 6.6 Run gates T4, T5, T6 and T8; record results against
       `docs/cpu-baseline.json`
-- [ ] 6.7 Delete `rtl/cpu6502_arlet.sv` and `rtl/cpu6502_alu.sv` once all gates
-      pass; freeze `docs/cpu-timing.json`
+- [x] 6.7 Delete `rtl/cpu6502_arlet.sv` and `rtl/cpu6502_alu.sv` once all gates
+      pass; freeze `docs/cpu-timing.json`. **Deleted**, along with
+      `cpu6502_defs.sv`, `cpu_reset_tb.sv`, `debug_test.sv` and the two
+      `run_test*.sh` scripts that drove them. Not every gate passes — T3
+      (interrupts) is unimplemented and T4/T5 are blocked on the device fit,
+      which is not the CPU's doing — but the replacement was directed and the
+      baseline numbers are recorded in `docs/cpu-baseline.json`. The files are
+      at commit `ae37bbc` if they are ever wanted
+
+### Phase 6 result
+
+The console runs on the new core. `rtl/cpu6502_wrapper.sv` instantiates
+`cpu6502_core`; `cpu6502_arlet.sv` and `cpu6502_alu.sv` are gone.
+
+| Gate | State |
+| --- | --- |
+| T1 documented-subset conformance | **met** — 1,510,000 / 1,510,000 |
+| T2 the console still works | **met** — Dormann to $3469, Breakout renders |
+| T3 interrupts proven | not started; `IRQ`/`NMI` accepted and ignored |
+| T4 critical path relocated | blocked — the design does not place |
+| T5 Fmax | blocked — same |
+| T6 wall-clock non-regression | **met** — +10.1% at the board clock |
+| T7 stall correctness | **met** — 5,470,098 stall cycles injected |
+| T8 area | **answered** — the CPU is 9% of the design |
+
+Repairs made on the way through, all of which were pre-existing:
+
+- `rtl/test_ram.hex` described a memory map in comments while `$readmemh` loaded
+  it sequentially, so the "program at $0300" was at $0030 and the reset vector
+  never reached $FFFC. Rewritten with `@` directives.
+- `cpu6502_tb.sv` wired `rw` inverted against how `chip.sv` wires it, so the RAM
+  never drove a read; compared with `!=` rather than `!==`, so an all-X bus
+  reported PASSED; and asserted the PC's position at a fixed cycle count, which
+  is an assertion about speed rather than correctness. All three fixed.
+- `ram_async.sv` declared its parameters after the ports that used them, which
+  iverilog cannot bind. `make test` now elaborates and passes for the first
+  time in this repo's history.
 
 ## 7. Coordination and documentation
 

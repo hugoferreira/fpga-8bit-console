@@ -1,18 +1,22 @@
-// Memory dump for testing
-// Format: Each line contains 16 bytes (32 hex chars) of data
-// Address 0x0000-0x000F: Zero page test values
+// Memory image for rtl/cpu6502_tb.sv - the reset-vector smoke test.
+//
+// $readmemh loads sequentially unless told otherwise, so the addresses below
+// are @ directives, not comments. The previous version of this file described
+// a memory map in comments and said "repeated lines of zeros omitted", which
+// meant the program it claimed to place at $0300 actually loaded at $0030 and
+// the reset vector never reached $FFFC at all. The bench read X's and, because
+// it compared with != rather than !==, reported PASSED.
+
+// Zero page: a few recognisable values.
+@0000
 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
-// Address 0x0010-0x001F: More zero page values
 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F
-// Addresses 0x0020-0x02FF: Fill with zeros
-00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-// ... (repeated lines of zeros omitted) ...
-// Address 0x0300-0x030F: Program code
+
+// Program at $0300: store a counter to $2000..$2003, then loop forever.
+@0300
 A9 01 8D 00 20 A9 02 8D 01 20 A9 03 8D 02 20 A9
-// Address 0x0310-0x031F: More program code
-04 8D 03 20 4C 00 03 FF FF FF FF FF FF FF FF FF
-// Addresses 0x0320-0xFFFB: Fill with zeros
-00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-// ... (repeated lines of zeros omitted) ...
-// Address 0xFFFC-0xFFFF: Reset vector and interrupt vectors
-00 03 FF FF 
+04 8D 03 20 4C 00 03
+
+// Reset vector -> $0300. NMI at $FFFA and IRQ at $FFFE are unused.
+@FFFA
+00 03 00 03 00 03

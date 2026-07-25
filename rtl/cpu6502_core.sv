@@ -542,7 +542,8 @@ module cpu6502_core (
             if (is_store) begin
                 we_c = 1'b1; do_c = ra_val; st_n = S_LAST;
             end else begin
-                st_n = is_rmw ? S_RMW : S_EXEC;
+                // Cast: iverilog will not take a ternary of two enum members.
+                if (is_rmw) st_n = S_RMW; else st_n = S_EXEC;
             end
         end
 

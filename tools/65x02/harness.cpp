@@ -189,6 +189,9 @@ struct Opts {
   long stall           = 0;      // 0 off; else 1-in-N cycles gets a stall
   const char *timing   = nullptr;
   const char *known    = "";   // opcodes whose failures are recorded, not new
+  const char *functest = nullptr;  // Dormann's 6502_functional_test.bin
+  long functest_start  = 0x0400;
+  long functest_pass   = 0x3469;
 };
 
 static FILE *OUT = nullptr;   // harness output, kept clear of the model's $display
@@ -619,6 +622,9 @@ int main(int argc, char **argv) {
     else if (a == "--verilog-stdout") o.verilog_stdout = true;
     else if (a == "--trace")          o.trace = true;
     else if (a == "--stall")          o.stall = atol(next());
+    else if (a == "--functest")       o.functest = next();
+    else if (a == "--functest-start") o.functest_start = strtol(next(), nullptr, 16);
+    else if (a == "--functest-pass")  o.functest_pass  = strtol(next(), nullptr, 16);
     else if (a == "--timing")         o.timing = next();
     else if (a == "--known-failures") o.known = next();
     else if (a == "--help" || a == "-h") {
@@ -668,6 +674,70 @@ int main(int argc, char **argv) {
 
   Vcpu6502_sst *top = new Vcpu6502_sst;
   Harness h(top, o.max_cycles);
+
+  // ---- Dormann's functional test ------------------------------------
+  //
+  // A self-checking 6502 program: ~30 M instructions covering every
+  // documented behaviour, decimal mode included, ending in `jmp *` at the
+  // success address if nothing went wrong and at the failing test's own
+  // address if something did. Unlike a screenshot it does not care how fast
+  // the core is, which is what makes it the right check after a core swap.
+  if (o.functest) {
+    FILE *bf = fopen(o.functest, "rb");
+    if (!bf) { perror(o.functest); return 2; }
+    size_t n = fread(h.mem, 1, 0x10000, bf);
+    fclose(bf);
+    fprintf(OUT, "functional test: %s, %zu bytes, start $%04lX, pass $%04lX\n",
+            o.functest, n, o.functest_start, o.functest_pass);
+
+    // Borrow the reset vector, then hand back the two bytes the image had
+    // there once the core is running at the start address.
+    const uint8_t v0 = h.mem[0xFFFC], v1 = h.mem[0xFFFD];
+    h.mem[0xFFFC] = (uint8_t)(o.functest_start & 0xFF);
+    h.mem[0xFFFD] = (uint8_t)(o.functest_start >> 8);
+
+    top->reset = 1; top->rdy = 1; top->irq = 0; top->nmi = 0;
+    h.di_reg = 0xFF;
+    for (int i = 0; i < 3; i++) h.cycle(false);
+    top->reset = 0;
+
+    bool started = false;
+    uint16_t prev_pc = 0xFFFF;
+    uint64_t cyc = 0, insn = 0;
+    int same = 0;
+    const uint64_t CAP = 400000000ull;
+    for (; cyc < CAP; cyc++) {
+      Harness::Bus b = h.probe();
+      if (!started && !b.w && b.a == (uint16_t)o.functest_start) {
+        started = true;
+        h.mem[0xFFFC] = v0;
+        h.mem[0xFFFD] = v1;
+      }
+      if (started && b.dec) {
+        insn++;
+        uint16_t pc = top->o_pc;
+        same = (pc == prev_pc) ? same + 1 : 0;
+        prev_pc = pc;
+        if (same >= 2) {
+          h.commit(b, true);
+          bool ok = pc == (uint16_t)o.functest_pass;
+          fprintf(OUT, "  trapped at $%04X after %llu instructions, %llu cycles\n",
+                  pc, (unsigned long long)insn, (unsigned long long)cyc);
+          fprintf(OUT, "  %s\n", ok
+                  ? "PASS - reached the success trap"
+                  : "FAIL - this is a failing test's own trap; look it up in "
+                    "6502_functional_test.lst");
+          delete top;
+          return ok ? 0 : 1;
+        }
+      }
+      h.commit(b, true);
+    }
+    fprintf(OUT, "  no trap within %llu cycles (%llu instructions)\n",
+            (unsigned long long)CAP, (unsigned long long)insn);
+    delete top;
+    return 1;
+  }
   h.trace = o.trace;
   top->eval();
   h.late_writeback = top->o_late_writeback;
