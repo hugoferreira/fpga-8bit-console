@@ -223,6 +223,49 @@ psg-trace: hex ${FONT_HEX}
 	@$(MAKE) -s $(SIM_BIN)
 	@$(SIM_BIN) --headless --frames $(FRAMES) --psg-trace $(if $(KEYS),--keys $(KEYS),) 2>/dev/null | grep '^@@'
 
+# PSG audio, rendered with nothing else in the system: no CPU, no game, no
+# video. Answers "does it SOUND right", which --psg-trace cannot.
+#   make psg-wav CART=~/Stuff/carts/celeste-15133.p8.png MUSIC=0 MASK=7
+#   make psg-wav CART=... SFX=3 SECONDS=2 WAV=build/dash.wav
+CART    ?=
+MUSIC   ?= 0
+MASK    ?= 7
+SFX     ?=
+SECONDS ?= 12
+WAV     ?= build/psg.wav
+PSG_WAV  = build/obj_psg/psg_wav
+
+$(PSG_WAV): rtl/psg.sv sim/psg_wav.cpp
+	verilator --cc rtl/psg.sv --top-module psg -Irtl -O3 \
+		--x-assign fast --x-initial fast \
+		-Wno-DEFOVERRIDE -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+		--exe $(abspath sim/psg_wav.cpp) -o psg_wav --build -j 8 \
+		-Mdir build/obj_psg -CFLAGS "-O2"
+
+psg-wav: $(PSG_WAV)
+	@test -n "$(CART)" || { echo "usage: make psg-wav CART=<cart.p8.png> [MUSIC=n|SFX=n]"; exit 1; }
+	@mkdir -p build
+	@python3 -c "import sys; sys.path.insert(0,'tools'); \
+	  from p8_audio import rom_from_png; \
+	  open('build/psg_audio.bin','wb').write(rom_from_png('$(CART)')[0x3100:0x4300])"
+	$(PSG_WAV) --audio build/psg_audio.bin --mask $(MASK) --seconds $(SECONDS) \
+	  $(if $(SFX),--sfx $(SFX),--music $(MUSIC)) --out $(WAV)
+
+# Row-by-row energy of one SFX against the cart's own note data. Localises a
+# "the melody is wrong" report to a row, and so to a waveform/volume/effect.
+#   make psg-rows CART=... SFX=8
+psg-rows: $(PSG_WAV)
+	@test -n "$(CART)" || { echo "usage: make psg-rows CART=<cart.p8.png> SFX=n"; exit 1; }
+	@$(MAKE) -s psg-wav CART=$(CART) SFX=$(SFX) SECONDS=$(SECONDS) WAV=build/psg_rows.wav
+	python3 tools/psg_rows.py build/psg_rows.wav --cart $(CART) --sfx $(SFX)
+
+# Diff the rendered pitch and waveform of one SFX against the cart's own data.
+#   make psg-notes CART=... SFX=21
+psg-notes: $(PSG_WAV)
+	@test -n "$(CART)" || { echo "usage: make psg-notes CART=<cart.p8.png> SFX=n"; exit 1; }
+	@$(MAKE) -s psg-wav CART=$(CART) SFX=$(SFX) SECONDS=$(SECONDS) WAV=build/psg_sfx.wav
+	python3 tools/psg_notes.py build/psg_sfx.wav --cart $(CART) --sfx $(SFX)
+
 # ------------------------------------------------------------------------------
 # Simulation / testbenches
 # ------------------------------------------------------------------------------
@@ -246,6 +289,13 @@ debug: bin/sim_debug_${SIM_TOP}
 
 debug_custom: bin/sim_${DEBUG_TEST}
 	${VVP} bin/sim_${DEBUG_TEST}
+
+# The PSG's own regression suite. It had stopped building under iverilog (two
+# declaration-after-use / cast issues Verilator tolerates), so it had not run
+# since the datapath refold. Kept as a target so that cannot happen quietly.
+test-psg:
+	iverilog -g2012 -o build/psg_tb.vvp rtl/psg_tb.sv rtl/psg.sv rtl/dsigma.sv 2>&1 | grep -v 'sorry:' || true
+	vvp build/psg_tb.vvp | tail -3
 
 test_ram: rtl/ram_test_tb.v rtl/ram_async.sv rtl/ram.hex
 	@echo "Running RAM testbench..."

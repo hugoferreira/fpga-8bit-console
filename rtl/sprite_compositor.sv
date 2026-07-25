@@ -37,6 +37,11 @@
 //       layer (background sprites), entries split..count-1 after. 0 (the
 //       reset value) keeps the whole list in front - no extra scan cost
 //       either way, the list is partitioned, never scanned twice.
+//   $37 staged repeat count, in CELLS (0 and 1 both mean one cell, so the
+//       reset value is the old behaviour). A committed entry blits its ONE
+//       fetched row into that many consecutive 8-pixel cells, which is what
+//       a flat run - a cloud, a bar, a floor - actually is. It costs one list
+//       entry instead of N, and one sheet fetch instead of N.
 //   $B: bit0 xflip, bit1 yflip, bits3:2 bpp-1, bits7:4 palette base
 //       (pixel color = palette base + pixel value, mod 16); writing commits
 //       the staged X/Y/base and auto-increments the list index
@@ -81,12 +86,13 @@ module sprite_compositor(input bit clk, input bit reset,
   logic [10:0] sheet_addr;   // CPU upload pointer
 
   // Sprite list: {pal[3:0], bppm1[1:0], yflip, xflip, base[7:0], y[6:0], x[7:0]}
-  logic [30:0] list[0:MAX_SPRITES-1];
+  logic [33:0] list[0:MAX_SPRITES-1];
   logic [7:0]  sp_index;
   logic [7:0]  sp_count;
   logic [7:0]  stage_x;
   logic [6:0]  stage_y;
   logic [7:0]  stage_base;
+  logic [2:0]  stage_rep;
 
   // Tilemap: 32x16 cells as two byte planes (low = base, high = attributes)
   logic [7:0] map_lo[0:511];
@@ -142,7 +148,7 @@ module sprite_compositor(input bit clk, input bit reset,
 
   logic [7:0]  scan_i;
   logic [4:0]  clear_i;
-  logic [30:0] entry_q;
+  logic [33:0] entry_q;
   logic        entry_valid;
   logic        w0_wait, w1_wait;
   logic [31:0] old_w0, old_w1;
@@ -180,6 +186,7 @@ module sprite_compositor(input bit clk, input bit reset,
   wire       e_yf    = entry_q[24];
   wire [1:0] e_bppm1 = entry_q[26:25];
   wire [3:0] e_pal   = entry_q[30:27];
+  wire [2:0] e_rep   = entry_q[33:31];   // extra cells after the first
   wire [6:0] dy      = line_y - e_y;
   wire       hit     = (dy < 7'd8) && entry_valid;
   wire [2:0] rowi    = dy[2:0] ^ {3{e_yf}};
@@ -211,9 +218,14 @@ module sprite_compositor(input bit clk, input bit reset,
   end
 
   // 64-bit window covering the two lanes the row can straddle
-  wire [4:0]  lane   = e_x[7:3];
+  // A repeated entry blits the same fetched row into consecutive cells, so
+  // the blit works from cell_x - the position of the cell being written -
+  // rather than from the entry's own x.
+  logic [7:0] cell_x;
+  logic [2:0] rcnt;
+  wire [4:0]  lane   = cell_x[7:3];
   wire [4:0]  lane1  = lane + 5'd1;
-  wire [2:0]  off    = e_x[2:0];
+  wire [2:0]  off    = cell_x[2:0];
   wire [63:0] data64 = {32'b0, packed32} << {off, 2'b00};
   wire [15:0] mask16 = {8'b0, opq8} << off;
 
@@ -337,6 +349,8 @@ module sprite_compositor(input bit clk, input bit reset,
         scan_pass <= 0;
         w0_wait <= 0;
         w1_wait <= 0;
+        cell_x <= 0;
+        rcnt <= 0;
         est <= E_CLEAR;
       end else begin
         case (est)
@@ -363,8 +377,10 @@ module sprite_compositor(input bit clk, input bit reset,
             else begin
               // Synthesize a sprite entry for this tile and blit it through
               // the shared pipeline; y is chosen so dy lands on the tile row
-              entry_q <= {map_rd_hi[7:4], map_rd_hi[3:2], map_rd_hi[1], map_rd_hi[0], map_rd_lo, y_syn, x_syn};
+              entry_q <= {3'd0, map_rd_hi[7:4], map_rd_hi[3:2], map_rd_hi[1], map_rd_hi[0], map_rd_lo, y_syn, x_syn};
               entry_valid <= 1;
+              cell_x <= x_syn;      // tiles are always a single cell
+              rcnt <= 3'd0;
               prow[0] <= 0;
               prow[1] <= 0;
               prow[2] <= 0;
@@ -378,6 +394,8 @@ module sprite_compositor(input bit clk, input bit reset,
           E_SCAN: begin
             if (hit) begin
               // Hold the entry and fetch its plane rows from the sheet
+              cell_x <= e_x;
+              rcnt <= e_rep;
               prow[0] <= 0;
               prow[1] <= 0;
               prow[2] <= 0;
@@ -454,9 +472,14 @@ module sprite_compositor(input bit clk, input bit reset,
           end
 
           E_WR1: begin
-            // merged word1 is written this cycle; go back for the next
-            // tile column or the next list entry
-            if (tile_mode)
+            // merged word1 is written this cycle. If the entry has cells left
+            // to go, step 8 pixels right and blit the SAME row again - prow
+            // still holds it, so a run pays one sheet fetch, not one per cell.
+            if (rcnt != 3'd0) begin
+              rcnt <= rcnt - 3'd1;
+              cell_x <= cell_x + 8'd8;
+              est <= E_RD0;
+            end else if (tile_mode)
               est <= E_TMAP0;
             else begin
               entry_q <= list[scan_i[6:0]];
@@ -506,6 +529,7 @@ module sprite_compositor(input bit clk, input bit reset,
       vsync_q <= 0;
       lfsr <= 16'hACE1;
       bsplit <= 0;
+      stage_rep <= 0;
       for (int k = 0; k < 16; k++) begin
         dpal[k] <= k[3:0];
         spal[k] <= k[3:0];
@@ -553,11 +577,16 @@ module sprite_compositor(input bit clk, input bit reset,
           6'h09: stage_x <= reg_data;
           6'h0A: stage_y <= reg_data[6:0];
           6'h0B: begin
-            list[sp_index[6:0]] <= {reg_data[7:2], reg_data[1], reg_data[0], stage_base, stage_y, stage_x};
+            list[sp_index[6:0]] <= {stage_rep, reg_data[7:2], reg_data[1], reg_data[0], stage_base, stage_y, stage_x};
             sp_index <= sp_index + 1;
           end
           6'h0C: sp_count <= reg_data;
           6'h0E: stage_base <= reg_data;
+          // Repeat count in CELLS: 0 and 1 both mean one cell, so the reset
+          // value leaves every existing program unchanged. Clamped to 8.
+          6'h37: stage_rep <= (reg_data == 8'd0)   ? 3'd0 :
+                              (reg_data >= 8'd8)   ? 3'd7 :
+                                                     reg_data[2:0] - 3'd1;
           default: ;  // $6, $7, $D, $F: unmapped / read-only
         endcase
       end else if (cs && !rw) begin
@@ -573,6 +602,7 @@ module sprite_compositor(input bit clk, input bit reset,
           6'h0C: dout <= sp_count;
           6'h0D: dout <= frame_count;
           6'h0E: dout <= stage_base;
+          6'h37: dout <= {5'd0, stage_rep} + 8'd1;
           6'b01????: dout <= {4'b0, addr[4] ? spal[addr[3:0]] : dpal[addr[3:0]]};
           6'h30: dout <= clip_x0;
           6'h31: dout <= {1'b0, clip_y0};

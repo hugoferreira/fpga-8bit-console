@@ -289,6 +289,54 @@ module sprite_compositor_tb;
     end
 
     $display("Rendered %0d frames of %0d sprites at mixed 1-4 bpp", NFRAMES, NSPR);
+
+    // ---- repeat field ($37): a run must be pixel-identical to the entries
+    // it replaces. Renders the same eight cells twice - once as eight list
+    // entries, once as one entry with a repeat count - and compares every
+    // pixel of the frame.
+    begin
+      logic [3:0] ref_pix[0:H-1][0:W-1];
+      int diff;
+      cpuwrite(6'h05, 8'h00);            // tiles and overlay off: sprites only
+      cpuwrite(6'h36, 8'h00);
+      cpuwrite(6'h03, 8'h00);
+      cpuwrite(6'h04, 8'h00);
+
+      cpuwrite(6'h37, 8'd1);             // eight separate single-cell entries
+      cpuwrite(6'h08, 8'd0);
+      for (int i = 0; i < 8; i++) begin
+        cpuwrite(6'h09, 8'(20 + i * 8));
+        cpuwrite(6'h0A, 8'd40);
+        cpuwrite(6'h0E, 8'd0);
+        cpuwrite(6'h0B, 8'h30);
+      end
+      cpuwrite(6'h0C, 8'd8);
+      wait_frame_end();
+      wait_frame_end();
+      for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) ref_pix[y][x] = frame_pix[y][x];
+
+      cpuwrite(6'h08, 8'd0);             // the same run as ONE entry
+      cpuwrite(6'h37, 8'd8);
+      cpuwrite(6'h09, 8'd20);
+      cpuwrite(6'h0A, 8'd40);
+      cpuwrite(6'h0E, 8'd0);
+      cpuwrite(6'h0B, 8'h30);
+      cpuwrite(6'h0C, 8'd1);
+      cpuwrite(6'h37, 8'd1);
+      wait_frame_end();
+      wait_frame_end();
+
+      diff = 0;
+      for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+          if (frame_pix[y][x] != ref_pix[y][x]) diff++;
+      if (diff == 0)
+        $display("[repeat] one entry with rep=8 == eight entries, all %0d pixels",
+                 W * H);
+      else
+        $display("[repeat] FAIL: %0d pixels differ from the entries it replaces", diff);
+    end
     $finish;
   end
 

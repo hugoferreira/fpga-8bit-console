@@ -53,8 +53,72 @@ def decompress_code(rom):
 
 
 def pxa_decompress(code):
-    raise SystemExit("pxa-compressed cart: extend pxa_decompress "
-                     "(only the audio dump works for new-format carts)")
+    """PICO-8 0.2.0+ code compression: LZ77 back-references interleaved with
+    move-to-front-coded literals, over an LSB-first bit stream.
+
+    Header (8 bytes): "\\0pxa", then uncompressed and compressed sizes as
+    big-endian 16-bit. The compressed size counts the header, which gives a
+    free end-to-end check that the bit stream was read correctly.
+    """
+    unc_size = (code[4] << 8) | code[5]
+    com_size = (code[6] << 8) | code[7]
+    bits, pos = code[8:], 0
+
+    def bit():
+        nonlocal pos
+        b = (bits[pos >> 3] >> (pos & 7)) & 1
+        pos += 1
+        return b
+
+    def read(n):
+        v = 0
+        for i in range(n):
+            v |= bit() << i
+        return v
+
+    mtf = list(range(0x100))
+    out = bytearray()
+    while len(out) < unc_size:
+        if bit():
+            # Literal, as an index into the move-to-front table. The index is
+            # 4 bits wide plus one bit per leading 1, so recently used bytes
+            # cost 5 bits and the tail of the table costs more.
+            extra = 0
+            while bit():
+                extra += 1
+            idx = read(4 + extra) + (((1 << extra) - 1) << 4)
+            ch = mtf[idx]
+            out.append(ch)
+            del mtf[idx]
+            mtf.insert(0, ch)
+        else:
+            offlen = (5 if bit() else 10) if bit() else 15
+            offset = read(offlen) + 1
+            if offset == 1 and offlen != 5:
+                # Escape: a run of raw bytes, NUL-terminated, bypassing the
+                # MTF table. Used for binary string literals, where MTF
+                # coding would cost more than the bytes themselves.
+                assert offlen == 10, f"unexpected raw-block offlen {offlen}"
+                while True:
+                    c = read(8)
+                    if c == 0:
+                        break
+                    out.append(c)
+            else:
+                count = 3
+                while True:
+                    part = read(3)
+                    count += part
+                    if part != 7:
+                        break
+                for _ in range(count):
+                    out.append(out[-offset])
+
+    consumed = 8 + (pos + 7) // 8
+    if consumed != com_size:
+        raise SystemExit(f"pxa: consumed {consumed} bytes, header says "
+                         f"{com_size} - decoder is out of step")
+    return out.decode("latin-1")
 
 
 def main():

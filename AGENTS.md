@@ -1,18 +1,19 @@
-<!-- OPENSPEC:START -->
-# OpenSpec Instructions
+# Working in this repo
 
-These instructions are for AI assistants working in this project.
+**Two agents are working in this checkout at once**, on the same branch, with
+uncommitted work from both: one on the NEMO port (`src/nemo/`), one on the
+Celeste port (`src/celeste/`).
 
-Always open `@/openspec/AGENTS.md` when the request:
-- Mentions planning or proposals (words like proposal, spec, change, plan)
-- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
-- Sounds ambiguous and you need the authoritative spec before coding
+**Read [`docs/agent-coordination.md`](docs/agent-coordination.md) before
+editing anything you did not write.** It holds:
 
-Use `@/openspec/AGENTS.md` to learn:
-- How to create and apply change proposals
-- Spec format and conventions
-- Project structure and guidelines
+- which paths each agent owns, and which four files are shared
+  (`tools/isa_metrics.py`, `docs/corpora.md`, `docs/hardware-gaps.md`,
+  `Makefile`)
+- the append-don't-rewrite protocol for those four
+- open requests in both directions, including two that need the nemo agent:
+  a one-pixel framebuffer offset in `sim/console.cpp`, and a measurement
+  artifact that makes `make metrics` print the opposite of the frame-pressure
+  result recorded in `docs/corpora.md`
 
-Keep this managed block so 'openspec update' can refresh the instructions.
-
-<!-- OPENSPEC:END -->
+Delete this section once both changes are archived.
