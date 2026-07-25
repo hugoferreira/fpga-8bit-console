@@ -131,6 +131,41 @@ master clocks together and runs ~7x slower than the board, so **fixing the
 simulator's clock model becomes part of this change**, not an aside. Without it
 there is no way to test sixteen voices before hardware.
 
+## Clocking: the PSG gets its own PLL
+
+Sixteen voices streamed from BRAM need ~320 clocks per sample. The board has
+them; the way it is wired today does not hand them to the PSG.
+
+`icepll -i 25` reaches 50, 100, 150 and 200 MHz exactly from the board's
+crystal, and **both** of the HX8K's PLLs are unused - `rtl/pll.v` (25 -> 50)
+exists but is instantiated nowhere. So the clocks are there for the taking.
+
+Two ways to take them, and the second is what this change does:
+
+1. **One high common clock, everything derived from it by enables.** Clean, no
+   clock-domain crossing, and it is the textbook answer. Rejected here for a
+   coordination reason, not a technical one: it means turning every
+   `always_ff @(posedge clk)` in the PPU into `if (en)`, and `refactor-ppu-core`
+   is in flight in this same checkout with a spec requirement that per-line
+   clock accounting must not regress. Two agents rewriting the PPU's clocking
+   at once is not a trade worth making.
+
+2. **An independent PLL for sound.** The PSG becomes its own clock domain at
+   50-100 MHz while the CPU and PPU keep the 25 MHz board clock untouched. The
+   cost is a clock-domain crossing on the PSG's register interface - and that
+   interface is tiny and slow: a handful of writes per frame plus the 4608-byte
+   audio upload, no read-modify-write, no burst. A toggle handshake covers it.
+
+The second is also what PICO-8 does. Its audio is pull-driven by the SDL
+callback thread, which runs completely independently of the video loop;
+`sfx()` and `music()` only mutate state, under `SDL_LockAudio`. The engine has
+no notion of audio and video sharing a clock, and the handshake here is the
+hardware equivalent of that lock.
+
+At 100 MHz the PSG gets **4535 clocks per sample**, so sixteen voices streamed
+from BRAM cost 7% of budget. That is the headroom that lets voice state live in
+RAM instead of registers, which is the whole point.
+
 ## Superseded: partition voice state by rate
 
 The 336 bits are not all touched at the same rate.

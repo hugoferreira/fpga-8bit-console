@@ -7,7 +7,8 @@
 `include "dma_controller.sv"
 `include "cpu6502_wrapper.sv"
 
-module chip(input logic clk, input logic cpuclk, input logic reset,
+module chip(input logic clk, input logic cpuclk, input logic psgclk,
+            input logic reset,
             input logic vsync, input logic hsync,
             input logic [6:0] vpos, input logic [7:0] hpos,
             input logic [7:0] buttons,
@@ -20,6 +21,14 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
   // sample rate is derived correctly on any board (default: the simulator's
   // 161*121*3*60 Hz pixel clock). REVERB=0 drops the reverb delay BRAM.
   parameter CLK_HZ = 32'd3_506_580, REVERB = 1;
+
+  // Size of the internal RAM, in address bits. 16 (64 KB) is the real machine
+  // and what the simulator uses. The FPGA top overrides it, because 64 KB is
+  // 512 kbit against the hx8k's 128 kbit of block RAM and the design cannot
+  // be synthesised at all with it - see rtl/top.sv. TEMPORARY: this parameter
+  // exists only until the external-memory abstraction lands, at which point
+  // both tops should pass the same thing and this can go.
+  parameter RAM_ADDR_BITS = 16;
 
   // CPU signals
   wire  [15:0] cpu_addr;
@@ -127,12 +136,14 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .sp_dma_data(sp_dma_data)
   );
 
-  // 8x64kbit Async RAM - use the same clock as the CPU
-  ram_async #(.A(16), .D(8), .FILE("./rtl/ram.hex")) ram(
-    .clk(clk), 
-    .cs(ram_cs), 
-    .rw(mem_write), 
-    .addr(mem_addr), 
+  // Async RAM - use the same clock as the CPU. The address is truncated
+  // explicitly rather than by port width, so a shrunken RAM aliases visibly
+  // instead of silently.
+  ram_async #(.A(RAM_ADDR_BITS), .D(8), .FILE("./rtl/ram.hex")) ram(
+    .clk(clk),
+    .cs(ram_cs),
+    .rw(mem_write),
+    .addr(mem_addr[RAM_ADDR_BITS-1:0]),
     .di(mem_data_out), 
     .dout(ram_do)
   );
@@ -187,8 +198,12 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
 
   // PSG: PICO-8-equivalent audio chip; all timing derived internally
   // from CLK_HZ (22050 Hz virtual sample rate, 120.49 Hz sequencer tick)
+  // The PSG runs on the undivided PLL clock: 5102 clocks per 22050 Hz sample
+  // instead of 159, which is what makes a BRAM-backed voice pool affordable.
+  // Same PLL, exact 32:1 ratio, so CPU-side register writes are stable for 32
+  // psgclk edges and need no synchroniser.
   psg #(.CLK_HZ(CLK_HZ), .REVERB(REVERB)) psg0(
-    .clk(clk),
+    .clk(psgclk),
     .reset(reset),
     .cs(psg_cs),
     .rw(mem_write),

@@ -14,18 +14,26 @@ module top(input  bit clk, output bit yellow_led,
   localparam SCALE = 2, WIDTH = 320, HEIGHT = 240;
   localparam RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
 
-  // Board master-clock frequency, fed to the PSG so its 22050 Hz virtual
-  // sample rate comes out right. clocks.sv passes the `clk` pin straight
-  // through as masterclk, and the board's clk is 25 MHz (icepll -i 25).
-  // *** If you route clk through the PLL or feed a different crystal,
-  // set this to that frequency - it is the only audio-tuning knob. ***
-  localparam BOARD_CLK_HZ = 32'd25_000_000;
+  // The clock the PSG actually runs at, fed to it so its 22050 Hz virtual
+  // sample rate comes out right. It is the PLL output undivided - see
+  // rtl/pll.v and rtl/clocks.sv - not the board pin.
+  //
+  // This used to read 25 MHz, the crystal, which was wrong in a way that hid
+  // for a long time: at 25 MHz this video timing (161 x 121 x 3 clocks) runs
+  // at 428 fps, so it was never the frequency anything actually ran at. The
+  // chip clock is 112.5/32 = 3.515625 MHz, which is 60.155 Hz.
+  localparam PSG_CLK_HZ = 32'd112_500_000;
 
   logic reset;
   logic masterclk;
   logic videoclk;
   logic cpuclk;
-  clocks clocks0(.clk, .reset, .masterclk, .videoclk, .cpuclk);
+  logic psgclk;
+  logic pllclk, pll_locked;
+  /* verilator lint_off PINCONNECTEMPTY */
+  pll pll0(.clock_in(clk), .clock_out(pllclk), .locked(pll_locked));
+  /* verilator lint_on PINCONNECTEMPTY */
+  clocks clocks0(.clk(pllclk), .reset, .masterclk, .videoclk, .cpuclk, .psgclk);
 
   assign lcd_rst = ~reset;
   assign yellow_led = ~reset;
@@ -43,14 +51,36 @@ module top(input  bit clk, output bit yellow_led,
   logic signed [15:0] audio;
   /* verilator lint_off PINCONNECTEMPTY */
   // psg_dbg is a verification-only bus; unconnected here so it synthesises away.
-  chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE), .CLK_HZ(BOARD_CLK_HZ))
-    chip(.clk(masterclk), .cpuclk(cpuclk), .reset, .vsync, .hsync, .vpos, .hpos,
+  // ---------------------------------------------------------------------
+  // TEMPORARY, and it makes this bitstream non-functional: the RAM is 8 KB
+  // here, not the machine's 64 KB.
+  //
+  // 64 KB is 512 kbit against the hx8k's 128 kbit of block RAM - 4x the whole
+  // device before any logic - so yosys does not map it to block RAM at all and
+  // expands it into fabric: 1.7 M AND gates for a 7680-cell part, which never
+  // finishes placing. Nothing about the FPGA path could be measured while that
+  // was true. 8 KB is enough to get synthesis and place-and-route to complete
+  // so the rest of the design has real numbers.
+  //
+  // A program will NOT run from this: the address is truncated, so $FFFC and
+  // $1FFC are the same byte and the reset vector aliases into the program.
+  // Do not flash it expecting a game. The external-memory abstraction is what
+  // fixes this properly; when it lands, delete RAM_ADDR_BITS here and in
+  // chip.sv so both tops agree again.
+  // ---------------------------------------------------------------------
+  chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE), .CLK_HZ(PSG_CLK_HZ),
+         .RAM_ADDR_BITS(13))
+    chip(.clk(masterclk), .cpuclk(cpuclk), .psgclk(psgclk), .reset, .vsync,
+         .hsync, .vpos, .hpos,
          .buttons(8'h00), .rgb, .audio(audio), .psg_dbg());
   /* verilator lint_on PINCONNECTEMPTY */
 
   // Delta-sigma output: 8-bit PCM -> 1-bit density stream on audio_pwm.
   // Wire this pin to a speaker/amp through an RC low-pass (~1k + ~10nF).
-  dsigma dsigma0(.clk(masterclk), .reset(reset), .pcm(audio), .out(audio_pwm));
+  // On psgclk, not masterclk: a delta-sigma modulator's noise shaping is only
+  // as good as its oversampling ratio, and 112.5 MHz against a 22050 Hz sample
+  // is 32x what the video clock gave it.
+  dsigma dsigma0(.clk(psgclk), .reset(reset), .pcm(audio), .out(audio_pwm));
 
   /* wire tx_ready;
 

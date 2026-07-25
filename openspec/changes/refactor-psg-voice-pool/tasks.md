@@ -76,7 +76,28 @@ be at 121%.
       per-voice registers are the whole scaling cost, and the datapath is
       already shared. Target ~3900 LUT4 / ~1100 flops / ~18 BRAM for sixteen
       voices - cheaper than today's four
-- [ ] 2.2a Give the simulator a clock model matching the board. At 159
+- [x] 2.2a One PLL at 112.5 MHz as the design's single clock source, with
+      everything an integer division of it. `rtl/pll.v` regenerated
+      (`icepll -i 25 -o 112.5`, exact), instantiated in `top.sv` for the first
+      time; `clocks.sv` divides /32 for the chip (3.515625 MHz, 60.155 Hz
+      frames) and passes it undivided to the PSG. Exact 32:1 ratio means no
+      asynchronous crossing: a chip-domain signal is stable for 32 psgclk
+      edges. `dsigma` moved to psgclk too - 32x the oversampling ratio.
+      **Corrects a long-standing wrong constant**: `top.sv` fed the PSG
+      `BOARD_CLK_HZ = 25 MHz`, but this video timing at 25 MHz is 428 fps, so
+      that was never the real rate. The design has always run at ~3.5 MHz
+      (161 x 121 x 3 x 60 = 3,506,580 exactly), which is why `chip.sv`'s
+      default said so
+- [ ] 2.2a1 Measure Fmax with nextpnr: 112.5 MHz is unproven on an HX8K.
+      56.25 MHz (/16) is the fallback and still gives 2551 clocks per sample
+- [ ] 2.2a2 The console simulator cannot mirror this: stepping the whole
+      Verilated model 32x more often would make `make run` ~32x slower and no
+      longer interactive. `top_simulator.sv` therefore ties psgclk to the chip
+      clock and **cannot run more voices than fit 159 clocks per sample**.
+      Sixteen-voice audio has to be tested through the standalone PSG model
+      (`make psg-wav`), which Verilates the PSG alone and can afford the fast
+      clock. Raise its clock and `psg_tb`'s clocks-per-sample together
+- [ ] 2.2a3 (superseded) Give the simulator a clock model matching the board. At 159
       clocks/sample it cannot run sixteen voices streamed from BRAM (201% of
       budget) - this blocks all testing of the pool and is no longer optional
 - [ ] 2.2b (superseded) Swap only the bulk note/instrument state to BRAM.

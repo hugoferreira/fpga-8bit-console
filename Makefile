@@ -182,7 +182,13 @@ bin/toplevel.asc: ${FPGA_PCF} bin/toplevel.json
 				  --json bin/toplevel.json --pcf ${FPGA_PCF} \
 				  --asc bin/toplevel.asc --opt-timing
 
-bin/toplevel.json: ${TOP_LEVEL} ${INCLUDE_FILES} ${PLL_FILE} ${FONT_HEX} hex
+# rtl/pll.v is generated, not checked in (.gitignore). top.sv instantiates it
+# now, so a fresh clone needs this rule or synthesis fails on a missing module.
+# 112.5 MHz: see the header comment the tool writes plus rtl/clocks.sv.
+rtl/pll.v:
+	icepll -i 25 -o 112.5 -m -f $@
+
+bin/toplevel.json: ${TOP_LEVEL} ${INCLUDE_FILES} ${PLL_FILE} rtl/pll.v ${FONT_HEX} hex
 	mkdir -p bin
 	yosys -p "read_verilog -Irtl -sv ${TOP_LEVEL}; synth_ice40 ${YOSYS_FLAGS} -top top -json bin/toplevel.json" > synthesis.log
 

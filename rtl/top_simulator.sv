@@ -36,9 +36,17 @@ module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
   /* verilator lint_on PINMISSING */
   
   // Use clk_i for both clk and cpuclk to keep them in the same domain
+  // psgclk is clk_i here, i.e. the PSG runs at the chip clock, not at the
+  // board's 112.5 MHz. Mirroring hardware would mean stepping this whole
+  // Verilated model 32x more often - the console sim would run ~32x slower and
+  // `make run` would stop being interactive - so the fast-clock PSG is tested
+  // through the standalone model instead (`make psg-wav`, sim/psg_wav.cpp),
+  // which Verilates the PSG alone and can afford it. Consequence: this sim
+  // cannot run more voices than fit 159 clocks per sample.
   chip #(.RED(8), .GREEN(8), .BLUE(8), .FILE("palette888.bin")) chip(
     .clk(clk_i), 
     .cpuclk(clk_i), // Use the same clock for CPU
+    .psgclk(clk_i),
     .reset(rst_i), 
     .vsync, 
     .hsync, 
