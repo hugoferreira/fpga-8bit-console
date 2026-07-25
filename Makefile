@@ -574,6 +574,12 @@ cpu-timing: $(SST_BIN) $(SST_FIXTURE)
 # Static mean CPI over a corpus, weighted by the instructions it contains.
 # Assembles to a listing directly rather than through `hex`, so it never
 # re-stamps rtl/ram.hex out from under whatever game is resident.
+# Where the cycles go, and what more bus bandwidth would buy. The question
+# behind add-cpu-prefetch: pipelining is worth nothing if every cycle is
+# already a byte crossing a one-byte-per-cycle bus.
+cpu-bandwidth: build/$(GAME).lst
+	python3 tools/65x02/bandwidth.py build/$(GAME).lst docs/cpu-timing-v2.json
+
 cpu-static-cpi: build/$(GAME).lst
 	python3 tools/65x02/static_cpi.py build/$(GAME).lst \
 	    docs/cpu-timing-arlet.json docs/cpu-timing-v2.json
@@ -583,7 +589,7 @@ build/$(GAME).lst: $(GAME_SRC) $(GAME_DEPS)
 	$(CUSTOMASM) $(GAME_SRC) -t 10 --color=off --legacy=off \
 	    -f annotated -o $(abspath build/$(GAME).lst)
 
-.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi cpu-fmax test-functional
+.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi cpu-fmax test-functional cpu-bandwidth
 
 # ------------------------------------------------------------------------------
 # Per-subsystem synthesis targets (openspec/changes/refactor-build-targets)
@@ -616,6 +622,21 @@ SYNTH_UNITS = cpu psg ppu soc
 SYNTH_DIR   = build/targets
 # Private to this block: `SEEDS` above belongs to ppu-timing and defaults to 5.
 SYNTH_SEEDS ?= 1
+
+# Floor on logic cells per target. A subsystem whose outputs all fold to
+# constants is trimmed to nothing and still reports a PASS with a spectacular
+# Fmax - it is measuring the empty space where the design used to be. That
+# happened three times while building these targets: 193 MHz with the critical
+# path inside the video timing generator, then 103 cells after an
+# observability tie-off replicated one bit across a bus that the probe
+# XOR-reduces back to a constant. Both looked like results.
+#
+# These are floors, not targets: set well below the real figure, they only
+# catch collapse.
+SYNTH_MIN_LC_cpu = 800
+SYNTH_MIN_LC_psg = 4000
+SYNTH_MIN_LC_ppu = 2500
+SYNTH_MIN_LC_soc = 6000
 # Every design file, so a change anywhere re-synthesises. The target tops pull
 # what they need through `include, the way chip.sv does.
 SYNTH_DEPS  = $(wildcard rtl/*.sv) $(wildcard rtl/*.v) $(wildcard rtl/*.hex) \
@@ -658,6 +679,14 @@ synth-$(1): $(SYNTH_DIR)/$(1).json
 	@# nextpnr calls BOTH "could not place" and "missed the frequency target"
 	@# an ERROR. Only the first means the design does not fit, and conflating
 	@# them reports a placed-but-slow design as unbuildable.
+	@lc=$$$$(grep -E 'ICESTORM_LC: +[0-9]+/' $(SYNTH_DIR)/$(1).pnr.log \
+	        | tail -1 | sed -E 's#.*ICESTORM_LC: +([0-9]+)/.*#\1#'); \
+	 if [ -n "$$$$lc" ] && [ "$$$$lc" -lt "$(SYNTH_MIN_LC_$(1))" ]; then \
+	   echo "  *** TRIMMED: $$$$lc logic cells is below the floor of $(SYNTH_MIN_LC_$(1))."; \
+	   echo "  *** The design folded to constants - this measures nothing."; \
+	   echo "  *** Check that every subsystem has a non-constant path to the probe."; \
+	   exit 1; \
+	 fi
 	@if grep '^ERROR' $(SYNTH_DIR)/$(1).pnr.log | grep -qv 'Max frequency'; then \
 	   echo "  DOES NOT PLACE:"; \
 	   grep '^ERROR' $(SYNTH_DIR)/$(1).pnr.log | grep -v 'Max frequency' \
