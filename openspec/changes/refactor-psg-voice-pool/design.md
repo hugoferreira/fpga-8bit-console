@@ -131,6 +131,47 @@ master clocks together and runs ~7x slower than the board, so **fixing the
 simulator's clock model becomes part of this change**, not an aside. Without it
 there is no way to test sixteen voices before hardware.
 
+## What the BRAM move is actually worth
+
+Measured across four voice counts (`yosys`/`synth_ice40`, PSG standalone):
+
+| NV | LUT4 | flops |
+| ---: | ---: | ---: |
+| 2 | 3962 | 2706 |
+| 4 (today) | 4998 | 2023 |
+| 8 | 6285 | 3287 |
+| 16 | 9378 | 5811 |
+
+Least squares: **LUT4 ~ 3314 fixed + 379 per voice.** The 379 is per-voice
+state and the muxes reaching it - that is what moving to block RAM removes,
+and it removes it at *any* voice count. The 3314 is combinational logic: the
+sample x volume multiply, wave ROM addressing, the effect and filter datapaths,
+the two FSMs. Block RAM does nothing for it.
+
+So the move is worth:
+
+| | LUT4 | share of an hx8k |
+| --- | ---: | ---: |
+| today, 4 voices in flops | 4998 | 65% |
+| 16 voices in flops | 9378 | 122% |
+| **any voice count, state in BRAM** | **~3314** | **43%** |
+
+A 34% cut to what ae37bbc measured as the largest block on the chip, and
+sixteen voices become free rather than impossible. It costs about 2 more
+`SB_RAM40_4K` (5376 bits of voice state).
+
+**It is not sufficient on its own.** ae37bbc puts the whole design at 10731 LC
+against 7680. Taking 1700 off the PSG leaves it around 9000, still ~117% over.
+The rest has to come from elsewhere - `add-memory-subsystem` for the main RAM's
+16 BRAM, and the compositor at 1789 LUT4 (23%). Worth saying plainly so this
+change is not mistaken for the thing that makes the design fit.
+
+**Consequence for clock optimisation.** Tuning each domain's clock to its own
+Fmax needs nextpnr to report a critical path, and nextpnr cannot place a design
+that is 139% over. Per-domain Fmax is therefore blocked behind area, not behind
+clocking - and 112.5 MHz for the PSG stays a target rather than a measurement
+until then.
+
 ## Clocking: the PSG gets its own PLL
 
 Sixteen voices streamed from BRAM need ~320 clocks per sample. The board has
