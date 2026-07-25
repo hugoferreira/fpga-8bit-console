@@ -56,18 +56,29 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           (input bit clk, input bit reset,
            input bit cs, input bit rw, input logic [7:0] addr, input logic [7:0] di,
            output logic [7:0] dout,
-           output logic [7:0] pcm);
+           output logic signed [15:0] pcm,
+           // Verification only: per-channel state for the simulator's
+           // --psg-trace. Left unconnected in the synthesised top level, so it
+           // costs nothing on the FPGA. Exists because there was no way to tell
+           // whether an audio fidelity complaint was allocation, sequencing or
+           // synthesis without seeing inside.
+           output logic [63:0] dbg);
 
   // Audio RAM: PICO-8 $3100-$42FF (music 0..255, SFX records 256..4607)
   logic [7:0] aram[0:4607];
   logic [15:0] wraddr;
 
   logic signed [7:0] wrom[0:2047];   // 8 waves x 256, exact PICO-8 shapes
+  // Noise gain per key: PICO-8's noise amplitude rises with pitch and this
+  // chip's sample-and-hold is flat, so the slope is restored from a table.
+  // 1.0 = 256. See tools/gen_psg_tables.py.
+  logic [7:0]  nz_gain[0:63];
   logic [23:0] pinc[0:63];           // 2^24 * f(pitch) / 22050
   logic [15:0] recip[0:255];         // 65536 / speed
   initial begin
     $readmemh("./rtl/psg_waves.hex", wrom);
     $readmemh("./rtl/psg_pitch.hex", pinc);
+    $readmemh("./rtl/psg_noise.hex", nz_gain);
     $readmemh("./rtl/psg_recip.hex", recip);
   end
 
@@ -122,6 +133,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   // Trigger parameters latched for the next trigger on a channel, and the
   // resulting play limits (sfx(n, ch, offset, length) / release from loop)
   logic [4:0]  trg_row[0:3];
+  // Borrowed-music restore. PICO-8 lets an SFX take a channel the music is
+  // using: the displaced music SFX is remembered and relaunched when the SFX
+  // ends (zepto-8 / fake-08 Audio.cpp store it as `sfx_music`). Without this a
+  // cart's own channel mask is not enough - see docs/hardware-gaps.md - and a
+  // game has to reserve every channel its patterns touch.
+  logic [5:0]  sav_sfx[0:3];
+  logic [4:0]  sav_row[0:3];
+  logic [3:0]  sav_valid;
   logic [5:0]  trg_len[0:3], play_len[0:3];
   logic        released[0:3];
 
@@ -158,9 +177,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   logic [3:0]  mus_mask;
   logic [7:0]  pb[0:2];
   logic [3:0]  launched;
-  logic [1:0]  tch;
-  logic        tch_valid, tch_seen, ptick_seen, f_lb, f_stop;
-  logic [12:0] pticks, ptick_tgt;    // all-looping-pattern fallback
+  logic        tch_seen, ptick_seen, f_lb, f_stop;
+  // A pattern's length in ticks, fixed when the pattern launches, and the
+  // tick position within it. PICO-8 paces a song the same way - the song
+  // scheduler records the pattern length and a global pattern-tick position -
+  // rather than asking any one voice whether it is still playing.
+  logic [12:0] pticks, ptick_tgt;
 
   // Music fade: an 8-bit gain ramped at tick rate. fade_len is in 16 ms
   // units and a tick is ~8.3 ms, so stepping a 16-bit accumulator by
@@ -309,6 +331,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       5'd30: fdec = 6'b000100;  default: fdec = 6'b000101;
     endcase
   endfunction
+  // Rows an SFX record plays before it ends, valid in T_NL where lps[0] holds
+  // the loop start and seq_q the loop end. Mirrors the end-of-record rule the
+  // per-tick walk applies, so a pattern's tick length matches the sound that
+  // paces it.
+  wire [5:0] pat_rows = (lps[0] != 0 && seq_q == 0)
+                          ? ((lps[0] < 8'd32) ? lps[0][5:0] : 6'd32) : 6'd32;
+
   wire [5:0] fdv    = fdec(seq_q[7:3]);
   wire [1:0] f_det  = fdv[1:0];
   wire [1:0] f_rev  = fdv[3:2];
@@ -340,6 +369,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   logic [23:0] pinc_q;
   logic [15:0] recip_q;
   logic [23:0] base_r, prev_r, arp_r;
+  // Declared here rather than below its first use: iverilog rejects
+  // declaration-after-use, which kept rtl/psg_tb.sv from building.
+  wire signed [8:0] arp_raw =
+      e_insfx ? ($signed({3'b0, cur_pitch[0]}) + $signed({3'b0, arp_p}) - 9'sd24)
+    : ins_use ? ($signed({3'b0, arp_p}) + $signed({3'b0, ins_pitch[0]}) - 9'sd24)
+              :  $signed({3'b0, arp_p});
+  wire [5:0] e_arp = pclamp(arp_raw);
+
   always_comb begin
     case (sst)
       K_PF1:   pinc_addr = e_prevp;
@@ -361,11 +398,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   // The arpeggiating voice contributes arp_p; the other voice still adds
   // its pitch relative to 24, so an arpeggio inside an instrument
   // transposes with the note and vice versa.
-  wire signed [8:0] arp_raw =
-      e_insfx ? ($signed({3'b0, cur_pitch[0]}) + $signed({3'b0, arp_p}) - 9'sd24)
-    : ins_use ? ($signed({3'b0, arp_p}) + $signed({3'b0, ins_pitch[0]}) - 9'sd24)
-              :  $signed({3'b0, arp_p});
-  wire [5:0] e_arp = pclamp(arp_raw);
 
   // ------------------------------------------------------------------
   // Shared multiplier. Every product the effect unit needs is (24-bit
@@ -462,6 +494,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       walk_tick <= 0;
       tickpend <= 0;
       trig_req <= 0;
+      sav_valid <= 0;
       clr_tog <= 0;
       mus_playing <= 0;
       mus_launch <= 0;
@@ -469,8 +502,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       ptick_seen <= 0;
       mus_pat <= 0;
       launched <= 0;
-      tch <= 0;
-      tch_valid <= 0;
       f_lb <= 0;
       f_stop <= 0;
       pticks <= 0;
@@ -503,6 +534,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
         eff_inc[i] <= 0;
         eff_vol[i] <= 0;
         trg_row[i] <= 0;
+        sav_sfx[i] <= 0;
+        sav_row[i] <= 0;
         trg_len[i] <= 0;
         play_len[i] <= 0;
         released[i] <= 0;
@@ -622,10 +655,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
         end
         T_NL: begin
           lpe[0] <= seq_q;
-          // The pattern is paced by its left-most launched non-looping
-          // channel; the walk reaches channels in order, so the first one
-          // that qualifies wins. Its speed is also the all-looping
-          // fallback's row length.
+          // The pattern's length is taken from its left-most launched
+          // non-looping channel; the walk reaches channels in order, so the
+          // first one that qualifies wins. An all-looping pattern falls back
+          // to 32 rows at the first launched channel's speed.
+          //
+          // Only a channel the pattern itself launched may set this, which is
+          // why `launched` is cleared when the CPU borrows a channel: a sound
+          // effect triggered on a music channel runs through these same states
+          // and would otherwise redefine the pattern's length as its own.
           if (launched[c]) begin
             if (!ptick_seen) begin
               ptick_seen <= 1;
@@ -633,8 +671,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
             end
             if (!tch_seen && !(lps[0] < seq_q)) begin
               tch_seen <= 1;
-              tch <= c;
-              tch_valid <= 1;
+              ptick_tgt <= 13'(sp[0] * pat_rows);
             end
           end
           sst <= T_NH;
@@ -673,8 +710,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
               if (play_len[0] != 0) begin
                 // an explicit length overrides the record's loop points
                 if (play_len[0] == 6'd1 || row[c] == 5'd31) begin
-                  playing[c] <= 0;
-                  eff_vol[c] <= 0;
+                  if (sav_valid[c]) begin
+                    sfx_id[c] <= sav_sfx[c];
+                    trg_row[c] <= sav_row[c];
+                    trig_req[c] <= 1;
+                    music_owned[c] <= 1;
+                    launched[c] <= 1;
+                    sav_valid[c] <= 0;
+                  end else begin
+                    playing[c] <= 0;
+                    eff_vol[c] <= 0;
+                  end
                   sst <= K_ROT;
                 end else begin
                   play_len[0] <= play_len[0] - 1;
@@ -689,8 +735,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
                            ((lps[0] != 0 && lpe[0] == 0)
                               ? ((lps[0] < 8'd32) ? lps[0] : 8'd32)
                               : 8'd32)) begin
-                playing[c] <= 0;
-                eff_vol[c] <= 0;
+                if (sav_valid[c]) begin
+                  sfx_id[c] <= sav_sfx[c];
+                  trg_row[c] <= sav_row[c];
+                  trig_req[c] <= 1;
+                  music_owned[c] <= 1;
+                  launched[c] <= 1;
+                  sav_valid[c] <= 0;
+                end else begin
+                  playing[c] <= 0;
+                  eff_vol[c] <= 0;
+                end
                 sst <= K_ROT;
               end else begin
                 row[c] <= row[c] + 1;
@@ -699,7 +754,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
             end else begin
               fcnt[0] <= fcnt[0] + 1;
               // the row holds, but the instrument playhead still advances
-              sst <= (ins_on[0] && !ins_wt[0]) ? I_ADV : K_ARP;
+              sst <= sst_t'((ins_on[0] && !ins_wt[0]) ? I_ADV : K_ARP);
             end
           end
         end
@@ -723,7 +778,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
                 seq_q[6:4] == 3'd3)
               sst <= I_TR0;
             else
-              sst <= ins_wt[0] ? K_ARP : I_ADV;
+              sst <= sst_t'(ins_wt[0] ? K_ARP : I_ADV);
           end else begin
             ins_on[0] <= 0;                 // back to the note's own filters
             ch_noiz[c] <= bf_noiz[0];
@@ -908,9 +963,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
         // ---- music: pattern-end check and flow control ---------------
         W_MUS: begin
           sst <= S_IDLE;
-          if (walk_tick && mus_playing && !mus_launch && trig_req == 0) begin
+          // The pattern clock free-runs; only the boundary itself waits for
+          // pending triggers to be serviced, so a channel change cannot make
+          // the song lose or gain ticks.
+          if (walk_tick && mus_playing && !mus_launch) begin
             pticks <= pticks + 1;
-            if (tch_valid ? !playing[tch] : (pticks >= ptick_tgt)) begin
+            if (trig_req == 0 && pticks >= ptick_tgt) begin
               if (f_stop) begin
                 mus_playing <= 0;
                 for (int i = 0; i < 4; i++)
@@ -952,12 +1010,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
 
         // ---- music: launch pattern mus_pat ---------------------------
         ML_STOP: begin
-          for (int i = 0; i < 4; i++)
+          for (int i = 0; i < 4; i++) begin
             if (music_owned[i]) begin
               playing[i] <= 0;
               eff_vol[i] <= 0;
               music_owned[i] <= 0;
             end
+            sav_valid[i] <= 0;      // a new pattern makes any saved SFX stale
+          end
           launched <= 0;
           sst <= ML_RD0;
         end
@@ -984,8 +1044,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
             launched[3] <= 1;
           end
           mus_playing <= 1;
-          tch_valid <= 0;                   // the walk fills these in
-          tch_seen <= 0;
+          tch_seen <= 0;                    // the walk fills the length in
           ptick_seen <= 0;
           pticks <= 0;
           sst <= S_IDLE;
@@ -1030,11 +1089,25 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
               playing[addr[1:0]] <= 0;
               eff_vol[addr[1:0]] <= 0;
               music_owned[addr[1:0]] <= 0;
+              launched[addr[1:0]] <= 0;
               trig_req[addr[1:0]] <= 0;
+              sav_valid[addr[1:0]] <= 0;    // an explicit stop forgets it
             end else begin
+              // Taking a music channel: remember the SFX and the row it was on
+              // so it can be put back when this sound finishes. A launch that
+              // has not been serviced yet has not reached its start row, so
+              // the row to come back to is the pending trigger's, not the one
+              // left over from the pattern before.
+              if (music_owned[addr[1:0]]) begin
+                sav_sfx[addr[1:0]] <= sfx_id[addr[1:0]];
+                sav_row[addr[1:0]] <= trig_req[addr[1:0]]
+                                        ? trg_row[addr[1:0]] : row[addr[1:0]];
+                sav_valid[addr[1:0]] <= 1;
+              end
               trig_req[addr[1:0]] <= 1;
               sfx_id[addr[1:0]] <= di[5:0];
               music_owned[addr[1:0]] <= 0;
+              launched[addr[1:0]] <= 0;     // a sound cannot pace the pattern
               eff_vol[addr[1:0]] <= 0;
             end
           2'd1: trg_row[addr[1:0]] <= di[4:0];        // $14-$17: start row
@@ -1114,7 +1187,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   // Second voice: phaser preset (~109/110) on wave 7, else the detune ratio
   wire [23:0] einc = eff_inc[pc_ch];
   wire [23:0] v2inc =
-      (snd_wave[pc_ch] == 3'd7) ? (einc - {7'b0, einc[23:7]} - {9'b0, einc[23:9]}) :
+      // Phaser: the second oscillator runs at 109/110 of the first, which is
+      // what produces the beat. 109/110 = 0.9909091; the previous shift pair
+      // gave 0.9902344, a 7.4% error in the BEAT rate (4.30 Hz instead of 4.00
+      // at A440). Three shifts land on 0.9909668 - 0.6% - for one more adder.
+      // Reference: zepto-8 synth.cpp INST_PHASER, via jtothebell/fake-08.
+      (snd_wave[pc_ch] == 3'd7) ? (einc - {7'b0, einc[23:7]}
+                                        - {10'b0, einc[23:10]}
+                                        - {12'b0, einc[23:12]}) :
       (ch_det[pc_ch] == 2'd1)   ? (einc + {7'b0, einc[23:7]}) :   // ~+14 cents
       (ch_det[pc_ch] == 2'd2)   ? {einc[22:0], 1'b0} :            // +1 octave
                                   24'd0;
@@ -1144,18 +1224,32 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
                                 : (mph < 8'd65  ? 8'sd63 : -8'sd63);  // ~25%
   wire signed [10:0] ph_sum =
       $signed({smp_a[7], smp_a, 1'b0}) + $signed({{3{smp_b[7]}}, smp_b});
+  wire signed [18:0] ph_wide = {{8{ph_sum[10]}}, ph_sum};
   wire signed [8:0] det_sum =
       $signed({smp_a[7], smp_a}) + $signed({{2{smp_b[7]}}, smp_b[7:1]});
   wire signed [7:0] det_clip =
       det_sum > 9'sd127 ? 8'sd127 : det_sum < -9'sd127 ? -8'sd127 : det_sum[7:0];
+
+  // nz_hold * nz_gain[key] / 256, saturated. The gain runs 87/256 at the
+  // bottom of the range to 222/256 at the top; it used to be a flat 192/256
+  // (0.75), which made low-pitched noise about twice as loud as PICO-8's.
+  wire signed [15:0] nz_mul = $signed(nz_hold[0]) * $signed({1'b0, nz_gain[e_pitch]});
+  wire signed [7:0] nz_scaled =
+      (nz_mul >>> 8) > 16'sd127  ?  8'sd127 :
+      (nz_mul >>> 8) < -16'sd127 ? -8'sd127 : 8'(nz_mul >>> 8);
 
   logic signed [7:0] samp;
   always_comb begin
     case (snd_wave[pc_ch])
       3'd6: samp = (ch_buzz[pc_ch] && !ch_noiz[pc_ch])
                      ? brown[0][12:5]                               // brown
-                     : (nz_hold[0] + (nz_hold[0] >>> 1)) >>> 1;
-      3'd7: samp = 8'((ph_sum * 11'sd85) >>> 8);                    // phaser
+                     : nz_scaled;
+      // Phaser. The multiply MUST be done at full width: ph_sum is 11 bits and
+      // so was the constant, so the product was evaluated modulo 2^11 and
+      // 381*85 = 32385 wrapped to -383, leaving the phaser at 3% of its proper
+      // amplitude - inaudible. It is two triangles summed 2:1 and scaled by
+      // 85/256, which peaks at 126, i.e. the same full scale as any other wave.
+      3'd7: samp = 8'((ph_wide * 19'sd85) >>> 8);                   // phaser
       3'd3, 3'd4:
             samp = ch_buzz[pc_ch] ? buzzsq
                  : (ch_det[pc_ch] != 0) ? det_clip : smp_a;
@@ -1170,21 +1264,27 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       lp[0] + ((samp_q8 - lp[0]) >>> ch_damp[pc_ch]);
   wire signed [7:0] samp_d = (ch_damp[pc_ch] == 0) ? samp : lp_next[15:8];
 
-  // Sample x volume on a small shift-add unit rather than an array
-  // multiplier: 8 iterations of an 8-bit add, once per channel per sample.
+  // Sample x volume. This used to be an 8-iteration shift-add unit, to avoid
+  // an array multiplier. It cost 8 of the ~12 clocks a voice takes per sample,
+  // which is affordable at four voices and not at sixteen: a single-cycle 8x8
+  // multiply is about 60 LCs and hands back 7 clocks per voice per sample.
+  //
+  // The magnitude is multiplied and the sign reapplied, exactly as the serial
+  // unit did, so this is bit-for-bit the same product.
   logic        mx_neg, mx_play;
   logic signed [15:0] mx_lp;
   logic [1:0]  mx_rev, mx_damp;
-  logic [7:0]  n_a;
-  logic [16:0] n_p;                  // {accumulator[8:0], multiplier[7:0]}
-  logic [3:0]  n_cnt;
-  wire  [9:0]  n_sum = {1'b0, n_p[16:8]} + (n_p[0] ? {2'b0, n_a} : 10'd0);
-  wire  [7:0]  n_res = n_p[15:8];
-  wire         n_busy = (n_cnt != 0);
-  wire signed [10:0] n_contrib = mx_neg ? -$signed({3'b0, n_res})
+  wire  [7:0]  n_mag = samp_d[7] ? ((samp_d == -8'sd128) ? 8'd127 : 8'(-samp_d))
+                                 : 8'(samp_d);
+  // The full 16-bit product, not its top byte. Truncating here cost the most
+  // resolution anywhere in the chip: a note at PICO-8 volume 1 has eff_vol 36,
+  // so (127*36)>>8 = 17 levels - 4.2 bits. Two thirds of NEMO's title music is
+  // volume 1 or 2. Keeping the low half makes those 12.2 and 13.2 bits.
+  logic [15:0] n_res;
+  wire signed [18:0] n_contrib = mx_neg ? -$signed({3'b0, n_res})
                                         :  $signed({3'b0, n_res});
 
-  logic signed [10:0] mixacc;
+  logic signed [18:0] mixacc;   // 4 channels x 32512 needs 19 bits
   logic [1:0]  rev_max;
   // The echo has to outlive the note that asked for it, so the level any
   // playing channel requests is held for a full delay line after the last
@@ -1192,7 +1292,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
   logic [1:0]  rev_lvl;
   logic [9:0]  rev_ttl;
   logic        dry_pend;
-  logic signed [7:0] dry8;
+  logic signed [15:0] dry16;
   logic        dry_valid;
 
   always_ff @(posedge clk) begin
@@ -1204,9 +1304,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       smp_a <= 0;
       smp_b <= 0;
       clr_ack <= 0;
-      n_a <= 0;
-      n_p <= 0;
-      n_cnt <= 0;
+      n_res <= 0;
       mx_neg <= 0;
       mx_play <= 0;
       mx_lp <= 0;
@@ -1217,7 +1315,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       rev_lvl <= 0;
       rev_ttl <= 0;
       dry_pend <= 0;
-      dry8 <= 0;
+      dry16 <= 0;
       dry_valid <= 0;
       for (int i = 0; i < 4; i++) begin
         phase[i] <= 0;
@@ -1228,18 +1326,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
         lp[i] <= 0;
       end
     end else begin
-      lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
       dry_valid <= 0;
-
-      if (n_cnt != 0) begin
-        n_p   <= {n_sum, n_p[7:1]};
-        n_cnt <= n_cnt - 1;
-      end
 
       if (dry_pend) begin
         dry_pend <= 0;
-        dry8 <= 8'((mixacc > 11'sd255 ?  11'sd255 :
-                    mixacc < -11'sd255 ? -11'sd255 : mixacc) >>> 1);
+        // PICO-8 mixes four quarter-scale channels and clips only at the sum
+        // (zepto-8 synth: chan = waveform * vol * 0.5, mix = clamp(sum, +-1)).
+        // One channel at full volume peaks at 32512, so >>> 2 puts it at a
+        // quarter of full scale and four sum to full scale without clipping.
+        dry16 <= 16'((mixacc > 19'sd131068 ?  19'sd131068 :
+                      mixacc < -19'sd131068 ? -19'sd131068 : mixacc) >>> 2);
         dry_valid <= 1;
         // hold the requested echo level for one delay line past the last
         // request, so a note that ends still gets its own echo back
@@ -1261,6 +1357,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       end else if (prun) begin
         case (pst)
           2'd0: begin                    // advance phase(s), issue main read
+            // One step per voice per sample. This used to free-run on the
+            // system clock, which tied the noise sequence to how many clocks
+            // the per-voice pipeline happened to take - so shortening the
+            // sample x volume multiply, or changing the number of voices,
+            // silently changed what the noise sounded like. Stepping it here
+            // gives every voice a fresh value every sample and makes the
+            // noise independent of the pipeline's timing.
+            lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
             if (playing[pc_ch]) begin
               phase[0] <= phase[0] + einc;
               if (v2_on)
@@ -1288,10 +1392,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           end
           2'd2: begin                    // second voice, then start x volume
             smp_b <= snd_wt[pc_ch] ? $signed(seq_q) : wq;
-            n_a   <= samp_d[7] ? ((samp_d == -8'sd128) ? 8'd127 : 8'(-samp_d))
-                               : 8'(samp_d);
-            n_p   <= {9'b0, eff_vol[pc_ch]};
-            n_cnt <= 4'd8;
+            n_res <= n_mag * eff_vol[pc_ch];
             mx_neg  <= samp_d[7];
             mx_play <= playing[pc_ch];
             mx_lp   <= lp_next;
@@ -1299,7 +1400,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
             mx_damp <= ch_damp[pc_ch];
             pst <= 2'd3;
           end
-          2'd3: if (!n_busy) begin       // accumulate and rotate the ring
+          2'd3: begin                    // accumulate and rotate the ring
             if (mx_play) begin
               mixacc <= mixacc + n_contrib;
               if (mx_rev > rev_max) rev_max <= mx_rev;
@@ -1346,12 +1447,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       rev_q <= revbuf[ridx];
     always_ff @(posedge clk) begin
       if (reset) begin
-        widx <= 0; ridx <= 0; rst <= 0; pcm <= 8'h80;
+        widx <= 0; ridx <= 0; rst <= 0; pcm <= 16'sd0;
         dry_l <= 0; rlvl_l <= 0;
       end else begin
         case (rst)
           2'd0: if (dry_valid) begin
-            dry_l <= dry8;
+            dry_l <= 8'(dry16 >>> 8);   // the echo tap stays 8-bit
             rlvl_l <= rev_lvl;
             ridx <= (dlen == 0) ? widx :
                     (widx >= dlen) ? widx - dlen : widx + 10'd732 - dlen;
@@ -1359,12 +1460,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
           end
           2'd1: rst <= 2'd2;                     // revbuf read settles
           2'd2: begin
-            rev_outv = (rlvl_l == 2'd0)
-                         ? $signed({{2{dry_l[7]}}, dry_l})
-                         : $signed({{2{dry_l[7]}}, dry_l}) +
-                           $signed({{3{rev_q[7]}}, rev_q[7:1]});
-            pcm <= 8'd128 + 8'(rev_outv > 10'sd127 ? 10'sd127 :
-                               rev_outv < -10'sd127 ? -10'sd127 : rev_outv);
+            rev_outv = (rlvl_l == 2'd0) ? 10'sd0
+                         : $signed({{3{rev_q[7]}}, rev_q[7:1]});
+            pcm <= 16'(dry16 + $signed({rev_outv, 8'b0}));
             revbuf[widx] <= dry_l;
             widx <= (widx == 10'd731) ? 10'd0 : widx + 1;
             rst <= 2'd0;
@@ -1375,8 +1473,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
     end
   end else begin : g_direct
     always_ff @(posedge clk) begin
-      if (reset) pcm <= 8'h80;
-      else if (dry_valid) pcm <= 8'd128 + dry8;
+      if (reset) pcm <= 16'sd0;
+      else if (dry_valid) pcm <= dry16;
     end
   end
   endgenerate
@@ -1412,7 +1510,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
                         playing[3] | trig_req[3], playing[2] | trig_req[2],
                         playing[1] | trig_req[1], playing[0] | trig_req[0]};
         8'h20: dout <= {2'b0, mus_pat};
-        8'h21: dout <= {4'b0, mus_mask};
+        // Low nibble: the channels the cart reserved. High nibble: the
+        // channels the song actually occupies right now. PICO-8 does not need
+        // the second one - sfx(n, -1) takes a voice from a pool of sixteen and
+        // so can never displace music - but with four physical channels the
+        // software auto-pick has to be told what the music is using, or it
+        // will take a music channel the reservation mask does not name.
+        8'h21: dout <= {music_owned[3], music_owned[2], music_owned[1],
+                        music_owned[0], mus_mask};
         8'h22: dout <= fade_len;
         default:
           if (addr[7:4] == 4'h1)
@@ -1425,4 +1530,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1)
       endcase
     end
   end
+  // {music, pattern, per-channel owned/playing/sfx/vol}
+  always_comb begin
+    dbg = 64'b0;
+    dbg[7:0]   = {mus_playing, 1'b0, mus_pat};
+    dbg[11:8]  = {playing[3], playing[2], playing[1], playing[0]};
+    dbg[15:12] = {music_owned[3], music_owned[2], music_owned[1], music_owned[0]};
+    dbg[21:16] = sfx_id[0];
+    dbg[27:22] = sfx_id[1];
+    dbg[33:28] = sfx_id[2];
+    dbg[39:34] = sfx_id[3];
+    dbg[45:40] = {1'b0, row[0]};
+    dbg[51:46] = {1'b0, row[1]};
+    dbg[57:52] = {1'b0, row[2]};
+    dbg[63:58] = {1'b0, row[3]};
+  end
+
 endmodule

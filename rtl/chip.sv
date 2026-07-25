@@ -12,7 +12,8 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
             input logic [6:0] vpos, input logic [7:0] hpos,
             input logic [7:0] buttons,
             output logic [RGB-1:0] rgb,
-            output logic [7:0] audio);
+            output logic signed [15:0] audio,
+            output logic [63:0] psg_dbg);
 
   parameter RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
   // Master-clock frequency, threaded to the PSG so its 22050 Hz virtual
@@ -194,7 +195,8 @@ module chip(input logic clk, input logic cpuclk, input logic reset,
     .addr(psg_cs ? mem_addr[7:0] : 8'h0),
     .di(mem_data_out),
     .dout(psg_do),
-    .pcm(audio)
+    .pcm(audio),
+    .dbg(psg_dbg)
   );
 
   // Basic Video Signals 

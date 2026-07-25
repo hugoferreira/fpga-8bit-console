@@ -7,6 +7,7 @@
 #include <chrono>
 #include <thread>
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 #include <cstdlib>
 #include <vector>
@@ -15,7 +16,7 @@
 #include <fstream>
 #include <sstream>
 
-static const int W = 160, H = 121, SCALE = 4;
+static const int W = 160, H = 120, SCALE = 4;   // V_DISPLAY is 120
 static const int CLKS_PER_PIXEL = 3;
 
 // Scripted input for headless runs: hold `mask` for HOLD frames from `frame`.
@@ -97,6 +98,7 @@ int main(int argc, char** argv) {
     long max_frames = 0;                  // 0 = run until quit
     const char* shot = nullptr;
     bool audio_trace = false;             // per-frame audio energy to stdout
+    bool psg_trace = false;               // per-frame PSG channel state
     const char* sym_path = nullptr;
     const char* resolve_addr = nullptr;
     std::vector<KeyEvent> script;
@@ -107,6 +109,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc)
             shot = argv[++i];
         else if (!strcmp(argv[i], "--audio-trace")) audio_trace = true;
+        else if (!strcmp(argv[i], "--psg-trace")) psg_trace = true;
         else if (!strcmp(argv[i], "--sym") && i + 1 < argc)
             sym_path = argv[++i];
         else if (!strcmp(argv[i], "--resolve") && i + 1 < argc)
@@ -153,7 +156,7 @@ int main(int argc, char** argv) {
     ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
     SDL_AudioSpec want = {}, have = {};
     want.freq = 44100;
-    want.format = AUDIO_U8;
+    want.format = AUDIO_S16SYS;      // the PSG is 16-bit now
     want.channels = 1;
     want.samples = 1024;
     adev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
@@ -165,13 +168,15 @@ int main(int argc, char** argv) {
     }
 
     std::vector<uint32_t> fb(W * H, 0);
-    std::vector<uint8_t> abuf;
+    std::vector<int16_t> abuf;
     abuf.reserve(1024);
     long aerr = 0;                        // 735 samples per 19481 pixels
     long asamples = 0, anonzero = 0;      // headless audio activity check
-    int amin = 255, amax = 0;
+    int amin = 32767, amax = -32768;
+    std::vector<uint8_t> aseen(65536, 0);  // distinct sample values, a direct
+    long adistinct = 0;                    // read on effective resolution
     long fsum = 0, fn = 0;                // per-frame audio energy for --audio-trace
-    int fmin = 255, fmax = 0;
+    int fmin = 32767, fmax = -32768;
     uint32_t hpos = 0, vpos = 0, frame = 0;
     bool vblank = true, hblank = false;
 
@@ -192,16 +197,20 @@ int main(int argc, char** argv) {
         aerr += 735;
         if (aerr >= 19481) {
             aerr -= 19481;
-            abuf.push_back(tb->audio);
+            // Verilator exposes a 16-bit port as an unsigned type, so the
+            // sign has to be put back explicitly.
+            int16_t smp = (int16_t)tb->audio;
+            abuf.push_back(smp);
             asamples++;
-            if (tb->audio != 0x80 && tb->audio != 0) anonzero++;
-            if (tb->audio < amin) amin = tb->audio;
-            if (tb->audio > amax) amax = tb->audio;
-            int d = tb->audio - 128;
+            if (smp != 0) anonzero++;
+            if (smp < amin) amin = smp;
+            if (smp > amax) amax = smp;
+            if (!aseen[(uint16_t)smp]) { aseen[(uint16_t)smp] = 1; adistinct++; }
+            int d = smp;
             fsum += (d < 0 ? -d : d);
             fn++;
-            if (tb->audio < fmin) fmin = tb->audio;
-            if (tb->audio > fmax) fmax = tb->audio;
+            if (smp < fmin) fmin = smp;
+            if (smp > fmax) fmax = smp;
         }
 
         if (vs && !vblank) {
@@ -229,18 +238,39 @@ int main(int argc, char** argv) {
             }
             tb->buttons = b;
 
+            if (psg_trace) {
+                // Layout matches rtl/psg.sv's dbg bus. Printed in the same
+                // shape as PICO-8's stat(46..49) so the two can be diffed:
+                // one line per frame, sfx id per channel, -1 when idle.
+                uint64_t d = tb->psg_dbg;
+                int play = (d >> 8) & 0xF, owned = (d >> 12) & 0xF;
+                int id[4] = {(int)((d >> 16) & 0x3F), (int)((d >> 22) & 0x3F),
+                             (int)((d >> 28) & 0x3F), (int)((d >> 34) & 0x3F)};
+                printf("@@%u", frame);
+                for (int c = 0; c < 4; c++)
+                    printf(" %d", (play >> c & 1) ? id[c] : -1);
+                // rows: the note index within each channel's SFX, directly
+                // comparable with PICO-8's stat(50..53)
+                for (int c = 0; c < 4; c++)
+                    printf(" %d", (play >> c & 1)
+                           ? (int)((d >> (40 + 6 * c)) & 0x3F) : -1);
+                printf(" %d mus=%d own=%x\n", (int)(d & 0x3F),
+                       (int)((d >> 7) & 1), owned);
+                fflush(stdout);
+            }
             if (audio_trace && fn) {
                 printf("frame %u audio mean|dev| %.1f range %d..%d\n",
                        frame, (double)fsum / fn, fmin, fmax);
                 fflush(stdout);
             }
-            fsum = 0; fn = 0; fmin = 255; fmax = 0;
+            fsum = 0; fn = 0; fmin = 32767; fmax = -32768;
 
             if (max_frames && (long)frame >= max_frames) running = false;
 
             if (adev) {
-                if (SDL_GetQueuedAudioSize(adev) < 4 * 735)
-                    SDL_QueueAudio(adev, abuf.data(), (Uint32)abuf.size());
+                if (SDL_GetQueuedAudioSize(adev) < 4 * 735 * 2)
+                    SDL_QueueAudio(adev, abuf.data(),
+                                   (Uint32)(abuf.size() * sizeof(int16_t)));
                 abuf.clear();
             }
             if (!headless) {
@@ -269,18 +299,27 @@ int main(int argc, char** argv) {
         if (!vs && vblank) vblank = false;
 
         if (!vblank) {
+            // Store at the CURRENT hpos, then advance. The previous order
+            // incremented first, so the first visible pixel of every line
+            // landed in column 1, column 0 was never written and the last
+            // column was dropped - a one-pixel right shift across the whole
+            // image, in the live window as well as --shot.
             if (hs && !hblank) { hpos = 0; hblank = true; vpos++; }
-            else hpos++;
             if (!hs && hblank) hblank = false;
-            if (!hblank && vpos < H && hpos < W)
-                fb[vpos * W + hpos] = 0xFF000000u | (tb->rgb & 0xFFFFFFu);
+            if (!hblank) {
+                if (vpos < H && hpos < W)
+                    fb[vpos * W + hpos] = 0xFF000000u | (tb->rgb & 0xFFFFFFu);
+                hpos++;
+            }
         }
     }
 
     if (headless)
-        printf("audio: %ld samples, %ld off-centre (%.1f%%), range %d..%d\n",
+        printf("audio: %ld samples, %ld off-centre (%.1f%%), range %d..%d, "
+               "%ld distinct levels (%.1f effective bits)\n",
                asamples, anonzero,
-               asamples ? 100.0 * anonzero / asamples : 0.0, amin, amax);
+               asamples ? 100.0 * anonzero / asamples : 0.0, amin, amax,
+               adistinct, adistinct > 1 ? log2((double)adistinct) : 0.0);
     if (shot) write_ppm(shot, fb, W, H);
     if (adev) SDL_CloseAudioDevice(adev);
     if (tex) SDL_DestroyTexture(tex);

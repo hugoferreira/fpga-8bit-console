@@ -40,10 +40,13 @@ module top(input  bit clk, output bit yellow_led,
 
   lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk(videoclk), .reset, .rgb, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
   scalescreen #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) scaler0(.clk(videoclk), .reset, .vp, .hp, .vpos, .hpos);
-  logic [7:0] audio;
+  logic signed [15:0] audio;
+  /* verilator lint_off PINCONNECTEMPTY */
+  // psg_dbg is a verification-only bus; unconnected here so it synthesises away.
   chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE), .CLK_HZ(BOARD_CLK_HZ))
     chip(.clk(masterclk), .cpuclk(cpuclk), .reset, .vsync, .hsync, .vpos, .hpos,
-         .buttons(8'h00), .rgb, .audio(audio));
+         .buttons(8'h00), .rgb, .audio(audio), .psg_dbg());
+  /* verilator lint_on PINCONNECTEMPTY */
 
   // Delta-sigma output: 8-bit PCM -> 1-bit density stream on audio_pwm.
   // Wire this pin to a speaker/amp through an RC low-pass (~1k + ~10nF).

@@ -490,3 +490,64 @@ in RTL, and both are wrong. NEMO's title music uses both.
   and is paced to a locked 60.00.
 - Simulator pixels are now 3 clocks (the /4 dated from the retired
   textbuffer); the PPU display pipeline needs exactly 3.
+
+## PSG vs the PICO-8 binary (reverse-engineering notes, 2026-07-25)
+
+Source: `/Applications/PICO-8.app/Contents/MacOS/pico8-psg-re.md` - a
+routine-level disassembly of the shipping PICO-8 binary. It supersedes
+zepto-8 as the reference where the two disagree, because it is the real
+implementation rather than a reimplementation.
+
+Checked and already correct, so not gaps:
+
+- **Relative waveform amplitudes.** The binary's waves have deliberately
+  different peaks (square/pulse are half the amplitude of triangle, saw and
+  organ two thirds). `rtl/psg_waves.hex` already reproduces that ratio to
+  within 2%, so instrument balance is not the cause of a bad-sounding mix.
+- **Tick length.** 183 samples at 22050 Hz = 120.49 Hz, which is `TICK_HZ`.
+
+Real gaps, in the order they are likely to be audible:
+
+1. **The song clock. FIXED 2026-07-25.** PICO-8's song scheduler records the
+   pattern length at launch and runs a global pattern-tick counter, explicitly
+   so that no single voice can advance the song clock. This PSG instead ended a
+   pattern when its timing channel's `playing` bit dropped, so anything that
+   disturbed that channel - above all an SFX borrowing it - could end the
+   pattern early or hold it open. See `rtl/psg.sv` `W_MUS`/`T_NL` and test 18c
+   in `rtl/psg_tb.sv`.
+
+2. **Sixteen voices, not four.** PICO-8's four "channels" are logical tags on a
+   pool of 16 mixer voices. `sfx(n, -1)` takes a *free voice* from that pool,
+   so a sound effect can never displace music - the situation this PSG's
+   borrow/restore machinery exists to survive simply cannot arise upstream.
+   Four physical channels cannot reproduce this. The closest faithful
+   approximation is that an auto-picked SFX must never take a channel the music
+   owns, and should be dropped instead when nothing is free; today
+   `src/nemo/sound.asm`'s steal path only skips the reservation mask, so it can
+   still take a music channel that the mask does not name.
+
+3. **The mixer is nonlinear and pairwise.** Voices are combined in a binary
+   reduction tree, and every pair goes through `soft_add`: below +-24576 it is
+   a plain sum, above it the excess is compressed 5:1 rather than clipped.
+   This PSG sums all four channels flat and hard-clips the total. Because
+   `soft_add` is not associative the tree order matters, which is why a loud
+   mix cannot be matched by a single final limiter.
+
+4. **The phaser is a comb filter, not a detuned pair.** Waveform 7 is the
+   triangle plus half of a sample taken from an 8-slot ring of 183-sample tick
+   buffers, tapped 4 (or 6) ticks back: `y = (4y + 2*history[tap][i]) / 4`.
+   This PSG synthesises it as two detuned triangles, which is a different
+   effect that happens to sound similar in isolation.
+
+5. **Noise has an exact form.** The hold period is `N` samples derived from the
+   phase increment (`t = 64 - x>>16`, `N = 4t-192` for `t < 64`), the generator
+   is a specific RNG (`H = rol32(H,16)+L; L = L+H`), and modes above 1
+   *interpolate* between successive random values rather than holding them,
+   which is what makes the spectrum change with pitch. This PSG uses a 15-bit
+   LFSR sample-and-hold plus the empirical gain curve in `rtl/psg_noise.hex`.
+
+6. **Every waveform is evaluated at two phases**, primary and a 17-bit
+   secondary with its own increment, summed at roughly 2:1 (triangle at 4:8).
+   This PSG runs a second voice only when detune is on. Worth confirming
+   against the binary's `_get_dx_for_note_fine` before changing anything: if
+   the two increments are equal the secondary is only a gain.

@@ -297,13 +297,67 @@ test-psg:
 	iverilog -g2012 -o build/psg_tb.vvp rtl/psg_tb.sv rtl/psg.sv rtl/dsigma.sv 2>&1 | grep -v 'sorry:' || true
 	vvp build/psg_tb.vvp | tail -3
 
+# ------------------------------------------------------------------------------
+# PPU: golden-frame regression net, and its resource/timing report
+# ------------------------------------------------------------------------------
+# Ten scenes, each exercising a different path through the compositor, each
+# compared bit-for-bit against a committed reference frame under rtl/golden/,
+# plus the per-line cycle budget as a committed number. Non-zero exit on
+# failure - `make test` used to exit 0 whether it passed or not.
+#
+#   make ppu-check                  check against the committed references
+#   make ppu-check PPUARGS=+regen   regenerate them. A deliberate act: commit
+#                                   the new frames WITH the change that moved
+#                                   them, so the diff shows which pixels moved
+#   make ppu-check PPUARGS=+inject  flip one pixel, to prove the net still bites
+#   make ppu-synth                  logic, block RAM and Fmax for the PPU alone
+#
+# PPU_RTL is a wildcard so the module split does not have to touch this file
+# every step; the testbench is the one rtl/ppu_*.sv that is not design source.
+PPU_RTL = rtl/sprite_compositor.sv \
+          $(filter-out rtl/ppu_golden_tb.sv,$(wildcard rtl/ppu_*.sv))
+PPUARGS ?=
+
+build/ppu_golden.vvp: rtl/ppu_golden_tb.sv $(PPU_RTL) rtl/sprite_pattern.bin
+	@mkdir -p build
+	iverilog -g2012 -I. -o $@ rtl/ppu_golden_tb.sv $(PPU_RTL) 2>&1 | grep -v 'sorry:' || true
+	@test -f $@
+
+ppu-check: build/ppu_golden.vvp
+	@mkdir -p rtl/golden
+	vvp $< $(PPUARGS)
+
+ppu-synth:
+	@mkdir -p build/ppu
+	yosys -p "read_verilog -Irtl -sv $(PPU_RTL); synth_ice40 -top sprite_compositor -json build/ppu/ppu.json" > build/ppu/synth.log 2>&1
+	@python3 tools/ppu_bram.py build/ppu/ppu.json
+	@nextpnr-ice40 --hx8k --package tq144:4k --json build/ppu/ppu.json \
+	  --asc build/ppu/ppu.asc --freq 50 --seed 1 > build/ppu/pnr.log 2>&1
+	@grep -E 'ICESTORM_LC:|ICESTORM_RAM:' build/ppu/pnr.log | sed 's/^Info:/ /'
+	@grep 'Max frequency for clock' build/ppu/pnr.log | tail -1 | sed 's/^Info:/ /'
+	@echo "  critical path (source -> sink):"
+	@awk '/Critical path report for clock/,/ns logic/' build/ppu/pnr.log | \
+	  grep 'Source ' | head -1 | sed 's/^Info: */    /'
+	@awk '/Critical path report for clock/,/ns logic/' build/ppu/pnr.log | \
+	  grep 'Sink ' | tail -1 | sed 's/^Info: */    /'
+
 test_ram: rtl/ram_test_tb.v rtl/ram_async.sv rtl/ram.hex
 	@echo "Running RAM testbench..."
 	iverilog -g2012 -o ram_test.vvp rtl/ram_test_tb.v rtl/ram_async.sv
 	vvp ram_test.vvp
 
+# The testbench now $fatal's on a failed check instead of printing "TEST
+# FAILED" and exiting 0 (refactor-cpu-core task 1.1), and rtl/ram_async.sv is
+# on the command line because `-y ./rtl` only searches for `.v`.
+#
+# This target still does not elaborate under iverilog: ram_async.sv declares
+# its parameters after the port list that uses them, and cpu6502_arlet.sv has
+# ~14 enum assignments iverilog wants explicit casts for (Verilator accepts
+# both). Neither is fixed here - the Arlet core is deleted at the end of this
+# change, and `make test-65x02` is a far stronger net than this reset check.
+# See docs/cpu-core.md.
 test:
-	iverilog -DSIMULATION -g2012 -y ./rtl -s cpu6502_tb rtl/cpu6502_defs.sv rtl/cpu6502_alu.sv rtl/cpu6502_wrapper.sv rtl/cpu6502_arlet.sv rtl/cpu6502_tb.sv && ./a.out
+	iverilog -DSIMULATION -g2012 -y ./rtl -s cpu6502_tb rtl/cpu6502_defs.sv rtl/cpu6502_alu.sv rtl/cpu6502_wrapper.sv rtl/cpu6502_arlet.sv rtl/ram_async.sv rtl/cpu6502_tb.sv && ./a.out
 
 # NEMO's own suites: routine-level checks and a full main-loop drive, both
 # against the assembled binary under tools/sim6502.py.
@@ -347,4 +401,75 @@ clean:
 
 .PHONY: all games hex hex-ca65 asm asm-ca65 check-customasm-version run shot \
         timing stat upload clean font tools test \
-        sim debug debug_custom test_ram test-nemo test-celeste metrics
+        sim debug debug_custom test_ram test-nemo test-celeste metrics \
+        ppu-check ppu-synth
+
+# ------------------------------------------------------------------------------
+# 65x02 conformance suite (openspec/changes/refactor-cpu-core)
+#
+# Per-opcode golden tests from SingleStepTests/65x02, run against whichever
+# 6502 core rtl/cpu6502_sst.sv selects. Tiers 1 and 2 gate; tier 3 is a
+# diagnostic and never affects the exit code - the new core is expected to use
+# FEWER cycles than NMOS, not the same ones.
+#
+#   make test-65x02                 fast subset (CASES per opcode), 151 opcodes
+#   make test-65x02 CASES=0         the full 1.51 M sweep (~17 s)
+#   make test-65x02 OPCODE=91       one opcode
+#   make test-65x02 TIER3=1         report cycle activity too
+#   make test-65x02 SST_CORE=v2     run it against the new core
+#   make cpu-timing                 rewrite docs/cpu-timing-$(SST_CORE).json
+#
+# The suite is 1,082 MB of JSON and is never vendored: it is cloned sparsely at
+# a pinned commit into $(SST_CACHE), then packed once into a 162 MB binary
+# fixture that the harness mmaps. Both live outside the tree.
+# ------------------------------------------------------------------------------
+SST_COMMIT   = 2f6980a2d95757486c7bee24355c360e40e2a224
+SST_CACHE    = $(HOME)/.cache/65x02
+SST_FIXTURE  = $(HOME)/.cache/65x02-fixture/6502-v1.fx
+SST_CORE    ?= arlet
+SST_BIN      = build/obj_65x02/harness
+SST_DEFS     = $(if $(filter v2,$(SST_CORE)),-DSST_CORE_V2,)
+SST_SRC      = rtl/cpu6502_sst.sv rtl/cpu6502_defs.sv \
+               $(if $(filter v2,$(SST_CORE)),rtl/cpu6502_core.sv rtl/cpu6502_decode.sv,\
+                                             rtl/cpu6502_arlet.sv rtl/cpu6502_alu.sv)
+CASES       ?= 100
+OPCODE      ?=
+TIER3       ?=
+# Opcodes whose failures are already understood and written up in
+# docs/cpu-core.md. They still run and are still printed; they just do not turn
+# the target red, so a NEW failure is not lost in a permanently broken gate.
+# The new core starts with an empty list and is expected to keep it empty.
+SST_KNOWN   ?= $(if $(filter v2,$(SST_CORE)),,00)
+SST_FLAGS    = --fixture $(SST_FIXTURE) --cases $(CASES) \
+               $(if $(OPCODE),--opcode $(OPCODE),) $(if $(TIER3),--tier3,) \
+               $(if $(SST_KNOWN),--known-failures $(SST_KNOWN),)
+
+$(SST_CACHE)/6502/v1/ff.json:
+	@echo "fetching SingleStepTests/65x02 at $(SST_COMMIT) (sparse, 6502/v1 only)"
+	rm -rf $(SST_CACHE).tmp
+	git clone --filter=blob:none --no-checkout --sparse \
+	    https://github.com/SingleStepTests/65x02 $(SST_CACHE).tmp
+	cd $(SST_CACHE).tmp && git sparse-checkout set 6502/v1 && \
+	    git checkout -q $(SST_COMMIT)
+	rm -rf $(SST_CACHE) && mv $(SST_CACHE).tmp $(SST_CACHE)
+
+$(SST_FIXTURE): tools/65x02/pack.py $(SST_CACHE)/6502/v1/ff.json
+	python3 tools/65x02/pack.py $(SST_CACHE)/6502/v1 $@ --commit $(SST_COMMIT)
+
+$(SST_BIN): tools/65x02/harness.cpp $(SST_SRC)
+	verilator --cc rtl/cpu6502_sst.sv --top-module cpu6502_sst -Irtl -O3 \
+	    --x-assign fast --x-initial fast $(SST_DEFS) \
+	    -Wno-DEFOVERRIDE -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+	    --exe $(abspath tools/65x02/harness.cpp) -o harness --build -j 8 \
+	    -Mdir build/obj_65x02 -CFLAGS "-O2"
+
+test-65x02: $(SST_BIN) $(SST_FIXTURE)
+	$(SST_BIN) $(SST_FLAGS)
+
+# The cycle table is a RECORD of what the core does, not a target it has to
+# hit: fewer cycles than NMOS is the point of the rebuild.
+cpu-timing: $(SST_BIN) $(SST_FIXTURE)
+	$(SST_BIN) --fixture $(SST_FIXTURE) --cases 0 --tier3 --max-report 0 \
+	    --timing docs/cpu-timing-$(SST_CORE).json
+
+.PHONY: test-65x02 cpu-timing

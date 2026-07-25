@@ -28,7 +28,8 @@ module psg_tb;
   bit reset = 1;
   bit cs = 0, rw = 0;
   logic [7:0] addr = 0, di = 0;
-  logic [7:0] dout, pcm;
+  logic [7:0] dout;
+  logic signed [15:0] pcm;   // the PSG is 16-bit now
 
   psg #(.CLK_HZ(CLKHZ)) dut(
     .clk(clk), .reset(reset),
@@ -36,7 +37,7 @@ module psg_tb;
     .dout(dout), .pcm(pcm));
 
   // Delta-sigma modulator under test (driven directly from a ramp below)
-  logic [7:0] ds_pcm = 0;
+  logic signed [15:0] ds_pcm = 0;
   logic       ds_out;
   dsigma dsig(.clk(clk), .reset(reset), .pcm(ds_pcm), .out(ds_out));
 
@@ -120,13 +121,14 @@ module psg_tb;
     end
   endtask
 
-  // peak |pcm-128| over nclk clocks (post-note echo detection)
+  // peak |pcm| over nclk clocks (post-note echo detection). The PSG's output
+  // is signed 16-bit centred on 0; it used to be unsigned 8-bit centred on 128.
   task peak_dev(input int nclk, output int pk);
     int d;
     pk = 0;
     repeat (nclk) begin
       @(posedge clk);
-      d = int'(pcm) - 128; if (d < 0) d = -d;
+      d = int'(pcm); if (d < 0) d = -d;
       if (d > pk) pk = d;
     end
   endtask
@@ -535,6 +537,96 @@ module psg_tb;
     check(q[3:0] == 4'h7, "the reservation mask reads back");
     wr(8'h20, 8'h80);
     wr(8'h21, 8'h00);
+
+    // ---- 18b. borrowing a music channel and giving it back -----------
+    $display("[18b] an SFX borrows a music channel, music resumes after");
+    begin
+      logic [7:0] q2;
+      wr(8'h20, 8'h80);                  // stop anything playing
+      ticks(1);
+      wr(8'h21, 8'h00);                  // reserve nothing, as the cart does
+      wr(8'h20, 8'd3);                   // pattern 3 launches all four channels
+      ticks(3);
+      rd(8'h14, q);                      // {playing, 0, sfx} on channel 0
+      check(q[7] && dut.music_owned[0], "music owns channel 0");
+      q2 = q;
+
+      // Take channel 0 for a short SFX, the way sfx(n) with no free channel
+      // does. sfx 15 runs at speed 4, so one row is 4 ticks - comfortably
+      // inside pattern 3's 32 ticks, so the pattern cannot advance underneath
+      // this test and relaunch the channel legitimately.
+      wr(8'h18, 8'd1);                   // length 1 row, so it ends quickly
+      wr(8'h10, 8'd15);
+      ticks(2);
+      check(dut.sav_valid[0], "the displaced music SFX was remembered");
+      check(dut.sav_sfx[0] == q2[5:0], "it remembered the right SFX");
+      rd(8'h14, q);
+      check(q[5:0] == 6'd15, "the SFX is what is playing now");
+
+      // Run until the SFX ends and the restore fires, rather than for a fixed
+      // time: waiting too long lets the pattern advance and relaunch the
+      // channel legitimately, which is not what this test is about.
+      begin
+        int guard;
+        guard = 0;
+        while (dut.sav_valid[0] && guard < 200) begin
+          ticks(1);
+          guard++;
+        end
+        check(guard < 200, "the SFX ended and the restore fired");
+      end
+      rd(8'h14, q);
+      check(q[7], "the channel is still playing after the SFX ends");
+      check(dut.music_owned[0], "the music owns channel 0 again");
+      check(q[5:0] == q2[5:0], "and it is the SFX the music had there");
+      check(!dut.sav_valid[0], "the saved slot was consumed");
+      wr(8'h20, 8'h80);
+      ticks(1);
+    end
+
+    // ---- 18c. borrowing a channel inside the pattern-launch window ---
+    //
+    // A pattern launch raises trig_req for its channels and only later does
+    // the walk service them. A button press landing in that window takes a
+    // channel whose music trigger is still pending, which is the race behind
+    // "moving the selection at the right moment kills the music".
+    $display("[18c] an SFX taken before the pattern's own trigger is serviced");
+    begin
+      logic [5:0] pat0;
+      int guard;
+      wr(8'h20, 8'h80);
+      ticks(1);
+      wr(8'h21, 8'h00);
+      wr(8'h22, 8'd0);                   // no fade, so gain is not the variable
+      wr(8'h20, 8'd3);
+      // wait for the launch to raise the requests, then take channel 0 before
+      // the walk gets to it - no ticks() in between
+      guard = 0;
+      while (!(dut.mus_playing && dut.trig_req[0]) && guard < 2000) begin
+        @(posedge clk);
+        guard++;
+      end
+      check(guard < 2000, "the pattern launch raised its trigger requests");
+      wr(8'h18, 8'd1);                   // one row of sfx 15: 4 ticks
+      wr(8'h10, 8'd15);                  // the CPU takes channel 0 right now
+
+      check(dut.sav_valid[0], "the pending music SFX was remembered");
+      check(dut.sav_row[0] == 5'd0,
+            "it remembered the pattern's start row, not a stale one");
+      check(!dut.launched[0],
+            "a borrowed channel does not pace the pattern");
+
+      // The pattern must still run its own length: it should not end the
+      // moment the borrowed sound effect does. 20 ticks is well past the
+      // 4-tick sound and well inside pattern 3's 32 ticks.
+      pat0 = dut.mus_pat;
+      ticks(20);
+      check(dut.mus_playing, "the music is still playing after the sound ends");
+      check(dut.mus_pat == pat0,
+            "the sound effect ending did not end the pattern");
+      wr(8'h20, 8'h80);
+      ticks(1);
+    end
 
     // ---- 19. SFX instruments ----------------------------------------
     $display("[19] custom instruments");

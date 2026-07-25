@@ -10,7 +10,7 @@
 
 module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
            output logic hsync, output logic vsync, output logic [23:0] rgb,
-           output logic [7:0] audio);
+           output logic signed [15:0] audio, output logic [63:0] psg_dbg);
   localparam WIDTH = 320, HEIGHT = 240;
 
   logic [7:0] hpos;
@@ -46,6 +46,7 @@ module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
     .hpos, 
     .buttons(buttons),
     .rgb,
-    .audio(audio)
+    .audio(audio),
+    .psg_dbg(psg_dbg)
   );
 endmodule
