@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
-"""Check that rtl/cpu6502_decode.sv and the opcode registry agree.
+"""Check that rtl/cpu6502_decode.sv and the opcode policy agree.
 
 refactor-cpu-core task 3.2. The decode table is the hardware's opinion of what
 each opcode is; `tools/65x02/opcodes.txt` is the registry the assembler and the
 conformance harness work from (and, once it lands, `docs/opcodes.md` will be).
 Two files can disagree silently forever, so this fails on any disagreement:
 
-  - an opcode in one and not the other,
+  - a documented NMOS opcode in one and not the other,
   - a different mnemonic,
-  - a different addressing mode.
+  - a different addressing mode,
+  - a row in a slot the allocation policy reserves for 65C02 compatibility,
+  - a row in a slot no slice has been assigned.
+
+Extension rows are expected, not errors: the policy in
+`tools/65x02/gen_opcodes_md.py` says which slices own which slots, and this
+reports what each has claimed.
 
     python3 tools/65x02/check_decode.py
 """
 
 import re
 import sys
+
+sys.path.insert(0, "tools/65x02")
+from gen_opcodes_md import RESERVED, EXTENSION            # the allocation policy
 
 DECODE = "rtl/cpu6502_decode.sv"
 REGISTRY = "tools/65x02/opcodes.txt"
@@ -69,14 +78,22 @@ def main():
     reg = read_registry(REGISTRY)
     dec = read_decode(DECODE)
     problems = []
+    claimed = {}
 
     for op in sorted(set(reg) | set(dec)):
         if op not in dec:
             problems.append(f"${op:02X} {reg[op][0]} is in the registry but has "
                             f"no row in the decode table")
         elif op not in reg:
-            problems.append(f"${op:02X} {dec[op][0]} has a decode row but is not "
-                            f"in the registry")
+            # Not NMOS. Legal only where the allocation policy says so.
+            if op in RESERVED:
+                problems.append(f"${op:02X} {dec[op][0]} claims a slot reserved "
+                                f"for {RESERVED[op]}")
+            elif op in EXTENSION:
+                claimed.setdefault(EXTENSION[op], []).append((op, dec[op][0]))
+            else:
+                problems.append(f"${op:02X} {dec[op][0]} claims a slot no slice "
+                                f"has been assigned - add it to the policy first")
         else:
             rm, rmode = reg[op]
             dm, dmode = dec[op]
@@ -92,8 +109,14 @@ def main():
             print(f"  {p}", file=sys.stderr)
         return 1
 
-    print(f"decode table agrees with {REGISTRY} on all {len(reg)} opcodes; "
-          f"the other {256 - len(reg)} slots trap")
+    print(f"decode table agrees with {REGISTRY} on all {len(reg)} documented "
+          f"opcodes")
+    for slice_name, ops in sorted(claimed.items()):
+        print(f"  {slice_name}: " +
+              ", ".join(f"${o:02X} {m}" for o, m in sorted(ops)))
+    n_ext = sum(len(v) for v in claimed.values())
+    print(f"  {len(reg)} documented + {n_ext} extension = {len(dec)} implemented; "
+          f"{256 - len(dec)} slots trap")
     return 0
 
 

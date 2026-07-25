@@ -70,13 +70,15 @@ def main():
     for op in sorted(set(RESERVED) & set(EXTENSION)):
         problems.append(f"${op:02X} is both reserved ({RESERVED[op]}) and "
                         f"extension space ({EXTENSION[op]})")
-    for op in sorted((set(RESERVED) | set(EXTENSION)) & set(rows)):
-        problems.append(f"${op:02X} is allocated by policy but already implemented")
+    for op in sorted(set(RESERVED) & set(rows)):
+        problems.append(f"${op:02X} is implemented but reserved ({RESERVED[op]})")
     if problems:
         for p in problems:
             print("policy conflict: " + p, file=sys.stderr)
         return 1
 
+    claimed = {op: EXTENSION[op] for op in EXTENSION if op in rows}
+    unclaimed = {op: EXTENSION[op] for op in EXTENSION if op not in rows}
     free = [op for op in range(256)
             if op not in rows and op not in RESERVED and op not in EXTENSION]
 
@@ -96,9 +98,10 @@ def main():
     w(f"| --- | --- |")
     w(f"| Implemented | {len(rows)} |")
     w(f"| Reserved for 65C02 compatibility | {len(RESERVED)} |")
-    w(f"| Extension space, assigned | {len(EXTENSION)} |")
+    w(f"| Extension space, claimed | {len(claimed)} |")
+    w(f"| Extension space, assigned but unclaimed | {len(unclaimed)} |")
     w(f"| Unallocated | {len(free)} |")
-    w(f"| **Total** | **{len(rows) + len(RESERVED) + len(EXTENSION) + len(free)}** |\n")
+    w(f"| **Total** | **{len(rows) + len(RESERVED) + len(unclaimed) + len(free)}** |\n")
 
     w("## Implemented\n")
     w("Cycles are this core's, measured over the full 65x02 sweep and recorded in")
@@ -111,6 +114,9 @@ def main():
     w("| Op | Mnemonic | Mode | Bytes | Cycles | NMOS |")
     w("| --- | --- | --- | --- | --- | --- |")
     for op in sorted(rows):
+        if op not in reg:
+            w(f"| `${op:02X}` | {rows[op]} | | | | *{claimed[op]}* |")
+            continue
         mn, mode, nb = reg[op]
         c = cyc[f"{op:02X}"]
         flag = "" if abs(c["cpi_mean"] - c["nmos_mean"]) < 0.001 else " ◀"
@@ -126,11 +132,11 @@ def main():
     for op in sorted(RESERVED):
         w(f"| `${op:02X}` | {RESERVED[op]} |")
 
-    w("\n## Extension space\n")
+    w("\n## Extension space, assigned but unclaimed\n")
     w("| Op | Assigned to |")
     w("| --- | --- |")
-    for op in sorted(EXTENSION):
-        w(f"| `${op:02X}` | {EXTENSION[op]} |")
+    for op in sorted(unclaimed):
+        w(f"| `${op:02X}` | {unclaimed[op]} |")
 
     w("\n## Unallocated\n")
     if free:
@@ -155,8 +161,9 @@ def main():
     w("one row in the decode table, in the same commit.")
 
     open(OUT, "w").write("\n".join(o) + "\n")
-    print(f"{OUT}: {len(rows)} implemented, {len(RESERVED)} reserved, "
-          f"{len(EXTENSION)} extension, {len(free)} unallocated")
+    print(f"{OUT}: {len(rows)} implemented ({len(claimed)} extension), "
+          f"{len(RESERVED)} reserved, {len(unclaimed)} assigned-unclaimed, "
+          f"{len(free)} unallocated")
     return 0
 
 

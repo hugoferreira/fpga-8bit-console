@@ -44,6 +44,10 @@ typedef enum logic [4:0] {
     AM_BRK,
     AM_JMPA,     // JMP abs
     AM_JMPI,     // JMP (abs)
+    // --- add-isa-core-ergonomics ---
+    AM_MOVZI,    // MOV zp, #imm
+    AM_MOVAI,    // MOV abs, #imm
+    AM_MOVZX,    // MOV zp, abs,X
     AM_TRAP      // no row: undefined opcode
 } amode_t;
 
@@ -57,7 +61,11 @@ typedef enum logic [4:0] {
     OP_INC, OP_DEC,
     OP_CLC, OP_SEC, OP_CLI, OP_SEI, OP_CLV, OP_CLD, OP_SED,
     OP_NOP,
-    OP_BRA       // branch: the operation is the condition test
+    OP_BRA,      // branch: the operation is the condition test
+    // --- add-isa-core-ergonomics ---
+    OP_ADD,      // ADC with carry-in forced to 0, decimal ignored
+    OP_SUB,      // SBC with borrow-in forced to 0, decimal ignored
+    OP_TRAP      // diagnostic trap carrying an immediate
 } aluop_t;
 
 // The register operand. For AM_IMP and AM_ACC it is also the second operand,
@@ -95,7 +103,10 @@ typedef enum logic [5:0] {
     S_RTS0, S_RTS1,
     S_RTI0, S_RTI1, S_RTI2,
     S_BRK0, S_BRK1, S_BRK2, S_BRK3, S_BRK4,
-    S_JMPI0, S_JMPI1
+    S_JMPI0, S_JMPI1,
+    S_MOVZ0, S_MOVZ1,
+    S_MOVA0, S_MOVA1, S_MOVA2,
+    S_MVX0, S_MVX1, S_MVX2, S_MVX3
 } state_t;
 
 typedef struct packed {
@@ -124,7 +135,8 @@ module cpu6502_decode (
                              ? (FW_N | FW_Z) : FW_NONE;
             OP_ORA, OP_AND, OP_EOR,
             OP_INC, OP_DEC:              fwset = FW_N | FW_Z;
-            OP_ADC, OP_SBC:              fwset = FW_N | FW_V | FW_Z | FW_C;
+            OP_ADC, OP_SBC,
+            OP_ADD, OP_SUB:              fwset = FW_N | FW_V | FW_Z | FW_C;
             OP_CMP:                      fwset = FW_N | FW_Z | FW_C;
             OP_BIT:                      fwset = FW_N | FW_V | FW_Z;
             OP_ASL, OP_LSR,
@@ -156,6 +168,9 @@ module cpu6502_decode (
             AM_RTS:                    st_of = S_RTS0;
             AM_RTI:                    st_of = S_RTI0;
             AM_BRK:                    st_of = S_BRK0;
+            AM_MOVZI:                  st_of = S_MOVZ0;
+            AM_MOVAI:                  st_of = S_MOVA0;
+            AM_MOVZX:                  st_of = S_MVX0;
             default:                   st_of = S_DECODE;   // AM_TRAP: inert
         endcase
     endfunction
@@ -340,8 +355,21 @@ module cpu6502_decode (
         8'hFD: d = row(AM_ABSX, OP_SBC,  R_A,    D_A);      // SBC abs,X
         8'hFE: d = row(AM_ABSX, OP_INC,  R_NONE, D_MEM);    // INC abs,X
 
-        // The other 105 slots. Reserved for the ISA slices; until one claims a
-        // slot, executing it is a named failure rather than silent corruption.
+        // ---- add-isa-core-ergonomics, column $x3 low half ----
+        // The accumulator toll booth and the carry ceremony. MOV touches no
+        // register and no flag; ADD/SUB are ADC/SBC with the carry forced, so
+        // the `clc`/`sec` before them stops being part of the instruction.
+        8'h03: d = row(AM_MOVZI, OP_PASS, R_NONE, D_MEM);   // MOV zp,#imm
+        8'h13: d = row(AM_MOVAI, OP_PASS, R_NONE, D_MEM);   // MOV abs,#imm
+        8'h23: d = row(AM_MOVZX, OP_PASS, R_NONE, D_MEM);   // MOV zp,abs,X
+        8'h33: d = row(AM_IMM,   OP_ADD,  R_A,    D_A);     // ADD #imm
+        8'h43: d = row(AM_ZP,    OP_ADD,  R_A,    D_A);     // ADD zp
+        8'h53: d = row(AM_IMM,   OP_SUB,  R_A,    D_A);     // SUB #imm
+        8'h63: d = row(AM_ZP,    OP_SUB,  R_A,    D_A);     // SUB zp
+        8'h73: d = row(AM_IMM,   OP_TRAP, R_NONE, D_NONE);  // TRAP #imm
+
+        // The remaining 97 slots. Reserved for the ISA slices; until one claims
+        // a slot, executing it is a named failure rather than silent corruption.
         default: d = row(AM_TRAP, OP_NOP, R_NONE, D_NONE);
         endcase
     end

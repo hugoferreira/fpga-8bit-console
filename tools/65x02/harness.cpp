@@ -191,6 +191,7 @@ struct Opts {
   const char *known    = "";   // opcodes whose failures are recorded, not new
   const char *functest = nullptr;  // Dormann's 6502_functional_test.bin
   long functest_start  = 0x0400;
+  long functest_load   = 0x0000;   // where in the 64 K map the image goes
   long functest_pass   = 0x3469;
 };
 
@@ -624,6 +625,7 @@ int main(int argc, char **argv) {
     else if (a == "--stall")          o.stall = atol(next());
     else if (a == "--functest")       o.functest = next();
     else if (a == "--functest-start") o.functest_start = strtol(next(), nullptr, 16);
+    else if (a == "--functest-load")  o.functest_load  = strtol(next(), nullptr, 16);
     else if (a == "--functest-pass")  o.functest_pass  = strtol(next(), nullptr, 16);
     else if (a == "--timing")         o.timing = next();
     else if (a == "--known-failures") o.known = next();
@@ -685,10 +687,11 @@ int main(int argc, char **argv) {
   if (o.functest) {
     FILE *bf = fopen(o.functest, "rb");
     if (!bf) { perror(o.functest); return 2; }
-    size_t n = fread(h.mem, 1, 0x10000, bf);
+    size_t n = fread(h.mem + (o.functest_load & 0xFFFF), 1,
+                     0x10000 - (o.functest_load & 0xFFFF), bf);
     fclose(bf);
-    fprintf(OUT, "functional test: %s, %zu bytes, start $%04lX, pass $%04lX\n",
-            o.functest, n, o.functest_start, o.functest_pass);
+    fprintf(OUT, "functional test: %s, %zu bytes at $%04lX, start $%04lX, pass $%04lX\n",
+            o.functest, n, o.functest_load, o.functest_start, o.functest_pass);
 
     // Borrow the reset vector, then hand back the two bytes the image had
     // there once the core is running at the start address.

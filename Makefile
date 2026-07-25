@@ -575,6 +575,17 @@ $(FUNCTEST_BIN):
 	@mkdir -p $(FUNCTEST_DIR)
 	curl -sfL -o $@ $(FUNCTEST_URL)/6502_functional_test.bin
 
+# Directed test for the ISA extensions. The 65x02 suite predates them, so this
+# is their conformance net. It is verified to be able to fail: inverting one
+# comparison stops it at that check's own trap instead of at `pass`.
+test-ext: $(SST_BIN)
+	@mkdir -p build
+	$(CUSTOMASM) tools/65x02/ext_test.asm -t 10 --color=off --legacy=off \
+	    -f symbols -o build/ext_test.sym -- -f binary -o build/ext_test.bin
+	@$(SST_BIN) --fixture $(SST_FIXTURE) --functest build/ext_test.bin \
+	    --functest-load 0400 --functest-start 0400 \
+	    --functest-pass $$(awk -F'0x' '/^pass = /{print $$2}' build/ext_test.sym)
+
 test-functional: $(SST_BIN) $(FUNCTEST_BIN)
 	$(SST_BIN) --fixture $(SST_FIXTURE) --functest $(FUNCTEST_BIN)
 
@@ -602,7 +613,7 @@ build/$(GAME).lst: $(GAME_SRC) $(GAME_DEPS)
 	$(CUSTOMASM) $(GAME_SRC) -t 10 --color=off --legacy=off \
 	    -f annotated -o $(abspath build/$(GAME).lst)
 
-.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi cpu-fmax test-functional cpu-bandwidth opcodes isa-seq
+.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi cpu-fmax test-functional cpu-bandwidth opcodes isa-seq test-ext
 
 # ------------------------------------------------------------------------------
 # Per-subsystem synthesis targets (openspec/changes/refactor-build-targets)

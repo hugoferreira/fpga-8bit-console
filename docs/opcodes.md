@@ -13,9 +13,10 @@ row.
 
 | | slots |
 | --- | --- |
-| Implemented | 151 |
+| Implemented | 159 |
 | Reserved for 65C02 compatibility | 58 |
-| Extension space, assigned | 33 |
+| Extension space, claimed | 8 |
+| Extension space, assigned but unclaimed | 25 |
 | Unallocated | 14 |
 | **Total** | **256** |
 
@@ -33,6 +34,7 @@ scored against this column.
 | --- | --- | --- | --- | --- | --- |
 | `$00` | BRK | imp | 1 | 6.00 ◀ | 7.00 |
 | `$01` | ORA | indx | 2 | 5.00 ◀ | 6.00 |
+| `$03` | MOV zp,#imm | | | | *add-isa-core-ergonomics* |
 | `$05` | ORA | zp | 2 | 3.00 | 3.00 |
 | `$06` | ASL | zp | 2 | 4.00 ◀ | 5.00 |
 | `$08` | PHP | imp | 1 | 2.00 ◀ | 3.00 |
@@ -42,6 +44,7 @@ scored against this column.
 | `$0E` | ASL | abs | 3 | 5.00 ◀ | 6.00 |
 | `$10` | BPL | rel | 2 | 2.00 ◀ | 2.63 |
 | `$11` | ORA | indy | 2 | 5.00 ◀ | 5.51 |
+| `$13` | MOV abs,#imm | | | | *add-isa-core-ergonomics* |
 | `$15` | ORA | zpx | 2 | 3.00 ◀ | 4.00 |
 | `$16` | ASL | zpx | 2 | 4.00 ◀ | 6.00 |
 | `$18` | CLC | imp | 1 | 2.00 | 2.00 |
@@ -50,6 +53,7 @@ scored against this column.
 | `$1E` | ASL | absx | 3 | 5.00 ◀ | 7.00 |
 | `$20` | JSR | abs | 3 | 5.00 ◀ | 6.00 |
 | `$21` | AND | indx | 2 | 5.00 ◀ | 6.00 |
+| `$23` | MOV zp,abs,X | | | | *add-isa-core-ergonomics* |
 | `$24` | BIT | zp | 2 | 3.00 | 3.00 |
 | `$25` | AND | zp | 2 | 3.00 | 3.00 |
 | `$26` | ROL | zp | 2 | 4.00 ◀ | 5.00 |
@@ -61,6 +65,7 @@ scored against this column.
 | `$2E` | ROL | abs | 3 | 5.00 ◀ | 6.00 |
 | `$30` | BMI | rel | 2 | 2.00 ◀ | 2.63 |
 | `$31` | AND | indy | 2 | 5.00 ◀ | 5.50 |
+| `$33` | ADD #imm | | | | *add-isa-core-ergonomics* |
 | `$35` | AND | zpx | 2 | 3.00 ◀ | 4.00 |
 | `$36` | ROL | zpx | 2 | 4.00 ◀ | 6.00 |
 | `$38` | SEC | imp | 1 | 2.00 | 2.00 |
@@ -69,6 +74,7 @@ scored against this column.
 | `$3E` | ROL | absx | 3 | 5.00 ◀ | 7.00 |
 | `$40` | RTI | imp | 1 | 4.00 ◀ | 6.00 |
 | `$41` | EOR | indx | 2 | 5.00 ◀ | 6.00 |
+| `$43` | ADD zp | | | | *add-isa-core-ergonomics* |
 | `$45` | EOR | zp | 2 | 3.00 | 3.00 |
 | `$46` | LSR | zp | 2 | 4.00 ◀ | 5.00 |
 | `$48` | PHA | imp | 1 | 2.00 ◀ | 3.00 |
@@ -79,6 +85,7 @@ scored against this column.
 | `$4E` | LSR | abs | 3 | 5.00 ◀ | 6.00 |
 | `$50` | BVC | rel | 2 | 2.00 ◀ | 2.63 |
 | `$51` | EOR | indy | 2 | 5.00 ◀ | 5.51 |
+| `$53` | SUB #imm | | | | *add-isa-core-ergonomics* |
 | `$55` | EOR | zpx | 2 | 3.00 ◀ | 4.00 |
 | `$56` | LSR | zpx | 2 | 4.00 ◀ | 6.00 |
 | `$58` | CLI | imp | 1 | 2.00 | 2.00 |
@@ -87,6 +94,7 @@ scored against this column.
 | `$5E` | LSR | absx | 3 | 5.00 ◀ | 7.00 |
 | `$60` | RTS | imp | 1 | 3.00 ◀ | 6.00 |
 | `$61` | ADC | indx | 2 | 5.00 ◀ | 6.00 |
+| `$63` | SUB zp | | | | *add-isa-core-ergonomics* |
 | `$65` | ADC | zp | 2 | 3.00 | 3.00 |
 | `$66` | ROR | zp | 2 | 4.00 ◀ | 5.00 |
 | `$68` | PLA | imp | 1 | 2.00 ◀ | 4.00 |
@@ -97,6 +105,7 @@ scored against this column.
 | `$6E` | ROR | abs | 3 | 5.00 ◀ | 6.00 |
 | `$70` | BVS | rel | 2 | 2.00 ◀ | 2.63 |
 | `$71` | ADC | indy | 2 | 5.00 ◀ | 5.50 |
+| `$73` | TRAP #imm | | | | *add-isa-core-ergonomics* |
 | `$75` | ADC | zpx | 2 | 3.00 ◀ | 4.00 |
 | `$76` | ROR | zpx | 2 | 4.00 ◀ | 6.00 |
 | `$78` | SEI | imp | 1 | 2.00 | 2.00 |
@@ -251,26 +260,18 @@ option of adopting its 65C02 meaning later.
 | `$FA` | 65C02 PHX / PLX |
 | `$FF` | R65C02 BBR/BBS |
 
-## Extension space
+## Extension space, assigned but unclaimed
 
 | Op | Assigned to |
 | --- | --- |
 | `$02` | add-isa-frame-pointer (prefix, opens a second 256-slot page) |
-| `$03` | add-isa-core-ergonomics |
 | `$0B` | add-isa-test-and-branch |
-| `$13` | add-isa-core-ergonomics |
 | `$1B` | add-isa-test-and-branch |
-| `$23` | add-isa-core-ergonomics |
 | `$2B` | add-isa-test-and-branch |
-| `$33` | add-isa-core-ergonomics |
 | `$3B` | add-isa-test-and-branch |
-| `$43` | add-isa-core-ergonomics |
 | `$4B` | add-isa-test-and-branch |
-| `$53` | add-isa-core-ergonomics |
 | `$5B` | add-isa-test-and-branch |
-| `$63` | add-isa-core-ergonomics |
 | `$6B` | add-isa-test-and-branch |
-| `$73` | add-isa-core-ergonomics |
 | `$7B` | add-isa-test-and-branch |
 | `$83` | add-isa-word-ops |
 | `$8B` | add-isa-pointer-ops |

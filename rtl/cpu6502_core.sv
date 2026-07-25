@@ -196,9 +196,17 @@ module cpu6502_core (
     assign sum     = {1'b0, ra_val} + {1'b0, opb_eff} + {8'd0, add_cin};
     assign ovf     = (~(ra_val ^ opb_eff) & (ra_val ^ sum[7:0]) & 8'h80) != 8'h00;
 
+    // ADD and SUB are the same adder with the carry decided by the opcode
+    // instead of by a preceding clc/sec - which is the whole point of them.
     always_comb begin
-        add_inv = (dec_r.op == OP_SBC) || (dec_r.op == OP_CMP);
-        add_cin = (dec_r.op == OP_CMP) ? 1'b1 : fc;
+        add_inv = (dec_r.op == OP_SBC) || (dec_r.op == OP_CMP)
+               || (dec_r.op == OP_SUB);
+        case (dec_r.op)
+            OP_CMP:  add_cin = 1'b1;
+            OP_ADD:  add_cin = 1'b0;   // no carry in: clc is implied
+            OP_SUB:  add_cin = 1'b1;   // no borrow in: sec is implied
+            default: add_cin = fc;
+        endcase
     end
 
     logic [5:0] dal, dal2, dah, dah2;
@@ -255,6 +263,16 @@ module cpu6502_core (
                 alu_v = ovf;
                 alu_c = sum[8];
                 alu_r = fd ? {sah2[3:0], sal2[3:0]} : sum[7:0];
+            end
+
+            // Binary only, by design: these are for addresses and counters,
+            // where a decimal adjust is never wanted. ADC/SBC keep decimal.
+            OP_ADD, OP_SUB: begin
+                alu_r = sum[7:0];
+                alu_n = sum[7];
+                alu_z = (sum[7:0] == 8'h00);
+                alu_v = ovf;
+                alu_c = sum[8];
             end
 
             OP_CMP: begin
@@ -463,9 +481,44 @@ module cpu6502_core (
             ab_c = {di_eff, adl}; pc_upd = 1'b1; st_n = S_DECODE;
         end
 
+        // ---- MOV: memory to memory, touching no register and no flag ----
+        // The destination address is held in `adr` and the data comes straight
+        // off the bus, so nothing passes through A.
+        S_MOVZ0: begin
+            adr_n = {8'h00, di_eff}; ab_c = pc; pc_upd = 1'b1; st_n = S_MOVZ1;
+        end
+        S_MOVZ1: begin
+            ab_c = adr; we_c = 1'b1; do_c = di_eff; st_n = S_LAST;
+        end
+
+        S_MOVA0: begin adl_n = di_eff; ab_c = pc; pc_upd = 1'b1; st_n = S_MOVA1; end
+        S_MOVA1: begin
+            adr_n = {di_eff, adl}; ab_c = pc; pc_upd = 1'b1; st_n = S_MOVA2;
+        end
+        S_MOVA2: begin
+            ab_c = adr; we_c = 1'b1; do_c = di_eff; st_n = S_LAST;
+        end
+
+        // MOV zp, abs,X - the indexed table read the corpus does 24 times.
+        // No page-cross penalty, because this core has none anywhere.
+        S_MVX0: begin zpa_n = di_eff; ab_c = pc; pc_upd = 1'b1; st_n = S_MVX1; end
+        S_MVX1: begin
+            {cy_n, adl_n} = {1'b0, di_eff} + {1'b0, x};
+            ab_c = pc; pc_upd = 1'b1; st_n = S_MVX2;
+        end
+        S_MVX2: begin ab_c = {di_eff + {7'b0, cy}, adl}; st_n = S_MVX3; end
+        S_MVX3: begin
+            ab_c = {8'h00, zpa}; we_c = 1'b1; do_c = di_eff; st_n = S_LAST;
+        end
+
         // ---- execute ----
         S_EXEC: begin
             commit = 1'b1;
+            if (dec_r.op == OP_TRAP) begin
+                trap_ir_n = di_eff;         // the immediate, not the opcode
+                trap_pc_n = pc - 16'd2;
+                trapped_n = 1'b1;
+            end
             ab_c = pc; pc_upd = 1'b1; st_n = S_DECODE;
         end
         S_RMW: begin
