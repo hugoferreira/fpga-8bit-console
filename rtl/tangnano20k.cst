@@ -1,0 +1,83 @@
+// Sipeed Tang Nano 20K - physical constraints for rtl/top_tangnano20k.sv
+//
+// The Gowin counterpart of rtl/top.pcf. Pin numbers are FPGA package pins on
+// the GW2AR-LV18QN88C8/I7, which is how the board is labelled and how the
+// Sipeed examples name them; the net names in comments are the board's, from
+// the Tang Nano 20K datasheet v1.3 pinout (page 5).
+//
+// nextpnr-himbaechel requires EVERY top-level port to appear here - an
+// unassigned port is an error, not a warning, so this file and the port list
+// of top_tangnano20k.sv have to be kept in step.
+//
+// ---------------------------------------------------------------------------
+// Clock
+// ---------------------------------------------------------------------------
+// The 27 MHz crystal. NOT one of the MS5351 outputs on pins 10/11/13: those
+// are programmed over I2C by the onboard BL616 and are reported not to bring
+// an rPLL's LOCK high when used as its reference.
+IO_LOC  "clk" 4;
+IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// ---------------------------------------------------------------------------
+// User keys
+// ---------------------------------------------------------------------------
+// S1 and S2, the two buttons flanking the USB-C connector. They short to
+// ground, so the internal pull-up is what makes an unpressed key read 1.
+// These are also the configuration MODE pins; they are ordinary inputs once
+// the device is configured, which is how every Sipeed example uses them.
+IO_LOC  "key1" 88;   // PIN88_MODE0_KEY1 - S1, reads as button O ($4007 bit 4)
+IO_PORT "key1" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "key2" 87;   // PIN87_MODE1_KEY2 - S2, reads as button X ($4007 bit 5)
+IO_PORT "key2" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// ---------------------------------------------------------------------------
+// LEDs (active low)
+// ---------------------------------------------------------------------------
+// Both mean "healthy": a working board shows two lit LEDs shortly after
+// power-on. One lit and one dark localises a fault to one side of the PLL.
+IO_LOC  "led_reset" 15;  // PIN15_SYS_LED0 - lit once reset is released
+IO_PORT "led_reset" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC  "led_lock" 16;   // PIN16_SYS_LED1 - lit once the PLL has locked
+IO_PORT "led_lock" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+
+// ---------------------------------------------------------------------------
+// SPI LCD (ST7789, 320x240) - the one thing an operator has to wire
+// ---------------------------------------------------------------------------
+// Five consecutive positions on the left-hand 20-pin header, chosen because
+// they are adjacent on the connector and because their only other function is
+// the RGB LCD FPC - which is unused here, since this console drives a serial
+// panel, not a parallel one. Nothing else on the board contends for them.
+//
+// Change these to match your wiring; that is all a different panel or a
+// different header position costs. Do NOT move them onto pins 80-85: those
+// are the microSD slot, and pin 79 is the WS2812.
+IO_LOC  "scl" 27;      // PIN27_LCD_B7  - SPI clock
+IO_PORT "scl" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "sda" 28;      // PIN28_LCD_B6  - SPI data (MOSI)
+IO_PORT "sda" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "cs" 25;       // PIN25_LCD_HS  - chip select
+IO_PORT "cs" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "rs" 26;       // PIN26_LCD_VS  - data/command
+IO_PORT "rs" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_rst" 29;  // PIN29_LCD_B5  - panel reset
+IO_PORT "lcd_rst" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+// ---------------------------------------------------------------------------
+// Audio
+// ---------------------------------------------------------------------------
+// The onboard MAX98357A mono class-D amplifier and the speaker pads. Fixed by
+// the board; these are not a choice.
+IO_LOC  "i2s_bclk" 56;  // PIN56_I2S_BCLK
+IO_PORT "i2s_bclk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "i2s_lrck" 55;  // PIN55_I2S_LRCK
+IO_PORT "i2s_lrck" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "i2s_din" 54;   // PIN54_I2S_DIN
+IO_PORT "i2s_din" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "pa_en" 51;     // PIN51_PA_EN - MAX98357A SD_MODE, high = enabled
+IO_PORT "pa_en" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+// The delta-sigma alternative, on the header pin next to the LCD group. Needs
+// an RC low-pass (~1k + ~10nF) and an amplifier off-board; the I2S path above
+// needs neither, so this is a fallback rather than the intended output.
+IO_LOC  "audio_pwm" 30; // PIN30_LCD_B4
+IO_PORT "audio_pwm" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

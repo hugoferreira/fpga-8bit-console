@@ -736,16 +736,29 @@ GOWIN_PACK    = gowin_pack
 OFL           = openFPGALoader
 OFL_BOARD     = tangnano20k
 
-# `delete t:$print` strips the $display cells yosys keeps out of the `initial`
-# blocks in ram_async.sv and clocks.sv. They are simulation artifacts with no
-# hardware meaning, and handing them to a place-and-route tool is asking it to
-# find a cell type it has no bel for.
+# Placer seed. Exposed because this nextpnr-himbaechel build can SEGFAULT while
+# routing, deterministically for a given placement, in the fallback path it
+# takes after "Failed to route net ... using dedicated routing" (a CE/LSR net
+# that would not fit on the dedicated resource). Another seed places those nets
+# elsewhere and the crash goes away:
+#
+#   make tangnano20k GOWIN_SEED=2
+#
+# It is a tool bug, not a design error - the same design routes cleanly on other
+# seeds - so treat a segfault as "try the next seed", not as something to fix in
+# the RTL. Worth re-testing against a newer nextpnr before chasing it further.
+GOWIN_SEED   ?= 1
+
 # Not INCLUDE_FILES: that is `rtl/**/*.v`, and make does not know `**`, so it
 # globs to `rtl/*/*.v` and then demands a rule for the literal `rtl/golden/*.v`
 # when no file matches. The design is one flat directory, so say so.
 GOWIN_SRC = $(wildcard rtl/*.sv) $(wildcard rtl/*.v) \
             $(wildcard rtl/*.hex) $(wildcard rtl/*.bin)
 
+# `delete t:$print` strips the $display cells yosys keeps out of the `initial`
+# blocks in ram_async.sv and clocks.sv. They are simulation artifacts with no
+# hardware meaning, and handing them to a place-and-route tool is asking it to
+# find a cell type it has no bel for.
 build/gowin/top.json: ${GOWIN_TOP} ${GOWIN_SRC} ${FONT_HEX} hex
 	@mkdir -p build/gowin
 	yosys -p "read_verilog -Irtl -sv ${GOWIN_TOP}; \
@@ -755,7 +768,7 @@ build/gowin/top.json: ${GOWIN_TOP} ${GOWIN_SRC} ${FONT_HEX} hex
 
 # Area against the datasheet's numbers, with block RAM broken down by consumer
 # - which is the interesting column, because block RAM is what this device is
-# nearly out of (45 of 46) and logic is not (49%).
+# nearly out of (45 of 46) and logic is not (42%).
 tangnano20k-synth: build/gowin/top.json
 	@python3 tools/gowin_stat.py $<
 
@@ -763,9 +776,26 @@ build/gowin/top_pnr.json: build/gowin/top.json ${GOWIN_CST}
 	${NEXTPNR_GOWIN} --json $< --write $@ \
 	    --device ${GOWIN_DEVICE} \
 	    --vopt family=${GOWIN_FAMILY} \
-	    --vopt cst=${GOWIN_CST} > build/gowin/pnr.log 2>&1
-	@grep -E 'Max frequency|Info: Device utilisation' -A 12 build/gowin/pnr.log \
-	   | sed 's/^Info:/ /' || true
+	    --vopt cst=${GOWIN_CST} \
+	    --seed ${GOWIN_SEED} > build/gowin/pnr.log 2>&1
+	@grep -E '(LUT4|ALU|DFF|BSRAM|MULT18X18|rPLL|IOB): +[0-9]+/' build/gowin/pnr.log \
+	  | sed 's/^Info:/ /' || true
+	@# nextpnr is run WITHOUT a frequency target, on purpose. `--freq` applies one
+	@# number to every unconstrained domain, and this design has three that differ
+	@# by 32x - constraining cpuclk at the PSG's 112.5 MHz would report a domain
+	@# with 14x of margin as failing. So take the per-domain Fmax nextpnr reports
+	@# anyway and check each against what the design actually asks of it
+	@# (rtl/clocks.sv). Fmax is printed twice per clock, after placement and after
+	@# routing; keep the LAST, which is the routed one.
+	@echo "  timing, against what rtl/clocks.sv asks of each domain:"
+	@grep 'Max frequency for clock' build/gowin/pnr.log \
+	  | sed "s/.*clock *'//; s/': */ /; s/ MHz.*//" \
+	  | awk '{ f[$$1] = $$2 } END { \
+	      need["pllclk"] = 112.5; need["cpuclk"] = 3.515625; \
+	      for (c in f) if (c in need) \
+	        printf "    %-9s %8.2f MHz achieved, %10.4f needed   %s\n", \
+	               c, f[c], need[c], (f[c] >= need[c] ? "ok" : "*** SHORT ***"); \
+	      else printf "    %-9s %8.2f MHz achieved   (derived clock, no target)\n", c, f[c] }'
 
 bin/toplevel.fs: build/gowin/top_pnr.json
 	@mkdir -p bin

@@ -1,6 +1,6 @@
 # 8-bit Console on FPGA
 
-A complete 8-bit console implementation on FPGA, featuring a 6502 CPU, video system, and memory architecture. The project supports both simulation through Verilator and deployment on BlackIce MX (Lattice Ice40) FPGA.
+A complete 8-bit console implementation on FPGA, featuring a 6502 CPU, video system, and memory architecture. The project supports simulation through Verilator and deployment on two boards: the BlackIce MX (Lattice iCE40 HX8K) and the Sipeed Tang Nano 20K (Gowin GW2AR-18C). Run `make boards` for the differences, or read [`docs/boards.md`](docs/boards.md) — the short version is that the 64 KB main memory only fits on the Tang Nano.
 
 ## Architecture Overview
 
@@ -88,6 +88,8 @@ This will:
 5. Show a 160x121 window with 4x scaling
 
 ### FPGA Deployment
+
+BlackIce MX (iCE40 HX8K):
 ```bash
 make upload
 ```
@@ -96,6 +98,21 @@ This will:
 2. Synthesize the design for BlackIce MX
 3. Generate the bitstream
 4. Upload to the FPGA
+
+Note this bitstream builds the chip with an 8 KB main memory, not 64 KB, and so
+cannot run a game — 64 KB does not fit in an HX8K's block RAM. See
+[`docs/memory-subsystem.md`](docs/memory-subsystem.md).
+
+Tang Nano 20K (Gowin GW2AR-18C), which does carry the full 64 KB:
+```bash
+make tangnano20k          # bin/toplevel.fs
+make tangnano20k-prog     # load it (SRAM; -flash to persist)
+make tangnano20k-synth    # area report only
+make boards               # what the two boards are
+```
+Needs yosys, `nextpnr-himbaechel`, `gowin_pack` (Project Apicula) and
+`openFPGALoader` — see [`docs/boards.md`](docs/boards.md) for the toolchain, the
+pin map and what has and has not been verified on hardware.
 
 ## Project Structure
 ```

@@ -551,3 +551,158 @@ Real gaps, in the order they are likely to be audible:
    This PSG runs a second voice only when detune is on. Worth confirming
    against the binary's `_get_dx_for_note_fine` before changing anything: if
    the two increments are equal the secondary is only a gain.
+
+## The target device is now a variable (2026-07-25, add-tangnano20k-target)
+
+Appended, not woven in: several entries above cost a gap against *the hx8k*,
+and that is now one of two devices. See `docs/boards.md`.
+
+The console builds for the Sipeed Tang Nano 20K (Gowin GW2AR-18C) from the same
+RTL as the BlackIce MX, and on that device the whole design is 50% of the logic
+and 45 of 46 block RAMs — with the **full 64 KB main memory**, which is what
+`rtl/top.sv` has never been able to carry.
+
+What that does and does not change, for the entries above:
+
+- **Gap 9's second overlay plane is still not affordable.** It costs "+5 blocks
+  on the hx8k"; the Tang Nano build has **one** block spare. The device is 4x
+  larger in logic and only 6 blocks larger than what this design already needs,
+  so block RAM stays the currency and the analysis in gap 9 stands unchanged.
+  What did change is that the two measurements it rests on ("there is no spare
+  block RAM"; "the plane is affordable only against a device with more block
+  RAM, or against the 64 KB `ram_async` array being dealt with first") were both
+  about the hx8k, and the *second* of those has now happened by moving device.
+  The plane is still one block short.
+
+- **"Hardware multiply: the target device cannot help" is device-specific.**
+  Under *Investigated and NOT recommended* that entry notes the Makefile
+  disables yosys `-dsp` because the hx8k has no `SB_MAC16`. The GW2AR-18C has
+  **48 18x18 multipliers**, and `synth_gowin` already infers four of them from
+  the PSG's volume multiply with no flags at all. The entry's *conclusion* is
+  unaffected — NEMO's measured demand for a general multiply is still one
+  routine called three times per puzzle load, and that is the reason not to
+  build a coprocessor. But the supporting sentence about the device is now only
+  true of one of the two.
+
+- **Gap 5, persistent storage (50 bits for NEMO's puzzle completion), has a
+  cheaper answer on this board.** It carries 64 Mbit of QSPI flash and a
+  microSD slot, both on dedicated pins. Nothing is implemented; the point is
+  only that "nothing in rtl/ implements EEPROM, flash or NVRAM" now describes
+  the RTL rather than the hardware.
+
+- **The fill-rate ceiling in gap 9 is unchanged**, and always will be: it is a
+  fact about the CPU's cycles per frame, not about the FPGA.
+
+One number this produced that belongs here rather than in a board document:
+**the PSG's 112.5 MHz clock domain closes at 46.27 MHz on the GW2AR-18C**,
+against 28.24 MHz measured on the hx8k by `refactor-build-targets`. A device
+four times larger moves a 4x miss to a 2.4x miss and no further, which settles
+it as an RTL problem rather than a device problem. `cpuclk` - the CPU, PPU,
+compositor and video timing - has 14.8x of margin, so nothing outside the PSG
+is near the edge on either device.
+
+Not verified on hardware. The bitstream builds (`yosys` ->
+`nextpnr-himbaechel` -> `gowin_pack`, 7.3 MB `.fs`) and every number above is
+read out of a routed netlist, but no board has been programmed.
+`docs/boards.md` says exactly what is proven and what is not.
+
+### Re-measured on the GW2AR-18C (2026-07-25, add-tangnano20k-target)
+
+The `refactor-build-targets` section below closes with "This is an HX8K
+result… the number does not carry over; it needs re-measuring there." It has been re-measured on a routed
+netlist, and it does carry over — which is the more useful answer, because it
+removes an option:
+
+| | PSG clock domain Fmax | needed |
+| --- | --- | --- |
+| iCE40 HX8K (PSG alone) | 28.24 MHz | 112.5 MHz |
+| **Gowin GW2AR-18C (whole chip, routed)** | **49.62 MHz** | 112.5 MHz |
+
+A device four times larger in logic, with hardware multipliers the PSG's volume
+multiply does infer (1 `MULT18X18` + 3 `MULT9X9`), moves a 4x miss to a 2.3x
+miss. **So "wait for a bigger board" is not one of the options.** Of the two
+fixes listed above, the reciprocal pipeline is the one that works on both
+devices.
+
+The critical path here is a different one — ~21 ns over ~31 levels, mostly
+routing, running `clocks0.reset_counter` -> the arbiter's PSG select decode ->
+`psg0.ins_wt`/`playing` -> `psg0.eff_vol[2].RESET` — so there is more than one
+path at this length and pipelining only the reciprocal may not be enough on its
+own. Measure after, not before.
+
+`cpuclk` (CPU, PPU, compositor, video) closes at 55.22 MHz against the
+3.515625 MHz it needs: 15.7x of margin. Nothing outside the PSG is near the
+edge on either device.
+
+### A second timing defect, found by the same run and fixed there
+
+**`rtl/clocks.sv` divides the PLL output in a counter, which makes the chip
+clock a flip-flop output rather than a clock network.** Place-and-route treats
+it as an ordinary signal: 2.04 ns of skew corner to corner on the GW2AR, and
+**three hold violations in the PPU blit** —
+
+    ERROR: Hold/min time violation for clock 'posedge cpuclk':
+      clk-skew -2.04 -2.04 Net cpuclk (31,5) -> (1,13)
+                           Sink chip.g_ppu.s0.blit.data64_q_DFFR_Q_10.CLK
+
+A hold violation is a bitstream that does not work, not one that is slow, and it
+is invisible to every check this project had, because nothing had ever placed.
+
+Fixed for the Tang Nano in `rtl/pll_gowin.v` by taking the /32 from the rPLL's
+`CLKOUTD` output, which rides the clock network: 0 violations and 294 fewer
+LUT4s, with the frequency, the 32:1 ratio and the phase lock unchanged.
+
+**`rtl/top.sv` has the same structure and has never been placed.** `SB_PLL40_CORE`
+has no second divided output, so the iCE40 fix is an `SB_GB` global buffer on the
+divided clock. Worth doing before anyone flashes a BlackIce and wonders why the
+picture is wrong.
+
+Full numbers, and what is and is not verified on hardware, in `docs/boards.md`.
+
+## The PSG is clocked at four times its closing frequency (2026-07-25, refactor-build-targets)
+
+`rtl/clocks.sv` assigns `psgclk = clk`, the undivided PLL output, and
+`rtl/pll.v` is generated for **112.5 MHz**. Synthesised and placed on its own
+(`make synth-psg`, iCE40 HX8K tq144:4k, seed 1, RTL fingerprint `26545f591961`
+at `bd502a6`), the PSG closes at **28.38 MHz**:
+
+```
+ICESTORM_LC:  6759/7680  88%      ICESTORM_RAM: 16/32
+Max frequency for clock 'psgclk': 28.38 MHz
+critical path: psg0.prun -> psg0.n_res      (the reciprocal / divide path)
+```
+
+A **4x miss**. The 56.25 MHz (/2) fallback named as the safe option in
+`refactor-psg-voice-pool` task 2.2a1 also fails, by 2x. The first divider that
+closes is **/4, 28.125 MHz**.
+
+Introduced by `f6fd3ab` ("Clocks: one PLL at 112.5 MHz, everything derived from
+it"). Nothing changed here; this is the first target able to report it. The
+whole chip has never placed, so no timing report was ever produced for any part
+of it — and both `docs/cpu-baseline.json` and
+`refactor-psg-voice-pool/design.md` recorded per-domain Fmax as *blocked behind
+area*. It was not: it was blocked behind the build having a single top. This
+closes task 2.2a1.
+
+**Consequence beyond the clock itself.** The "5102 clocks per 22050 Hz sample"
+arithmetic in `clocks.sv`'s header comment and at `chip.sv:200-204` is wrong at
+any divider that closes. At /4 the PSG gets **1275 clocks per sample**, which is
+still comfortably enough for the sixteen BRAM-streamed voices that
+`refactor-psg-voice-pool/design.md` budgets at ~320 clocks — so the voice-pool
+plan survives, but its headroom claim does not.
+
+**Not fixed here, deliberately.** Two candidate fixes, both owned by
+`refactor-psg-voice-pool` and both gated on its render comparison
+(`make psg-wav` must stay bit-identical):
+
+1. Pipeline the reciprocal path nextpnr names (`prun` → `n_res`). Preferred:
+   it keeps the sample-rate arithmetic intact.
+2. Divide psgclk by 4. One line, but it changes *every* PSG rate — the sample
+   tick, the sequencer tick, the noise LFSR — so it is a behaviour change
+   wearing a clocking change's clothes.
+
+Do not change `rtl/clocks.sv` without that gate.
+
+**Device-specific.** This is an HX8K result. The Tang Nano 20K's GW2AR-18C is a
+different fabric with hardware multipliers the PSG's volume multiply already
+infers, so the number does not carry over; it needs re-measuring there.

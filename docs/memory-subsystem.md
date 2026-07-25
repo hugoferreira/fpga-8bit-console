@@ -4,6 +4,14 @@ Why it is the blocker, what the board actually has, and what the abstraction has
 to look like. Opened when `refactor-cpu-core` phase 2 found that the design has
 never placed and that the CPU is not the reason.
 
+> **Since 2026-07-25 this is the blocker on *one* of two boards.** The console
+> also targets the Sipeed Tang Nano 20K, whose GW2AR-18C has 828 kbit of block
+> RAM, and there the 64 KB array simply fits — 32 of 46 blocks, no controller,
+> no external memory. That does not retire anything below: the BlackIce still
+> needs this, and so does any machine bigger than 64 KB. It does mean the
+> abstraction is no longer the only route to a bitstream that can run a game.
+> See [`boards.md`](boards.md) and the section at the end of this file.
+
 ## The problem, stated once
 
 `rtl/ram_async.sv` models the console's 64 KB main memory as an on-chip array:
@@ -153,3 +161,34 @@ Once the 64 KB array is out of the fabric, the design places, and with it:
   trade depends on the measured row-hit rate.
 - Whether a small instruction line buffer is worth it beyond the free 16-bit
   pairing. Measure before building.
+
+## The other answer: a device with the block RAM (2026-07-25)
+
+Everything above is about making 64 KB reachable when the fabric does not hold
+it. The Tang Nano 20K target takes the other route — hold it.
+
+| | iCE40 HX8K | Gowin GW2AR-18C |
+| --- | --- | --- |
+| Block RAM | 32 x 4 kbit = 128 kbit | 46 x 18 kbit = 828 kbit |
+| 64 KB main memory | 4x the whole device | 32 blocks |
+| What the top can pass | `RAM_ADDR_BITS(13)` — 8 KB, aliases `$FFFC` | `RAM_ADDR_BITS(16)` — the real machine |
+
+Measured: the full console synthesises at 45 of 46 block RAMs and 50% of the
+logic, with the 64 KB array intact. `make tangnano20k-synth`; numbers and the
+per-consumer split are in [`boards.md`](boards.md).
+
+**What this changes here.** Only the urgency, and only for one board:
+
+- The *capacity* half of the problem has an answer that costs no RTL.
+- The *latency* analysis above — row hits, the 16-bit free prefetch, RDY
+  becoming load-bearing, the zero-page/stack split staying on-chip — is
+  untouched and still the design for any external memory, on either board.
+- Gate T4/T5/T8 ("the design cannot be placed") were hx8k facts. A device this
+  design fits on can answer them, once place-and-route has actually been run on
+  it — which, as of writing, it has not been. See the verification section of
+  [`boards.md`](boards.md).
+
+**What it does not change.** The BlackIce MX still cannot run a game without
+this work, and its 16 Mbit SDRAM is still the cheapest 2 MB in the project. The
+GW2AR's own 64 Mbit of in-package SDRAM is unused by the Tang Nano target for
+exactly the reason above: at 64 KB there is nothing to spend it on yet.
