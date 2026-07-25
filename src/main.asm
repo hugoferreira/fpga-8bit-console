@@ -34,8 +34,14 @@
     .define PSG_ADDR_HI        $4101
     .define PSG_DATA           $4102
     .define PSG_STATUS         $4103  ; read: bits 0-3 channel playing, bit7 music
-    .define PSG_CH             $4110  ; +ch: write cart SFX # to play, $80 stops
+    .define PSG_CH             $4110  ; +ch: write cart SFX # to play, $80 stops,
+                                      ; $81 releases from looping
+    .define PSG_CHROW          $4114  ; +ch: write start row; read {playing, sfx #}
+    .define PSG_CHLEN          $4118  ; +ch: write rows to play (0 = all)
     .define PSG_MUSIC          $4120  ; write pattern # to start music, $80 stops
+    .define PSG_MUSMASK        $4121  ; channels reserved for music
+    .define PSG_FADE           $4122  ; music fade length, 16 ms units
+    .define MUS_FADE_2S        125    ; the cart's music(-1, 2000)
 
     ; sound ids (the cart's own SFX slot numbers; brick = 2 + chain)
     .define SND_WALL           0
@@ -401,7 +407,9 @@ do_serve:
     sta ballspd
     sta windt
     sta windt+1
-    lda #$80               ; title music ends when play begins
+    lda #MUS_FADE_2S       ; title music fades out over 2 s, as music(-1,2000)
+    sta PSG_FADE
+    lda #$80
     sta PSG_MUSIC
     ldx #SND_SERVE
     ldy #2
@@ -2441,11 +2449,13 @@ zone_vy_lo: .byte $40, $C0, $80, $C0, $40
 zone_vy_hi: .byte $FF, $FE, $FE, $FE, $FF
 
 ; sfx_play: X = cart SFX number. Auto-picks a channel the way PICO-8's
-; sfx(n) (default channel -1) does - the lowest channel whose playing bit
-; is clear, so sounds layer instead of cutting each other off; if all four
-; are busy it steals round-robin. Y is ignored (kept for old call sites).
+; sfx(n) (default channel -1) does - the lowest channel that is neither
+; playing nor reserved for music, so sounds layer instead of cutting each
+; other off; if all four are busy it steals round-robin. Y is ignored
+; (kept for old call sites).
 sfx_play:
     lda PSG_STATUS         ; bits 0-3 = channel playing flags
+    ora PSG_MUSMASK        ; channels music() reserved are off limits
     ldy #0
     lsr                    ; ch0 -> carry
     bcc @go

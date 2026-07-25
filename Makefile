@@ -3,8 +3,9 @@ FPGA_PKG = tq144:4k
 FPGA_TYPE = hx8k
 FPGA_PCF = rtl/top.pcf
 TARGET_FREQ = 50
-# YOSYS_FLAGS = -noflatten -abc9 -dsp
-YOSYS_FLAGS = -dsp 
+# -dsp infers SB_MAC16 cells, which the hx8k has none of - nextpnr then
+# fails with "no BELs remaining to implement cell type ICESTORM_DSP".
+YOSYS_FLAGS =
 
 # Project Specific Settings
 INCLUDE_FILES = rtl/**/*.v rtl/**/*.sv rtl/**/*.bin

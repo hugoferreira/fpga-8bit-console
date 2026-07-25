@@ -1,18 +1,26 @@
 // Standalone PSG v2 testbench. Uploads a constructed PICO-8 audio RAM
 // image through the CPU port, then checks: row timing against speed,
 // loop and length-only conventions, slide/drop/fade/arpeggio effect
-// trajectories (via hierarchical peeks at eff_inc/eff_vol), and music
-// pattern flow (chaining, loop-back to loop-start, stop flag, $80).
+// trajectories (via hierarchical peeks at eff_inc/eff_vol), music
+// pattern flow (chaining, loop-back to loop-start, stop flag, $80),
+// the filters, and the delta-sigma output.
+//
+// A second bank is uploaded part-way through for the PICO-8 API surface:
+// sfx() start row and length, release from looping, the SFX-number
+// readback, music fades, channel reservation, custom SFX instruments
+// (volume multiply, pitch relative to C-2, the retrigger rule) and
+// waveform instruments.
 //
 // Run: verilator --binary --timing -j 4 rtl/psg_tb.sv rtl/psg.sv \
-//        --top-module psg_tb && ./obj_dir/Vpsg_tb
+//        rtl/dsigma.sv --top-module psg_tb && ./obj_dir/Vpsg_tb
 `timescale 1ns/1ps
 
 module psg_tb;
-  // 32 system clocks per virtual sample keeps the sim quick while giving
-  // the serialized datapath headroom (needs ~13)
-  localparam CLKHZ = 32'd705_600;
-  localparam CLKS_PER_TICK = 32 * 183;
+  // 96 system clocks per virtual sample keeps the sim quick while giving
+  // the serialized synth/mix walk headroom (needs ~48; the board clocks the
+  // chip at 25 MHz, which is 1133 clocks per sample)
+  localparam CLKHZ = 32'd2_116_800;
+  localparam CLKS_PER_TICK = 96 * 183;
 
   bit clk = 0;
   always #5 clk = ~clk;
@@ -72,6 +80,29 @@ module psg_tb;
 
   task set_filter(input int sfx, input int fb);
     img[256 + sfx * 68 + 64] = fb[7:0];
+  endtask
+
+  // a note played through custom instrument `inst` (SFX 0-7): bit 15 set
+  task set_inote(input int sfx, input int r, input int pitch, input int inst,
+                 input int vol, input int fx);
+    set_note(sfx, r, pitch, inst, vol, fx);
+    img[256 + sfx * 68 + r * 2 + 1] = img[256 + sfx * 68 + r * 2 + 1] | 8'h80;
+  endtask
+
+  // a waveform instrument: 64 signed samples, flagged by loop-start bit 7
+  task set_wavetable(input int sfx, input int amp, input bit bass);
+    for (int i = 0; i < 64; i++)
+      img[256 + sfx * 68 + i] = (i < 32) ? 8'(amp) : 8'(-amp);
+    img[256 + sfx * 68 + 64] = 8'd0;
+    img[256 + sfx * 68 + 65] = bass ? 8'd1 : 8'd0;
+    img[256 + sfx * 68 + 66] = 8'h80;
+    img[256 + sfx * 68 + 67] = 8'd0;
+  endtask
+
+  task upload;
+    wr(8'h00, 8'h00);
+    wr(8'h01, 8'h31);
+    for (int i = 0; i < 4608; i++) wr(8'h02, img[i]);
   endtask
 
   // measure pcm over nclk system clocks: peak |delta| and change count
@@ -184,9 +215,7 @@ module psg_tb;
     reset = 0;
     repeat (8) @(posedge clk);
 
-    wr(8'h00, 8'h00);
-    wr(8'h01, 8'h31);
-    for (int i = 0; i < 4608; i++) wr(8'h02, img[i]);
+    upload;
 
     // ---- 1. row timing and looping ---------------------------------
     $display("[1] speed and loop rows");
@@ -326,11 +355,11 @@ module psg_tb;
       int md0, md2, ch0, ch2;
       wr(8'h10, 8'd7);                    // clean white noise
       ticks(2);
-      measure(8000, md0, ch0);
+      measure(24000, md0, ch0);
       wr(8'h10, 8'h80);
       wr(8'h10, 8'd8);                    // damp-2 white noise
       ticks(2);
-      measure(8000, md2, ch2);
+      measure(24000, md2, ch2);
       wr(8'h10, 8'h80);
       check(md0 > 0, "clean noise has large steps");
       check(md2 * 2 < md0, "dampen shrinks the peak sample step");
@@ -347,9 +376,9 @@ module psg_tb;
     $display("[11] noise modes differ (white/pitched/brown)");
     begin
       int mdw, mdp, mdb, cw, cp, cb;
-      wr(8'h10, 8'd10); ticks(2); measure(8000, mdw, cw); wr(8'h10, 8'h80);
-      wr(8'h10, 8'd11); ticks(2); measure(8000, mdp, cp); wr(8'h10, 8'h80);
-      wr(8'h10, 8'd12); ticks(2); measure(8000, mdb, cb); wr(8'h10, 8'h80);
+      wr(8'h10, 8'd10); ticks(2); measure(24000, mdw, cw); wr(8'h10, 8'h80);
+      wr(8'h10, 8'd11); ticks(2); measure(24000, mdp, cp); wr(8'h10, 8'h80);
+      wr(8'h10, 8'd12); ticks(2); measure(24000, mdb, cb); wr(8'h10, 8'h80);
       check(cw > cp, "white noise updates faster than pitched");
       check(mdb < mdw, "brown noise has smaller sample steps than white");
     end
@@ -358,15 +387,21 @@ module psg_tb;
     $display("[12] reverb leaves an echo tail after note-off");
     begin
       int tail_rev, tail_dry;
+      // the level-2 echo of the note's first sample lands 732 samples
+      // after it was written, so skip past the note's own output and then
+      // measure the window the echo has to arrive in
       wr(8'h12, 8'd14);                   // dry short square
       ticks(2);
-      wr(8'h12, 8'h80);                   // stop; measure the silence after
-      peak_dev(9000, tail_dry);
+      wr(8'h12, 8'h80);
+      repeat (9000) @(posedge clk);
+      peak_dev(78000, tail_dry);
       wr(8'h12, 8'd13);                   // reverb-2 short square
       ticks(2);
       wr(8'h12, 8'h80);
-      peak_dev(9000, tail_rev);
-      check(tail_rev > tail_dry + 2, "reverb tail outlasts the dry note");
+      repeat (9000) @(posedge clk);
+      peak_dev(78000, tail_rev);
+      check(tail_dry < 4, "a dry note leaves nothing behind");
+      check(tail_rev > tail_dry + 8, "reverb tail outlasts the dry note");
     end
 
     // ---- 13. DELTA-SIGMA OUTPUT -------------------------------------
@@ -381,6 +416,194 @@ module psg_tb;
       check(hi_hi > lo_hi, "higher PCM -> denser 1s");
       check(lo_hi > 100 && hi_hi < 1900, "density is proportional, not saturated");
     end
+
+    // ---- second bank: trigger parameters, fades, instruments --------
+    // sfx15: 32 distinct pitches, speed 4 - offset/length slicing
+    for (int r = 0; r < 32; r++) set_note(15, r, 20 + r, 0, 7, 0);
+    set_meta(15, 4, 0, 0);
+    // sfx16: loops rows [2,6) at speed 2 - release from looping
+    for (int r = 0; r < 32; r++) set_note(16, r, 30, 0, 7, 0);
+    set_meta(16, 2, 2, 6);
+    // sfx17: plain note, for the SFX-number readback
+    for (int r = 0; r < 32; r++) set_note(17, r, 30, 0, 7, 0);
+    set_meta(17, 16, 0, 0);
+
+    // instrument bank in SFX 0-4 (the earlier tests are done with them)
+    for (int r = 0; r < 32; r++)                    // 0: tremolo, no transpose
+      set_note(0, r, 24, 0, (r % 2) ? 2 : 5, 0);
+    set_meta(0, 1, 0, 0);
+    for (int r = 0; r < 32; r++) set_note(1, r, 36, 0, 7, 0);  // 1: +12
+    set_meta(1, 8, 0, 0);
+    set_wavetable(2, 100, 1'b0);                    // 2: square wavetable
+    set_wavetable(3, 0,   1'b0);                    // 3: silent wavetable
+    set_wavetable(4, 100, 1'b1);                    // 4: same, an octave down
+
+    // notes that play through them (speed 16, one or two rows)
+    set_inote(18, 0, 33, 0, 7, 0); set_inote(18, 1, 33, 0, 7, 0);
+    set_meta(18, 16, 2, 0);
+    set_inote(19, 0, 33, 1, 7, 0); set_meta(19, 16, 1, 0);
+    set_inote(20, 0, 33, 2, 7, 0); set_meta(20, 16, 1, 0);
+    set_inote(21, 0, 33, 3, 7, 0); set_meta(21, 16, 1, 0);
+    set_inote(22, 0, 33, 4, 7, 0); set_meta(22, 16, 1, 0);
+    // 23: same pitch on both rows (instrument runs on), 24: pitch changes
+    set_inote(23, 0, 33, 0, 7, 0); set_inote(23, 1, 33, 0, 7, 0);
+    set_meta(23, 4, 2, 0);
+    set_inote(24, 0, 33, 0, 7, 0); set_inote(24, 1, 34, 0, 7, 0);
+    set_meta(24, 4, 2, 0);
+    // 26: same pitch, but row 1 asks for a retrigger with effect 3
+    set_inote(26, 0, 33, 0, 7, 0); set_inote(26, 1, 33, 0, 7, 3);
+    set_meta(26, 4, 2, 0);
+    // 25: filter byte past the base-3 range - dampen must wrap, not clamp
+    for (int r = 0; r < 32; r++) set_note(25, r, 30, 0, 7, 0);
+    set_meta(25, 16, 0, 0); set_filter(25, 224);
+    // pattern 3: all four channels enabled, for the reservation test
+    set_pat(3, 8'h06, 8'h06, 8'h06, 8'h06);
+    upload;
+
+    // ---- 14. sfx(n, ch, offset, length) -----------------------------
+    $display("[14] start row and length");
+    wr(8'h14, 8'd8);                     // offset 8
+    wr(8'h18, 8'd4);                     // 4 notes
+    wr(8'h10, 8'd15);
+    ticks(1);
+    rd(8'h10, q);
+    check(q[4:0] == 5'd8, "playback starts at the requested row");
+    ticks(13);
+    rd(8'h03, q);
+    check(q[0] == 1, "still playing inside the 4-row slice");
+    ticks(5);
+    rd(8'h03, q);
+    check(q[0] == 0, "stops after exactly 4 rows");
+    wr(8'h10, 8'd15);                    // no parameters this time
+    ticks(1);
+    rd(8'h10, q);
+    check(q[4:0] == 5'd0, "start row and length do not persist");
+    wr(8'h10, 8'h80);
+
+    // ---- 15. release from looping -----------------------------------
+    $display("[15] release from looping");
+    wr(8'h11, 8'd16);
+    ticks(16);
+    rd(8'h11, q);
+    check(q[4:0] >= 5'd2 && q[4:0] < 5'd6, "looping inside [2,6)");
+    wr(8'h11, 8'h81);                    // sfx(-2)
+    ticks(8);
+    rd(8'h11, q);
+    check(q[7] == 1 && q[4:0] >= 5'd6, "released playback leaves the loop");
+    ticks(56);
+    rd(8'h03, q);
+    check(q[1] == 0, "released sfx stops at the end of the record");
+
+    // ---- 16. SFX-number readback ------------------------------------
+    $display("[16] channel reports which sfx it plays");
+    wr(8'h12, 8'd17);
+    ticks(1);
+    rd(8'h16, q);
+    check(q == 8'h91, "channel 2 reads back {playing, sfx 17}");
+    wr(8'h12, 8'h80);
+    ticks(1);
+    rd(8'h16, q);
+    check(q[7] == 0, "playing bit clears when the channel is stopped");
+
+    // ---- 17. music fade in and out ----------------------------------
+    $display("[17] music fade");
+    wr(8'h22, 8'd125);                   // 2 s
+    wr(8'h20, 8'd0);
+    ticks(2);
+    check(dut.mus_gain < 8'd40, "fade-in starts near silence");
+    ticks(60);
+    check(dut.mus_gain > 8'd60, "fade-in gain rises");
+    wr(8'h22, 8'd16);                    // 256 ms = 32 ticks
+    wr(8'h20, 8'h80);
+    ticks(4);
+    rd(8'h03, q);
+    check(q[7] == 1, "music keeps playing while it fades out");
+    check(dut.mus_gain < 8'd230, "fade-out gain falls");
+    ticks(40);
+    rd(8'h03, q);
+    check(q[7] == 0, "music stops when the fade-out reaches silence");
+    check(q[3:0] == 4'd0, "music channels are silenced");
+
+    // ---- 18. reserved channels still play music ---------------------
+    $display("[18] channel mask reserves, it does not gate");
+    wr(8'h21, 8'h07);
+    wr(8'h20, 8'd3);
+    ticks(2);
+    rd(8'h03, q);
+    check(q[3:0] == 4'hF, "all four pattern channels launch");
+    rd(8'h21, q);
+    check(q[3:0] == 4'h7, "the reservation mask reads back");
+    wr(8'h20, 8'h80);
+    wr(8'h21, 8'h00);
+
+    // ---- 19. SFX instruments ----------------------------------------
+    $display("[19] custom instruments");
+    begin
+      int loud, quiet;
+      loud = 0; quiet = 0;
+      wr(8'h10, 8'd18);                  // instrument 0 alternates vol 5/2
+      ticks(1);
+      check(dut.eff_inc[0] == dut.pinc[33],
+            "instrument pitch 24 leaves the note's pitch alone");
+      for (int i = 0; i < 6; i++) begin
+        if (dut.eff_vol[0] == 8'd180) loud++;
+        if (dut.eff_vol[0] == 8'd72)  quiet++;
+        ticks(1);
+      end
+      check(loud > 0 && quiet > 0, "instrument volume multiplies the note's");
+      wr(8'h10, 8'h80);
+    end
+    wr(8'h11, 8'd19);                    // instrument 1 sits at pitch 36
+    ticks(2);
+    check(dut.eff_inc[1] == dut.pinc[45],
+          "instrument pitch adds relative to C-2 (33 + 36 - 24)");
+    wr(8'h11, 8'h80);
+
+    $display("[19b] instrument retrigger rule");
+    wr(8'h12, 8'd23);                    // same pitch on both rows
+    ticks(6);
+    check(dut.ins_row[2] >= 5'd4, "held pitch keeps the instrument running");
+    wr(8'h12, 8'h80);
+    wr(8'h12, 8'd24);                    // pitch changes on row 1 (tick 4)
+    ticks(6);
+    check(dut.ins_row[2] <= 5'd3, "a pitch change retriggers the instrument");
+    wr(8'h12, 8'h80);
+    wr(8'h12, 8'd26);                    // effect 3 asks for a retrigger
+    ticks(6);
+    check(dut.ins_row[2] <= 5'd3, "effect 3 retriggers instead of dropping");
+    check(dut.eff_inc[2] == dut.pinc[33], "effect 3 does not drop the pitch");
+    wr(8'h12, 8'h80);
+
+    // ---- 20. waveform instruments -----------------------------------
+    $display("[20] waveform instruments");
+    begin
+      int pk_wave, pk_zero;
+      logic [23:0] inc_plain, inc_bass;
+      wr(8'h10, 8'd20);                  // square wavetable
+      ticks(2);
+      check(dut.snd_wt[0] == 1, "channel switches to the wavetable");
+      peak_dev(27000, pk_wave);
+      inc_plain = dut.eff_inc[0];
+      wr(8'h10, 8'h80);
+      wr(8'h10, 8'd21);                  // all-zero wavetable
+      ticks(2);
+      peak_dev(27000, pk_zero);
+      wr(8'h10, 8'h80);
+      check(pk_wave > 20, "the wavetable's samples reach the output");
+      check(pk_zero < 4, "a zero wavetable is silent (samples really read)");
+      wr(8'h10, 8'd22);                  // same table, bass flag set
+      ticks(2);
+      inc_bass = dut.eff_inc[0];
+      wr(8'h10, 8'h80);
+      check(inc_bass == (inc_plain >> 1), "the bass flag drops an octave");
+    end
+
+    // ---- 21. filter byte dampen wraps -------------------------------
+    $display("[21] dampen field is taken mod 3");
+    wr(8'h13, 8'd25);                    // filter byte 224
+    ticks(1);
+    check(dut.ch_damp[3] == 2'd0, "filter byte 224 decodes dampen 0");
+    wr(8'h13, 8'h80);
 
     if (errors == 0)
       $display("ALL TESTS PASSED");
