@@ -20,8 +20,7 @@ sound_init:
     mov PSG_ADDR_LO, #$00
     mov PSG_ADDR_HI, #$31
     mov pSrc, #<audio_data
-    lda #>audio_data
-    sta pSrc+1
+    mov pSrc+1, #>audio_data
     ldx #18                     ; 18 pages = 4608 bytes
     ldy #0
 .up:

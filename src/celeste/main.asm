@@ -76,8 +76,7 @@ reset:
     sta pause_player
     sta btn
     sta btnprev
-    lda #1
-    sta max_djump
+    mov max_djump, #1
 
     jsr title_screen
 
@@ -147,8 +146,7 @@ update_frame:
     lda seconds
     cmp #60
     bcc .clock
-    lda #0
-    sta seconds
+    mov seconds, #0
     inc minutes
 .clock:
 
@@ -197,8 +195,7 @@ update_frame:
     beq .objects
     dec delay_restart
     bne .objects
-    lda #0
-    sta will_restart
+    mov will_restart, #0
     jsr restart_room
     rts
 
@@ -283,8 +280,7 @@ sheet_upload:
     mov pSrc, #<celeste_sheet
     mov pSrc+1, #>celeste_sheet
     mov t0, #<SHEET_BYTES
-    lda #>SHEET_BYTES
-    sta t1
+    mov t1, #>SHEET_BYTES
     ldy #0
 .byte:
     lda (pSrc), y

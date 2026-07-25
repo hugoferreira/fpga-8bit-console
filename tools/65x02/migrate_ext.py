@@ -2,7 +2,7 @@
 """Rewrite a corpus to use the add-isa-core-ergonomics instructions, safely.
 
     python3 tools/65x02/migrate_ext.py src/main.asm            # report only
-    python3 tools/65x02/migrate_ext.py src/main.asm --apply
+    python3 tools/65x02/migrate_ext.py src/celeste --apply     # a whole corpus
 
 None of these rewrites is unconditionally safe, which is the whole point of
 this file:
@@ -15,14 +15,28 @@ this file:
   clc / adc m      ->  add m           Identical in A, N, V, Z and C, so valid
   sec / sbc m      ->  sub m           wherever the pair is genuinely adjacent.
 
-Liveness is decided by a deliberately conservative forward scan: anything that
-might read A or N/Z before they are redefined rejects the site, and so does a
-label, a branch, or a jump, because either means another path arrives and this
-scan does not build a control-flow graph. A rejected site is not a site that is
-unsafe - it is a site this tool declines to prove safe. Every rejection is
-counted and categorised, so the ones worth doing by hand are visible.
+Liveness is decided by a walk over the corpus's control-flow graph. A site is
+rewritten only if A and the N/Z flags are dead on EVERY path leaving it:
+
+  - `jmp` and branches follow their target, and a branch follows both edges;
+  - `jsr` walks into the callee and `rts` returns to the caller, so a value
+    that a subroutine overwrites counts as dead at the call site;
+  - `rts` with no known caller is unsafe, because the return value may be read;
+  - a label is entered from elsewhere, which is fine: what matters is whether
+    anything READS the value, not how it got there.
+
+Loops are handled by a visited set over (position, what is already dead), and
+the walk gives up - conservatively, as unsafe - past a node budget. A rejected
+site is not a site that is unsafe; it is one this tool declines to prove safe.
+Every rejection is counted and categorised.
+
+Not done, deliberately: `lda #k / sta a / sta b` -> two MOVs. It is neutral in
+bytes and cycles for two stores and WORSE for three or more, and the corpus
+contains runs of 16 and 18 stores. It would trade real size for an instruction
+count, which is the metric gaming the gates warn about.
 """
 
+import os
 import re
 import sys
 from collections import Counter
@@ -48,42 +62,129 @@ MNEMONICS = {l.split()[1].lower()
 
 
 class Line:
-    __slots__ = ("raw", "label", "mn", "operand", "idx")
+    __slots__ = ("raw", "label", "label_name", "mn", "operand", "idx")
 
     def __init__(self, raw, idx):
         self.raw, self.idx = raw, idx
         body = raw.split(";")[0].rstrip()
-        self.label = bool(re.match(r"^\S+:", body.strip())) or \
-                     bool(re.match(r"^[A-Za-z_.@][\w.@]*\s*:", body))
+        m = re.match(r"^\s*([.A-Za-z_@][\w.@]*)\s*:", body)
+        self.label_name = m.group(1) if m else None
+        self.label = bool(m)
         t = re.sub(r"^[A-Za-z_.@][\w.@]*\s*:\s*", "", body.strip())
         p = t.split(None, 1)
         self.mn = p[0].lower() if p and p[0].lower() in MNEMONICS else None
         self.operand = (p[1].strip() if len(p) > 1 else "") if self.mn else ""
 
 
-def dead_after(lines, start, need_a, need_nz):
-    """Is A (and/or N,Z) dead from `start` onward? Conservative: unknown = no."""
-    a_dead = not need_a
-    nz_dead = not need_nz
-    for k in range(start, len(lines)):
-        ln = lines[k]
-        if ln.label:
-            return False, "label - another path arrives"
-        if ln.mn is None:
-            continue
-        if not a_dead and ln.mn in READS_A:
-            return False, f"A read by {ln.mn}"
-        if not nz_dead and ln.mn in READS_NZ:
-            return False, f"N/Z read by {ln.mn}"
-        if ln.mn in KILLS_A:
-            a_dead = True
-        if ln.mn in KILLS_NZ:
-            nz_dead = True
-        if a_dead and nz_dead:
-            return True, ""
-        if ln.mn in CONTROL:
-            return False, f"control flow ({ln.mn}) before both were redefined"
-    return False, "end of file"
+BRANCHES = {"bpl", "bmi", "bvc", "bvs", "bcc", "bcs", "bne", "beq"}
+NODE_BUDGET = 4000
+
+
+class Corpus:
+    """Every line of every file, with the label map needed to follow a jump."""
+
+    def __init__(self, paths):
+        self.lines = []           # flat list of Line
+        self.owner = []           # index -> file index
+        self.files = paths
+        self.globals = {}         # name -> index
+        self.locals = {}          # (enclosing global, name) -> index
+        for fi, p in enumerate(paths):
+            for raw in open(p).read().splitlines():
+                self.lines.append(Line(raw, len(self.lines)))
+                self.owner.append(fi)
+            self.lines.append(Line("", len(self.lines)))     # file boundary
+            self.owner.append(fi)
+        cur = None
+        for i, ln in enumerate(self.lines):
+            if not ln.label_name:
+                continue
+            if ln.label_name.startswith("."):
+                self.locals[(cur, ln.label_name)] = i
+            else:
+                cur = ln.label_name
+                self.globals[ln.label_name] = i
+        self.enclosing = []
+        cur = None
+        for ln in self.lines:
+            if ln.label_name and not ln.label_name.startswith("."):
+                cur = ln.label_name
+            self.enclosing.append(cur)
+
+    def target(self, i, operand):
+        """Resolve a branch/jump/call operand to a line index, or None."""
+        t = operand.strip().split(",")[0].strip()
+        t = t.lstrip("(").rstrip(")")
+        if not re.match(r"^[.A-Za-z_][\w.@]*$", t):
+            return None
+        if t.startswith("."):
+            return self.locals.get((self.enclosing[i], t))
+        return self.globals.get(t)
+
+
+def dead_after(corpus, start, need_a, need_nz):
+    """Are A and N/Z dead on every path from `start`? Unknown counts as no."""
+    seen = set()
+    budget = [NODE_BUDGET]
+    # each work item: position, a_dead, nz_dead, return-address stack
+    stack = [(start, not need_a, not need_nz, ())]
+    while stack:
+        i, a_dead, nz_dead, ret = stack.pop()
+        while True:
+            if budget[0] <= 0:
+                return False, "analysis budget exhausted"
+            budget[0] -= 1
+            key = (i, a_dead, nz_dead, len(ret))
+            if key in seen:
+                break                       # this path already proven
+            seen.add(key)
+            if i >= len(corpus.lines):
+                return False, "end of corpus"
+            ln = corpus.lines[i]
+            if ln.mn is None:
+                i += 1
+                continue
+            if not a_dead and ln.mn in READS_A:
+                return False, f"A read by {ln.mn}"
+            if not nz_dead and ln.mn in READS_NZ:
+                return False, f"N/Z read by {ln.mn}"
+            if ln.mn in KILLS_A:
+                a_dead = True
+            if ln.mn in KILLS_NZ:
+                nz_dead = True
+            if a_dead and nz_dead:
+                break                       # this path is safe
+            if ln.mn == "jsr":
+                t = corpus.target(i, ln.operand)
+                if t is None:
+                    return False, "jsr to an unresolved target"
+                ret = ret + (i + 1,)
+                if len(ret) > 12:
+                    return False, "call depth"
+                i = t
+                continue
+            if ln.mn == "rts":
+                if not ret:
+                    return False, "rts with no known caller"
+                i, ret = ret[-1], ret[:-1]
+                continue
+            if ln.mn == "jmp":
+                t = corpus.target(i, ln.operand)
+                if t is None:
+                    return False, "jmp to an unresolved target"
+                i = t
+                continue
+            if ln.mn in BRANCHES:
+                t = corpus.target(i, ln.operand)
+                if t is None:
+                    return False, "branch to an unresolved target"
+                stack.append((t, a_dead, nz_dead, ret))    # taken edge
+                i += 1                                      # fall-through
+                continue
+            if ln.mn in ("rti", "brk"):
+                return False, f"{ln.mn}"
+            i += 1
+    return True, ""
 
 
 def indent_of(raw):
@@ -142,8 +243,15 @@ def main(argv):
         """
         v = value_of(op)
         return v is not None and v >= 0x100
-    raw = open(path).read().splitlines()
-    lines = [Line(r, i) for i, r in enumerate(raw)]
+    # A corpus, not a file: `jsr` has to be followed into whichever file the
+    # callee lives in, so the whole thing is loaded and indexed as one body.
+    if os.path.isdir(path):
+        paths = sorted(os.path.join(path, f) for f in os.listdir(path)
+                       if f.endswith(".asm"))
+    else:
+        paths = [path]
+    corpus = Corpus(paths)
+    lines = corpus.lines
 
     # index of the code lines only, so "adjacent" ignores blanks and comments
     code = [i for i, ln in enumerate(lines) if ln.mn or ln.label]
@@ -193,7 +301,7 @@ def main(argv):
                 if not is_abs_operand(idx_x.group(1)):
                     skipped["source is zero page - lda zp,x wraps, abs,x does not"] += 1
                     continue
-            ok, why = dead_after(lines, rest, True, True)
+            ok, why = dead_after(corpus, rest, True, True)
             if not ok:
                 skipped[why if why.startswith(("label", "end")) else why] += 1
                 continue
@@ -213,15 +321,20 @@ def main(argv):
             print(f"    {v:>4}  {k}")
 
     if apply_:
-        res = []
-        for i, r in enumerate(raw):
-            if i in out:
-                if out[i] is not None:
-                    res.append(out[i])
-            else:
-                res.append(r)
-        open(path, "w").write("\n".join(res) + "\n")
-        print(f"  written: {len(raw)} -> {len(res)} lines")
+        # split the flat corpus back into its files, dropping the boundary line
+        start = 0
+        for fi, p in enumerate(paths):
+            n = sum(1 for k in range(len(corpus.owner)) if corpus.owner[k] == fi)
+            res = []
+            for i in range(start, start + n - 1):        # -1: boundary sentinel
+                if i in out:
+                    if out[i] is not None:
+                        res.append(out[i])
+                else:
+                    res.append(corpus.lines[i].raw)
+            open(p, "w").write("\n".join(res) + "\n")
+            start += n
+        print(f"  written: {len(paths)} file(s)")
     return 0
 
 

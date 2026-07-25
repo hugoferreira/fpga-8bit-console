@@ -68,8 +68,7 @@ load_room:
     sta pDst
 .bank0:
     ldx #0                      ; X walks the 256 tile ids in order
-    lda #ROOM_H
-    sta t6
+    mov t6, #ROOM_H
 .row:
     ldy #0
 .col:
@@ -115,8 +114,7 @@ load_room:
     lsr
     sta spawn_y
     stx ld_i
-    lda #T_SPAWN
-    sta spawn_type
+    mov spawn_type, #T_SPAWN
     jsr init_object
     ldx ld_i
 .nextspawn:
@@ -133,12 +131,10 @@ load_room:
     lda t3                      ; with off = -4. Scrolling the camera 4 to the
     add #4
     sta t3
-    lda #PLAYFIELD_W-5          ; and clip 4 short, so the neighbouring bank
-    sta SPR_CLIPX1              ; does not appear in the gap that opens up
+    mov SPR_CLIPX1, #PLAYFIELD_W-5  ; does not appear in the gap that opens up
     jmp .cam
 .notitle:
-    lda #PLAYFIELD_W-1
-    sta SPR_CLIPX1
+    mov SPR_CLIPX1, #PLAYFIELD_W-1
 .cam:
     lda t3
     sta SPR_CAMX

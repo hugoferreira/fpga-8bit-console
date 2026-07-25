@@ -193,9 +193,8 @@ fx_draw_clouds:
     ldx #0
 .cloud:
     stx t6
-    lda CL_Y, x                  ; clouds do not scroll with the camera: they
     sub camera_y
-    sta t5
+    mov t5, CL_Y + x
     mov t3, #PAL_ATTR_1
     mov t4, CL_XH + x
     lda CL_W, x                  ; the whole cloud is ONE entry: the compositor
@@ -214,16 +213,14 @@ fx_draw_clouds:
 ; puts the stars on the title screen. Clobbers A, X, Y, t3..t6.
 ; ------------------------------------------------------------------------------
 fx_draw_particles:
-    lda #1                      ; back to single cells for everything else
-    sta SPR_REP
+    mov SPR_REP, #1
     ldx #0
 .part:
     stx t6
     mov t3, PA_ATTR + x
     mov t4, PA_XH + x
-    lda PA_YH, x
     sub camera_y
-    sta t5
+    mov t5, PA_YH + x
     lda #SPR_DOT
     jsr stage_sprite
     ldx t6

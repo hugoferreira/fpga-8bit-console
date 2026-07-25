@@ -20,14 +20,12 @@
 ; real. They come back with the types, in stage 2.
 ; ------------------------------------------------------------------------------
 is_solid:
-    lda #FLAG_SOLID
-    sta c_mask
+    mov c_mask, #FLAG_SOLID
     jsr obj_box
     jmp tile_flag_at
 
 is_ice:
-    lda #FLAG_ICE
-    sta c_mask
+    mov c_mask, #FLAG_ICE
     jsr obj_box
     jmp tile_flag_at
 

@@ -21,8 +21,7 @@ draw_frame:
     jsr camera_update
     jsr ovl_begin
 
-    lda #0
-    sta nspr
+    mov nspr, #0
     jsr is_title                ; the cart draws no clouds on the title screen
     beq .nosky
     jsr fx_draw_clouds
@@ -31,8 +30,7 @@ draw_frame:
     sta SPR_SPLIT
     mov SPR_REP, #1  ; player, hair and smoke are single cells
 
-    lda #0
-    sta obj_slot
+    mov obj_slot, #0
 .loop:
     lda obj_slot
     jsr obj_ptr
@@ -322,8 +320,7 @@ draw_hair:
     mov hair_ly, #$80
 
     mov hair_i, #0
-    lda #O_HAIR
-    sta d_n                     ; field offset of the node being moved
+    mov d_n, #O_HAIR  ; field offset of the node being moved
 .node:
     ldy d_n                     ; h.x += (last.x - h.x) * 0.625
     jsr obj_ldw
@@ -464,8 +461,7 @@ asr_w2:
 ; ------------------------------------------------------------------------------
 ovl_init:
     mov pDst, #<OVLSHADOW
-    lda #>OVLSHADOW
-    sta pDst+1
+    mov pDst+1, #>OVLSHADOW
     ldx #0
 .row:
     lda pDst
@@ -551,8 +547,7 @@ ovl_end:
     bne .blit
     rts
 .blit:
-    lda #0
-    sta ovl_dirty
+    mov ovl_dirty, #0
     ldx #0
 .page:
     lda OVLSHADOW+$000, x
@@ -603,8 +598,7 @@ ovl_putc:
     asl
     add d_ch  ; glyph * 5
     tax
-    lda #0
-    sta d_row
+    mov d_row, #0
 .row:
     mov d_bits, font3x5 + x
     mov d_n, #0

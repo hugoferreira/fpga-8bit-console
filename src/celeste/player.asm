@@ -105,14 +105,12 @@ player_update:
 .notbottom:
 
     mov c_ox, #0
-    lda #1
-    sta c_oy
+    mov c_oy, #1
     jsr is_solid
     sta p_onground
 
     mov c_ox, #0
-    lda #1
-    sta c_oy
+    mov c_oy, #1
     jsr is_ice
     sta p_onice
 
@@ -147,8 +145,7 @@ player_update:
     sta (pObj), y
     jmp .jbuf
 .jumpheld:
-    lda #0
-    sta p_jump
+    mov p_jump, #0
     jmp .jbufdec
 .nojumpheld:
     mov p_jump, #0
@@ -183,8 +180,7 @@ player_update:
     sta (pObj), y
     jmp .grace
 .dashheld:
-    lda #0
-    sta p_dash
+    mov p_dash, #0
     jmp .grace
 .nodashheld:
     mov p_dash, #0
@@ -283,15 +279,13 @@ player_move:
     lda p_onground
     bne .grounded
     mov p_accel, #<ACCEL_AIR
-    lda #>ACCEL_AIR
-    sta p_accel+1
+    mov p_accel+1, #>ACCEL_AIR
     jmp .run
 .grounded:
     lda p_onice
     beq .run
     mov p_accel, #<ACCEL_ICE
-    lda #>ACCEL_ICE
-    sta p_accel+1
+    mov p_accel+1, #>ACCEL_ICE
 
 .run:
     lda #<MAXRUN                ; if abs(spd.x) > maxrun then decelerate
@@ -301,9 +295,8 @@ player_move:
     jsr obj_ldw1
     lda w1+1
     bpl .absdone
-    lda #0                      ; w1 = abs(spd.x), inline because neg16 works
     sub w1
-    sta w1
+    mov w1, #0
     lda #0
     sbc w1+1
     sta w1+1
@@ -383,8 +376,7 @@ player_move:
     mov p_maxfall, #<MAXFALL
     mov p_maxfall+1, #>MAXFALL
     mov p_gravity, #<GRAVITY
-    lda #>GRAVITY
-    sta p_gravity+1
+    mov p_gravity+1, #>GRAVITY
 
     ldy #O_SPDY                 ; if abs(spd.y) <= 0.15 then gravity *= 0.5
     jsr obj_ldw
@@ -402,21 +394,18 @@ player_move:
     bne .slide
 .halfgrav:
     mov p_gravity, #<GRAVITY_HALF
-    lda #>GRAVITY_HALF
-    sta p_gravity+1
+    mov p_gravity+1, #>GRAVITY_HALF
 
 .slide:                         ; wall slide
     lda p_input
     beq .fall
     sta c_ox
-    lda #0
-    sta c_oy
+    mov c_oy, #0
     jsr is_solid
     beq .fall
     lda p_input
     sta c_ox
-    lda #0
-    sta c_oy
+    mov c_oy, #0
     jsr is_ice
     bne .fall
 
@@ -492,21 +481,17 @@ player_move:
 
 .walljump:                      ; wall_dir = is_solid(-3,0) and -1 or is_solid(3,0) and 1 or 0
     mov c_ox, #$FD
-    lda #0
-    sta c_oy
+    mov c_oy, #0
     jsr is_solid
     beq .wallright
-    lda #$FF
-    sta p_walldir
+    mov p_walldir, #$FF
     jmp .havewall
 .wallright:
     mov c_ox, #3
-    lda #0
-    sta c_oy
+    mov c_oy, #0
     jsr is_solid
     beq .dash
-    lda #1
-    sta p_walldir
+    mov p_walldir, #1
 .havewall:
     lda #2
     jsr psfx
@@ -544,8 +529,7 @@ player_move:
     asl
     add p_walldir
     sta c_ox                    ; wall_dir * 3
-    lda #0
-    sta c_oy
+    mov c_oy, #0
     jsr is_ice
     bne .dash
     ldy #O_X
@@ -681,8 +665,7 @@ player_move:
     lda #3
     jsr psfx
     mov freeze, #2
-    lda #6
-    sta shake
+    mov shake, #6
 
     ldy #O_SPDX                 ; dash_target = 2 * sign(spd), dash_accel = 1.5
     jsr obj_ldw
@@ -762,8 +745,7 @@ player_anim:
     bne .onground
     lda p_input                 ; airborne: 5 against a wall, 3 otherwise
     sta c_ox
-    lda #0
-    sta c_oy
+    mov c_oy, #0
     jsr is_solid
     beq .air
     lda #5
@@ -863,8 +845,7 @@ kill_player:
     lda #0
     jsr sfx_play
     inc deaths
-    lda #10
-    sta shake
+    mov shake, #10
     jsr destroy_object
     mov will_restart, #1
     lda #15
@@ -1047,8 +1028,7 @@ spawn_update:
     lda (pObj), y
     sta spawn_y
     jsr destroy_object
-    lda #T_PLAYER
-    sta spawn_type
+    mov spawn_type, #T_PLAYER
     jmp init_object
 .stillhere:
     rts

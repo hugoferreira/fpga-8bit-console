@@ -124,8 +124,7 @@ start:
     mov PSG_ADDR_LO, #$00
     mov PSG_ADDR_HI, #$31
     mov ptr, #<audio_data
-    lda #>audio_data
-    sta ptr+1
+    mov ptr+1, #>audio_data
     ldx #18                ; 18 pages = 4608 bytes
     ldy #0
 .sfxup:
@@ -141,8 +140,7 @@ start:
     mov PSG_MUSIC, #MUS_TITLE
 
     ; First 8 list entries (ambient dust) composite behind the tile layer
-    lda #8
-    sta SPR_BSPLIT
+    mov SPR_BSPLIT, #8
     ; seed the dust from the hardware LFSR
     ldx #0
 .dust0:
@@ -160,8 +158,7 @@ start:
 
     ; PPU on: tilemap + overlay, white overlay text
     mov SPR_OVLCOL, #7
-    lda #3
-    sta SPR_CTRL
+    mov SPR_CTRL, #3
 
     jsr new_game
 
@@ -220,8 +217,7 @@ do_serve:
     sta windt
     sta windt+1
     mov PSG_FADE, #MUS_FADE_2S
-    lda #$80
-    sta PSG_MUSIC
+    mov PSG_MUSIC, #$80
     ldx #SND_SERVE
     ldy #2
     jsr sfx_play
@@ -243,8 +239,7 @@ do_over:
     bne .done
     jsr msg_clear
     jsr new_game
-    lda #MUS_TITLE         ; back to the title loop while serving
-    sta PSG_MUSIC
+    mov PSG_MUSIC, #MUS_TITLE
 .done:
     jmp frame_end
 
@@ -277,8 +272,7 @@ do_play:
     beq .chz
     dec chaint
     bne .chz
-    lda #1
-    sta chain
+    mov chain, #1
 .chz:
 
     ; power-up timers, falling pills, sudden-death fuse, explosions
@@ -308,8 +302,7 @@ do_play:
     lda btnprev
     and #BTN_X
     bne .after1
-    lda #0
-    sta stuckf
+    mov stuckf, #0
     jsr pad_zone
     bcc .after1
     jsr set_vec
@@ -318,8 +311,7 @@ do_play:
     jsr negy
     jmp .after1
 .notstuck:
-    lda #0
-    sta curball
+    mov curball, #0
     jsr ball_step
     bcc .after1
     ; primary ball lost: promote ball2 if one is out, else lose a life
@@ -338,24 +330,20 @@ do_play:
     ldx #SND_LOSE
     ldy #2
     jsr sfx_play
-    lda #8
-    sta shaket
+    mov shaket, #8
     dec lives
     jsr draw_hud
     jsr serve_reset
     lda lives
     beq .gameover
     mov state, #ST_SERVE
-    lda #0
-    sta blink
+    mov blink, #0
     jmp frame_end
 .gameover:
     mov state, #ST_OVER
-    lda #MUS_OVER          ; the cart's game-over jingle
-    sta PSG_MUSIC
+    mov PSG_MUSIC, #MUS_OVER
     jsr msg_over
-    lda #124
-    sta bally+1            ; park the dead ball off-screen
+    mov bally+1, #124  ; park the dead ball off-screen
     jmp frame_end
 .after1:
 
@@ -363,13 +351,11 @@ do_play:
     lda b2on
     beq .noball2
     jsr swap_ball2
-    lda #1
-    sta curball
+    mov curball, #1
     jsr ball_step
     jsr swap_ball2
     bcc .noball2
-    lda #0
-    sta b2on
+    mov b2on, #0
     ldx #SND_LOSE
     ldy #2
     jsr sfx_play
@@ -384,12 +370,10 @@ do_play:
     bcc .lv
     ; all 15 levels cleared: winner screen (X restarts via do_over)
     mov state, #ST_WIN
-    lda #MUS_WIN
-    sta PSG_MUSIC
+    mov PSG_MUSIC, #MUS_WIN
     jsr serve_reset
     jsr msg_win
-    lda #124
-    sta bally+1
+    mov bally+1, #124
     jmp frame_end
 .lv:
     stx level
@@ -398,8 +382,7 @@ do_play:
     jsr serve_reset
     mov PSG_MUSIC, #MUS_CLEAR
     mov flasht, #6
-    lda #ST_SERVE
-    sta state
+    mov state, #ST_SERVE
 .go:
     jmp frame_end
 
@@ -457,24 +440,21 @@ ball_step:
     lda ballx+1
     cmp #ARENA_L-1
     bcs .notleft
-    lda #ARENA_L-1
-    sta ballx+1
+    mov ballx+1, #ARENA_L-1
     jsr negx
     jsr snd_wall
 .notleft:
     lda ballx+1
     cmp #ARENA_R-7
     bcc .notright
-    lda #ARENA_R-7
-    sta ballx+1
+    mov ballx+1, #ARENA_R-7
     jsr negx
     jsr snd_wall
 .notright:
     lda bally+1
     cmp #ARENA_T-1
     bcs .nottop
-    lda #ARENA_T-1
-    sta bally+1
+    mov bally+1, #ARENA_T-1
     jsr negy
     jsr snd_wall
 .nottop:
@@ -513,8 +493,7 @@ ball_step:
     sta bvx+1
     sta bvy
     sta bvy+1
-    lda #1
-    sta chain
+    mov chain, #1
     ldx #SND_PADDLE
     ldy #1
     jsr sfx_play
@@ -538,8 +517,7 @@ ball_step:
     dey
 .nobias:
     jsr set_vec
-    lda #1                 ; returning to the paddle resets the chain
-    sta chain
+    mov chain, #1
     ldx #SND_PADDLE
     ldy #1
     jsr sfx_play
@@ -871,8 +849,7 @@ apply_pill:
     sta b2vx
     sta b2vy
     mov b2vx+1, #1
-    lda #$FF
-    sta b2vy+1
+    mov b2vy+1, #$FF
     jmp .have
 .negvx:
     sec
@@ -905,8 +882,7 @@ check_sd:
     mov sd_on, #1
     mov sd_t, #$C2
     mov sd_t+1, #$01
-    lda #8
-    sta sd_blink
+    mov sd_blink, #8
     ldx #SND_SD
     ldy #3
     jsr sfx_play
@@ -1006,8 +982,7 @@ update_sd:
     ldy sd_idx
     lda #3                 ; detonate as an explosive brick
     sta shadow, y
-    lda #1
-    sta ncmb
+    mov ncmb, #1
     jsr brick_hit
     lda #0
     sta ncmb
@@ -1019,8 +994,7 @@ update_explosions:
     beq .done
     dec expn
     ldx expn
-    lda EXPQ, x
-    sta tmp3
+    mov tmp3, EXPQ + x
     ldx #SND_EXPLODE
     ldy #2
     jsr sfx_play
@@ -1062,8 +1036,7 @@ update_explosions:
     pha
     lda colv
     pha
-    lda #1
-    sta ncmb
+    mov ncmb, #1
     jsr brick_hit
     mov ncmb, #0
     pla
@@ -1111,10 +1084,9 @@ serve_reset:
 msg_show:
     tax
     mov tmp3, msg_pairs + x
-    lda #12
     sub tmp3
     add #<(OVL+70*20)
-    sta ptr
+    mov ptr, #12
     lda #>(OVL+70*20)
     adc #0
     sta ptr+1
@@ -1183,8 +1155,7 @@ brick_hit:
     lda sidx
     cmp sd_idx
     bne .nosdhit
-    lda #0
-    sta sd_on
+    mov sd_on, #0
     jsr sd_attr_norm
     sed
     lda score0
@@ -1209,8 +1180,7 @@ brick_hit:
     lda #0
     sta t_megaw
     sta t_megaw+1
-    lda #120
-    sta t_mega
+    mov t_mega, #120
 .mchk:
     lda t_mega             ; active megaball smashes hard bricks outright
     beq .nomega
@@ -1246,8 +1216,7 @@ brick_hit:
     ; refresh the chain window; the chain boost and its rising-pitch smash
     ; and fanfare happen at the destroy site below, matching the original
     ; (sfx(2+chain) fires with the pre-boost chain, then boostchain)
-    lda #44
-    sta chaint
+    mov chaint, #44
 .nopts:
     ldy sidx
     lda type_next, x
@@ -1369,8 +1338,7 @@ brick_hit:
     asl
     add #19  ; brick center y
     sta spy
-    lda #0
-    sta spkind
+    mov spkind, #0
     ldy #0
 .burst:
     lda burst_vx, y
@@ -1430,8 +1398,7 @@ move_paddle:
     cmp #$FD               ; clamp at -2.5 ($FD80)
     bcs .chkr
     mov padvx, #$80
-    lda #$FD
-    sta padvx+1
+    mov padvx+1, #$FD
     jmp .apply
 .notl:
 .chkr:
@@ -1447,8 +1414,7 @@ move_paddle:
     cmp #3                 ; clamp at +2.5 ($0280)
     bcc .apply
     mov padvx, #$80
-    lda #$02
-    sta padvx+1
+    mov padvx+1, #$02
     jmp .apply
 .friction:
     lda btn
@@ -1560,8 +1526,7 @@ frame_end:
     lda rowmap2_hi, x
     add #2  ; attribute page
     sta ptr2+1
-    lda #0
-    sta colv
+    mov colv, #0
 .bcol:
     txa
     pha
@@ -1624,8 +1589,7 @@ frame_end:
     sta shx
 .shdone:
     ; stream sprites: dust (behind tiles) + ball + paddle + particles
-    lda #0
-    sta SPR_INDEX
+    mov SPR_INDEX, #0
     ldx #0
 .dstream:
     lda DUSTX, x
@@ -1634,8 +1598,7 @@ frame_end:
     lda DUSTY, x
     sta SPR_Y
     mov SPR_BASE, #44
-    lda #$40               ; dark grey dot, under the bricks
-    sta SPR_FLAGS
+    mov SPR_FLAGS, #$40
     inx
     cpx #8
     bne .dstream
@@ -1675,15 +1638,13 @@ frame_end:
     mov SPR_Y, #PAD_Y
     pla
     sta SPR_BASE
-    lda #$0C
-    sta SPR_FLAGS
+    mov SPR_FLAGS, #$0C
     jmp .pnexts
 .ppark:
     mov SPR_X, #0
     mov SPR_Y, #124
     mov SPR_BASE, #44
-    lda #0
-    sta SPR_FLAGS
+    mov SPR_FLAGS, #0
 .pnexts:
     inx
     cpx #4
@@ -1697,15 +1658,13 @@ frame_end:
     lda b2y+1
     sta SPR_Y
     mov SPR_BASE, #0
-    lda #$0C
-    sta SPR_FLAGS
+    mov SPR_FLAGS, #$0C
     jmp .b2done
 .b2park:
     mov SPR_X, #0
     mov SPR_Y, #124
     mov SPR_BASE, #44
-    lda #0
-    sta SPR_FLAGS
+    mov SPR_FLAGS, #0
 .b2done:
     ; falling pills: an 8px circle tinted per type
     ldx #1
@@ -1726,8 +1685,7 @@ frame_end:
     mov SPR_X, #0
     mov SPR_Y, #124
     mov SPR_BASE, #44
-    lda #0
-    sta SPR_FLAGS
+    mov SPR_FLAGS, #0
 .pillnext:
     dex
     bpl .pillspr
@@ -1790,20 +1748,17 @@ frame_end:
     cmp #8
     bcc .t2
     mov SPR_BASE, #45
-    lda #$60
-    sta SPR_FLAGS
+    mov SPR_FLAGS, #$60
     jmp .pnextp
 .t2:
     cmp #4
     bcc .t1
     mov SPR_BASE, #46
-    lda #$90
-    sta SPR_FLAGS
+    mov SPR_FLAGS, #$90
     jmp .pnextp
 .t1:
     mov SPR_BASE, #47
-    lda #$80
-    sta SPR_FLAGS
+    mov SPR_FLAGS, #$80
     jmp .pnextp
 .bspark:
     mov SPR_BASE, #44
@@ -1814,16 +1769,14 @@ frame_end:
     mov SPR_Y, #124
     mov SPR_X, #0
     mov SPR_BASE, #44
-    lda #0
-    sta SPR_FLAGS
+    mov SPR_FLAGS, #0
 .pnextp:
     inx
     cpx #16
     beq .pfin
     jmp .ploop
 .pfin:
-    lda #32                ; dust 8 + ball + paddle 4 + ball2 + pills 2 + 16
-    sta SPR_COUNT
+    mov SPR_COUNT, #32
     jmp main_loop
 
 ; ------------------------------------------------------------------------------
@@ -1848,8 +1801,7 @@ new_game:
     sta level
     sta servedx
     mov lives, #3
-    lda #52
-    sta padx
+    mov padx, #52
     jsr serve_reset
     jsr build_level
     jsr draw_hud
@@ -1902,14 +1854,12 @@ build_level:
     bne .p0
     inc ptr+1
 .p0:
-    lda #0
-    sta hitr
+    mov hitr, #0
 .rowloop:
     lda hitr
     cmp rowv
     bcs .done
-    lda #0
-    sta hitc
+    mov hitc, #0
 .colloop:
     ldy hitc
     lda (ptr), y            ; type code
@@ -2034,11 +1984,9 @@ ovl_print:
     sta tmp3
     stx tmp
     sty tmp2
-    lda #0
-    sta rowv
+    mov rowv, #0
 .row:
-    lda #0
-    sta colv
+    mov colv, #0
 .pair:
     lda colv
     asl
@@ -2081,8 +2029,7 @@ ovl_print:
 
 msg_clear:
     mov ptr, #<(OVL+68*20+5)
-    lda #>(OVL+68*20+5)
-    sta ptr+1
+    mov ptr+1, #>(OVL+68*20+5)
     ldx #10
 .r: lda #0
     ldy #10

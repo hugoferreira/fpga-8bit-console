@@ -172,8 +172,7 @@ spawn_at:
 spawn_smoke:
     sta spawn_x
     stx spawn_y
-    lda #T_SMOKE
-    sta spawn_type
+    mov spawn_type, #T_SMOKE
     jmp spawn_at
 
 ; ------------------------------------------------------------------------------
@@ -194,8 +193,7 @@ destroy_object:
 ; particular order relative to each other).
 ; ------------------------------------------------------------------------------
 obj_update_all:
-    lda #0
-    sta obj_slot
+    mov obj_slot, #0
 .loop:
     lda obj_slot
     jsr obj_ptr
@@ -313,9 +311,8 @@ move_x:
     jmp .loop
 .neg:
     mov t1, #$FF
-    lda #0                      ; t2 = abs(amount)
     sub t0
-    sta t2
+    mov t2, #0
     jmp .loop
 .zero:
     sta t1                      ; step 0: the cart still runs one iteration,
@@ -324,8 +321,7 @@ move_x:
 .loop:
     lda t1                      ; is_solid(step, 0)
     sta c_ox
-    lda #0
-    sta c_oy
+    mov c_oy, #0
     jsr is_solid
     bne .blocked
 
@@ -375,9 +371,8 @@ move_y:
     jmp .loop
 .neg:
     mov t1, #$FF
-    lda #0
     sub t0
-    sta t2
+    mov t2, #0
     jmp .loop
 .zero:
     sta t1
