@@ -1082,9 +1082,10 @@ serve_reset:
 msg_show:
     tax
     mov tmp3, msg_pairs + x
+    lda #12
     sub tmp3
     add #<(OVL+70*20)
-    mov ptr, #12
+    sta ptr
     lda #>(OVL+70*20)
     adc #0
     sta ptr+1

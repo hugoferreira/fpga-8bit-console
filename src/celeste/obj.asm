@@ -304,8 +304,9 @@ move_x:
     jmp .loop
 .neg:
     mov t1, #$FF
+    lda #0                      ; t2 = abs(amount)
     sub t0
-    mov t2, #0
+    sta t2
     jmp .loop
 .zero:
     sta t1                      ; step 0: the cart still runs one iteration,
@@ -363,8 +364,9 @@ move_y:
     jmp .loop
 .neg:
     mov t1, #$FF
+    lda #0
     sub t0
-    mov t2, #0
+    sta t2
     jmp .loop
 .zero:
     sta t1

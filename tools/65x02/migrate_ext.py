@@ -41,6 +41,8 @@ import re
 import sys
 from collections import Counter
 
+DECODE_TABLE = "rtl/cpu6502_decode.sv"
+
 # Reads Y. `ldy #d / lda (p),y` -> `lda (p), #d` leaves Y unchanged where the
 # original left Y = d, so the rewrite needs Y dead afterwards.
 READS_Y = {"sty", "tya", "cpy", "iny", "dey", "pha"}
@@ -48,22 +50,38 @@ KILLS_Y = {"ldy", "tay", "ply"}
 
 # Reads A, so a preceding `lda` whose value we removed would be observable.
 READS_A = {"sta", "cmp", "adc", "sbc", "and", "ora", "eor", "bit",
-           "tax", "tay", "pha", "add", "sub"}
+           "tax", "tay", "pha", "add", "sub",
+           # accumulator-mode shifts read A as well as write it. They were
+           # missing here, which is a second latent hole in the same analysis.
+           "asl", "lsr", "rol", "ror",
+           "stab", "addw", "subw", "cmpw"}
 # Overwrites A without reading it: past here the old A is unobservable.
-KILLS_A = {"lda", "pla", "txa", "tya"}
+KILLS_A = {"lda", "pla", "txa", "tya", "ldab"}
 # Reads the N or Z flag.
 READS_NZ = {"bpl", "bmi", "bne", "beq", "php"}
 # Sets N and Z from its own result.
-KILLS_NZ = {"lda", "ldx", "ldy", "and", "ora", "eor", "adc", "sbc", "cmp",
+KILLS_NZ = {"ldab", "stab", "addw", "subw", "cmpw",
+            "lda", "ldx", "ldy", "and", "ora", "eor", "adc", "sbc", "cmp",
             "cpx", "cpy", "inc", "dec", "inx", "dex", "iny", "dey", "asl",
             "lsr", "rol", "ror", "bit", "tax", "txa", "tay", "tya", "tsx",
             "pla", "plp", "add", "sub"}
 CONTROL = {"jmp", "jsr", "rts", "rti", "brk", "bpl", "bmi", "bvc", "bvs",
            "bcc", "bcs", "bne", "beq"}
 
+# Every mnemonic the hardware implements, documented and extension alike, read
+# from the decode table so it cannot fall behind it.
+#
+# This was the NMOS-151 registry alone, and that was a serious defect: once
+# slice 1 put `mov`, `add` and `sub` into the corpus, those lines became
+# INVISIBLE to this tool. A `lda #0` and a `sta w0` separated by an unseen
+# `sub w0` looked adjacent, and were rewritten into a `mov` that discarded the
+# subtraction. It corrupted celeste's neg16 and with it every jump in the game.
+# The tool became unsafe the moment its own output entered the corpus.
 MNEMONICS = {l.split()[1].lower()
              for l in open("tools/65x02/opcodes.txt")
              if l.strip() and not l.startswith("#")}
+MNEMONICS |= {m.group(1).lower() for m in
+              re.finditer(r"//\s*([A-Z]{3,4})\b", open(DECODE_TABLE).read())}
 
 
 class Line:
@@ -262,6 +280,26 @@ def main(argv):
         paths = [path]
     corpus = Corpus(paths)
     lines = corpus.lines
+
+    # Fail loudly on a mnemonic this tool does not know, rather than silently
+    # treating the line as invisible. Silence is what corrupted neg16.
+    unknown = Counter()
+    for ln in lines:
+        body = re.sub(r"^\s*[.A-Za-z_@][\w.@]*\s*:\s*", "", ln.raw.split(";")[0]).strip()
+        if not body or body.startswith(("#", ".", "@")):
+            continue
+        if re.match(r"^[\w.@]+\s*=", body):        # NAME = value, an equate
+            continue
+        head = body.split()[0].lower()
+        if head not in MNEMONICS and re.match(r"^[a-z]{2,5}$", head):
+            unknown[head] += 1
+    if unknown:
+        print("unknown mnemonics - refusing to run, since an unrecognised line "
+              "would be treated as absent and could make two instructions look "
+              "adjacent that are not:", file=sys.stderr)
+        for k, v in unknown.most_common():
+            print(f"  {v:>4}  {k}", file=sys.stderr)
+        return 1
 
     # index of the code lines only, so "adjacent" ignores blanks and comments
     code = [i for i, ln in enumerate(lines) if ln.mn or ln.label]

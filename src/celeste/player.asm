@@ -281,8 +281,9 @@ player_move:
     jsr obj_ldw1
     lda w1+1
     bpl .absdone
+    lda #0                      ; w1 = abs(spd.x), inline because neg16 works
     sub w1
-    mov w1, #0
+    sta w1
     lda #0
     sbc w1+1
     sta w1+1

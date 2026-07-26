@@ -590,6 +590,13 @@ test-ext: $(SST_BIN)
 	    --functest-load 0400 --functest-start 0400 \
 	    --functest-pass $$(awk -F'0x' '/^pass = /{print $$2}' build/ext_test.sym)
 
+# A migrated corpus must behave EXACTLY like its original. celeste's own suite
+# passed a build whose jumps were a third of their proper height, because it
+# checks that physics happens rather than that it is unchanged.
+#   make migrate-check BEFORE=... BEFORE_LBL=... AFTER=... AFTER_LBL=...
+migrate-check:
+	python3 tools/65x02/migrate_check.py $(BEFORE) $(BEFORE_LBL) $(AFTER) $(AFTER_LBL)
+
 test-functional: $(SST_BIN) $(FUNCTEST_BIN)
 	$(SST_BIN) --fixture $(SST_FIXTURE) --functest $(FUNCTEST_BIN)
 
@@ -617,7 +624,7 @@ build/$(GAME).lst: $(GAME_SRC) $(GAME_DEPS)
 	$(CUSTOMASM) $(GAME_SRC) -t 10 --color=off --legacy=off \
 	    -f annotated -o $(abspath build/$(GAME).lst)
 
-.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi cpu-fmax test-functional cpu-bandwidth opcodes isa-seq test-ext
+.PHONY: test-65x02 cpu-timing check-decode cpu-static-cpi cpu-fmax test-functional cpu-bandwidth opcodes isa-seq test-ext migrate-check
 
 # ------------------------------------------------------------------------------
 # Per-subsystem synthesis targets (openspec/changes/refactor-build-targets)
