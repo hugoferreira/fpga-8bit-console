@@ -70,7 +70,7 @@ obj_init:
     txa
     pha
     jsr obj_ptr
-    offset y, CelesteObject.core.kind
+    mov y, offset CelesteObject.core.kind
     lda #0
     sta (pObj), y
     pla
@@ -88,7 +88,7 @@ init_object:
 .find:
     txa
     jsr obj_ptr
-    offset y, CelesteObject.core.kind
+    mov y, offset CelesteObject.core.kind
     lda (pObj), y
     beq .found
     inx
@@ -121,7 +121,7 @@ init_object:
     sta [pObj + CelesteObject.core.hitbox.w]
     sta [pObj + CelesteObject.core.hitbox.h]
     lda #F_COLLIDEABLE|F_SOLIDS
-    offset y, CelesteObject.core.flags
+    mov y, offset CelesteObject.core.flags
     sta (pObj), y
 
     lda spawn_type              ; type.init(this)
@@ -191,7 +191,7 @@ obj_update_all:
 .loop:
     lda obj_slot
     jsr obj_ptr
-    offset y, CelesteObject.core.kind
+    mov y, offset CelesteObject.core.kind
     lda (pObj), y
     beq .next
 
@@ -199,8 +199,8 @@ obj_update_all:
 
     lda obj_slot                ; the object may have been destroyed by its own
     jsr obj_ptr                 ; move (nothing in stage 1 does, but reloading
-    offset y, CelesteObject.core.kind                 ; pObj is a byte cheaper than proving it cannot)
-    lda (pObj), y
+    mov y, offset CelesteObject.core.kind
+    lda (pObj), y                 ; pObj is a byte cheaper than proving it cannot)
     beq .next
     tax
     lda type_update_lo-1, x
@@ -229,12 +229,12 @@ obj_update_all:
 ; Clobbers everything. t0 holds the integer step amount.
 ; ------------------------------------------------------------------------------
 obj_move:
-    offset y, CelesteObject.core.remainder_x                 ; rem.x += spd.x
+    mov y, offset CelesteObject.core.remainder_x                 ; rem.x += spd.x
     jsr obj_ldw
-    offset y, CelesteObject.core.speed_x
+    mov y, offset CelesteObject.core.speed_x
     jsr obj_ldw1
     jsr add16
-    offset y, CelesteObject.core.remainder_x
+    mov y, offset CelesteObject.core.remainder_x
     jsr obj_stw
 
     lda #$80                    ; amount = flr(rem.x + 0.5)
@@ -244,19 +244,19 @@ obj_move:
     lda w0+1
     sta t0
 
-    offset y, CelesteObject.core.remainder_x.integer               ; rem.x -= amount, in the high half only
-    lda (pObj), y
+    mov y, offset CelesteObject.core.remainder_x.integer ; inlay-exception: variable update operand t0
+    lda (pObj), y               ; rem.x -= amount, in the high half only
     sub t0
     sta (pObj), y
 
     jsr move_x
 
-    offset y, CelesteObject.core.remainder_y                 ; and the same for y
+    mov y, offset CelesteObject.core.remainder_y                 ; and the same for y
     jsr obj_ldw
-    offset y, CelesteObject.core.speed_y
+    mov y, offset CelesteObject.core.speed_y
     jsr obj_ldw1
     jsr add16
-    offset y, CelesteObject.core.remainder_y
+    mov y, offset CelesteObject.core.remainder_y
     jsr obj_stw
 
     lda #$80
@@ -266,7 +266,7 @@ obj_move:
     lda w0+1
     sta t0
 
-    offset y, CelesteObject.core.remainder_y.integer
+    mov y, offset CelesteObject.core.remainder_y.integer ; inlay-exception: variable update operand t0
     lda (pObj), y
     sub t0
     sta (pObj), y
@@ -286,8 +286,8 @@ move_x:
     and #F_SOLIDS
     bne .solid
 
-    offset y, CelesteObject.core.x                    ; not solid: x += amount, no collision at all
-    lda (pObj), y
+    mov y, offset CelesteObject.core.x ; inlay-exception: variable update operand t0
+    lda (pObj), y                    ; not solid: x += amount, no collision at all
     add t0
     sta (pObj), y
     rts
@@ -317,7 +317,7 @@ move_x:
     jsr is_solid
     bne .blocked
 
-    offset y, CelesteObject.core.x
+    mov y, offset CelesteObject.core.x ; inlay-exception: variable update operand t1
     lda (pObj), y
     add t1
     sta (pObj), y
@@ -328,11 +328,11 @@ move_x:
 
 .blocked:
     lda #0                      ; spd.x = 0, rem.x = 0
-    offset y, CelesteObject.core.speed_x.fraction
+    mov y, offset CelesteObject.core.speed_x.fraction
     sta (pObj), y
     iny
     sta (pObj), y
-    offset y, CelesteObject.core.remainder_x.fraction
+    mov y, offset CelesteObject.core.remainder_x.fraction
     sta (pObj), y
     iny
     sta (pObj), y
@@ -346,7 +346,7 @@ move_y:
     and #F_SOLIDS
     bne .solid
 
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y ; inlay-exception: variable update operand t0
     lda (pObj), y
     add t0
     sta (pObj), y
@@ -377,7 +377,7 @@ move_y:
     jsr is_solid
     bne .blocked
 
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y ; inlay-exception: variable update operand t1
     lda (pObj), y
     add t1
     sta (pObj), y
@@ -388,11 +388,11 @@ move_y:
 
 .blocked:
     lda #0
-    offset y, CelesteObject.core.speed_y.fraction
+    mov y, offset CelesteObject.core.speed_y.fraction
     sta (pObj), y
     iny
     sta (pObj), y
-    offset y, CelesteObject.core.remainder_y.fraction
+    mov y, offset CelesteObject.core.remainder_y.fraction
     sta (pObj), y
     iny
     sta (pObj), y

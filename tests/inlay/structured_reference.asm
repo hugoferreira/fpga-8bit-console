@@ -23,6 +23,34 @@ indexed_store:
     sta (pObj), y
     rts
 
+typed_operations:
+    lda (pWord), #0
+    sta w0
+    lda (pWord), #1
+    sta w0+1
+    lda w0
+    sta (pWord), #0
+    lda w0+1
+    sta (pWord), #1
+    addw w0
+    subw w0
+    cmpw w0
+    lda (pWord), #2
+    add #1
+    sta (pWord), #2
+    lda (pWord), #2
+    sub #1
+    sta (pWord), #2
+    lda (pWord), #2
+    and #$fe
+    sta (pWord), #2
+    lda (pWord), #2
+    ora #1
+    sta (pWord), #2
+    lda REGS + 0, y
+    sta REGS + 0, y
+    rts
+
 object_at:
     tax
     mov pObj, obj_lo + x
@@ -148,6 +176,9 @@ obj_hi:
 
 OBJPOOL = $8000
 pOther = $12
+pWord = $14
+w0 = $16
+REGS = $4100
 t0 = $20
 t1 = $21
 t2 = $22

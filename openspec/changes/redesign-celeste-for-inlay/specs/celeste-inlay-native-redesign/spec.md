@@ -10,7 +10,8 @@ include ISA rule definitions or define compatibility `T_*`, `O_*` or generated
 #### Scenario: Object field offset is consumed
 
 - **WHEN** game code needs an object field displacement
-- **THEN** it uses the qualified layout property or a typed operation directly
+- **THEN** it uses a prefix `offset` query as a semantic operand or a typed
+  operation directly
 
 ### Requirement: Scoped Generated Assets and Effects
 

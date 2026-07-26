@@ -149,8 +149,8 @@ struct PsgRegisters
     fade : u8 at 34
 end
 
-overlay video : VideoRegisters at SPR_SHADDR_LO
-overlay psg : PsgRegisters at PSG_ADDR_LO
+overlay video : VideoRegisters at SPR_SHADDR_LO volatile
+overlay psg : PsgRegisters at PSG_ADDR_LO volatile
 
 static_assert CelesteObject.size == 64
 static_assert ObjectCore.size == 18

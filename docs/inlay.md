@@ -103,6 +103,25 @@ static_assert objects.count == 16
 static_assert objects.stride == Name.size
 ```
 
+Layout queries also have compact prefix forms for semantic operands and
+compile-time expressions:
+
+```asm
+mov y, offset Name.nested.member
+mov bytes, sizeof Name.array
+mov alignment, alignof Name
+mov elements, countof Name.array
+mov stride, strideof Name.array
+
+static_assert offset Name.nested.member == 14
+static_assert sizeof Name.scalar == 1
+```
+
+The query itself identifies a compile-time value, so semantic `mov` does not
+use the target immediate marker `#`. `offset` is a prefix operand, not a
+standalone instruction. Direct typed memory operations remain preferable to
+materialising an offset solely for a following raw instruction.
+
 The fixed-width primitive types are `u8`, `i8`, `u16` and `i16`. Pointer width
 comes from the target and is two storage units for `console6502`. Layouts are
 nominal. Forward nominal references are allowed; unknown types and recursive
@@ -248,6 +267,68 @@ The actual output uses generated constants and an inspectable source comment.
 Locations are aliases only: a `location` declaration allocates, initializes and
 preserves nothing.
 
+Two-storage-unit fields use explicit physical word transfers:
+
+```asm
+proc load_speed naked
+    self : ptr CelesteObject in pObj
+    value : u16 in w0
+begin
+    ldw value, [self + CelesteObject.core.speed_x]
+    stw [self + CelesteObject.core.speed_x], value
+    ret
+end
+```
+
+`ldw WORD, [pointer + Type.field]` and
+`stw [pointer + Type.field], WORD` require a declared two-unit physical word
+location and a scalar or aggregate field whose complete width is two storage
+units. The semantic operation records the access width, target byte order,
+physical pointer and word locations, and its scratch/clobber contract. The
+console6502 lowering transfers the low unit and then the high unit through
+`A`, so it clobbers `A` and flags but does not consume or change `Y`. Both
+field units must fit the target displacement range.
+
+Physical word arithmetic keeps both machine locations visible:
+
+```asm
+addw ab, value
+subw ab, value
+cmpw ab, value
+```
+
+For `console6502`, `ab` is the required physical word accumulator and `value`
+must be a declared two-unit physical location. The backend lowers these forms
+to the target's one-operand `addw value`, `subw value` and `cmpw value`
+instructions. Add and subtract update `AB` and publish `N,V,Z,C`; compare
+preserves `AB` and publishes `N,Z,C`. A one-operand spelling remains raw target
+assembly and receives no Inlay type validation.
+
+Typed byte updates operate on one nonvolatile pointer field:
+
+```asm
+inc [self + CelesteObject.payload.player.grace]
+dec [self + CelesteObject.payload.player.dash_time]
+and [self + CelesteObject.core.flags], #$fd
+ora [self + CelesteObject.core.flags], #$02
+```
+
+The console6502 backend emits a direct pointer-displacement load, the selected
+update, and a direct pointer-displacement store. These operations are
+non-atomic and clobber `A` and flags. The frontend rejects arrays, non-byte
+fields, out-of-range masks and targets without a registered byte-update
+lowering. Fixed overlays are deliberately excluded from this operation: they
+may describe volatile MMIO, and the current backend does not register a
+volatile-safe read-modify-write sequence.
+
+Production conformance treats an adjacent
+`mov y, offset CelesteObject.field` / `lda (pObj),y` pair as a missed typed
+load when `Y` is overwritten before any intervening read or control-flow
+boundary. A sequence with genuinely different flag, control-flow,
+update-operand or target-constant semantics must carry an inline
+`; inlay-exception: REASON` comment on the offset materialisation. The reason
+is reviewed source, not a global suppression.
+
 One array component may carry the physical index `x`:
 
 ```asm
@@ -262,6 +343,21 @@ the result to `Y`, then performs `(base),y`. Indexed loads therefore clobber
 `A`, `Y` and flags. Indexed stores preserve the incoming value in `A` with
 `PHA`/`PLA`, consume one hardware-stack byte transiently, and clobber `Y` and
 flags. Neither form performs a bounds check.
+
+Fixed-overlay byte arrays may instead use physical `Y` directly:
+
+```asm
+sta [psg + PsgRegisters.channels[y]]
+lda [video + VideoRegisters.draw_palette[y]]
+```
+
+The frontend resolves the overlay base, array displacement, count, unit stride,
+access width and volatility. The initial console6502 lowering accepts only
+byte elements with stride one and emits `BASE + displacement,Y`; it performs
+no bounds check and does not materialize another index. Hardware overlays may
+append `volatile` to their declaration. The volatility is carried by every
+overlay access event so a backend cannot silently substitute an unsafe
+sequence.
 
 The implemented pool and address forms are deliberately explicit:
 

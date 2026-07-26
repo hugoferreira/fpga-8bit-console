@@ -36,14 +36,14 @@ is_ice:
 ; ------------------------------------------------------------------------------
 obj_box:
     lda [pObj + CelesteObject.core.x]
-    offset y, CelesteObject.core.hitbox.x
+    mov y, offset CelesteObject.core.hitbox.x
     clc
     adc (pObj), y
     add c_ox
     sta c_x
 
     lda [pObj + CelesteObject.core.y]
-    offset y, CelesteObject.core.hitbox.y
+    mov y, offset CelesteObject.core.hitbox.y
     clc
     adc (pObj), y
     add c_oy
@@ -240,7 +240,7 @@ spike_test_hi:
 
 ; tile 17, pointing down: ((y+h-1)%8 >= 6 or y+h == j*8+8) and yspd >= 0
 spike_down:
-    offset y, CelesteObject.core.speed_y.integer
+    mov y, offset CelesteObject.core.speed_y.integer
     lda (pObj), y
     bmi .no
     lda c_y
@@ -266,11 +266,11 @@ spike_down:
 
 ; tile 27, pointing up: y%8 <= 2 and yspd <= 0
 spike_up:
-    offset y, CelesteObject.core.speed_y.integer
+    mov y, offset CelesteObject.core.speed_y.integer
     lda (pObj), y
     bmi .maybe
     lda [pObj + CelesteObject.core.speed_y.fraction]  ; high byte: +0.004 is still moving down
-    offset y, CelesteObject.core.speed_y.integer
+    mov y, offset CelesteObject.core.speed_y.integer
     ora (pObj), y
     bne .no
 .maybe:
@@ -287,11 +287,11 @@ spike_up:
 
 ; tile 43, pointing right: x%8 <= 2 and xspd <= 0
 spike_right:
-    offset y, CelesteObject.core.speed_x.integer
+    mov y, offset CelesteObject.core.speed_x.integer
     lda (pObj), y
     bmi .maybe
     lda [pObj + CelesteObject.core.speed_x.fraction]
-    offset y, CelesteObject.core.speed_x.integer
+    mov y, offset CelesteObject.core.speed_x.integer
     ora (pObj), y
     bne .no
 .maybe:
@@ -308,7 +308,7 @@ spike_right:
 
 ; tile 59, pointing left: ((x+w-1)%8 >= 6 or x+w == i*8+8) and xspd >= 0
 spike_left:
-    offset y, CelesteObject.core.speed_x.integer
+    mov y, offset CelesteObject.core.speed_x.integer
     lda (pObj), y
     bmi .no
     lda c_x

@@ -111,13 +111,13 @@ begin
 
     lda p_onground              ; landing smoke
     beq .nosmoke
-    lda [pObj + CelesteObject.payload.player.player_bits]
+    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: mask constant remains target-owned
+    lda (pObj), y
     and #PB_GROUND
     bne .nosmoke
     lda [pObj + CelesteObject.core.x]
     pha
-    offset y, CelesteObject.core.y
-    lda (pObj), y
+    lda [pObj + CelesteObject.core.y]
     add #4
     tax
     pla
@@ -125,11 +125,12 @@ begin
 .nosmoke:
 
     tbz btn, #BTN_JUMP, .nojumpheld  ; jump = btn(jump) and not p_jump
-    lda [pObj + CelesteObject.payload.player.player_bits]
+    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
+    lda (pObj), y
     and #PB_JUMP
     bne .jumpheld
     mov p_jump, #1
-    offset y, CelesteObject.payload.player.player_bits
+    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: mask constant remains target-owned
     lda (pObj), y
     ora #PB_JUMP
     sta (pObj), y
@@ -139,12 +140,12 @@ begin
     jmp .jbufdec
 .nojumpheld:
     mov p_jump, #0
-    offset y, CelesteObject.payload.player.player_bits
+    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
     lda (pObj), y
     and #<!PB_JUMP
     sta (pObj), y
 .jbufdec:
-    offset y, CelesteObject.payload.player.jump_buffer
+    mov y, offset CelesteObject.payload.player.jump_buffer ; inlay-exception: branch observes pre-decrement value
     lda (pObj), y
     beq .dashedge
     sub #1
@@ -156,11 +157,12 @@ begin
 
 .dashedge:
     tbz btn, #BTN_DASH, .nodashheld  ; dash = btn(dash) and not p_dash
-    lda [pObj + CelesteObject.payload.player.player_bits]
+    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: mask constant remains target-owned
+    lda (pObj), y
     and #PB_DASH
     bne .dashheld
     mov p_dash, #1
-    offset y, CelesteObject.payload.player.player_bits
+    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
     lda (pObj), y
     ora #PB_DASH
     sta (pObj), y
@@ -170,7 +172,7 @@ begin
     jmp .grace
 .nodashheld:
     mov p_dash, #0
-    offset y, CelesteObject.payload.player.player_bits
+    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
     lda (pObj), y
     and #<!PB_DASH
     sta (pObj), y
@@ -189,20 +191,18 @@ begin
     sta [pObj + CelesteObject.payload.player.dash_jumps]
     jmp .gracedone
 .airborne:
-    offset y, CelesteObject.payload.player.grace
+    mov y, offset CelesteObject.payload.player.grace ; inlay-exception: branch observes pre-decrement value
     lda (pObj), y
     beq .gracedone
     sub #1
     sta (pObj), y
 .gracedone:
 
-    offset y, CelesteObject.payload.player.dash_effect                ; dash_effect_time -= 1
-    lda (pObj), y
-    sub #1
-    sta (pObj), y
+    dec [pObj + CelesteObject.payload.player.dash_effect] ; dash_effect_time -= 1
 
-    offset y, CelesteObject.payload.player.dash_time                ; if dash_time > 0 then ... else move
-    lda (pObj), y
+    mov y, offset CelesteObject.payload.player.dash_time
+
+    lda (pObj), y                ; if dash_time > 0 then ... else move
     beq .move
     jmp .dashing
 .move:
@@ -213,38 +213,37 @@ begin
 
     lda [pObj + CelesteObject.core.x]                    ; a smoke puff per dash frame
     pha
-    offset y, CelesteObject.core.y
-    lda (pObj), y
+    lda [pObj + CelesteObject.core.y]
     tax
     pla
     jsr spawn_smoke
 
-    offset y, CelesteObject.core.speed_x                 ; spd.x = appr(spd.x, dash_target.x, dash_accel.x)
+    mov y, offset CelesteObject.core.speed_x                 ; spd.x = appr(spd.x, dash_target.x, dash_accel.x)
     jsr obj_ldw
-    offset y, CelesteObject.payload.player.dash_target_x
+    mov y, offset CelesteObject.payload.player.dash_target_x
     jsr obj_ldw1
-    offset y, CelesteObject.payload.player.dash_accel_x.fraction
+    mov y, offset CelesteObject.payload.player.dash_accel_x.fraction
     lda (pObj), y
     sta w2
     iny
     lda (pObj), y
     sta w2+1
     jsr appr
-    offset y, CelesteObject.core.speed_x
+    mov y, offset CelesteObject.core.speed_x
     jsr obj_stw
 
-    offset y, CelesteObject.core.speed_y
+    mov y, offset CelesteObject.core.speed_y
     jsr obj_ldw
-    offset y, CelesteObject.payload.player.dash_target_y
+    mov y, offset CelesteObject.payload.player.dash_target_y
     jsr obj_ldw1
-    offset y, CelesteObject.payload.player.dash_accel_y.fraction
+    mov y, offset CelesteObject.payload.player.dash_accel_y.fraction
     lda (pObj), y
     sta w2
     iny
     lda (pObj), y
     sta w2+1
     jsr appr
-    offset y, CelesteObject.core.speed_y
+    mov y, offset CelesteObject.core.speed_y
     jsr obj_stw
     jmp player_anim
 
@@ -275,7 +274,7 @@ player_move:
     lda #<MAXRUN                ; if abs(spd.x) > maxrun then decelerate
     ldx #>MAXRUN
     jsr setw0
-    offset y, CelesteObject.core.speed_x
+    mov y, offset CelesteObject.core.speed_x
     jsr obj_ldw1
     lda w1+1
     bpl .absdone
@@ -286,7 +285,7 @@ player_move:
     jsr cmp16                   ; N set: maxrun < abs(spd.x)
     bpl .accelerate
 
-    offset y, CelesteObject.core.speed_x                 ; spd.x = appr(spd.x, sign(spd.x)*maxrun, deccel)
+    mov y, offset CelesteObject.core.speed_x                 ; spd.x = appr(spd.x, sign(spd.x)*maxrun, deccel)
     jsr obj_ldw
     lda w0+1
     bmi .decelneg
@@ -303,12 +302,12 @@ player_move:
     ldx p_deccel+1
     jsr setw2
     jsr appr
-    offset y, CelesteObject.core.speed_x
+    mov y, offset CelesteObject.core.speed_x
     jsr obj_stw
     jmp .facing
 
 .accelerate:                    ; spd.x = appr(spd.x, input*maxrun, accel)
-    offset y, CelesteObject.core.speed_x
+    mov y, offset CelesteObject.core.speed_x
     jsr obj_ldw
     lda p_input
     beq .targetzero
@@ -331,24 +330,24 @@ player_move:
     ldx p_accel+1
     jsr setw2
     jsr appr
-    offset y, CelesteObject.core.speed_x
+    mov y, offset CelesteObject.core.speed_x
     jsr obj_stw
 
 .facing:
-    offset y, CelesteObject.core.speed_x.fraction                 ; if spd.x != 0 then flip.x = spd.x < 0
-    lda (pObj), y
+    mov y, offset CelesteObject.core.speed_x.fraction
+    lda (pObj), y                 ; if spd.x != 0 then flip.x = spd.x < 0
     iny
     ora (pObj), y
     beq .gravity
     lda [pObj + CelesteObject.core.speed_x.integer]
     bmi .faceleft
-    offset y, CelesteObject.core.flip
+    mov y, offset CelesteObject.core.flip ; inlay-exception: following flags feed control flow
     lda (pObj), y
     and #$FE
     sta (pObj), y
     jmp .gravity
 .faceleft:
-    offset y, CelesteObject.core.flip
+    mov y, offset CelesteObject.core.flip ; inlay-exception: following flags feed control flow
     lda (pObj), y
     ora #$01
     sta (pObj), y
@@ -359,7 +358,7 @@ player_move:
     mov p_gravity, #<GRAVITY
     mov p_gravity+1, #>GRAVITY
 
-    offset y, CelesteObject.core.speed_y                 ; if abs(spd.y) <= 0.15 then gravity *= 0.5
+    mov y, offset CelesteObject.core.speed_y                 ; if abs(spd.y) <= 0.15 then gravity *= 0.5
     jsr obj_ldw
     jsr abs16
     lda #<SPDY_EPSILON
@@ -400,7 +399,7 @@ player_move:
     add p_input
     add p_input
     pha
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y
     lda (pObj), y
     tax
     pla
@@ -409,7 +408,7 @@ player_move:
 .fall:
     lda p_onground
     bne .jump
-    offset y, CelesteObject.core.speed_y                 ; spd.y = appr(spd.y, maxfall, gravity)
+    mov y, offset CelesteObject.core.speed_y                 ; spd.y = appr(spd.y, maxfall, gravity)
     jsr obj_ldw
     lda p_maxfall
     ldx p_maxfall+1
@@ -418,7 +417,7 @@ player_move:
     ldx p_gravity+1
     jsr setw2
     jsr appr
-    offset y, CelesteObject.core.speed_y
+    mov y, offset CelesteObject.core.speed_y
     jsr obj_stw
 
 .jump:
@@ -435,14 +434,14 @@ player_move:
     sta [pObj + CelesteObject.payload.player.jump_buffer]
     sta [pObj + CelesteObject.payload.player.grace]
     lda #<JUMP_SPD
-    offset y, CelesteObject.core.speed_y.fraction
+    mov y, offset CelesteObject.core.speed_y.fraction
     sta (pObj), y
     lda #>JUMP_SPD
     iny
     sta (pObj), y
     lda [pObj + CelesteObject.core.x]
     pha
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y
     lda (pObj), y
     add #4
     tax
@@ -469,7 +468,7 @@ player_move:
     lda #0
     sta [pObj + CelesteObject.payload.player.jump_buffer]
     lda #<JUMP_SPD
-    offset y, CelesteObject.core.speed_y.fraction
+    mov y, offset CelesteObject.core.speed_y.fraction
     sta (pObj), y
     lda #>JUMP_SPD
     iny
@@ -484,7 +483,7 @@ player_move:
     lda #<WALLJUMP_SPD
     ldx #>WALLJUMP_SPD
 .wjset:
-    offset y, CelesteObject.core.speed_x.fraction
+    mov y, offset CelesteObject.core.speed_x.fraction
     sta (pObj), y
     txa
     iny
@@ -510,7 +509,7 @@ player_move:
     add p_walldir
     add p_walldir
     pha
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y
     lda (pObj), y
     tax
     pla
@@ -525,7 +524,7 @@ player_move:
     jsr psfx
     lda [pObj + CelesteObject.core.x]
     pha
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y
     lda (pObj), y
     tax
     pla
@@ -536,16 +535,13 @@ player_move:
 .dodash:
     lda [pObj + CelesteObject.core.x]
     pha
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y
     lda (pObj), y
     tax
     pla
     jsr spawn_smoke
 
-    offset y, CelesteObject.payload.player.dash_jumps
-    lda (pObj), y
-    sub #1
-    sta (pObj), y
+    dec [pObj + CelesteObject.payload.player.dash_jumps]
     lda #4
     sta [pObj + CelesteObject.payload.player.dash_time]
     mov has_dashed, #1
@@ -626,33 +622,34 @@ player_move:
     mov freeze, #2
     mov shake, #6
 
-    offset y, CelesteObject.core.speed_x                 ; dash_target = 2 * sign(spd), dash_accel = 1.5
+    mov y, offset CelesteObject.core.speed_x                 ; dash_target = 2 * sign(spd), dash_accel = 1.5
     jsr obj_ldw
     jsr sign16
     ldx #<DASH_TARGET
     ldy #>DASH_TARGET
     jsr signed_word
-    offset y, CelesteObject.payload.player.dash_target_x
+    mov y, offset CelesteObject.payload.player.dash_target_x
     jsr obj_stw
 
-    offset y, CelesteObject.core.speed_y
+    mov y, offset CelesteObject.core.speed_y
     jsr obj_ldw
     jsr sign16
     ldx #<DASH_TARGET
     ldy #>DASH_TARGET
     jsr signed_word
-    offset y, CelesteObject.payload.player.dash_target_y
+    mov y, offset CelesteObject.payload.player.dash_target_y
     jsr obj_stw
 
-    offset y, CelesteObject.core.speed_y.fraction                 ; if spd.y < 0 then dash_target.y *= 0.75
-    lda (pObj), y
+    mov y, offset CelesteObject.core.speed_y.fraction
+
+    lda (pObj), y                 ; if spd.y < 0 then dash_target.y *= 0.75
     iny
     ora (pObj), y
     beq .yzero
     lda [pObj + CelesteObject.core.speed_y.integer]
     bpl .ynonzero
     lda #<(-DASH_TARGET_UP & $FFFF)
-    offset y, CelesteObject.payload.player.dash_target_y.fraction
+    mov y, offset CelesteObject.payload.player.dash_target_y.fraction
     sta (pObj), y
     lda #>(-DASH_TARGET_UP & $FFFF)
     iny
@@ -665,14 +662,15 @@ player_move:
     lda #<DASH_ACCEL
     ldx #>DASH_ACCEL
 .setax:
-    offset y, CelesteObject.payload.player.dash_accel_x.fraction
+    mov y, offset CelesteObject.payload.player.dash_accel_x.fraction
     sta (pObj), y
     txa
     iny
     sta (pObj), y
 
-    offset y, CelesteObject.core.speed_x.fraction                 ; spd.x != 0: dash_accel.y *= sqrt(2)/2
-    lda (pObj), y
+    mov y, offset CelesteObject.core.speed_x.fraction
+
+    lda (pObj), y                 ; spd.x != 0: dash_accel.y *= sqrt(2)/2
     iny
     ora (pObj), y
     beq .xzero
@@ -683,7 +681,7 @@ player_move:
     lda #<DASH_ACCEL
     ldx #>DASH_ACCEL
 .setay:
-    offset y, CelesteObject.payload.player.dash_accel_y.fraction
+    mov y, offset CelesteObject.payload.player.dash_accel_y.fraction
     sta (pObj), y
     txa
     iny
@@ -693,8 +691,8 @@ player_move:
 ; Animation, the level exit, and the ground latch.
 ; ------------------------------------------------------------------------------
 player_anim:
-    offset y, CelesteObject.payload.player.sprite_offset               ; spr_off += 0.25, in quarter frames
-    lda (pObj), y
+    mov y, offset CelesteObject.payload.player.sprite_offset ; inlay-exception: wrapping add-and-mask update
+    lda (pObj), y               ; spr_off += 0.25, in quarter frames
     add #1
     and #15
     sta (pObj), y
@@ -720,8 +718,8 @@ player_anim:
     lda #7
     jmp .setspr
 .notup:
-    offset y, CelesteObject.core.speed_x.fraction                 ; standing still, or no key held: frame 1
-    lda (pObj), y
+    mov y, offset CelesteObject.core.speed_x.fraction
+    lda (pObj), y                 ; standing still, or no key held: frame 1
     iny
     ora (pObj), y
     beq .still
@@ -736,8 +734,9 @@ player_anim:
 .setspr:
     sta [pObj + CelesteObject.core.sprite]
 
-    offset y, CelesteObject.core.y                    ; if y < -4 then next_room()
-    lda (pObj), y
+    mov y, offset CelesteObject.core.y
+
+    lda (pObj), y                    ; if y < -4 then next_room()
     bpl .stay
     cmp #$FC
     bcs .stay
@@ -760,12 +759,12 @@ player_anim:
 ; ------------------------------------------------------------------------------
 set_spdx_signed:
     jsr signed_word
-    offset y, CelesteObject.core.speed_x
+    mov y, offset CelesteObject.core.speed_x
     jmp obj_stw
 
 set_spdy_signed:
     jsr signed_word
-    offset y, CelesteObject.core.speed_y
+    mov y, offset CelesteObject.core.speed_y
     jmp obj_stw
 
 ; signed_word: w0 = A * {X,Y} for A in {-1, 0, 1}. Clobbers A.
@@ -819,7 +818,7 @@ begin
 .clamped:
     sta [pObj + CelesteObject.core.x]
     lda #0                      ; and stop, as the cart does
-    offset y, CelesteObject.core.speed_x.fraction
+    mov y, offset CelesteObject.core.speed_x.fraction
     sta (pObj), y
     iny
     sta (pObj), y
@@ -843,19 +842,20 @@ begin
     sta [pObj + CelesteObject.core.sprite]
     lda [pObj + CelesteObject.core.x]
     sta [pObj + CelesteObject.payload.spawn.target_x]
-    lda [pObj + CelesteObject.core.y]
+    mov y, offset CelesteObject.core.y
+    lda (pObj), y
     sta [pObj + CelesteObject.payload.spawn.target_y]
 
     lda #127                    ; the cart starts at y = 128, one past what a
     sta [pObj + CelesteObject.core.y]  ; screen either way
     lda #<SPAWN_SPD
-    offset y, CelesteObject.core.speed_y.fraction
+    mov y, offset CelesteObject.core.speed_y.fraction
     sta (pObj), y
     lda #>SPAWN_SPD
     iny
     sta (pObj), y
-    offset y, CelesteObject.core.flags                ; solids = false
-    lda (pObj), y
+    mov y, offset CelesteObject.core.flags ; inlay-exception: complemented target constant
+    lda (pObj), y                ; solids = false
     and #<!F_SOLIDS
     sta (pObj), y
     jmp create_hair
@@ -875,26 +875,26 @@ begin
     lda [pObj + CelesteObject.payload.spawn.target_y]
     add #16
     sta t3
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y
     lda (pObj), y
     cmp t3
     bcs .done
     lda #1
     sta [pObj + CelesteObject.payload.spawn.phase]
     lda #3
-    offset y, CelesteObject.payload.player.delay
+    mov y, offset CelesteObject.payload.player.delay
     sta (pObj), y
 .done:
     rts
 
 .falling:
-    offset y, CelesteObject.core.speed_y                 ; spd.y += 0.5
+    mov y, offset CelesteObject.core.speed_y                 ; spd.y += 0.5
     jsr obj_ldw
     lda #<SPAWN_GRAV
     ldx #>SPAWN_GRAV
     jsr setw1
     jsr add16
-    offset y, CelesteObject.core.speed_y
+    mov y, offset CelesteObject.core.speed_y
     jsr obj_stw
 
     lda w0+1                    ; the hover: while delay lasts, spd.y is held
@@ -902,13 +902,13 @@ begin
     lda w0
     ora w0+1
     beq .done2
-    offset y, CelesteObject.payload.player.delay
+    mov y, offset CelesteObject.payload.player.delay ; inlay-exception: branch observes pre-decrement value
     lda (pObj), y
     beq .land
     sub #1
     sta (pObj), y
     lda #0
-    offset y, CelesteObject.core.speed_y.fraction
+    mov y, offset CelesteObject.core.speed_y.fraction
     sta (pObj), y
     iny
     sta (pObj), y
@@ -918,7 +918,7 @@ begin
 .land:
     lda [pObj + CelesteObject.payload.spawn.target_y]
     sta t3
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y
     lda (pObj), y
     cmp t3
     bcc .done2
@@ -926,11 +926,11 @@ begin
     lda t3
     sta [pObj + CelesteObject.core.y]
     lda #0
-    offset y, CelesteObject.core.speed_x.fraction
+    mov y, offset CelesteObject.core.speed_x.fraction
     sta (pObj), y
     iny
     sta (pObj), y
-    offset y, CelesteObject.core.speed_y.fraction
+    mov y, offset CelesteObject.core.speed_y.fraction
     sta (pObj), y
     iny
     sta (pObj), y
@@ -941,7 +941,7 @@ begin
     mov shake, #5
     lda [pObj + CelesteObject.core.x]
     pha
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y
     lda (pObj), y
     add #4
     tax
@@ -951,20 +951,18 @@ begin
     jmp sfx_play
 
 .landing:
-    offset y, CelesteObject.payload.player.delay
-    lda (pObj), y
-    sub #1
-    sta (pObj), y
+    dec [pObj + CelesteObject.payload.player.delay]
     pha
     lda #6
-    offset y, CelesteObject.core.sprite
+    mov y, offset CelesteObject.core.sprite
     sta (pObj), y
     pla
     bpl .stillhere
 
     lda [pObj + CelesteObject.core.x]
     sta spawn_x
-    lda [pObj + CelesteObject.core.y]
+    mov y, offset CelesteObject.core.y
+    lda (pObj), y
     sta spawn_y
     jsr destroy_object
     mov spawn_type, #ObjectKind.player
@@ -993,7 +991,7 @@ begin
     lda #29
     sta [pObj + CelesteObject.core.sprite]
     lda #<SMOKE_SPDY
-    offset y, CelesteObject.core.speed_y.fraction
+    mov y, offset CelesteObject.core.speed_y.fraction
     sta (pObj), y
     lda #>SMOKE_SPDY
     iny
@@ -1002,7 +1000,7 @@ begin
     lda [video + VideoRegisters.random]                 ; spd.x = 0.3 + rnd(0.2)
     and #$33
     add #$4D
-    offset y, CelesteObject.core.speed_x.fraction
+    mov y, offset CelesteObject.core.speed_x.fraction
     sta (pObj), y
     lda #0
     iny
@@ -1011,14 +1009,14 @@ begin
     lda [video + VideoRegisters.random]                 ; x += -1 + rnd(2), y likewise
     and #1
     sub #1
-    offset y, CelesteObject.core.x
+    mov y, offset CelesteObject.core.x
     clc
     adc (pObj), y
     sta (pObj), y
     lda [video + VideoRegisters.random]
     and #1
     sub #1
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y
     clc
     adc (pObj), y
     sta (pObj), y
@@ -1026,7 +1024,7 @@ begin
     lda [video + VideoRegisters.random]                 ; flip.x = maybe(), flip.y = maybe()
     and #3
     sta [pObj + CelesteObject.core.flip]
-    offset y, CelesteObject.core.flags
+    mov y, offset CelesteObject.core.flags ; inlay-exception: complemented target constant
     lda (pObj), y
     and #<!F_SOLIDS
     sta (pObj), y
@@ -1037,10 +1035,7 @@ end
 proc Smoke.update using console6502
     self : ptr CelesteObject in pObj
 begin
-    offset y, CelesteObject.payload.player.sprite_offset               ; spr += 0.2 -> destroy after 15 frames
-    lda (pObj), y
-    add #1
-    sta (pObj), y
+    inc [pObj + CelesteObject.payload.player.sprite_offset] ; spr += 0.2 -> destroy after 15 frames
     cmp #15
     bcs .gone
     lda [pObj + CelesteObject.payload.smoke.sprite_offset]
@@ -1090,10 +1085,7 @@ end
 proc Title.draw using console6502
     self : ptr CelesteObject in pObj
 begin
-    offset y, CelesteObject.payload.player.delay
-    lda (pObj), y
-    sub #1
-    sta (pObj), y
+    dec [pObj + CelesteObject.payload.player.delay]
     cmp #<(-30)
     beq .gone
     bpl .done

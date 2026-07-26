@@ -132,8 +132,38 @@ def main():
             "end\n"
             "mov spawn_type, #Kind.player\n"
             "mov y, #Item.size-1\n"
-            "offset x, Item.value\n"
-            "cmp #Kind.none\n",
+            "mov x, offset Item.value\n"
+            "mov item_size, sizeof Item\n"
+            "mov item_align, alignof Item\n"
+            "mov item_count, countof Item.pad\n"
+            "mov item_stride, strideof Item.pad\n"
+            "cmp #Kind.none\n"
+            "struct WordBox\n"
+            "pad : u8[4]\n"
+            "word : u16\n"
+            "timer : u8\n"
+            "end\n"
+            "struct RegisterBank\n"
+            "channels : u8[4]\n"
+            "end\n"
+            "overlay registers : RegisterBank at REGS volatile\n"
+            "proc word_copy naked\n"
+            "self : ptr WordBox in pObj\n"
+            "value : u16 in w0\n"
+            "begin\n"
+            "ldw value, [self + WordBox.word]\n"
+            "stw [self + WordBox.word], value\n"
+            "addw ab, value\n"
+            "subw ab, value\n"
+            "cmpw ab, value\n"
+            "inc [self + WordBox.timer]\n"
+            "dec [self + WordBox.timer]\n"
+            "and [self + WordBox.timer], #$fe\n"
+            "ora [self + WordBox.timer], #1\n"
+            "lda [registers + RegisterBank.channels[y]]\n"
+            "sta [registers + RegisterBank.channels[y]]\n"
+            "ret\n"
+            "end\n",
         )
         namespaced_asm = namespaced / "out.asm"
         namespaced_map = namespaced / "out.json"
@@ -153,7 +183,30 @@ def main():
         assert "mov spawn_type, #3" in assembly
         assert "ldy #3" in assembly
         assert "ldx #3" in assembly
+        assert "mov item_size, #4" in assembly
+        assert "mov item_align, #1" in assembly
+        assert "mov item_count, #3" in assembly
+        assert "mov item_stride, #1" in assembly
         assert "cmp #0" in assembly
+        assert (
+            "lda (pObj), #4 ; inlay WordBox.word[0]\n"
+            "    sta w0\n"
+            "    lda (pObj), #5 ; inlay WordBox.word[1]\n"
+            "    sta w0+1"
+        ) in assembly
+        assert (
+            "lda w0\n"
+            "    sta (pObj), #4 ; inlay WordBox.word[0]\n"
+            "    lda w0+1\n"
+            "    sta (pObj), #5 ; inlay WordBox.word[1]"
+        ) in assembly
+        assert "    addw w0\n    subw w0\n    cmpw w0\n" in assembly
+        assert "    lda (pObj), #6\n    add #1\n    sta (pObj), #6" in assembly
+        assert "    lda (pObj), #6\n    sub #1\n    sta (pObj), #6" in assembly
+        assert "    lda (pObj), #6\n    and #254\n    sta (pObj), #6" in assembly
+        assert "    lda (pObj), #6\n    ora #1\n    sta (pObj), #6" in assembly
+        assert "    lda REGS + 0, y ; inlay overlay RegisterBank.channels" in assembly
+        assert "    sta REGS + 0, y ; inlay overlay RegisterBank.channels" in assembly
         assert assembly.count(".done:") == 2
         mapping = json.loads(namespaced_map.read_text(encoding="ascii"))
         assert any(

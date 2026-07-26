@@ -391,6 +391,42 @@ static int emit_pointer_displacement(HostOutput *output,
     return 1;
 }
 
+static int emit_pointer_word_transfer(HostOutput *output,
+                                      const LaEvent *event)
+{
+    unsigned step;
+    int store;
+    store = event->operation == LA_TARGET_OP_STORE16_PTR_DISP;
+    for (step = 0; step < event->access_width; ++step) {
+        unsigned unit;
+        const char *suffix;
+        unit = step;
+        suffix = unit == 0 ? "" : "+1";
+        if (store) {
+            if (!begin_line(output, event->span, "word-field-store")) return 0;
+            fprintf(output->assembly, "    lda %.*s%s\n",
+                    (int)event->aux.length, event->aux.data, suffix);
+        }
+        if (!begin_line(output, event->span,
+                        store ? "word-field-store" : "word-field-load")) {
+            return 0;
+        }
+        fprintf(output->assembly, "    %s (%.*s), #%u",
+                store ? "sta" : "lda",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value + step);
+        fprintf(output->assembly, " ; inlay %.*s.%.*s[%u]\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data, unit);
+        if (!store) {
+            if (!begin_line(output, event->span, "word-field-load")) return 0;
+            fprintf(output->assembly, "    sta %.*s%s\n",
+                    (int)event->aux.length, event->aux.data, suffix);
+        }
+    }
+    return 1;
+}
+
 static int emit_overlay_displacement(HostOutput *output,
                                      const LaEvent *event)
 {
@@ -401,6 +437,22 @@ static int emit_overlay_displacement(HostOutput *output,
             (int)event->base.length, event->base.data);
     mangle_path(output->assembly, event->owner, event->path);
     fprintf(output->assembly, "__offset ; inlay overlay %.*s.%.*s\n",
+            (int)event->owner.length, event->owner.data,
+            (int)event->path.length, event->path.data);
+    return 1;
+}
+
+static int emit_overlay_indexed(HostOutput *output,
+                                const LaEvent *event)
+{
+    if (!begin_line(output, event->span, "overlay-indexed-operation")) return 0;
+    fprintf(output->assembly, "    %s %.*s + %u, %.*s",
+            event->operation == LA_TARGET_OP_LOAD8_OVERLAY_INDEXED ?
+                "lda" : "sta",
+            (int)event->base.length, event->base.data,
+            (unsigned)event->value,
+            (int)event->index.length, event->index.data);
+    fprintf(output->assembly, " ; inlay overlay %.*s.%.*s\n",
             (int)event->owner.length, event->owner.data,
             (int)event->path.length, event->path.data);
     return 1;
@@ -599,6 +651,48 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
     case LA_TARGET_OP_LOAD8_PTR_DISP:
     case LA_TARGET_OP_STORE8_PTR_DISP:
         return emit_pointer_displacement(output, event);
+    case LA_TARGET_OP_LOAD16_PTR_DISP:
+    case LA_TARGET_OP_STORE16_PTR_DISP:
+        return emit_pointer_word_transfer(output, event);
+    case LA_TARGET_OP_ADD16_PHYSICAL:
+    case LA_TARGET_OP_SUB16_PHYSICAL:
+    case LA_TARGET_OP_CMP16_PHYSICAL:
+        if (!begin_line(output, event->span, "physical-word-arithmetic")) {
+            return 0;
+        }
+        fprintf(output->assembly, "    %s %.*s\n",
+                event->operation == LA_TARGET_OP_ADD16_PHYSICAL ? "addw" :
+                event->operation == LA_TARGET_OP_SUB16_PHYSICAL ? "subw" :
+                                                                  "cmpw",
+                (int)event->aux.length, event->aux.data);
+        return 1;
+    case LA_TARGET_OP_INC8_PTR_DISP:
+    case LA_TARGET_OP_DEC8_PTR_DISP:
+    case LA_TARGET_OP_AND8_PTR_DISP:
+    case LA_TARGET_OP_OR8_PTR_DISP:
+        if (!begin_line(output, event->span, "byte-field-update")) return 0;
+        fprintf(output->assembly, "    lda (%.*s), #%u\n",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value);
+        if (!begin_line(output, event->span, "byte-field-update")) return 0;
+        if (event->operation == LA_TARGET_OP_INC8_PTR_DISP) {
+            fputs("    add #1\n", output->assembly);
+        } else if (event->operation == LA_TARGET_OP_DEC8_PTR_DISP) {
+            fputs("    sub #1\n", output->assembly);
+        } else {
+            fprintf(output->assembly, "    %s #%u\n",
+                    event->operation == LA_TARGET_OP_AND8_PTR_DISP ?
+                        "and" : "ora",
+                    (unsigned)event->offset);
+        }
+        if (!begin_line(output, event->span, "byte-field-update")) return 0;
+        fprintf(output->assembly, "    sta (%.*s), #%u",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value);
+        fprintf(output->assembly, " ; inlay update %.*s.%.*s\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
+        return 1;
     case LA_TARGET_OP_LOAD8_PTR_INDEXED:
     case LA_TARGET_OP_STORE8_PTR_INDEXED:
         return emit_indexed_operation(output, event);
@@ -628,6 +722,9 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
     case LA_TARGET_OP_LOAD8_OVERLAY_DISP:
     case LA_TARGET_OP_STORE8_OVERLAY_DISP:
         return emit_overlay_displacement(output, event);
+    case LA_TARGET_OP_LOAD8_OVERLAY_INDEXED:
+    case LA_TARGET_OP_STORE8_OVERLAY_INDEXED:
+        return emit_overlay_indexed(output, event);
     case LA_TARGET_OP_DATA_PROC_LOW:
     case LA_TARGET_OP_DATA_PROC_HIGH:
     case LA_TARGET_OP_DATA_PROC_FULL:

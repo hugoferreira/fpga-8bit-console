@@ -28,11 +28,11 @@ CELESTE_REFERENCE_DIR = (
     ROOT / "tests/inlay/reference/celeste-customasm"
 )
 CELESTE_MEMMAP = CELESTE_REFERENCE_DIR / "memmap.asm"
-EXPECTED_CELESTE_TYPED_OPERATIONS = 80
+EXPECTED_CELESTE_TYPED_OPERATIONS = 82
 EXPECTED_CELESTE_OVERLAY_OPERATIONS = 42
 EXPECTED_CELESTE_OFFSET_SETUPS = 0
-EXPECTED_CELESTE_SEMANTIC_OFFSETS = 112
-EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 143
+EXPECTED_CELESTE_SEMANTIC_OFFSETS = 110
+EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 136
 READABLE_CELESTE_MODULES = {
     "main.inlay.asm",
     "obj.inlay.asm",
@@ -597,12 +597,73 @@ def check_celeste_boundary_failures(tmp: Path) -> None:
     expect_celeste_boundary_failure(corpus, "test oracle")
 
 
+def eligible_legacy_field_loads(path: Path, text: str) -> list[str]:
+    lines = text.splitlines()
+    failures = []
+    offset = re.compile(
+        r"^\s*mov\s+y,\s+offset\s+(CelesteObject\.[A-Za-z0-9_.]+)"
+    )
+    load = re.compile(r"^\s*lda\s+\(pObj\),\s*y\b")
+    kills_y = re.compile(r"^\s*(?:ldy\b|tay\b|mov\s+y,)")
+    control_boundary = re.compile(
+        r"^\s*(?:[.@A-Za-z_][.@A-Za-z0-9_]*:|"
+        r"b(?:cc|cs|eq|mi|ne|pl|vc|vs|ra)\b|j(?:mp|sr)\b|rts\b)"
+    )
+    reads_y = re.compile(r"(?:\by\b|\(pObj\),\s*y)")
+    for index, line in enumerate(lines[:-1]):
+        match = offset.match(line)
+        if not match or not load.match(lines[index + 1]):
+            continue
+        if "inlay-exception:" in line:
+            continue
+        for following in lines[index + 2:]:
+            code = following.split(";", 1)[0].strip()
+            if not code:
+                continue
+            if kills_y.match(code):
+                failures.append(
+                    f"{path.name}:{index + 1}: {match.group(1)}"
+                )
+                break
+            if control_boundary.match(code) or reads_y.search(code):
+                break
+    return failures
+
+
+def check_legacy_exception_contract() -> None:
+    path = Path("fixture.inlay.asm")
+    candidate = (
+        "mov y, offset CelesteObject.core.kind\n"
+        "lda (pObj), y\n"
+        "ldy #0\n"
+    )
+    documented = (
+        "mov y, offset CelesteObject.core.kind "
+        "; inlay-exception: flags are consumed\n"
+        "lda (pObj), y\n"
+        "ldy #0\n"
+    )
+    assert eligible_legacy_field_loads(path, candidate)
+    assert not eligible_legacy_field_loads(path, documented)
+
+
 def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
     production_files = check_celeste_source_boundary()
     module_texts = [
         path.read_text(encoding="ascii")
         for path in production_files
     ]
+    missed_field_loads = [
+        failure
+        for path, text in zip(production_files, module_texts)
+        for failure in eligible_legacy_field_loads(path, text)
+    ]
+    if missed_field_loads:
+        raise AssertionError(
+            "mechanically eligible legacy field load remains; use a typed "
+            "operand or add an inlay-exception reason:\n"
+            + "\n".join(missed_field_loads)
+        )
     typed_operations = sum(
         len(re.findall(r"\[(?:pObj|pOth) \+ CelesteObject\.", text))
         for text in module_texts
@@ -637,7 +698,7 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
         )
     semantic_offsets = sum(
         len(re.findall(
-            r"^\s*offset\s+[axy],\s+CelesteObject\.",
+            r"^\s*mov\s+[axy],\s+offset\s+CelesteObject\.",
             text,
             re.MULTILINE,
         ))
@@ -784,6 +845,7 @@ def main() -> int:
         check_negative_sources(tmp_a)
         check_downstream_diagnostics(tmp_a)
         check_celeste_boundary_failures(tmp_a)
+        check_legacy_exception_contract()
         (
             rom_size, rom_hash, overlay_operations,
             offset_setups, raw_indirects,

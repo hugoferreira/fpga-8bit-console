@@ -103,7 +103,8 @@ express:
 
 ```asm
 mov spawn_type, #ObjectKind.smoke
-offset y, CelesteObject.core.kind
+mov y, offset CelesteObject.core.kind
+mov count, countof CelesteObject.payload.hair.hair
 data u8 low(Player.init), low(Spawn.init)
 data u8 high(Player.init), high(Spawn.init)
 ```
@@ -112,10 +113,14 @@ The frontend resolves these values and asks the backend to emit target-valid
 forms. Game source never names generated `__la_*` symbols or relies on their
 mangling convention.
 
-`offset` is explicit materialisation into a physical location. It does not
-perform a memory access and publishes its target clobber contract. This is the
-bridge for residual instructions whose following operation cannot yet consume
-a typed field operand directly.
+`offset`, `sizeof`, `alignof`, `countof` and `strideof` are prefix compile-time
+query operators. Their prefix spelling makes the selected property explicit
+without repeating a long path before a postfix property. A query operand is
+self-identifying and therefore does not use the target immediate marker `#`.
+`mov y, offset CelesteObject.core.kind` performs no memory access and publishes
+the target clobber contract. It is the escape hatch for residual instructions
+whose following operation cannot yet consume a typed field operand directly;
+ordinary code should use the typed field operation itself.
 
 ### Extend typed operations at the semantic boundary
 

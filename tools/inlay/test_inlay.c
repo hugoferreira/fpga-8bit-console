@@ -27,6 +27,17 @@ typedef struct {
     int saw_frame_offset;
     int saw_first_a;
     int saw_second_x;
+    int saw_word_load;
+    int saw_word_store;
+    int saw_word_add;
+    int saw_word_sub;
+    int saw_word_compare;
+    int saw_byte_increment;
+    int saw_byte_decrement;
+    int saw_byte_and;
+    int saw_byte_or;
+    int saw_overlay_indexed_load;
+    int saw_overlay_indexed_store;
 } TestEvents;
 
 typedef struct {
@@ -35,6 +46,16 @@ typedef struct {
 } TestDiagnostic;
 
 static int failures;
+
+static LaDiagnosticCode compile_source_target(
+    const char *source, la_u16 chunk, LaLimits limits, TestEvents *events,
+    TestDiagnostic *diagnostic, LaStats *stats, const LaTarget *target);
+static LaDiagnosticCode compile_source(const char *source, la_u16 chunk,
+                                       LaLimits limits, TestEvents *events,
+                                       TestDiagnostic *diagnostic,
+                                       LaStats *stats);
+static void expect_error(const char *source, LaLimits limits,
+                         LaDiagnosticCode expected, const char *message);
 
 static void check(int condition, const char *message)
 {
@@ -89,11 +110,19 @@ static int test_event(void *context, const LaEvent *event)
     hash_bytes(&events->hash, event->index.data, event->index.length);
     hash_bytes(&events->hash, event->aux.data, event->aux.length);
     hash_bytes(&events->hash, event->aux2.data, event->aux2.length);
+    hash_bytes(&events->hash, event->scratch.data, event->scratch.length);
+    hash_bytes(&events->hash, event->clobbers.data, event->clobbers.length);
+    events->hash ^= (unsigned long)event->byte_order;
+    events->hash *= 16777619UL;
+    events->hash ^= (unsigned long)event->volatility;
+    events->hash *= 16777619UL;
     events->hash ^= event->offset;
     events->hash *= 16777619UL;
     events->hash ^= event->stride;
     events->hash *= 16777619UL;
     events->hash ^= event->count;
+    events->hash *= 16777619UL;
+    events->hash ^= event->access_width;
     events->hash *= 16777619UL;
     events->hash ^= event->explicit_offset;
     events->hash *= 16777619UL;
@@ -144,6 +173,81 @@ static int test_event(void *context, const LaEvent *event)
         }
     } else if (event->kind == LA_EVENT_TARGET_OPERATION) {
         ++events->operations;
+        if (event->operation == LA_TARGET_OP_LOAD16_PTR_DISP ||
+            event->operation == LA_TARGET_OP_STORE16_PTR_DISP) {
+            check(event->access_width == 2,
+                  "word transfer reports two-unit width");
+            check(event->byte_order == LA_BYTE_ORDER_LITTLE,
+                  "word transfer reports target byte order");
+            check(event->base.length == 4 &&
+                  memcmp(event->base.data, "pObj", 4) == 0,
+                  "word transfer reports physical pointer");
+            check(event->aux.length == 2 &&
+                  memcmp(event->aux.data, "w0", 2) == 0,
+                  "word transfer reports physical word");
+            check(event->scratch.length == 1 &&
+                  event->scratch.data[0] == 'a',
+                  "word transfer reports accumulator scratch");
+            check(event->clobbers.length == 7 &&
+                  memcmp(event->clobbers.data, "a,flags", 7) == 0,
+                  "word transfer reports clobbers");
+            if (event->operation == LA_TARGET_OP_LOAD16_PTR_DISP) {
+                events->saw_word_load = 1;
+            } else {
+                events->saw_word_store = 1;
+            }
+        } else if (event->operation == LA_TARGET_OP_ADD16_PHYSICAL ||
+                   event->operation == LA_TARGET_OP_SUB16_PHYSICAL ||
+                   event->operation == LA_TARGET_OP_CMP16_PHYSICAL) {
+            check(event->base.length == 2 &&
+                  memcmp(event->base.data, "ab", 2) == 0,
+                  "word arithmetic reports physical accumulator");
+            check(event->aux.length == 2 &&
+                  memcmp(event->aux.data, "w0", 2) == 0,
+                  "word arithmetic reports physical operand");
+            check(event->access_width == 2,
+                  "word arithmetic reports two-unit width");
+            if (event->operation == LA_TARGET_OP_ADD16_PHYSICAL) {
+                events->saw_word_add = 1;
+            } else if (event->operation == LA_TARGET_OP_SUB16_PHYSICAL) {
+                events->saw_word_sub = 1;
+            } else {
+                events->saw_word_compare = 1;
+            }
+        } else if (event->operation == LA_TARGET_OP_INC8_PTR_DISP ||
+                   event->operation == LA_TARGET_OP_DEC8_PTR_DISP ||
+                   event->operation == LA_TARGET_OP_AND8_PTR_DISP ||
+                   event->operation == LA_TARGET_OP_OR8_PTR_DISP) {
+            check(event->access_width == 1,
+                  "byte update reports one-unit width");
+            check(event->volatility == LA_ACCESS_NONVOLATILE,
+                  "pointer byte update reports nonvolatile access");
+            check(event->scratch.length == 1 &&
+                  event->scratch.data[0] == 'a',
+                  "byte update reports accumulator scratch");
+            if (event->operation == LA_TARGET_OP_INC8_PTR_DISP) {
+                events->saw_byte_increment = 1;
+            } else if (event->operation == LA_TARGET_OP_DEC8_PTR_DISP) {
+                events->saw_byte_decrement = 1;
+            } else if (event->operation == LA_TARGET_OP_AND8_PTR_DISP) {
+                events->saw_byte_and = 1;
+            } else {
+                events->saw_byte_or = 1;
+            }
+        } else if (event->operation == LA_TARGET_OP_LOAD8_OVERLAY_INDEXED ||
+                   event->operation == LA_TARGET_OP_STORE8_OVERLAY_INDEXED) {
+            check(event->index.length == 1 && event->index.data[0] == 'y',
+                  "indexed overlay reports physical Y");
+            check(event->stride == 1,
+                  "indexed overlay reports unit stride");
+            check(event->volatility == LA_ACCESS_VOLATILE,
+                  "indexed MMIO overlay reports volatile access");
+            if (event->operation == LA_TARGET_OP_LOAD8_OVERLAY_INDEXED) {
+                events->saw_overlay_indexed_load = 1;
+            } else {
+                events->saw_overlay_indexed_store = 1;
+            }
+        }
     } else if (event->kind == LA_EVENT_ENUM_MEMBER) {
         ++events->enum_members;
     } else if (event->kind == LA_EVENT_OVERLAY) {
@@ -153,15 +257,178 @@ static int test_event(void *context, const LaEvent *event)
         check(event->owner.length == 0 && event->path.length == 0 &&
               event->base.length == 0 && event->index.length == 0 &&
               event->aux.length == 0 && event->aux2.length == 0 &&
+              event->scratch.length == 0 && event->clobbers.length == 0 &&
               event->property == 0 && event->operation == 0 &&
               event->aggregate_kind == 0 && event->layout_policy == 0 &&
+              event->byte_order == 0 &&
+              event->volatility == 0 &&
               event->signed_value == 0 &&
               event->value == 0 && event->offset == 0 &&
               event->stride == 0 && event->count == 0 &&
+              event->access_width == 0 &&
               event->explicit_offset == 0,
               "raw events do not retain fields from prior events");
     }
     return 1;
+}
+
+static void test_typed_word_transfers(void)
+{
+    static const char source[] =
+        "struct Fixed8_8\n"
+        "    fraction : u8\n"
+        "    integer : i8\n"
+        "end\n"
+        "struct Object\n"
+        "    pad : u8[4]\n"
+        "    speed : Fixed8_8\n"
+        "    timer : u8\n"
+        "end\n"
+        "proc transfer naked\n"
+        "    self : ptr Object in pObj\n"
+        "    value : u16 in w0\n"
+        "begin\n"
+        "    ldw value, [self + Object.speed]\n"
+        "    stw [self + Object.speed], value\n"
+        "    addw ab, value\n"
+        "    subw ab, value\n"
+        "    cmpw ab, value\n"
+        "    inc [self + Object.timer]\n"
+        "    dec [self + Object.timer]\n"
+        "    and [self + Object.timer], #$fe\n"
+        "    ora [self + Object.timer], #1\n"
+        "    ret\n"
+        "end\n";
+    static const char overlay_source[] =
+        "struct Registers\n"
+        "    channels : u8[4]\n"
+        "end\n"
+        "overlay regs : Registers at REGS volatile\n"
+        "lda [regs + Registers.channels[y]]\n"
+        "sta [regs + Registers.channels[y]]\n";
+    LaLimits limits;
+    TestEvents events;
+    TestDiagnostic diagnostic;
+    LaStats stats;
+    LaDiagnosticCode result;
+    LaTarget target;
+    limits = la_default_limits();
+    result = compile_source(source, 0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, "typed word transfers compile");
+    check(!diagnostic.seen, "typed word transfers have no diagnostic");
+    check(stats.operations == 11,
+          "word transfers and procedure operations are counted");
+    check(events.saw_word_load, "typed word load event emitted");
+    check(events.saw_word_store, "typed word store event emitted");
+    check(events.saw_word_add, "physical word add event emitted");
+    check(events.saw_word_sub, "physical word subtract event emitted");
+    check(events.saw_word_compare, "physical word compare event emitted");
+    check(events.saw_byte_increment, "typed byte increment event emitted");
+    check(events.saw_byte_decrement, "typed byte decrement event emitted");
+    check(events.saw_byte_and, "typed byte mask event emitted");
+    check(events.saw_byte_or, "typed byte update event emitted");
+    result = compile_source(
+        overlay_source, 0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, "indexed overlay transfers compile");
+    check(stats.operations == 2, "indexed overlay operations are counted");
+    check(events.saw_overlay_indexed_load,
+          "indexed overlay load event emitted");
+    check(events.saw_overlay_indexed_store,
+          "indexed overlay store event emitted");
+    expect_error(
+        "struct Object\nbyte : u8\nend\n"
+        "proc bad naked\n"
+        "self : ptr Object in pObj\n"
+        "value : u16 in w0\n"
+        "begin\nldw value, [self + Object.byte]\nret\nend\n",
+        limits, LA_ERR_ACCESS_WIDTH,
+        "byte field is rejected by typed word transfer");
+    expect_error(
+        "struct Object\nword : u16\nend\n"
+        "proc bad naked\n"
+        "self : ptr Object in pObj\n"
+        "value : u8 in t0\n"
+        "begin\nldw value, [self + Object.word]\nret\nend\n",
+        limits, LA_ERR_LOCATION_TYPE,
+        "byte physical location is rejected by typed word transfer");
+    expect_error(
+        "struct Object\npad : u8[255]\nword : u16\nend\n"
+        "proc bad naked\n"
+        "self : ptr Object in pObj\n"
+        "value : u16 in w0\n"
+        "begin\nldw value, [self + Object.word]\nret\nend\n",
+        limits, LA_ERR_DISPLACEMENT,
+        "word transfer validates both displacement units");
+    target = la_target_console6502;
+    target.pointer_word_operations = 0;
+    result = compile_source_target(source, 0, limits, &events, &diagnostic,
+                                   &stats, &target);
+    check(result == LA_ERR_UNSUPPORTED_OPERATION,
+          "target may reject typed pointer word transfers");
+    expect_error(
+        "proc bad naked\n"
+        "value : u16 in w0\n"
+        "begin\naddw w0, value\nret\nend\n",
+        limits, LA_ERR_MEMBER_PLACEMENT,
+        "word arithmetic requires the target accumulator");
+    expect_error(
+        "proc bad naked\n"
+        "value : u8 in t0\n"
+        "begin\naddw ab, value\nret\nend\n",
+        limits, LA_ERR_LOCATION_TYPE,
+        "word arithmetic rejects a byte physical operand");
+    target = la_target_console6502;
+    target.physical_word_arithmetic = 0;
+    result = compile_source_target(
+        "proc bad naked\n"
+        "value : u16 in w0\n"
+        "begin\naddw ab, value\nret\nend\n",
+        0, limits, &events, &diagnostic, &stats, &target);
+    check(result == LA_ERR_UNSUPPORTED_OPERATION,
+          "target may reject physical word arithmetic");
+    expect_error(
+        "struct Object\nword : u16\nend\n"
+        "proc bad naked\nself : ptr Object in pObj\n"
+        "begin\ninc [self + Object.word]\nret\nend\n",
+        limits, LA_ERR_ACCESS_WIDTH,
+        "byte update rejects a word field");
+    expect_error(
+        "struct Object\nbyte : u8\nend\n"
+        "proc bad naked\nself : ptr Object in pObj\n"
+        "begin\nand [self + Object.byte], #256\nret\nend\n",
+        limits, LA_ERR_ACCESS_WIDTH,
+        "byte update rejects a wide immediate");
+    target = la_target_console6502;
+    target.pointer_byte_rmw_operations = 0;
+    result = compile_source_target(
+        "struct Object\nbyte : u8\nend\n"
+        "proc bad naked\nself : ptr Object in pObj\n"
+        "begin\ninc [self + Object.byte]\nret\nend\n",
+        0, limits, &events, &diagnostic, &stats, &target);
+    check(result == LA_ERR_UNSUPPORTED_OPERATION,
+          "target may reject typed byte updates");
+    expect_error(
+        "struct Registers\nchannels : u8[4]\nend\n"
+        "overlay regs : Registers at REGS volatile\n"
+        "lda [regs + Registers.channels[x]]\n",
+        limits, LA_ERR_INDEX_LOCATION,
+        "indexed overlay requires physical Y");
+    expect_error(
+        "struct Pair\nlo : u8\nhi : u8\nend\n"
+        "struct Registers\nchannels : Pair[4]\nend\n"
+        "overlay regs : Registers at REGS volatile\n"
+        "lda [regs + Registers.channels[y].lo]\n",
+        limits, LA_ERR_INDEX_STRIDE,
+        "indexed overlay rejects non-unit stride");
+    target = la_target_console6502;
+    target.indexed_overlay_byte_operations = 0;
+    result = compile_source_target(
+        "struct Registers\nchannels : u8[4]\nend\n"
+        "overlay regs : Registers at REGS volatile\n"
+        "lda [regs + Registers.channels[y]]\n",
+        0, limits, &events, &diagnostic, &stats, &target);
+    check(result == LA_ERR_UNSUPPORTED_OPERATION,
+          "target may reject indexed overlay access");
 }
 
 static void test_diagnostic(void *context, const LaDiagnostic *diagnostic)
@@ -866,8 +1133,8 @@ static void test_layout_variants(void)
                  "misaligned numeric overlay rejected");
     expect_error("struct A\nx : u8[2]\nend\n"
                  "overlay v : A at RAM\nlda [v + A.x[x]]\n",
-                 limits, LA_ERR_UNSUPPORTED_OPERATION,
-                 "indexed overlay rejected");
+                 limits, LA_ERR_INDEX_LOCATION,
+                 "indexed overlay requires target index");
     expect_error("struct A\nx : u16\nend\n"
                  "overlay v : A at RAM\nlda [v + A.x]\n",
                  limits, LA_ERR_ACCESS_WIDTH,
@@ -1157,10 +1424,24 @@ static void test_namespaces(void)
         la_default_limits(), LA_ERR_ACCESS_WIDTH,
         "full procedure address requires word data");
     result = compile_source(
-        "struct Item\npad : u8[3]\nvalue : u8\nend\n"
-        "offset y, Item.value\n",
+        "struct Item\n"
+        "pad : u8[3]\n"
+        "value : u8\n"
+        "items : u8[4]\n"
+        "end\n"
+        "mov y, offset Item.value\n"
+        "mov slot, sizeof Item.items\n"
+        "mov slot, alignof Item.value\n"
+        "mov slot, countof Item.items\n"
+        "mov slot, strideof Item.items\n"
+        "static_assert offset Item.value == 3\n"
+        "static_assert sizeof Item.items == 4\n"
+        "static_assert alignof Item.value == 1\n"
+        "static_assert countof Item.items == 4\n"
+        "static_assert strideof Item.items == 1\n",
         0, la_default_limits(), &events, &diagnostic, &stats);
-    check(result == LA_OK, "typed field offset materializes");
+    check(result == LA_OK, "prefix layout queries materialize");
+    check(stats.operations == 5, "prefix query moves are counted");
     result = compile_source(
         "enum Kind : u8\n"
         "none = 0\n"
@@ -1190,14 +1471,24 @@ static void test_namespaces(void)
         "qualified immediate beyond target range is rejected");
     expect_error(
         "struct Big\nvalue : u8 at 256\nend\n"
-        "offset y, Big.value\n",
+        "mov y, offset Big.value\n",
         la_default_limits(), LA_ERR_DISPLACEMENT,
         "field offset beyond target range is rejected");
     expect_error(
         "struct Item\nvalue : u8\nend\n"
-        "offset t0, Item.value\n",
+        "mov t0, offset Item.value\n",
         la_default_limits(), LA_ERR_MEMBER_PLACEMENT,
         "field offset requires a supported physical destination");
+    expect_error(
+        "struct Item\nvalue : u8\nend\n"
+        "mov count, countof Item.value\n",
+        la_default_limits(), LA_ERR_BAD_PROPERTY,
+        "countof rejects scalar fields");
+    expect_error(
+        "struct Item\nvalue : u8\nend\n"
+        "offset y, Item.value\n",
+        la_default_limits(), LA_ERR_UNSUPPORTED_OPERATION,
+        "legacy offset statement is rejected");
 }
 
 static void test_workspace_error(void)
@@ -1247,6 +1538,7 @@ int main(void)
     test_layout_variants();
     test_capacities();
     test_namespaces();
+    test_typed_word_transfers();
     test_workspace_error();
     if (failures != 0) {
         fprintf(stderr, "%d Inlay test(s) failed\n", failures);

@@ -39,14 +39,21 @@ receive the resolved procedure identity and relocation part.
 
 ### Requirement: Typed Field-offset Materialisation
 
-The frontend SHALL provide an explicit operation that places a resolved field
-offset into a declared physical target location. The operation SHALL perform no
-memory access and SHALL publish target clobbers.
+The frontend SHALL provide prefix compile-time layout-query operators
+`offset`, `sizeof`, `alignof`, `countof` and `strideof`. A query SHALL bind to
+the qualified layout path immediately following it and SHALL be usable as a
+semantic `mov` source without a target-specific immediate marker. A query
+SHALL perform no memory access.
+
+`offset` SHALL place a resolved field displacement into the declared physical
+destination and SHALL publish target clobbers. `countof` and `strideof` SHALL
+reject scalar fields. Layout paths SHALL NOT implicitly select one of these
+properties.
 
 #### Scenario: Offset is loaded into an index register
 
 - **WHEN** source requests
-  `offset y, CelesteObject.core.kind`
+  `mov y, offset CelesteObject.core.kind`
 - **THEN** the target receives the resolved displacement and physical
   destination `y`
 
@@ -55,6 +62,18 @@ memory access and SHALL publish target clobbers.
 - **WHEN** the resolved displacement cannot be represented by the selected
   target location or operation
 - **THEN** lowering fails with the actual displacement and supported range
+
+#### Scenario: Array layout is queried
+
+- **WHEN** source requests
+  `mov count, countof CelesteObject.payload.hair.hair`
+- **THEN** lowering receives the array element count without a generated
+  property symbol
+
+#### Scenario: Legacy offset statement is used
+
+- **WHEN** source uses `offset y, CelesteObject.core.kind`
+- **THEN** translation rejects it in favor of the prefix query operand
 
 ### Requirement: Typed Word Field Transfers
 

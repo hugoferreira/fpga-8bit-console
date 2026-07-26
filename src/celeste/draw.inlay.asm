@@ -34,7 +34,7 @@ draw_frame:
 .loop:
     lda obj_slot
     jsr obj_ptr
-    offset y, CelesteObject.core.kind
+    mov y, offset CelesteObject.core.kind
     lda (pObj), y
     beq .next
     tax
@@ -166,7 +166,7 @@ stage_sprite:
 ;
 
 draw_obj_sprite:
-    offset y, CelesteObject.core.sprite
+    mov y, offset CelesteObject.core.sprite
     lda (pObj), y
     beq .done                   ; the cart's `elseif obj.spr > 0`
     cmp #29
@@ -182,7 +182,7 @@ draw_obj_sprite:
     pha
     lda #SPR_SMOKE_ATTR
 .flip:
-    offset y, CelesteObject.core.flip
+    mov y, offset CelesteObject.core.flip
     ora (pObj), y
     sta t3
     jsr obj_screen_pos
@@ -223,7 +223,7 @@ create_hair:
     sta t3
     lda [pObj + CelesteObject.core.y]
     sta t4
-    offset y, CelesteObject.payload.hair.hair
+    mov y, offset CelesteObject.payload.hair.hair
     ldx #HAIR_NODES
 .node:
     lda #0
@@ -288,7 +288,7 @@ draw_hair:
 .faceright:
     lda #2
 .lastx:
-    offset y, CelesteObject.core.x
+    mov y, offset CelesteObject.core.x
     clc
     adc (pObj), y
     sta hair_lx+1
@@ -300,7 +300,7 @@ draw_hair:
 .lastup:
     lda #3
 .lasty:
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y
     clc
     adc (pObj), y
     sta hair_ly+1
@@ -477,7 +477,7 @@ ovl_begin:
 .find:
     txa
     jsr obj_ptr
-    offset y, CelesteObject.core.kind
+    mov y, offset CelesteObject.core.kind
     lda (pObj), y
     cmp #ObjectKind.title
     beq .yes

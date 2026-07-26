@@ -209,7 +209,7 @@ camera_update:
 .find:
     txa
     jsr obj_ptr
-    offset y, CelesteObject.core.kind
+    mov y, offset CelesteObject.core.kind
     lda (pObj), y
     cmp #ObjectKind.player
     beq .found
@@ -220,7 +220,7 @@ camera_update:
     bne .find
     rts                         ; no player: leave the camera where it is
 .found:
-    offset y, CelesteObject.core.y
+    mov y, offset CelesteObject.core.y
     lda (pObj), y
     bmi .top                    ; above the room: show the top
     sub #56

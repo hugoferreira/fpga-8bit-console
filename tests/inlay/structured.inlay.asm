@@ -13,9 +13,19 @@ struct TestObject packed
     hair : HairNode[5]
 end
 
+struct WordObject packed
+    value : Fixed8_8
+    timer : u8
+end
+
+struct RegisterBank packed
+    channels : u8[4]
+end
+
 location pObj : ptr TestObject
 location pOther : ptr TestObject
 pool objects : TestObject[4] at OBJPOOL table obj_lo, obj_hi
+overlay registers : RegisterBank at REGS volatile
 
 static_assert objects.count == 4
 static_assert objects.stride == 24
@@ -40,6 +50,24 @@ proc indexed_store naked
     self : ptr TestObject in pObj
 begin
     sta [self + TestObject.bytes[x]]
+    ret
+end
+
+proc typed_operations naked
+    self : ptr WordObject in pWord
+    word : u16 in w0
+begin
+    ldw word, [self + WordObject.value]
+    stw [self + WordObject.value], word
+    addw ab, word
+    subw ab, word
+    cmpw ab, word
+    inc [self + WordObject.timer]
+    dec [self + WordObject.timer]
+    and [self + WordObject.timer], #$fe
+    ora [self + WordObject.timer], #1
+    lda [registers + RegisterBank.channels[y]]
+    sta [registers + RegisterBank.channels[y]]
     ret
 end
 
@@ -154,6 +182,9 @@ obj_hi:
 
 OBJPOOL = $8000
 pOther = $12
+pWord = $14
+w0 = $16
+REGS = $4100
 t0 = $20
 t1 = $21
 t2 = $22

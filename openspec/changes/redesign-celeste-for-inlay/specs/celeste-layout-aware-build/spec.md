@@ -64,8 +64,8 @@ forms whose register, flag, volatility or clobber behavior cannot be expressed.
 
 #### Scenario: Residual indexed operation needs its offset
 - **WHEN** a following raw operation requires Y to contain a field displacement
-- **THEN** source explicitly materializes the qualified field offset without an
-  `O_*` alias
+- **THEN** source uses `mov y, offset TYPE.field` to materialize the qualified
+  field displacement without an `O_*` alias
 
 #### Scenario: Typed form is not semantically equivalent
 - **WHEN** no registered typed operation preserves the required machine-state

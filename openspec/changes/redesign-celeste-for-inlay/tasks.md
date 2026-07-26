@@ -20,18 +20,18 @@
 
 - [x] 3.1 Add qualified constant, enum-member and layout-property resolution in frontend-owned operands
 - [x] 3.2 Add semantic low/high/full procedure-address data declarations and relocation events
-- [x] 3.3 Add typed field-offset materialisation with target range and clobber validation
+- [x] 3.3 Add prefix layout-query operands and typed field-offset materialisation with target range and clobber validation
 - [x] 3.4 Replace underscore-only qualified-procedure spelling with the collision-free target-symbol encoder
-- [x] 3.5 Add focused customasm reference tests for qualified values, dispatch data and offset materialisation
+- [x] 3.5 Add focused customasm reference tests for qualified values, dispatch data and prefix layout-query materialisation
 
 ## 4. Add Celeste-evidenced typed operations
 
-- [ ] 4.1 Add typed word field load/store events with width, byte-order, physical-location and scratch contracts
-- [ ] 4.2 Add explicit physical word add, subtract and compare operations for the console6502 target
-- [ ] 4.3 Add typed byte increment, decrement and mask/update operations with volatility and clobber rules
-- [ ] 4.4 Add indexed byte access for fixed-overlay arrays
-- [ ] 4.5 Add exact lowering references, negative diagnostics and bounded-capacity tests for every new operation
-- [ ] 4.6 Extend conformance to reject mechanically eligible legacy sequences while supporting documented semantic exceptions
+- [x] 4.1 Add typed word field load/store events with width, byte-order, physical-location and scratch contracts
+- [x] 4.2 Add explicit physical word add, subtract and compare operations for the console6502 target
+- [x] 4.3 Add typed byte increment, decrement and mask/update operations with volatility and clobber rules
+- [x] 4.4 Add indexed byte access for fixed-overlay arrays
+- [x] 4.5 Add exact lowering references, negative diagnostics and bounded-capacity tests for every new operation
+- [x] 4.6 Extend conformance to reject mechanically eligible legacy sequences while supporting documented semantic exceptions
 
 ## 5. Purify layouts and memory ownership
 

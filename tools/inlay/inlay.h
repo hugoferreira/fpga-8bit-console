@@ -168,8 +168,29 @@ typedef enum {
     LA_TARGET_OP_DATA_PROC_FULL,
     LA_TARGET_OP_MATERIALIZE_FIELD_OFFSET,
     LA_TARGET_OP_VALUE_MOV,
-    LA_TARGET_OP_VALUE_CMP
+    LA_TARGET_OP_VALUE_CMP,
+    LA_TARGET_OP_LOAD16_PTR_DISP,
+    LA_TARGET_OP_STORE16_PTR_DISP,
+    LA_TARGET_OP_ADD16_PHYSICAL,
+    LA_TARGET_OP_SUB16_PHYSICAL,
+    LA_TARGET_OP_CMP16_PHYSICAL,
+    LA_TARGET_OP_INC8_PTR_DISP,
+    LA_TARGET_OP_DEC8_PTR_DISP,
+    LA_TARGET_OP_AND8_PTR_DISP,
+    LA_TARGET_OP_OR8_PTR_DISP,
+    LA_TARGET_OP_LOAD8_OVERLAY_INDEXED,
+    LA_TARGET_OP_STORE8_OVERLAY_INDEXED
 } LaTargetOperationKind;
+
+typedef enum {
+    LA_BYTE_ORDER_LITTLE = 1,
+    LA_BYTE_ORDER_BIG
+} LaByteOrder;
+
+typedef enum {
+    LA_ACCESS_NONVOLATILE = 1,
+    LA_ACCESS_VOLATILE
+} LaAccessVolatility;
 
 typedef enum {
     LA_EVENT_HEADER = 1,
@@ -248,15 +269,20 @@ typedef struct {
     LaSlice index;
     LaSlice aux;
     LaSlice aux2;
+    LaSlice scratch;
+    LaSlice clobbers;
     LaPropertyKind property;
     LaTargetOperationKind operation;
     LaAggregateKind aggregate_kind;
     LaLayoutPolicy layout_policy;
+    LaByteOrder byte_order;
+    LaAccessVolatility volatility;
     la_i32 signed_value;
     la_u16 value;
     la_u16 offset;
     la_u16 stride;
     la_u16 count;
+    la_u16 access_width;
     la_u8 explicit_offset;
 } LaEvent;
 
@@ -360,6 +386,12 @@ typedef struct {
     la_u8 max_aggregate_alignment;
     la_u8 max_frame_alignment;
     la_u8 overlay_byte_operations;
+    la_u8 pointer_word_operations;
+    LaByteOrder byte_order;
+    const char *word_accumulator;
+    la_u8 physical_word_arithmetic;
+    la_u8 pointer_byte_rmw_operations;
+    la_u8 indexed_overlay_byte_operations;
 } LaTarget;
 
 typedef struct {
