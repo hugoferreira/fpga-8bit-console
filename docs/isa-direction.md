@@ -180,3 +180,57 @@ human wrote (me) and could have written differently. Before committing to A or
 C, the thing worth doing is transcribing two or three more routines and getting
 a dynamic instruction profile, because everything above weights by code written
 rather than code executed.
+
+---
+
+# Slice scoreboard, measured
+
+Written after `src/isa/pseudo.asm` made it possible to score a slice before
+building it. Every figure here is from the two customasm corpora (breakout,
+celeste); nemo is still ca65 and is excluded.
+
+| Slice | Opcodes | Sites | Bytes | Status |
+| --- | --- | --- | --- | --- |
+| `add-isa-core-ergonomics` (MOV/ADD/SUB/TRAP) | 8 | ~200 | large | **built** |
+| `add-isa-pointer-ops`, displacement half | 2 | 239 | large | **built** |
+| `add-isa-word-ops` (AB) | 8 | 18 | 94 | **built** |
+| `add-isa-test-and-branch` | 8 | 60 | 120 projected | **adopted in source** |
+| `add-isa-pointer-ops`, remaining half | 6 | ~8 | negligible | **do not build** |
+| `add-isa-frame-pointer` | prefix page | n/a | n/a | not measurable this way |
+
+Two things this ordering says that the original slice plan did not.
+
+**The word ops were the weakest of the built slices, and were built anyway**
+because they were sized from an idiom count rather than from adoption. 18 sites.
+Worth having, but they should not have gone before test-and-branch, which is
+worth more for the same opcode budget.
+
+**The remaining pointer ops should be dropped.** Six opcodes for about eight
+sites; the block copy and fill that motivated them do not occur in either
+corpus. The proposal also claims two slots that slice 2 already spent.
+
+## When the pseudo-instruction method works
+
+It is free exactly when the expansion is the code you would have written
+anyway, because then adoption is bit-identical and carries no risk to argue
+about. That holds for instructions that **fuse an existing sequence** and fails
+for instructions that **add architectural state**:
+
+- fusing (test-and-branch, the word ops): expansion is the current code, so
+  `make pseudo-check` proves adoption is a no-op and the projection is honest;
+- new state (the frame pointer's `F`): the only emulation is `ldx fp / lda n,x`,
+  which clobbers X. Adopting it would make the games worse today and the
+  resulting measurement would describe the emulation, not the instruction.
+
+A slice that introduces a register has to be justified on its own terms — for
+the frame pointer, on ergonomic ones, since its claim is about the size of
+program a person can hold and that was never a byte count.
+
+## What is still unmeasured
+
+Everything here weights by **code written**. A dynamic profile would weight by
+code executed, and the two disagree: a `cbne` in a per-frame inner loop is worth
+far more than one in a menu. `docs/cpu-timing-v2.json` gives per-instruction
+cycles, so the missing piece is an execution histogram from the simulator, not
+new hardware. That is the next thing worth building for this programme, and it
+is cheaper than any of the remaining slices.
