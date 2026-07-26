@@ -326,6 +326,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [2:0]  s_snd_id;
   logic [5:0]  s_snd_pitch;
   logic        s_pitch_direct;
+  logic        s_drop_effect;
+  logic        s_trigger_tag;
   logic        s_ch_noiz, s_ch_buzz;
   logic [1:0]  s_ch_det, s_ch_rev, s_ch_damp;
   logic [7:0]  s_eff_vol;
@@ -343,6 +345,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [7:0]  s_old_vol, s_last_vol;
   logic [2:0]  s_old_wave, s_last_wave;
   logic [5:0]  s_last_pitch;
+  logic        s_last_trigger;
+  logic        s_fx_phase_entry;
   logic [6:0]  s_ramp;              // 0 idle; 1..64 means blend position 0..63
   // The wavetable's base address in audio RAM, recomputed rather than stored:
   // 256 + id * 68 is two shifts and an add, against 13 bits per slot of state
@@ -406,7 +410,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     S_IDLE,
     T_FL, T_SP, T_LS, T_LE, T_NL, T_NH, T_LD,
     K_ADV, K_NL, K_NH, K_LD, K_ARP, K_ARPC,
-    K_PF0, K_PF1, K_PF2, K_FX, K_SLP0, K_SLP1,
+    K_PF0, K_PF1, K_PF2, K_FX,
+    K_SLP0, K_SLP1, K_SLP2, K_SLPM,
     I_TR0, I_TR1, I_TR2, I_TR3, I_TR4, I_ADV, I_NL, I_NH, I_LD,
     W_MUS,
     K_ROT, V_LD, V_ST,
@@ -437,7 +442,26 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                           w_eff_inc[23:16]};
       4'd2:    spar_wd = {2'b0, w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz,
                           w_ch_noiz, w_snd_pitch};
-      default: spar_wd = {7'b0, (!w_ins_on && w_cur_fx == 3'd0),
+      default: spar_wd = {5'b0,
+                          ((!w_ins_on && w_cur_fx == 3'd3)
+                           || (w_ins_on && !w_ins_wt
+                               && (w_cur_fx == 3'd0
+                                   || w_cur_fx == 3'd3)
+                               && w_ins_fx == 3'd3)),
+                          clr_tog[c],
+                          ((!w_ins_on
+                            && (w_cur_fx == 3'd0
+                                || w_cur_fx == 3'd4
+                                || w_cur_fx == 3'd5))
+                           || (w_ins_on && !w_ins_wt
+                               && (w_cur_fx == 3'd0
+                                   || w_cur_fx == 3'd3)
+                               && (w_ins_fx == 3'd0
+                                   || w_ins_fx == 3'd4
+                                   || w_ins_fx == 3'd5))
+                           || (w_ins_on && !w_ins_wt
+                               && (w_cur_fx == 3'd4
+                                   || w_cur_fx == 3'd5))),
                           w_eff_vol};
     endcase
   end
@@ -634,6 +658,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       K_PF1:   pinc_addr = e_prevp;
       K_PF2:   pinc_addr = e_arp;
       K_SLP0:  pinc_addr = slide_addr;
+      K_SLP1:  pinc_addr = (slide_addr == 6'd63)
+                              ? 6'd63 : slide_addr + 1'b1;
       default: pinc_addr = e_pitch;
     endcase
   end
@@ -711,6 +737,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       + (slp_neg ? -$signed(m_res[15:0]) : $signed(m_res[15:0]));
   wire signed [8:0] slp_whole = {slp_q8[15], slp_q8[15:8]};
   wire [5:0] slp_int = pclamp(slp_whole);
+  wire [7:0] slp_frac = (slp_whole < 0 || slp_whole > 9'sd62)
+                          ? 8'd0 : slp_q8[7:0];
 
   // Step results (fxv_next also feeds the last product's operand)
   wire [23:0] p24 = m_res[31:8];
@@ -1186,9 +1214,26 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             xs    <= xs + 1;
           end
         end
-        K_SLP0: sst <= K_SLP1;       // synchronous pitch-table read
+        K_SLP0: sst <= K_SLP1;       // issue/read the lower semitone
         K_SLP1: begin
+          // _get_dx_for_note_fine linearly interpolates the two adjacent
+          // integer-note increments using the fractional 16.16 pitch. Our row
+          // fraction is Q8, so retain those eight useful fractional bits and
+          // borrow a second synchronous table read.
           slide_r <= pinc_q;
+          sst <= K_SLP2;
+        end
+        K_SLP2: begin
+          // pinc_q is the upper semitone. Reuse the iterative multiplier for
+          // (upper-lower)*fraction; this trades 8 clocks for the combinational
+          // fine-pitch network PICO-8's software implementation can afford.
+          m_a   <= pinc_q - slide_r;
+          m_p   <= {25'b0, slp_frac};
+          m_cnt <= 4'd8;
+          sst   <= K_SLPM;
+        end
+        K_SLPM: if (!m_busy) begin
+          slide_r <= slide_r + p24;
           // Resume after micro-op 2 by starting its current-volume product.
           m_a   <= 24'd1317;
           m_p   <= {25'b0, {2'b0, vmul}};
@@ -1413,12 +1458,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // schedule below. REALTIME_PREVIEW is a constant, so the unused schedule is
   // removed during lowering rather than becoming runtime selection logic.
   localparam int PWORK = REALTIME_PREVIEW ? 7  : 15;
-  localparam int PFOLD = REALTIME_PREVIEW ? 18 : 47;
+  localparam int PFOLD = REALTIME_PREVIEW ? 18 : 57;
   localparam int PSTOR = REALTIME_PREVIEW ? 11 : 48;
   localparam int PLAST = REALTIME_PREVIEW ? 18 : 61;
   logic [5:0]  pph;
   logic        prun;
   logic signed [7:0] wq, smp_a, smp_b, old_smp;
+  logic signed [7:0] wt_p1, wt_q1;
+  logic signed [18:0] wi_acc, wi_d;
+  logic [9:0] wi_f, wt_pf, wt_qf;
+  logic [3:0] wi_cnt;
+  logic wi_qsel;
   logic [10:0] wrom_addr;
   logic [NV-1:0] clr_ack;              // pairs with the sequencer's clr_tog
 
@@ -1457,7 +1507,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         4'd10:   sosc_wd = {s_last_pitch[4:0], s_last_wave,
                             s_last_inc[23:16]};
         4'd11:   sosc_wd = s_last_inc[15:0];
-        4'd12:   sosc_wd = {4'b0, s_last_pitch[5], s_old_wave, s_last_vol};
+        4'd12:   sosc_wd = {2'b0, s_fx_phase_entry, s_last_trigger,
+                            s_last_pitch[5],
+                            s_old_wave, s_last_vol};
         default: sosc_wd = s_noise_lp;
       endcase
     end
@@ -1481,14 +1533,22 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [16:0] det_dq_round = {1'b0, einc[23:8]} + 17'd255;
   wire [16:0] det_dq_wide =
       {1'b0, einc[23:8]} - {8'b0, det_dq_round[16:8]};
+  // PICO-8 keeps a 17-bit secondary phase and computes DETUNE-1's increment
+  // as trunc(dp * 255 / 256).  The FPGA phase has eight additional fractional
+  // bits, so the exact mapping is the truncated 16-bit result followed by
+  // eight zeroes; no pitch-dependent residual belongs in those low bits.
   wire [23:0] det_dq = {det_dq_wide[15:0], 8'b0};
   wire pitch_transition = playing[pc_ch] && !s_snd_wt
                         && s_pitch_direct
                         && s_eff_inc != s_last_inc
                         && s_last_vol != 0
+                        && s_snd_wave == s_last_wave
                         && s_snd_pitch != s_last_pitch;
+  wire trigger_transition = playing[pc_ch]
+                          && s_trigger_tag != s_last_trigger;
   wire transition_change = playing[pc_ch] && !s_snd_wt
-                         && (s_eff_inc != s_last_inc
+                         && (trigger_transition
+                             || s_eff_inc != s_last_inc
                              || s_eff_vol != s_last_vol
                              || s_snd_wave != s_last_wave);
   wire [23:0] v2inc =
@@ -1515,9 +1575,19 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       if (pph == 6'(PWORK)) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb + {7'b0, s_phase[23:18]};
-      end else if (pph == 6'(PWORK + 1) && v2_on) begin
+      end else if (!REALTIME_PREVIEW && pph == 6'(PWORK + 1)) begin
+        syn_rd   = 1'b1;
+        syn_addr = s_snd_wtb
+                 + {7'b0, s_phase[23:18] + 6'd1};
+      end else if (pph == 6'(PWORK + (REALTIME_PREVIEW ? 1 : 2))
+                   && v2_on) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb + {7'b0, s_phase2[23:18]};
+      end else if (!REALTIME_PREVIEW && pph == 6'(PWORK + 3)
+                   && v2_on) begin
+        syn_rd   = 1'b1;
+        syn_addr = s_snd_wtb
+                 + {7'b0, s_phase2[23:18] + 6'd1};
       end
     end
   end
@@ -1548,6 +1618,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire signed [7:0] det_raw_clip =
       det_sum > 9'sd127 ? 8'sd127
     : det_sum < -9'sd127 ? -8'sd127 : det_sum[7:0];
+  wire signed [18:0] wi_add =
+      wi_f[0] ? (wi_acc + wi_d) : wi_acc;
+  wire signed [8:0] wt_pd =
+      $signed({wt_p1[7], wt_p1}) - $signed({smp_a[7], smp_a});
+  wire signed [8:0] wt_qd =
+      $signed({wt_q1[7], wt_q1}) - $signed({smp_b[7], smp_b});
 
   // nz_hold * nz_gain[key] / 256, saturated. The gain runs 87/256 at the
   // bottom of the range to 222/256 at the top; it used to be a flat 192/256
@@ -1615,8 +1691,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
   // DAMPEN: per-channel one-pole low-pass (Q8), shift by damp level
   wire signed [15:0] samp_q8 = signed'({samp, 8'b0});
-  wire signed [15:0] lp_next =
-      s_lp + ((samp_q8 - s_lp) >>> s_ch_damp);
+  // Keep the subtraction's carry bit. Opposite-sign endpoints can span almost
+  // the full 16-bit unsigned range; evaluating it at 16 bits wraps the first
+  // square-wave edge and produces an alternating full-scale transient instead
+  // of PICO-8's 0, 1/2, 3/4, 7/8... response.
+  wire signed [16:0] lp_delta =
+      $signed({samp_q8[15], samp_q8})
+      - $signed({s_lp[15], s_lp});
+  wire signed [16:0] lp_step =
+      $signed({s_lp[15], s_lp}) + (lp_delta >>> s_ch_damp);
+  wire signed [15:0] lp_next = lp_step[15:0];
   wire signed [7:0] samp_d = (s_ch_damp == 0) ? samp : lp_next[15:8];
 
   // Sample x volume, back to an 8-iteration shift-add - and this is the third
@@ -1627,10 +1711,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // ample slack, so the multiplier is serial and its iterations are hidden
   // under the record
   // write-back rather than added to the visit: the store phase does not depend
-  // on the product, so the 8 steps run concurrently with it. A visit costs 19
-  // clocks; eight visits plus the reduction tree cost 155 clocks. The
-  // magnitude is multiplied and the sign reapplied, so the product is
-  // bit-for-bit what the array multiplier produced.
+  // on the product, so the 8 steps run concurrently with it. The architectural
+  // PSG clock is derived from the >=100 MHz master clock; Verilator lowering
+  // and host throughput are not cycle-budget requirements. The magnitude is
+  // multiplied and the sign reapplied, so the product is bit-for-bit what the
+  // array multiplier produced.
   logic        mx_neg, mx_play;
   // Whether this slot is HEARD, as opposed to merely running. A music slot is
   // silenced while its channel's foreground effect plays, but it still renders:
@@ -1645,18 +1730,28 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [7:0] n_mag =
       samp_d[7] ? ((samp_d == -8'sd128) ? 8'd127 : 8'(-samp_d))
                 : 8'(samp_d);
+  // Custom waveforms add two signed table results before oscillator scaling,
+  // so their exact range is wider than one sample byte. Keep that ninth bit
+  // through the same eight-cycle sample-by-volume multiply. Their expanded
+  // table values use PICO-8's 7/8 oscillator scale before volume.
+  wire signed [8:0] wt_mix = det_sum;
+  wire signed [8:0] wt_scaled = wt_mix - (wt_mix >>> 3);
+  wire [8:0] n_mag9 =
+      s_snd_wt
+        ? (wt_scaled[8] ? 9'(-wt_scaled) : 9'(wt_scaled))
+        : {1'b0, n_mag};
   // The full 16-bit product, not its top byte. Truncating here cost the most
   // resolution anywhere in the chip: a note at PICO-8 volume 1 has eff_vol 36,
   // so (127*36)>>8 = 17 levels - 4.2 bits. Two thirds of NEMO's title music is
   // volume 1 or 2. Keeping the low half makes those 12.2 and 13.2 bits.
-  logic [15:0] n_res;
+  logic [16:0] n_res;
   // {accumulator, multiplier}: one add-and-shift per clock, 8 of them.
-  logic [7:0] nm_a;
+  logic [8:0] nm_a;
   logic [3:0]  nm_cnt;
-  wire [8:0] nm_sum = {1'b0, n_res[15:8]}
-                    + (n_res[0] ? {1'b0, nm_a} : 9'd0);
+  wire [9:0] nm_sum = {1'b0, n_res[16:8]}
+                    + (n_res[0] ? {1'b0, nm_a} : 10'd0);
   wire signed [16:0] nm_signed =
-      mx_neg ? -$signed({1'b0, n_res}) : $signed({1'b0, n_res});
+      mx_neg ? -$signed(n_res) : $signed(n_res);
   wire signed [16:0] nm_noise_scaled = nm_signed + (nm_signed >>> 1);
   logic signed [16:0] mx_new, mx_old, mx_prod;
   wire signed [16:0] blend_diff = mx_new - mx_old;
@@ -1773,6 +1868,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       smp_a <= 0;
       smp_b <= 0;
       old_smp <= 0;
+      wt_p1 <= 0;
+      wt_q1 <= 0;
+      wi_acc <= 0;
+      wi_d <= 0;
+      wi_f <= 0;
+      wt_pf <= 0;
+      wt_qf <= 0;
+      wi_cnt <= 0;
+      wi_qsel <= 0;
       clr_ack <= 0;
       n_res <= 0;
       nm_a <= 0;
@@ -1817,12 +1921,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       s_last_vol <= 0;
       s_last_wave <= 0;
       s_last_pitch <= 0;
+      s_last_trigger <= 0;
+      s_fx_phase_entry <= 0;
       s_ramp <= 0;
       s_eff_inc <= 0;
       s_snd_wave <= 0;
       s_snd_wt <= 0;
       s_snd_id <= 0;
       s_snd_pitch <= 0;
+      s_drop_effect <= 0;
       s_ch_noiz <= 0;
       s_ch_buzz <= 0;
       s_ch_det <= 0;
@@ -1882,9 +1989,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                     {s_last_pitch[4:0], s_last_wave,
                      s_last_inc[23:16]} <= sosc_q;
           6'd12: if (!REALTIME_PREVIEW) s_last_inc[15:0] <= sosc_q;
-          6'd13: if (!REALTIME_PREVIEW)
+          6'd13: if (!REALTIME_PREVIEW) begin
+                    s_fx_phase_entry <= sosc_q[13];
+                    s_last_trigger <= sosc_q[12];
                     {s_last_pitch[5], s_old_wave,
                      s_last_vol} <= sosc_q[11:0];
+                  end
           6'd14: if (!REALTIME_PREVIEW) s_noise_lp <= sosc_q;
           default: ;
         endcase
@@ -1893,7 +2003,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           6'd2: {s_snd_id, s_snd_wt, s_snd_wave, s_eff_inc[23:16]} <= spar_q[14:0];
           6'd3: {s_ch_damp, s_ch_rev, s_ch_det, s_ch_buzz, s_ch_noiz,
                  s_snd_pitch} <= spar_q[13:0];
-          6'd4: {s_pitch_direct, s_eff_vol} <= spar_q[8:0];
+          6'd4: {s_drop_effect, s_trigger_tag, s_pitch_direct,
+                 s_eff_vol} <= spar_q[10:0];
           default: ;
         endcase
 
@@ -1907,6 +2018,25 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         if (bl_cnt != 0) begin
           bl_p <= {bl_sum, bl_p[5:1]};
           bl_cnt <= bl_cnt - 1;
+        end
+        if (wi_cnt != 0) begin
+          wi_acc <= wi_add;
+          wi_d <= wi_d <<< 1;
+          wi_f <= wi_f >> 1;
+          wi_cnt <= wi_cnt - 1;
+          if (wi_cnt == 1) begin
+            if (!wi_qsel) begin
+              smp_a <= 8'(wi_add >>> 10);
+              wi_acc <= $signed({smp_b[7], smp_b, 10'b0});
+              wi_d <= {{10{wt_qd[8]}}, wt_qd};
+              wi_f <= wt_qf;
+              wi_cnt <= 4'd10;
+              wi_qsel <= 1;
+            end else begin
+              smp_b <= 8'(wi_add >>> 10);
+              wi_qsel <= 0;
+            end
+          end
         end
 
         if (pph == 6'(PLAST)) begin
@@ -1925,8 +2055,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
               if (playing[pc_ch] && s_eff_vol != 0) begin
                 s_phase <= s_phase + einc;
-                if (v2_on)
-                  s_phase2 <= s_phase2 + v2inc;
                 if (s_ch_noiz || s_phase[23:20] != s_nz_ph) begin
                   s_nz_ph <= s_phase[23:20];
                   s_nz_hold <= $signed(lfsr[7:0]);
@@ -1948,14 +2076,19 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               end
             end
             6'(PWORK + 1): begin
+              // The secondary synchronous read observes q during this cycle.
+              // Advance it at the edge only after that address has captured
+              // the same pre-advance sample state as p captured at PWORK.
+              if (playing[pc_ch] && s_eff_vol != 0 && v2_on)
+                s_phase2 <= s_phase2 + v2inc;
               smp_a <= s_snd_wt ? $signed(seq_q) : wq;
             end
             6'(PWORK + 2): begin
               smp_b <= s_snd_wt ? $signed(seq_q) : wq;
-              nm_a   <= n_mag;
-              n_res  <= {8'b0, s_eff_vol};
+              nm_a   <= n_mag9;
+              n_res  <= {9'b0, s_eff_vol};
               nm_cnt <= 4'd8;
-              mx_neg  <= samp_d[7];
+              mx_neg  <= s_snd_wt ? wt_mix[8] : samp_d[7];
               mx_play <= playing[pc_ch];
               mx_aud  <= playing[pc_ch]
                          & ~(is_mus(pc_ch)
@@ -1990,9 +2123,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             // fade-in rows: their silent first ticks freeze phase rather than
             // free-running it.
             if (playing[pc_ch] && s_eff_vol != 0) begin
-              s_phase <= s_phase + einc;
-              if (v2_on)
-                s_phase2 <= s_phase2 + v2inc;
+              if (!s_snd_wt)
+                s_phase <= s_phase + einc;
+              else begin
+                wt_pf <= s_phase[17:8];
+                wt_qf <= s_phase2[17:8];
+              end
               // noise: white every sample when NOIZ, else pitched S&H
               if (s_ch_noiz || s_phase[23:20] != s_nz_ph) begin
                 s_nz_ph <= s_phase[23:20];
@@ -2011,6 +2147,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             // old-to-new render. The previous phase begins exactly where the
             // new phase did before either continuation advances.
             if (transition_change) begin
+              // A trigger generation is published atomically with the new
+              // parameters and retained in the oscillator record. This makes
+              // a retrigger a transition even when its sounding parameters
+              // happen to match the preceding state.
               s_old_phase <= s_phase;
               s_old_inc <= s_last_inc;
               s_old_vol <= s_last_vol;
@@ -2022,8 +2162,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               // stream consumes its new increment starting with the following
               // sample. Without this hold, every pitch boundary leaves the
               // new continuation one sample ahead after the crossfade.
-              if (pitch_transition)
+              if (pitch_transition && !trigger_transition)
                 s_phase <= s_phase;
+              else if (s_drop_effect && !s_fx_phase_entry
+                       && s_eff_inc != s_last_inc && s_last_vol != 0
+                       && s_snd_wave == s_last_wave
+                       && !trigger_transition) begin
+                s_phase <= s_phase + {s_eff_inc[22:0], 1'b0};
+                s_fx_phase_entry <= 1;
+              end
               // A zero-amplitude state is not merely an inaudible running
               // oscillator in PICO-8: the next nonzero state starts from the
               // canonical phase again.  Repeated speed-2 fade-in rows export
@@ -2034,9 +2181,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               end
             end
             s_last_inc <= s_eff_inc;
-            s_last_vol <= s_eff_vol;
+            // A pattern handoff publishes zero volume while music itself is
+            // still active. Preserve only that last audible field across the
+            // gap; increment, waveform and pitch never change there and do not
+            // need wide preservation muxes.
+            if (playing[pc_ch] || !(is_mus(pc_ch) && mus_playing))
+              s_last_vol <= s_eff_vol;
             s_last_wave <= s_snd_wave;
             s_last_pitch <= s_snd_pitch;
+            s_last_trigger <= s_trigger_tag;
+            if (trigger_transition || s_pitch_direct)
+              s_fx_phase_entry <= 0;
             // a trigger asked for this channel's filter state to be reset
             if (clr_tog[pc_ch] != clr_ack[pc_ch]) begin
               clr_ack[pc_ch] <= clr_tog[pc_ch];
@@ -2046,60 +2201,109 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             end
           end
           6'(PWORK + 1): begin           // main-voice sample
+            // Keep q's synchronous ROM address on the pre-advance phase,
+            // matching PICO-8's render-then-advance oscillator ordering.
+            if (playing[pc_ch] && s_eff_vol != 0 && v2_on && !s_snd_wt)
+              s_phase2 <= s_phase2 + v2inc;
+            if (playing[pc_ch] && s_eff_vol != 0 && s_snd_wt)
+              s_phase <= s_phase + einc;
             smp_a <= s_snd_wt ? $signed(seq_q) : wq;
           end
           6'(PWORK + 2): begin           // second voice
-            smp_b <= s_snd_wt ? $signed(seq_q) : wq;
+            if (s_snd_wt)
+              wt_p1 <= $signed(seq_q);
+            else
+              smp_b <= wq;
           end
           6'(PWORK + 3): begin           // preceding-state waveform sample
-            old_smp <= wq;
+            if (s_snd_wt) begin
+              smp_b <= $signed(seq_q);
+              if (playing[pc_ch] && s_eff_vol != 0 && v2_on)
+                s_phase2 <= s_phase2 + v2inc;
+            end else
+              old_smp <= wq;
           end
           6'(PWORK + 4): begin
-            // The old continuation advances independently for exactly the
-            // samples in which it participates in the transition.
-            if (s_ramp != 0 && s_old_vol != 0)
-              s_old_phase <= s_old_phase + s_old_inc;
-            // First serialized product: new oscillator sample × new volume.
-            nm_a   <= n_mag;
-            n_res  <= {8'b0, s_eff_vol};
-            nm_cnt <= 4'd8;
-            mx_neg  <= samp_d[7];
-            mx_play <= playing[pc_ch];
-            // Audible unless this is a music slot whose channel currently has a
-            // foreground effect running.
-            mx_aud  <= playing[pc_ch]
-                       & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
-            mx_lp   <= lp_next;
-            mx_rev  <= s_ch_rev;
-            mx_damp <= s_ch_damp;
+            if (s_snd_wt) begin
+              // PICO-8 interpolates its 64 signed wavetable samples with ten
+              // fractional phase bits. Serialize p and then q through one
+              // shift-add interpolator; twenty clocks are still well inside
+              // the long hardware visit and halve the arithmetic state.
+              wt_q1 <= $signed(seq_q);
+              wi_acc <= $signed({smp_a[7], smp_a, 10'b0});
+              wi_d <= {{10{wt_pd[8]}}, wt_pd};
+              wi_f <= wt_pf;
+              wi_cnt <= 4'd10;
+              wi_qsel <= 0;
+            end else begin
+              // The old continuation advances independently for exactly the
+              // samples in which it participates in the transition.
+              if (s_ramp != 0 && s_old_vol != 0)
+                s_old_phase <= s_old_phase + s_old_inc;
+              // First serialized product: new oscillator sample × new volume.
+              nm_a   <= n_mag9;
+              n_res  <= {9'b0, s_eff_vol};
+              nm_cnt <= 4'd8;
+              mx_neg  <= samp_d[7];
+              mx_play <= playing[pc_ch];
+              // Audible unless this music slot has a foreground effect.
+              mx_aud  <= playing[pc_ch]
+                         & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
+              mx_lp   <= lp_next;
+              mx_rev  <= s_ch_rev;
+              mx_damp <= s_ch_damp;
+            end
           end
           6'(PWORK + 13): begin
-            mx_new <= (s_snd_wave == 3'd6) ? nm_noise_scaled : nm_signed;
-            // Second serialized product: old continuation × old volume.
-            nm_a   <= old_smp[7]
-                        ? ((old_smp == -8'sd128) ? 8'd127 : 8'(-old_smp))
-                        : 8'(old_smp);
-            n_res  <= {8'b0, s_old_vol};
-            nm_cnt <= 4'd8;
-            mx_neg <= old_smp[7];
+            if (!s_snd_wt) begin
+              mx_new <= (s_snd_wave == 3'd6) ? nm_noise_scaled : nm_signed;
+              // Second serialized product: old continuation × old volume.
+              nm_a   <= old_smp[7]
+                          ? ((old_smp == -8'sd128) ? 9'd127
+                                                  : 9'(-old_smp))
+                          : {1'b0, old_smp};
+              n_res  <= {9'b0, s_old_vol};
+              nm_cnt <= 4'd8;
+              mx_neg <= old_smp[7];
+            end
+          end
+          6'(PWORK + 25): begin
+            if (s_snd_wt) begin
+              nm_a   <= n_mag9;
+              n_res  <= {9'b0, s_eff_vol};
+              nm_cnt <= 4'd8;
+              mx_neg  <= wt_mix[8];
+              mx_play <= playing[pc_ch];
+              mx_aud  <= playing[pc_ch]
+                         & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
+              mx_lp   <= lp_next;
+              mx_rev  <= s_ch_rev;
+              mx_damp <= s_ch_damp;
+            end
           end
           6'(PWORK + 22): begin
-            mx_old <= mx_neg ? -$signed({1'b0, n_res})
-                             :  $signed({1'b0, n_res});
+            if (!s_snd_wt)
+              mx_old <= mx_neg ? -$signed(n_res) : $signed(n_res);
           end
           6'(PWORK + 23): begin
             // A zero ramp bypasses the blend entirely. Otherwise start the
             // 16×6 difference product on the same serialized principle.
-            if (s_ramp == 0) begin
+            if (!s_snd_wt && s_ramp == 0) begin
               mx_prod <= mx_new;
-            end else begin
+            end else if (!s_snd_wt) begin
               bl_a <= blend_mag;
               bl_p <= {17'b0, blend_pos};
               bl_cnt <= 3'd6;
             end
           end
+          6'(PWORK + 34): begin
+            if (s_snd_wt) begin
+              mx_new <= nm_signed;
+              mx_prod <= nm_signed;
+            end
+          end
           6'(PWORK + 30): begin
-            if (s_ramp != 0) begin
+            if (!s_snd_wt && s_ramp != 0) begin
               mx_prod <= blend_diff[16]
                            ? (mx_old - $signed({1'b0, bl_res[21:6]}))
                            : (mx_old + $signed({1'b0, bl_res[21:6]}));
@@ -2130,13 +2334,26 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // delay at the strongest level any active channel requested)
   generate
   if (REVERB) begin : g_reverb
-    logic signed [7:0] revbuf[0:731];
+    // Ten signed bits in units of 64 PCM counts preserve the exported tail
+    // down to its last ~62-count repeat while keeping 732 samples in two EBRs.
+    logic signed [9:0] revbuf[0:731];
     logic [9:0] widx, ridx;
-    logic signed [7:0] rev_q, dry_l;
+    logic signed [9:0] rev_q, dry_l;
     logic [1:0] rst, rlvl_l;
-    logic signed [9:0] rev_outv;
+    logic signed [10:0] rev_fbv;
+    logic signed [9:0] rev_fb;
+    logic signed [15:0] rev_echo;
     wire [9:0] dlen = (rev_lvl == 2'd1) ? 10'd366 :
                       (rev_lvl == 2'd2) ? 10'd732 : 10'd0;
+    always_comb begin
+      rev_fbv = $signed({dry_l[9], dry_l})
+                + ((rlvl_l == 2'd0)
+                     ? 11'sd0 : $signed({rev_q[9], rev_q}) >>> 1);
+      rev_fb = rev_fbv > 11'sd511 ? 10'sd511
+             : rev_fbv < -11'sd512 ? -10'sd512 : rev_fbv[9:0];
+      rev_echo = (rlvl_l == 2'd0)
+                   ? 16'sd0 : $signed({rev_q[9], rev_q, 5'b0});
+    end
     always_ff @(posedge clk)
       rev_q <= revbuf[ridx];
     always_ff @(posedge clk) begin
@@ -2146,7 +2363,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       end else begin
         case (rst)
           2'd0: if (dry_valid) begin
-            dry_l <= 8'(dry16 >>> 8);   // the echo tap stays 8-bit
+            dry_l <= 10'(dry16 >>> 6);
             rlvl_l <= rev_lvl;
             ridx <= (dlen == 0) ? widx :
                     (widx >= dlen) ? widx - dlen : widx + 10'd732 - dlen;
@@ -2154,10 +2371,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           end
           2'd1: rst <= 2'd2;                     // revbuf read settles
           2'd2: begin
-            rev_outv = (rlvl_l == 2'd0) ? 10'sd0
-                         : $signed({{3{rev_q[7]}}, rev_q[7:1]});
-            pcm <= 16'(dry16 + $signed({rev_outv, 8'b0}));
-            revbuf[widx] <= dry_l;
+            pcm <= 16'(dry16 + rev_echo);
+            // PICO-8's reverb is a feedback comb: the delayed half-level
+            // repeat is written back with the dry signal, producing the
+            // measured 1/2, 1/4, 1/8... impulse train every delay period.
+            revbuf[widx] <= rev_fb;
             widx <= (widx == 10'd731) ? 10'd0 : widx + 1;
             rst <= 2'd0;
           end

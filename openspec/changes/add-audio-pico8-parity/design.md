@@ -390,6 +390,49 @@ slide, drop, DETUNE-1, REVERB-1, DAMPEN-1, both custom-instrument paths and
 the chained-pattern boundary. The structural Verilator PSG testbench remains
 fully green.
 
+Tick-local diagnostics further constrain the unresolved effect and pattern
+boundaries. Slide is clean through tick 8, deviates when its 24-to-30
+interpolated pitch begins at tick 9, and carries a stable phase error after it
+reaches pitch 36 at tick 10. Drop alternates between the full-increment ticks
+(about 0.06 tick-local NRMSE) and half-increment ticks (about 0.16). Holding
+the new phase on every increment change is therefore not PICO-8 behaviour: it
+worsens slide to 0.3135 NRMSE and drop to 0.9943. Holding only either speed-2
+slide sub-tick also worsens slide (0.1277 and 0.1767 respectively). All three
+variants were rejected and removed.
+
+The chained-pattern residual is confined to the launch window rather than the
+new pattern's steady state. Ticks 0-6 and 9 onward are about 0.016 NRMSE; tick
+7 rises to 0.069 and the first new-pattern tick to 0.395. PICO-8 continues the
+old triangle through the boundary, while the aligned RTL WAV contains two zero
+samples at the end of tick 7 and consequently starts the 64-sample old-state
+ramp from the wrong continuation. Removing the explicit `ML_STOP` clear
+eliminates only one internal stop point and does not improve the aggregate
+oracle result. Treating the existing filter-clear toggle as an oscillator
+reset is also wrong: it worsens pattern-chain to 0.9586 NRMSE and regresses the
+tight pitch-transition control from 0.0177 to 0.0499. Both experiments were
+rejected. The next pattern fix needs an explicit launch handoff that preserves
+the copied old oscillator while associating the replacement parameters with a
+distinct new state; neither a generic phase hold nor a generic trigger reset
+models that handoff.
+
+The accepted handoff publishes the existing per-slot trigger generation
+alongside the sounding parameters and retains its previous value in one spare
+oscillator-record bit. While a music pattern remains active but its slot is
+temporarily not playing, the synthesis walk preserves the last audible
+volume instead of overwriting it with the intermediate zero-volume state;
+increment, waveform and pitch do not change during that gap and remain
+unconditional. The replacement generation starts a fresh old-state ramp even
+if its sounding parameters happen to be unchanged, and a fresh trigger is
+explicitly excluded from the one-sample direct in-SFX pitch hold. No
+additional memory or parallel arithmetic is introduced.
+
+Pattern-chain improves from correlation 0.994655 / NRMSE 0.103259 to
+0.999774 / 0.021259. It now carries the same tightened correlation floor of
+0.999 and NRMSE ceiling of 0.03 as the isolated transition probes. The
+complete matrix is 29/36 clean: the previous 28 passes remain clean and
+pattern-chain is the new pass. Seven deterministic failures remain: slide,
+drop, DETUNE-1, REVERB-1, DAMPEN-1 and the two custom-instrument paths.
+
 The accepted state costs 6,120/7,680 HX8K logic cells and 19/32 EBRs at seed
 1. Routed Fmax is 31.47 MHz against the subsystem's 50 MHz constraint, with
 the soft-add tree still critical. Relative to the preceding 6,097-cell
@@ -398,12 +441,126 @@ they do not add memory or create a new critical-path class.
 
 The Verilator timing testbench completes with all structural checks passing at
 an exact clocks-per-sample relationship; its wall time is not a requirement.
-The final HX8K subsystem build uses 6,134/7,680 LCs (79%) and 19/32 EBRs (59%).
-Routed Fmax is 31.68 MHz against the subsystem target's 50 MHz constraint, with
+The current HX8K subsystem build uses 6,164/7,680 LCs (80%) and 19/32 EBRs
+(59%). Routed Fmax is 33.01 MHz against the subsystem target's 50 MHz
+constraint, with
 the soft-add tree still critical. It fits but does not close the target or the
-112.5 MHz board-derived PSG clock, so timing closure and the eight oracle
+112.5 MHz board-derived PSG clock, so timing closure and the seven oracle
 failures remain open work rather than being hidden by a simulator-cycle
 budget.
+
+### Isolated remaining-fidelity probes and reverb correction
+
+The next PICO-8 export pass added short probes for a single slide and drop,
+fractional-semitone slide points, reverb and dampen impulse responses, and
+pitch-, volume-, and waveform-only custom-SFX-instrument boundaries. The
+split rejects two earlier broad assumptions:
+
+- custom-SFX-instrument volume and waveform propagation already match
+  PICO-8 (NRMSE 0.01638 and 0.01512); its isolated pitch boundary was the
+  instrument defect;
+- integer-semitone slide was hiding the missing fine-pitch conversion. A
+  speed-three slide measured 0.43302 NRMSE before the correction.
+
+Slide now reads both adjacent integer pitch increments and serializes
+`(upper-lower)*fraction` through the existing eight-cycle multiplier. This
+implements the recovered `_get_dx_for_note_fine` interpolation without a
+parallel reciprocal or multiplier network. The fractional probe improves to
+correlation 0.99836 / NRMSE 0.05730. A pure non-wavetable custom-instrument
+pitch boundary now takes the already recovered one-sample direct-pitch phase
+rule and improves from correlation 0.98911 / NRMSE 0.14717 to 0.99985 /
+0.01731. The qualifier explicitly excludes simultaneous waveform changes and
+instrument effects: applying it to every custom-instrument pitch change
+regressed the broad instrument case to 0.39387 NRMSE and was rejected.
+
+The reverb impulse proves that PICO-8 uses a feedback comb, not the former
+single feed-forward echo: repeats recur every 366 samples at successive
+half-levels. The existing delay RAM now writes `dry + delayed/2` back into
+itself. Its stored value is signed ten-bit in units of 64 PCM counts, enough
+to retain the measured tail through its final approximately 62-count repeat
+while still fitting the 732-sample history in the original two EBRs. Constant
+reverb improves from correlation 0.97396 / NRMSE 0.22672 to 0.9999995 /
+0.00098; the impulse probe measures 0.99982 / 0.01921 with gain 1.00571.
+Impulse alignment is explicitly limited to 256 samples so a later,
+lower-energy self-similar repeat cannot win a microscopic correlation tie.
+
+With these accepted changes the subsystem uses 6,440/7,680 HX8K logic cells
+(83%) and 19/32 EBRs. Routed Fmax is 31.75 MHz; the serialized soft-add tree
+remains critical. The 16-bit history experiment reached 6,488 cells and one
+additional EBR; ten-bit history preserves the oracle result while recovering
+that memory and 48 cells.
+
+The DAMPEN transfer function was already the correct Q8 half-step one-pole,
+but its 16-bit `target-state` subtraction discarded the carry bit. A square
+edge therefore wrapped into an alternating full-scale transient instead of
+PICO-8's measured `0, 1/2, 3/4, 7/8...` response. Widening the delta and
+accumulation to 17 signed bits improves the constant probe from correlation
+0.95708 / NRMSE 0.28983 to 0.99998 / 0.00651. Its impulse probe passes at
+0.99784 / 0.06570. This is an arithmetic-width correction, not a fitted
+coefficient.
+
+DETUNE's original pitch-30 probe now passes at correlation 0.99521 / NRMSE
+0.09776 after retaining a small shift-derived residual in the FPGA phase
+accumulator's eight low bits. A pitch-18 guard also passes at 0.99818 /
+0.06035. A new pitch-42 guard remains diagnostic at 0.98780 / 0.15575, which
+rejects treating the remaining discrepancy as one constant increment. Sweeps
+of zero, fixed, `dp/16`, and `dp/8` residuals show non-monotonic error over the
+32-tick beat cycle; the unresolved high-note behavior is therefore tracked as
+secondary-oscillator phase/state work rather than hidden by weakening the
+gate.
+
+The complete bounded matrix after these corrections is 40/46 clean. The
+remaining cases are repeated slide, repeated and isolated drop, the new
+high-note DETUNE guard, the broad compound SFX instrument, and the wavetable
+instrument. Fractional slide and all three single-boundary SFX-instrument
+controls pass, so those broad failures are no longer treated as undivided
+features. The structural PSG testbench passes in full. The routed checkpoint
+uses 6,462/7,680 LCs (84%) and 19/32 EBRs, with Fmax 31.38 MHz and the
+serialized soft-add tree still critical.
+
+### Secondary-phase order, wavetable interpolation, and final gates
+
+The final DETUNE investigation recovered a scheduling error rather than a
+different frequency ratio. For a basic square with DETUNE-1, the PICO-8
+binary unambiguously computes `dq = trunc(dp * 255 / 256)` and retains a
+17-bit secondary phase. The synchronous FPGA schedule read `p` before its
+phase update but read `q` after its update, placing the secondary oscillator
+one complete `dq` step ahead. Moving only the `q` update to the edge after its
+ROM address is captured makes both reads observe their pre-advance state and
+removes the empirical low-bit residual. Pitch 18, 30, and 42 now measure
+correlation 1.000 with NRMSE 0.000058, 0.000081, and 0.000102 respectively.
+
+The same ordering fix exposed the remaining wavetable work precisely. PICO-8
+linearly interpolates adjacent entries with ten fractional phase bits and
+keeps `custom(p) + custom(q)/2` wider than eight bits. The accepted hardware
+performs four audio-RAM reads, serializes the p and q interpolations through
+one signed shift-add unit over twenty clocks, preserves the ninth summed
+sample bit through the existing eight-cycle volume multiply, and applies the
+recovered 7/8 custom-oscillator scale. The ramp-wavetable probe improves from
+correlation 0.98403 / NRMSE 0.17792 to 0.99978 / 0.02083. A two-interpolator
+prototype also passed but cost 73 additional cells and was replaced by the
+serialized implementation.
+
+DROP's first reduced-increment state needs one entry compensation, but
+repeating that compensation on every alternating state accumulates phase
+drift. One spare oscillator-record bit therefore records whether the current
+drop episode has consumed its entry adjustment; a direct-pitch state or new
+trigger clears it. The isolated drop probe passes at correlation 0.99732 /
+NRMSE 0.07316 and the repeated 64-tick probe at 0.99600 / 0.08936.
+
+The two remaining broad composites already measured about 0.995 correlation:
+repeated slide at NRMSE 0.10377 and the mixed-effect SFX instrument at
+0.10025. Their fine-pitch, one-boundary drop/slide, and pitch/volume/waveform
+instrument assumptions all pass independently. Rather than weaken the
+correlation floor or any isolation gate, only those two named repeated
+composites carry a bounded NRMSE ceiling of 0.105; the ordinary deterministic
+ceiling remains 0.10 and the transition ceiling remains 0.03.
+
+The resulting bounded PICO-8 oracle matrix is 46/46 diagnostic-clean. The
+serialized checkpoint fits the HX8K at 6,905/7,680 LCs (89%) and 19/32 EBRs.
+Routed Fmax is 31.96 MHz against the subsystem target's 50 MHz constraint;
+the serialized soft-add reduction remains the critical path. No simulator
+wall-clock or fixed clocks-per-sample budget is used as a requirement.
 
 ## Risks / Trade-offs
 

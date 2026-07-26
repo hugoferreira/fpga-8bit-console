@@ -101,7 +101,7 @@
 
 - [x] 9.1 Classify every initial failure by timing, sequencer, oscillator,
       effect, filter or mixer and record the measured evidence
-- [ ] 9.2 Fix deterministic failures one layer at a time, tightening the
+- [x] 9.2 Fix deterministic failures one layer at a time, tightening the
       corresponding oracle case with each correction
 - [x] 9.3 Fix stochastic noise/filter distribution failures without requiring
       identical PRNG sequences

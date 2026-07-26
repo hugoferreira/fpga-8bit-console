@@ -41,6 +41,7 @@ class Probe:
     expected_ticks: int
     stochastic: bool = False
     long: bool = False
+    alignment_max_shift: int = 1024
 
 
 def note(pitch: int, waveform: int, volume: int, effect: int = 0,
@@ -125,6 +126,32 @@ def probes() -> list[Probe]:
             64,
         ))
 
+    # Short effect probes expose one control-rate entry/exit without the
+    # repeated rows in the broad 64-tick cases obscuring which transition
+    # introduced a persistent phase error.
+    out.append(Probe(
+        "effect-slide-once", "one speed-2 slide row bracketed by plain notes",
+        {0: sfx([note(24, 0, 7), note(36, 0, 7, 1),
+                 note(36, 0, 7)], speed=2, length=3)},
+        [([0, None, None, None], False, False, True)],
+        6,
+    ))
+    out.append(Probe(
+        "effect-slide-fractional",
+        "one speed-3 slide with fractional-semitone interpolation points",
+        {0: sfx([note(24, 0, 7), note(35, 0, 7, 1),
+                 note(35, 0, 7)], speed=3, length=3)},
+        [([0, None, None, None], False, False, True)],
+        9,
+    ))
+    out.append(Probe(
+        "effect-drop-once", "one speed-2 drop row followed by a plain note",
+        {0: sfx([note(36, 0, 7, 3), note(36, 0, 7)],
+                speed=2, length=2)},
+        [([0, None, None, None], False, False, True)],
+        4,
+    ))
+
     # One-boundary transition probes. These distinguish oscillator-state
     # continuation from the effect and music sequencers: exactly one parameter
     # changes halfway through one SFX, while the other two remain fixed.
@@ -174,6 +201,33 @@ def probes() -> list[Probe]:
             stochastic=(name == "noiz"),
         ))
 
+    for name, pitch in (("low", 18), ("high", 42)):
+        out.append(Probe(
+            f"filter-detune-{name}",
+            f"DETUNE-1 square pitch {pitch}",
+            {0: constant(pitch, 3, filt=8)},
+            [([0, None, None, None], False, False, True)],
+            32,
+        ))
+
+    out.append(Probe(
+        "filter-reverb-impulse",
+        "one audible square tick followed by silence through reverb-1",
+        {0: sfx([note(30, 3, 7)] + [note(30, 3, 0)] * 15,
+                speed=1, length=16, filt=24)},
+        [([0, None, None, None], False, False, True)],
+        16,
+        alignment_max_shift=256,
+    ))
+    out.append(Probe(
+        "filter-dampen-impulse",
+        "one audible square tick followed by silence through dampen-1",
+        {0: sfx([note(30, 3, 7)] + [note(30, 3, 0)] * 15,
+                speed=1, length=16, filt=72)},
+        [([0, None, None, None], False, False, True)],
+        16,
+    ))
+
     instrument_rows = (
         [note(24, 0, 7)] * 4 + [note(31, 5, 3)] * 4
         + [note(36, 3, 1, 5)] * 8
@@ -185,6 +239,20 @@ def probes() -> list[Probe]:
         [([8, None, None, None], False, False, True)],
         32,
     ))
+
+    for name, rows in (
+        ("pitch", [note(24, 0, 7)] * 8 + [note(36, 0, 7)] * 8),
+        ("volume", [note(24, 0, 7)] * 8 + [note(24, 0, 3)] * 8),
+        ("waveform", [note(24, 0, 7)] * 8 + [note(24, 3, 7)] * 8),
+    ):
+        out.append(Probe(
+            f"sfx-instrument-{name}",
+            f"held SFX instrument with one {name}-only boundary",
+            {0: sfx(rows, speed=1, length=16),
+             8: constant(30, 0, 7, custom=True, length=16)},
+            [([8, None, None, None], False, False, True)],
+            16,
+        ))
 
     ramp = [max(-128, min(127, i * 4 - 128)) for i in range(64)]
     out.append(Probe(
@@ -301,6 +369,7 @@ def generate(out_dir: Path) -> dict:
             "expected_samples": probe.expected_ticks * SAMPLES_PER_TICK,
             "stochastic": probe.stochastic,
             "long": probe.long,
+            "alignment_max_shift": probe.alignment_max_shift,
         })
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -362,8 +431,10 @@ def fit(reference: list[int], candidate: list[int]) -> tuple[float, float]:
 
 
 def deterministic_metrics(reference: list[int], candidate: list[int],
-                          expected_samples: int | None) -> dict:
-    ref, cand, shift, align_corr = align(reference, candidate)
+                          expected_samples: int | None,
+                          max_shift: int = 1024) -> dict:
+    ref, cand, shift, align_corr = align(
+        reference, candidate, max_shift=max_shift)
     gain, offset = fit(ref, cand)
     adjusted = [gain * x + offset for x in cand]
     errors = [x - y for x, y in zip(ref, adjusted)]

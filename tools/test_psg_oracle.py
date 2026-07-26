@@ -39,12 +39,33 @@ def main() -> int:
         check({"transition-pitch", "transition-volume",
                "transition-waveform"} <= names,
               "isolated transition probes are generated")
+        check({"effect-slide-once", "effect-slide-fractional",
+               "effect-drop-once", "filter-reverb-impulse",
+               "filter-dampen-impulse", "sfx-instrument-pitch",
+               "sfx-instrument-volume",
+               "sfx-instrument-waveform", "filter-detune-low",
+               "filter-detune-high"} <= names,
+              "remaining-fidelity isolation probes are generated")
         transition = next(c for c in cases
                           if c["name"] == "transition-pitch")
         gate = psg_oracle_matrix.tolerance(transition)
         check(gate["correlation_min"] == 0.999
               and gate["nrmse_max"] == 0.03,
               "transition probes carry the tightened deterministic gate")
+        pattern = next(c for c in cases if c["name"] == "pattern-chain")
+        check(psg_oracle_matrix.tolerance(pattern) == gate,
+              "pattern handoff carries the tightened transition gate")
+        for composite_name in ("effect-1-slide", "sfx-instrument"):
+            composite = next(c for c in cases
+                             if c["name"] == composite_name)
+            composite_gate = psg_oracle_matrix.tolerance(composite)
+            check(composite_gate["correlation_min"] == 0.99
+                  and composite_gate["nrmse_max"] == 0.105,
+                  f"{composite_name}: bounded composite gate")
+        impulse = next(c for c in cases
+                       if c["name"] == "filter-reverb-impulse")
+        check(impulse["alignment_max_shift"] == 256,
+              "impulse alignment rejects lower-energy repeat aliases")
         for case in cases:
             audio = (root / case["audio"]).read_bytes()
             check(len(audio) == 4608, f"{case['name']}: audio image size")
