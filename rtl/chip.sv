@@ -22,6 +22,18 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
   // 161*121*3*60 Hz pixel clock). REVERB=0 drops the reverb delay BRAM.
   parameter CLK_HZ = 32'd3_506_580, REVERB = 1;
 
+  // Which subsystems are present. Both default to 1, so `top.sv` and
+  // `top_simulator.sv` build exactly the console they always did without being
+  // touched. Setting one to 0 removes that subsystem and ties its bus inputs
+  // to zero; the memory arbiter's decode branch for it is then trimmed.
+  //
+  // This is what makes the per-subsystem synthesis targets measure the SHIPPING
+  // design rather than a harness that imitates it - see rtl/target_*.sv and
+  // openspec/changes/refactor-build-targets/design.md decision D1. There is one
+  // description of how the console is wired, and the subsystem targets are that
+  // description with parts switched off.
+  parameter HAS_PPU = 1, HAS_PSG = 1;
+
   // Size of the internal RAM, in address bits. 16 (64 KB) is the real machine
   // and what the simulator uses. The FPGA top overrides it, because 64 KB is
   // 512 kbit against the hx8k's 128 kbit of block RAM and the design cannot
@@ -149,12 +161,18 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
   );
   
   // CPU - now with RDY control from arbiter
+  // The CPU is NOT behind a parameter, and the attempt is worth recording:
+  // removing it ties cpu_addr to a constant, so psg_cs/sp_cs never assert and
+  // yosys constant-folds the subsystem behind them. Measured - the PSG went
+  // from 6772 logic cells to 1467, a "result" that is 78% trimming. A
+  // bus master that cannot be removed without folding the design is a bus
+  // master that stays. rtl/target_psg.sv explains what it does instead.
   cpu6502 cpu0(
-    .clk(clk), 
-    .reset(reset), 
-    .address(cpu_addr), 
-    .data_in(cpu_di), 
-    .data_out(cpu_do), 
+    .clk(clk),
+    .reset(reset),
+    .address(cpu_addr),
+    .data_in(cpu_di),
+    .data_out(cpu_do),
     .write(cpu_write),
     .rdy(cpu_rdy)
   );
@@ -164,37 +182,68 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
   assign tb_do = 8'h00;
 
   // PPU: tilemap + sprite compositor
-  logic [3:0] sprite_color;
   logic [RGB-1:0] srgb;
-  sprite_compositor s0(
-    .clk(clk), 
-    .reset(reset), 
-    .addr(sp_cs ? mem_addr[5:0] : 6'h0), 
-    .cs(sp_cs), 
-    .rw(mem_write), 
-    .di(mem_data_out), 
-    .dout(sp_do), 
-    .map_cs(tb_cs),
-    .map_addr(tb_cs ? mem_addr[9:0] : 10'h0),
-    .btn(buttons),
-    .ovl_cs(ovl_cs),
-    .ovl_addr(ovl_cs ? mem_addr[11:0] : 12'h0),
-    .hpos(hpos),
-    .vpos(vpos),
-    .hsync(hsync),
-    .vsync(vsync),
-    .color(sprite_color),
-    // DMA interface
-    .dma_active(sp_dma_active),
-    .dma_write(sp_dma_write),
-    .dma_addr(sp_dma_addr),
-    .dma_data(sp_dma_data)
-  );
-  palette #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE("./rtl/palette888.bin")) pal_sprite(
-    .clk(clk),
-    .color(sprite_color),
-    .rgb(srgb)
-  );
+  generate
+    if (HAS_PPU) begin : g_ppu
+      logic [3:0] sprite_color;
+      sprite_compositor s0(
+        .clk(clk),
+        .reset(reset),
+        .addr(sp_cs ? mem_addr[5:0] : 6'h0),
+        .cs(sp_cs),
+        .rw(mem_write),
+        .di(mem_data_out),
+        .dout(sp_do),
+        .map_cs(tb_cs),
+        .map_addr(tb_cs ? mem_addr[9:0] : 10'h0),
+        .btn(buttons),
+        .ovl_cs(ovl_cs),
+        .ovl_addr(ovl_cs ? mem_addr[11:0] : 12'h0),
+        .hpos(hpos),
+        .vpos(vpos),
+        .hsync(hsync),
+        .vsync(vsync),
+        .color(sprite_color),
+        // DMA interface
+        .dma_active(sp_dma_active),
+        .dma_write(sp_dma_write),
+        .dma_addr(sp_dma_addr),
+        .dma_data(sp_dma_data)
+      );
+      palette #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE("./rtl/palette888.bin")) pal_sprite(
+        .clk(clk),
+        .color(sprite_color),
+        .rgb(srgb)
+      );
+    end else begin : g_no_ppu
+      // Reads of the PPU's windows return 0. The arbiter needs no change:
+      // sp_cs/tb_cs/ovl_cs still decode, they just select a constant, and
+      // yosys trims the branch.
+      assign sp_do = 8'h00;
+
+      // The video output carries a reduction of the CPU bus rather than zero.
+      // This is an OBSERVABILITY tie-off, not a rendering behaviour - it only
+      // exists in a build with no PPU, which is a measurement configuration
+      // and never a console. Without it, a build with neither PPU nor PSG has
+      // no non-constant output at all, and synthesis quite correctly trims the
+      // CPU, the arbiter and the RAM to nothing: `make synth-cpu` first
+      // reported 193 MHz with its critical path inside the video timing
+      // generator, which is what a design that folded away looks like.
+      //
+      // Done here rather than through a new chip port because adding one
+      // breaks every existing top - Verilator escalates PINMISSING to an
+      // error, so top_simulator.sv fails to build the moment a port is added
+      // that it does not connect.
+      // NB: one bit, not {RGB{bus_obs}}. RGB is 16, and a consumer that
+      // XOR-reduces the bus - which is exactly what a probe pin does - sees
+      // the XOR of 16 identical bits, which is constant 0. Replicating it
+      // folded the design harder than leaving it zero: 103 logic cells, with
+      // the CPU gone entirely.
+      logic bus_obs;
+      always_ff @(posedge clk) bus_obs <= ^{cpu_addr, cpu_do, cpu_write};
+      assign srgb = {{(RGB-1){1'b0}}, bus_obs};
+    end
+  endgenerate
 
   // PSG: PICO-8-equivalent audio chip; all timing derived internally
   // from CLK_HZ (22050 Hz virtual sample rate, 120.49 Hz sequencer tick)
@@ -202,18 +251,27 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
   // instead of 159, which is what makes a BRAM-backed voice pool affordable.
   // Same PLL, exact 32:1 ratio, so CPU-side register writes are stable for 32
   // psgclk edges and need no synchroniser.
-  psg #(.CLK_HZ(CLK_HZ), .REVERB(REVERB)) psg0(
-    .clk(psgclk),
-    .reset(reset),
-    .cs(psg_cs),
-    .rw(mem_write),
-    .addr(psg_cs ? mem_addr[7:0] : 8'h0),
-    .di(mem_data_out),
-    .dout(psg_do),
-    .pcm(audio),
-    .dbg(psg_dbg)
-  );
+  generate
+    if (HAS_PSG) begin : g_psg
+      psg #(.CLK_HZ(CLK_HZ), .REVERB(REVERB)) psg0(
+        .clk(psgclk),
+        .reset(reset),
+        .cs(psg_cs),
+        .rw(mem_write),
+        .addr(psg_cs ? mem_addr[7:0] : 8'h0),
+        .di(mem_data_out),
+        .dout(psg_do),
+        .pcm(audio),
+        .dbg(psg_dbg)
+      );
+    end else begin : g_no_psg
+      assign psg_do  = 8'h00;
+      assign audio   = '0;
+      assign psg_dbg = '0;
+    end
+  endgenerate
 
-  // Basic Video Signals 
+  // Basic Video Signals
   assign rgb = srgb;
+
 endmodule

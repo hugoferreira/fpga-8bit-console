@@ -15,14 +15,21 @@ module top(input  bit clk, output bit yellow_led,
   localparam RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
 
   // The clock the PSG actually runs at, fed to it so its 22050 Hz virtual
-  // sample rate comes out right. It is the PLL output undivided - see
-  // rtl/pll.v and rtl/clocks.sv - not the board pin.
+  // sample rate comes out right. It is the PLL output divided by PSG_DIV - see
+  // rtl/pll.v and rtl/clocks.sv - not the board pin, and not the undivided PLL
+  // either: the PSG measures Fmax 27.98 MHz, so the full 112.5 does not close.
   //
   // This used to read 25 MHz, the crystal, which was wrong in a way that hid
   // for a long time: at 25 MHz this video timing (161 x 121 x 3 clocks) runs
   // at 428 fps, so it was never the frequency anything actually ran at. The
   // chip clock is 112.5/32 = 3.515625 MHz, which is 60.155 Hz.
-  localparam PSG_CLK_HZ = 32'd112_500_000;
+  // ONE knob for the PSG's rate. PSG_DIV goes to clocks.sv as the divider and
+  // to chip.sv as the frequency the PSG derives 22050 Hz from; deriving both
+  // from the same number is what stops the divider and the assumed frequency
+  // drifting apart, which would detune the audio with nothing to show for it.
+  // 4 because the PSG measures Fmax 27.98 MHz - see rtl/clocks.sv.
+  localparam PSG_DIV    = 4;
+  localparam PSG_CLK_HZ = 32'd112_500_000 / PSG_DIV;
 
   logic reset;
   logic masterclk;
@@ -33,7 +40,7 @@ module top(input  bit clk, output bit yellow_led,
   /* verilator lint_off PINCONNECTEMPTY */
   pll pll0(.clock_in(clk), .clock_out(pllclk), .locked(pll_locked));
   /* verilator lint_on PINCONNECTEMPTY */
-  clocks clocks0(.clk(pllclk), .reset, .masterclk, .videoclk, .cpuclk, .psgclk);
+  clocks #(.PSGDIV(PSG_DIV)) clocks0(.clk(pllclk), .reset, .masterclk, .videoclk, .cpuclk, .psgclk);
 
   assign lcd_rst = ~reset;
   assign yellow_led = ~reset;
@@ -78,8 +85,8 @@ module top(input  bit clk, output bit yellow_led,
   // Delta-sigma output: 8-bit PCM -> 1-bit density stream on audio_pwm.
   // Wire this pin to a speaker/amp through an RC low-pass (~1k + ~10nF).
   // On psgclk, not masterclk: a delta-sigma modulator's noise shaping is only
-  // as good as its oversampling ratio, and 112.5 MHz against a 22050 Hz sample
-  // is 32x what the video clock gave it.
+  // as good as its oversampling ratio, and 28.125 MHz against a 22050 Hz
+  // sample is 8x what the video clock gave it.
   dsigma dsigma0(.clk(psgclk), .reset(reset), .pcm(audio), .out(audio_pwm));
 
   /* wire tx_ready;

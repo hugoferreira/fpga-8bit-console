@@ -50,6 +50,9 @@ typedef enum logic [4:0] {
     AM_MOVZX,    // MOV zp, abs,X
     // --- add-isa-pointer-ops ---
     AM_INDD,     // (zp), #disp - indirect with a constant displacement
+    // --- add-isa-word-ops: the 16-bit accumulator AB (A high, B low) ---
+    AM_WZP,      // 16-bit operand at a zero-page pair, little-endian
+    AM_WIMM,     // 16-bit immediate
     AM_TRAP      // no row: undefined opcode
 } amode_t;
 
@@ -67,7 +70,9 @@ typedef enum logic [4:0] {
     // --- add-isa-core-ergonomics ---
     OP_ADD,      // ADC with carry-in forced to 0, decimal ignored
     OP_SUB,      // SBC with borrow-in forced to 0, decimal ignored
-    OP_TRAP      // diagnostic trap carrying an immediate
+    OP_TRAP,     // diagnostic trap carrying an immediate
+    // --- add-isa-word-ops ---
+    OP_LDW, OP_STW, OP_ADDW, OP_SUBW, OP_CMPW
 } aluop_t;
 
 // The register operand. For AM_IMP and AM_ACC it is also the second operand,
@@ -109,7 +114,9 @@ typedef enum logic [5:0] {
     S_MOVZ0, S_MOVZ1,
     S_MOVA0, S_MOVA1, S_MOVA2,
     S_MVX0, S_MVX1, S_MVX2, S_MVX3,
-    S_IDD0, S_IDD1, S_IDD2, S_IDD3
+    S_IDD0, S_IDD1, S_IDD2, S_IDD3,
+    S_W0, S_W1, S_W2, S_WS1,
+    S_WI0, S_WI1
 } state_t;
 
 typedef struct packed {
@@ -140,7 +147,10 @@ module cpu6502_decode (
             OP_INC, OP_DEC:              fwset = FW_N | FW_Z;
             OP_ADC, OP_SBC,
             OP_ADD, OP_SUB:              fwset = FW_N | FW_V | FW_Z | FW_C;
-            OP_CMP:                      fwset = FW_N | FW_Z | FW_C;
+            OP_CMP,
+            OP_CMPW:                     fwset = FW_N | FW_Z | FW_C;
+            OP_LDW:                      fwset = FW_N | FW_Z;
+            OP_ADDW, OP_SUBW:            fwset = FW_N | FW_V | FW_Z | FW_C;
             OP_BIT:                      fwset = FW_N | FW_V | FW_Z;
             OP_ASL, OP_LSR,
             OP_ROL, OP_ROR:              fwset = FW_N | FW_Z | FW_C;
@@ -175,6 +185,8 @@ module cpu6502_decode (
             AM_MOVAI:                  st_of = S_MOVA0;
             AM_MOVZX:                  st_of = S_MVX0;
             AM_INDD:                   st_of = S_IDD0;
+            AM_WZP:                    st_of = S_W0;
+            AM_WIMM:                   st_of = S_WI0;
             default:                   st_of = S_DECODE;   // AM_TRAP: inert
         endcase
     endfunction
@@ -380,7 +392,22 @@ module cpu6502_decode (
         8'h8B: d = row(AM_INDD, OP_PASS, R_NONE, D_A);      // LDA (zp),#d
         8'h9B: d = row(AM_INDD, OP_PASS, R_A,    D_MEM);    // STA (zp),#d
 
-        // The remaining 95 slots. Reserved for the ISA slices; until one claims
+        // ---- add-isa-word-ops, column $x3 high half ----
+        // AB is a 16-bit accumulator: A is the high byte, B the low. A is the
+        // high byte because the corpus reads a high half alone 192 times across
+        // 33 distinct 16-bit variables - the integer part of an 8.8 value - and
+        // every existing 8-bit instruction already operates on A.
+        // Memory operands are little-endian pairs, as the corpus stores them.
+        8'h83: d = row(AM_WZP,  OP_LDW,  R_NONE, D_NONE);   // LDAB zp
+        8'h93: d = row(AM_WZP,  OP_STW,  R_NONE, D_NONE);   // STAB zp
+        8'hA3: d = row(AM_WIMM, OP_LDW,  R_NONE, D_NONE);   // LDAB #imm16
+        8'hB3: d = row(AM_WZP,  OP_ADDW, R_NONE, D_NONE);   // ADDW zp
+        8'hC3: d = row(AM_WZP,  OP_SUBW, R_NONE, D_NONE);   // SUBW zp
+        8'hD3: d = row(AM_WZP,  OP_CMPW, R_NONE, D_NONE);   // CMPW zp
+        8'hE3: d = row(AM_WIMM, OP_ADDW, R_NONE, D_NONE);   // ADDW #imm16
+        8'hF3: d = row(AM_WIMM, OP_SUBW, R_NONE, D_NONE);   // SUBW #imm16
+
+        // The remaining 87 slots. Reserved for the ISA slices; until one claims
         // a slot, executing it is a named failure rather than silent corruption.
         default: d = row(AM_TRAP, OP_NOP, R_NONE, D_NONE);
         endcase

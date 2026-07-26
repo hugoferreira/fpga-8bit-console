@@ -77,3 +77,34 @@
     lda ({zaddr: u8}), #{disp: u8} => 0x8B @ zaddr @ disp
     sta ({zaddr: u8}), #{disp: u8} => 0x9B @ zaddr @ disp
 }
+
+; add-isa-word-ops: AB, a 16-bit accumulator.
+;
+; A is the high byte and B the low. A is the high byte because the corpus reads
+; a high half alone 192 times across 33 distinct 16-bit variables - the integer
+; part of an 8.8 value - and every existing 8-bit instruction already operates
+; on A. So after `ldab ballx`, `sta screenx` stores the integer part with no
+; transfer, and the fractional half sits in B where nothing else disturbs it.
+;
+; Memory operands are little-endian pairs, matching how the corpus already
+; stores 16-bit values: `ldab foo` reads foo as the low byte and foo+1 as high.
+;
+; The replaced sequence, hand-written today, is
+;   lda foo / add bar / sta foo / lda foo+1 / adc bar+1 / sta foo+1
+; at 12 bytes and 18 cycles. `ldab foo / addw bar / stab foo` is 6 and 12.
+#ruledef ext_word
+{
+    ldab <{zaddr: u8}      => 0x83 @ zaddr        ; 2 bytes / 4 cycles
+    ldab  {zaddr: u8}      => 0x83 @ zaddr
+    stab <{zaddr: u8}      => 0x93 @ zaddr        ; 2 / 4
+    stab  {zaddr: u8}      => 0x93 @ zaddr
+    ldab #{v: i32}         => 0xA3 @ v[7:0] @ v[15:8]   ; 3 / 3
+    addw <{zaddr: u8}      => 0xB3 @ zaddr        ; 2 / 4
+    addw  {zaddr: u8}      => 0xB3 @ zaddr
+    subw <{zaddr: u8}      => 0xC3 @ zaddr        ; 2 / 4
+    subw  {zaddr: u8}      => 0xC3 @ zaddr
+    cmpw <{zaddr: u8}      => 0xD3 @ zaddr        ; 2 / 4
+    cmpw  {zaddr: u8}      => 0xD3 @ zaddr
+    addw #{v: i32}         => 0xE3 @ v[7:0] @ v[15:8]   ; 3 / 3
+    subw #{v: i32}         => 0xF3 @ v[7:0] @ v[15:8]   ; 3 / 3
+}

@@ -16,11 +16,13 @@
 `timescale 1ns/1ps
 
 module psg_tb;
-  // 96 system clocks per virtual sample keeps the sim quick while giving
-  // the serialized synth/mix walk headroom (needs ~48; the board clocks the
-  // chip at 25 MHz, which is 1133 clocks per sample)
-  localparam CLKHZ = 32'd2_116_800;
-  localparam CLKS_PER_TICK = 96 * 183;
+  // 200 system clocks per virtual sample. The synth/mix walk now streams each
+  // slot's record out of block RAM, so a visit costs 17 clocks and eight slots
+  // need 136 plus the mixer's reduction - the old 96 no longer covers a sample
+  // and the walk would be truncated mid-flight. The board has 1275 at 28.125
+  // MHz; psg_wav's default CLK_HZ gives 159.
+  localparam CLKHZ = 32'd4_410_000;
+  localparam CLKS_PER_TICK = 200 * 183;
 
   bit clk = 0;
   always #5 clk = ~clk;
@@ -141,6 +143,35 @@ module psg_tb;
     img[p * 4 + 3] = b3;
   endtask
 
+  // The instrument playhead's row moved into the PSG's BRAM record, so it is no
+  // longer an addressable `ins_row[v]`. Word 5 of slot v holds
+  // {ins_vol, ins_wave, ins_row, ins_id, bf_damp} - mirror of psg.sv's vpack(),
+  // which is the definition to re-check if this ever stops matching. The record
+  // is written back at the end of each visit, so it is current between walks.
+  function automatic logic [4:0] ins_row_of(input int v);
+    ins_row_of = dut.vmem[v * 16 + 5][9:5];
+  endfunction
+
+  // State that moved into the PSG's synthesis register files. These mirror
+  // psg.sv's spar/sosc packing - if a peek ever stops matching, that packing is
+  // the definition. The records are written back at the end of each visit, so
+  // they are current whenever the walk is not mid-slot.
+  function automatic logic [23:0] eff_inc_of(input int v);
+    eff_inc_of = {dut.spar_m[v*16+1][7:0], dut.spar_m[v*16+0]};
+  endfunction
+  function automatic logic [23:0] phase2_of(input int v);
+    phase2_of = {dut.sosc_m[v*16+3][7:0], dut.sosc_m[v*16+2]};
+  endfunction
+  function automatic logic snd_wt_of(input int v);
+    snd_wt_of = dut.spar_m[v*16+1][11];
+  endfunction
+  function automatic logic [7:0] eff_vol_of(input int v);
+    eff_vol_of = dut.spar_m[v*16+3][7:0];
+  endfunction
+  function automatic logic [1:0] ch_damp_of(input int v);
+    ch_damp_of = dut.spar_m[v*16+2][13:12];
+  endfunction
+
   task check(input bit cond, input string what);
     if (!cond) begin
       $display("FAIL: %s", what);
@@ -255,9 +286,9 @@ module psg_tb;
     $display("[3] slide interpolates the phase increment");
     wr(8'h12, 8'd2);
     ticks(9);                          // into row 1 (fx1), early
-    inc0 = dut.eff_inc[2];
+    inc0 = eff_inc_of(2);
     ticks(6);                          // near the end of row 1
-    inc1 = dut.eff_inc[2];
+    inc1 = eff_inc_of(2);
     check(inc0 > 24'd120000 && inc0 < 24'd220000, "slide starts near f(21)");
     check(inc1 > inc0, "slide rises across the row");
     check(inc1 > 24'd280000, "slide approaches f(33)");
@@ -267,9 +298,9 @@ module psg_tb;
     $display("[4] drop falls toward zero");
     wr(8'h13, 8'd3);
     ticks(2);
-    inc0 = dut.eff_inc[3];
+    inc0 = eff_inc_of(3);
     ticks(12);
-    inc1 = dut.eff_inc[3];
+    inc1 = eff_inc_of(3);
     check(inc0 > inc1, "drop decreases");
     check(inc1 < 24'd60000, "drop nearly silent-frequency by row end");
     wr(8'h13, 8'h80);
@@ -278,14 +309,14 @@ module psg_tb;
     $display("[5] fade in / fade out volume ramps");
     wr(8'h10, 8'd4);
     ticks(2);
-    inc0 = {16'b0, dut.eff_vol[0]};
+    inc0 = {16'b0, eff_vol_of(0)};
     ticks(5);
-    inc1 = {16'b0, dut.eff_vol[0]};
+    inc1 = {16'b0, eff_vol_of(0)};
     check(inc1 > inc0, "fade-in volume rises");
     ticks(3);                          // into row 1 (fade out)
-    inc0 = {16'b0, dut.eff_vol[0]};
+    inc0 = {16'b0, eff_vol_of(0)};
     ticks(5);
-    inc1 = {16'b0, dut.eff_vol[0]};
+    inc1 = {16'b0, eff_vol_of(0)};
     check(inc1 < inc0, "fade-out volume falls");
     wr(8'h10, 8'h80);
 
@@ -297,7 +328,7 @@ module psg_tb;
       for (int i = 0; i < 4; i++) hits[i] = 0;
       for (int i = 0; i < 15; i++) begin
         ticks(1);
-        case (dut.eff_inc[1])
+        case (eff_inc_of(1))
           dut.pinc[10]: hits[0]++;
           dut.pinc[20]: hits[1]++;
           dut.pinc[30]: hits[2]++;
@@ -316,7 +347,9 @@ module psg_tb;
     ticks(2);
     rd(8'h03, q);
     check(q[7] == 1, "music playing");
-    check(q[0] == 1, "music launched sfx on channel 0");
+    // The song lands on channel 0's MUSIC slot, not its foreground slot, so
+    // $03's low nibble stays clear - see [18].
+    check(dut.playing[4] == 1, "music launched sfx on channel 0's music slot");
     ticks(34);                          // pattern 0 is 32 ticks long
     rd(8'h20, q);
     check(q[5:0] == 6'd1, "advanced to pattern 1");
@@ -326,7 +359,7 @@ module psg_tb;
     wr(8'h20, 8'h80);
     rd(8'h03, q);
     check(q[7] == 0, "music stops on $80");
-    check(q[0] == 0, "music channel silenced on stop");
+    check(dut.playing[4] == 0, "music channel silenced on stop");
 
     wr(8'h20, 8'd2);
     ticks(2);
@@ -371,7 +404,7 @@ module psg_tb;
     $display("[10] detune runs a second voice");
     wr(8'h11, 8'd9);
     ticks(2);
-    check(dut.phase2[1] != 0, "detuned second accumulator advances");
+    check(phase2_of(1) != 0, "detuned second accumulator advances");
     wr(8'h11, 8'h80);
 
     // ---- 11. NOISE MODES --------------------------------------------
@@ -538,65 +571,87 @@ module psg_tb;
     wr(8'h21, 8'h07);
     wr(8'h20, 8'd3);
     ticks(2);
+    check(dut.playing[4] && dut.playing[5] && dut.playing[6] && dut.playing[7],
+          "all four pattern channels launch on their music slots");
     rd(8'h03, q);
-    check(q[3:0] == 4'hF, "all four pattern channels launch");
+    check(q[7], "the song reads as playing");
+    // $03's low nibble is FOREGROUND occupancy, and the song does not occupy
+    // any foreground slot. This is the contract software auto-pick relies on:
+    // every channel is available to a sound effect however busy the song is.
+    check(q[3:0] == 4'h0,
+          "the song leaves all four foreground slots free for effects");
     rd(8'h21, q);
     check(q[3:0] == 4'h7, "the reservation mask reads back");
+    check(q[7:4] == 4'h0, "and the occupancy nibble no longer blocks anything");
     wr(8'h20, 8'h80);
     wr(8'h21, 8'h00);
 
-    // ---- 18b. borrowing a music channel and giving it back -----------
-    $display("[18b] an SFX borrows a music channel, music resumes after");
+    // ---- 18b. a sound effect covers the music, it does not take it ----
+    //
+    // This replaces the old borrow-and-restore tests. Those checked that a
+    // displaced music SFX was saved and relaunched AT THE ROW IT WAS
+    // INTERRUPTED ON, which is exactly what PICO-8 does not do: the hidden
+    // music slot keeps advancing while inaudible and the song reappears at its
+    // current position (pico8-psg-re.md, "Observable behavior and
+    // compatibility boundary", point 5). So the old tests asserted the wrong
+    // behaviour and had to go rather than be ported.
+    //
+    // The races they covered cannot recur: channel c's foreground slot (c) and
+    // music slot (NCH+c) are independent playback states and neither ever
+    // writes the other's registers. There is nothing to save, nothing to
+    // restore, and no window in which a pending launch can be stolen.
+    $display("[18b] an SFX covers the music; the music runs on underneath");
     begin
-      logic [7:0] q2;
+      logic [5:0] mus_sfx;
+      logic [7:0] t0;
       wr(8'h20, 8'h80);                  // stop anything playing
       ticks(1);
       wr(8'h21, 8'h00);                  // reserve nothing, as the cart does
+      wr(8'h22, 8'd0);                   // no fade, so gain is not a variable
       wr(8'h20, 8'd3);                   // pattern 3 launches all four channels
       ticks(3);
-      rd(8'h14, q);                      // {playing, 0, sfx} on channel 0
-      check(q[7] && dut.music_owned[0], "music owns channel 0");
-      q2 = q;
+      check(dut.playing[4], "channel 0's music slot is running");
+      mus_sfx = dut.sfx_id[4];
+      rd(8'h14, q);
+      check(q[7] && q[5:0] == mus_sfx,
+            "$14 reports the music while nothing covers it");
 
-      // Take channel 0 for a short SFX, the way sfx(n) with no free channel
-      // does. sfx 15 runs at speed 4, so one row is 4 ticks - comfortably
-      // inside pattern 3's 32 ticks, so the pattern cannot advance underneath
-      // this test and relaunch the channel legitimately.
+      // Take channel 0 for a short effect. sfx 15 runs at speed 4, so one row
+      // is 4 ticks - well inside pattern 3's 32, so the pattern cannot advance
+      // underneath this test and relaunch the channel legitimately.
       wr(8'h18, 8'd1);                   // length 1 row, so it ends quickly
       wr(8'h10, 8'd15);
       ticks(2);
-      check(dut.sav_valid[0], "the displaced music SFX was remembered");
-      check(dut.sav_sfx[0] == q2[5:0], "it remembered the right SFX");
+      check(dut.playing[0], "channel 0's foreground slot is running");
+      check(dut.playing[4], "the music slot was NOT stopped");
+      check(dut.sfx_id[4] == mus_sfx, "and it still holds the music's SFX");
       rd(8'h14, q);
-      check(q[5:0] == 6'd15, "the SFX is what is playing now");
+      check(q[5:0] == 6'd15, "$14 reports the covering effect");
 
-      // Run until the SFX ends and the restore fires, rather than for a fixed
-      // time: waiting too long lets the pattern advance and relaunch the
-      // channel legitimately, which is not what this test is about.
-      begin
-        int guard;
-        guard = 0;
-        while (dut.sav_valid[0] && guard < 200) begin
-          ticks(1);
-          guard++;
-        end
-        check(guard < 200, "the SFX ended and the restore fired");
-      end
+      // Pattern 3 runs sfx 6 on every channel, and sfx 6 is speed 1 - one row
+      // per tick - so the music slot's row is direct evidence that the covered
+      // song kept running. (The per-tick counters now live in the BRAM record
+      // and are only visible in the working copy, so `row`, which stays in
+      // flops for the status reads, is the observable to use here.)
+      t0 = {3'b0, dut.row[4]};
+      ticks(6);                          // outlast the 4-tick effect
+      check({3'b0, dut.row[4]} != t0, "the covered music advanced while inaudible");
+      check(!dut.playing[0], "the effect finished");
       rd(8'h14, q);
-      check(q[7], "the channel is still playing after the SFX ends");
-      check(dut.music_owned[0], "the music owns channel 0 again");
-      check(q[5:0] == q2[5:0], "and it is the SFX the music had there");
-      check(!dut.sav_valid[0], "the saved slot was consumed");
+      check(q[7] && q[5:0] == mus_sfx,
+            "the music is audible again, at its own current position");
       wr(8'h20, 8'h80);
       ticks(1);
     end
 
-    // ---- 18c. borrowing a channel inside the pattern-launch window ---
+    // ---- 18c. taking a channel inside the pattern-launch window ------
     //
-    // A pattern launch raises trig_req for its channels and only later does
-    // the walk service them. A button press landing in that window takes a
-    // channel whose music trigger is still pending, which is the race behind
-    // "moving the selection at the right moment kills the music".
+    // A pattern launch raises trig_req for its music slots and only later does
+    // the walk service them. A button press landing in that window used to take
+    // a channel whose music trigger was still pending, which was the race
+    // behind "moving the selection at the right moment kills the music". The
+    // effect now lands on a different slot entirely, so the pending launch is
+    // simply not reachable from here.
     $display("[18c] an SFX taken before the pattern's own trigger is serviced");
     begin
       logic [5:0] pat0;
@@ -609,7 +664,7 @@ module psg_tb;
       // wait for the launch to raise the requests, then take channel 0 before
       // the walk gets to it - no ticks() in between
       guard = 0;
-      while (!(dut.mus_playing && dut.trig_req[0]) && guard < 2000) begin
+      while (!(dut.mus_playing && dut.trig_req[4]) && guard < 2000) begin
         @(posedge clk);
         guard++;
       end
@@ -617,15 +672,12 @@ module psg_tb;
       wr(8'h18, 8'd1);                   // one row of sfx 15: 4 ticks
       wr(8'h10, 8'd15);                  // the CPU takes channel 0 right now
 
-      check(dut.sav_valid[0], "the pending music SFX was remembered");
-      check(dut.sav_row[0] == 5'd0,
-            "it remembered the pattern's start row, not a stale one");
-      check(!dut.launched[0],
-            "a borrowed channel does not pace the pattern");
+      check(dut.trig_req[4], "the music slot's pending trigger is untouched");
+      check(dut.launched[4], "and it still paces the pattern");
 
       // The pattern must still run its own length: it should not end the
-      // moment the borrowed sound effect does. 20 ticks is well past the
-      // 4-tick sound and well inside pattern 3's 32 ticks.
+      // moment the sound effect does. 20 ticks is well past the 4-tick sound
+      // and well inside pattern 3's 32 ticks.
       pat0 = dut.mus_pat;
       ticks(20);
       check(dut.mus_playing, "the music is still playing after the sound ends");
@@ -670,11 +722,11 @@ module psg_tb;
       loud = 0; quiet = 0;
       wr(8'h10, 8'd18);                  // instrument 0 alternates vol 5/2
       ticks(1);
-      check(dut.eff_inc[0] == dut.pinc[33],
+      check(eff_inc_of(0) == dut.pinc[33],
             "instrument pitch 24 leaves the note's pitch alone");
       for (int i = 0; i < 6; i++) begin
-        if (dut.eff_vol[0] == 8'd180) loud++;
-        if (dut.eff_vol[0] == 8'd72)  quiet++;
+        if (eff_vol_of(0) == 8'd180) loud++;
+        if (eff_vol_of(0) == 8'd72)  quiet++;
         ticks(1);
       end
       check(loud > 0 && quiet > 0, "instrument volume multiplies the note's");
@@ -682,23 +734,23 @@ module psg_tb;
     end
     wr(8'h11, 8'd19);                    // instrument 1 sits at pitch 36
     ticks(2);
-    check(dut.eff_inc[1] == dut.pinc[45],
+    check(eff_inc_of(1) == dut.pinc[45],
           "instrument pitch adds relative to C-2 (33 + 36 - 24)");
     wr(8'h11, 8'h80);
 
     $display("[19b] instrument retrigger rule");
     wr(8'h12, 8'd23);                    // same pitch on both rows
     ticks(6);
-    check(dut.ins_row[2] >= 5'd4, "held pitch keeps the instrument running");
+    check(ins_row_of(2) >= 5'd4, "held pitch keeps the instrument running");
     wr(8'h12, 8'h80);
     wr(8'h12, 8'd24);                    // pitch changes on row 1 (tick 4)
     ticks(6);
-    check(dut.ins_row[2] <= 5'd3, "a pitch change retriggers the instrument");
+    check(ins_row_of(2) <= 5'd3, "a pitch change retriggers the instrument");
     wr(8'h12, 8'h80);
     wr(8'h12, 8'd26);                    // effect 3 asks for a retrigger
     ticks(6);
-    check(dut.ins_row[2] <= 5'd3, "effect 3 retriggers instead of dropping");
-    check(dut.eff_inc[2] == dut.pinc[33], "effect 3 does not drop the pitch");
+    check(ins_row_of(2) <= 5'd3, "effect 3 retriggers instead of dropping");
+    check(eff_inc_of(2) == dut.pinc[33], "effect 3 does not drop the pitch");
     wr(8'h12, 8'h80);
 
     // ---- 20. waveform instruments -----------------------------------
@@ -708,9 +760,9 @@ module psg_tb;
       logic [23:0] inc_plain, inc_bass;
       wr(8'h10, 8'd20);                  // square wavetable
       ticks(2);
-      check(dut.snd_wt[0] == 1, "channel switches to the wavetable");
+      check(snd_wt_of(0) == 1, "channel switches to the wavetable");
       peak_dev(27000, pk_wave);
-      inc_plain = dut.eff_inc[0];
+      inc_plain = eff_inc_of(0);
       wr(8'h10, 8'h80);
       wr(8'h10, 8'd21);                  // all-zero wavetable
       ticks(2);
@@ -720,7 +772,7 @@ module psg_tb;
       check(pk_zero < 4, "a zero wavetable is silent (samples really read)");
       wr(8'h10, 8'd22);                  // same table, bass flag set
       ticks(2);
-      inc_bass = dut.eff_inc[0];
+      inc_bass = eff_inc_of(0);
       wr(8'h10, 8'h80);
       check(inc_bass == (inc_plain >> 1), "the bass flag drops an octave");
     end
@@ -729,7 +781,7 @@ module psg_tb;
     $display("[21] dampen field is taken mod 3");
     wr(8'h13, 8'd25);                    // filter byte 224
     ticks(1);
-    check(dut.ch_damp[3] == 2'd0, "filter byte 224 decodes dampen 0");
+    check(ch_damp_of(3) == 2'd0, "filter byte 224 decodes dampen 0");
     wr(8'h13, 8'h80);
 
     if (errors == 0)

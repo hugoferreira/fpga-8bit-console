@@ -65,7 +65,7 @@ module cpu6502_sst (
       .AB(ab), .DI(di), .DO(dout), .WE(we),
       .IRQ(irq), .NMI(nmi), .RDY(rdy),
       .dbg_pc(o_pc), .dbg_a(o_a), .dbg_x(o_x), .dbg_y(o_y),
-      .dbg_s(o_s), .dbg_p(o_p),
+      .dbg_s(o_s), .dbg_p(o_p), .dbg_b(),
       .dbg_sync(o_decode), .dbg_trap(o_trap),
       .dbg_trap_ir(), .dbg_trap_pc()
   );

@@ -93,14 +93,15 @@ start:
     bne fail8
     ; the displacement must carry into the pointer's high byte
     mov 0x22, #0xFE
-    mov 0x23, #0x04           ; pSrc -> 0x04FE
-    lda (0x22), #3            ; 0x04FE + 3 = 0x0501, crossing the page
+    mov 0x23, #0x06           ; pSrc -> 0x06FE
+    lda (0x22), #3            ; 0x06FE + 3 = 0x0701, crossing the page
     cmp #0x5C
     bne fail9
 
-pass:
-    jmp pass
+    jmp word_checks
 
+; The failure handlers sit in the middle: the test outgrew the +/-127 byte
+; branch range, and every check has to be able to reach them.
 fail1: lda #1
     jmp fail
 fail2: lda #2
@@ -118,6 +119,16 @@ fail7: lda #7
 fail8: lda #8
     jmp fail
 fail9: lda #9
+    jmp fail
+fail10: lda #10
+    jmp fail
+fail11: lda #11
+    jmp fail
+fail12: lda #12
+    jmp fail
+fail13: lda #13
+    jmp fail
+fail14: lda #14
 fail:
     sta 0x00FF               ; which check failed
 spin:
@@ -125,13 +136,66 @@ spin:
                              ; the same convention Dormann's test uses. A
                              ; two-instruction loop is never noticed.
 
+word_checks:
+    ; ---- AB, the 16-bit accumulator ----
+    ldab #0x1234              ; A = 0x12 (high), B = 0x34 (low)
+    cmp #0x12                 ; the high half is in A, usable directly
+    bne fail10
+    stab 0x30
+    lda 0x30
+    cmp #0x34                 ; little-endian: low byte at zp
+    bne fail10
+    lda 0x31
+    cmp #0x12
+    bne fail10
+
+    ; add with a carry out of the low half into the high
+    ldab #0x00FF
+    addw #0x0001
+    cmp #0x01                 ; 0x00FF + 1 = 0x0100
+    bne fail11
+    stab 0x30
+    lda 0x30
+    bne fail11                ; low half must be 0
+
+    ; a 16-bit add against memory, the sequence this slice exists to replace
+    mov 0x32, #0x11
+    mov 0x33, #0x22           ; word at 0x32 = 0x2211
+    ldab #0x1100
+    addw 0x32
+    cmp #0x33                 ; 0x1100 + 0x2211 = 0x3311
+    bne fail12
+    stab 0x30
+    lda 0x30
+    cmp #0x11
+    bne fail12
+
+    ; subtract, and the Z flag spanning both halves
+    ldab #0x2211
+    subw 0x32                 ; 0x2211 - 0x2211 = 0
+    bne fail13                ; Z must be set across BOTH bytes
+    ldab #0x2212
+    subw 0x32
+    beq fail13                ; and clear when only the low half differs
+
+    ; compare leaves AB alone
+    ldab #0x2211
+    cmpw 0x32
+    bne fail14
+    cmp #0x22
+    bne fail14
+
+pass:
+    jmp pass
+
+
 table:
     #d8 0x00, 0x11, 0x22, 0x33, 0x44
 
 obj:
     #d8 0x11, 0x00, 0x22, 0x33
 
-; a byte at 0x0501, to prove the displacement carries into the pointer's high
+; a byte at 0x0701, to prove the displacement carries into the pointer's high
 ; byte rather than wrapping inside the page
-#addr 0x0501
+#addr 0x0701
     #d8 0x5C

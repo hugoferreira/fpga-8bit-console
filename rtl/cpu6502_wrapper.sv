@@ -53,7 +53,7 @@ module cpu6502(
     .RDY(rdy),        // Ready - the memory arbiter stalls the core with this
 
     // Test interface. Synthesis trims it; the simulator can watch it.
-    .dbg_pc(), .dbg_a(), .dbg_x(), .dbg_y(), .dbg_s(), .dbg_p(),
+    .dbg_pc(), .dbg_a(), .dbg_x(), .dbg_y(), .dbg_s(), .dbg_p(), .dbg_b(),
     .dbg_sync(), .dbg_trap(), .dbg_trap_ir(), .dbg_trap_pc()
   );
 

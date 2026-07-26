@@ -55,7 +55,7 @@ module cpu_fmax_top (
         .clk(clk), .reset(rst),
         .AB(ab), .DI(di), .DO(dout), .WE(we),
         .IRQ(1'b0), .NMI(1'b0), .RDY(rdy_in),
-        .dbg_pc(), .dbg_a(), .dbg_x(), .dbg_y(), .dbg_s(), .dbg_p(),
+        .dbg_pc(), .dbg_a(), .dbg_x(), .dbg_y(), .dbg_s(), .dbg_p(), .dbg_b(),
         .dbg_sync(), .dbg_trap(), .dbg_trap_ir(), .dbg_trap_pc()
     );
 

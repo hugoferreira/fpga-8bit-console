@@ -1,3 +1,10 @@
+`include "ppu_regs.sv"
+`include "ppu_line.sv"
+`include "ppu_display.sv"
+`include "ppu_blit.sv"
+`include "ppu_fetch.sv"
+`include "ppu_map.sv"
+`include "ppu_scan.sv"
 // PPU: scrolling tilemap layer + sprite compositor, both fed from a shared
 // sprite sheet. While line N is displayed, the engine composites line N+1
 // into the back bank of a BRAM line buffer: clear, then one pass of tile
@@ -80,54 +87,52 @@ module sprite_compositor(input bit clk, input bit reset,
   localparam SHEET_BYTES = SHEET_SLOTS * 8;
   localparam TILE_COLS = LANES + 1;        // visible tile columns per line
 
-  // Sprite sheet: plane slot s row r at byte {s, r}
-  logic [7:0] sheet[0:SHEET_BYTES-1];
-  initial $readmemb("./rtl/sprite_pattern.bin", sheet);
-  logic [10:0] sheet_addr;   // CPU upload pointer
-
-  // Sprite list: {pal[3:0], bppm1[1:0], yflip, xflip, base[7:0], y[6:0], x[7:0]}
-  logic [33:0] list[0:MAX_SPRITES-1];
-  logic [7:0]  sp_index;
+  // ------------------------------------------------------------------
+  // Register file: $00-$3F, the CPU/DMA port and the readback mux, in
+  // ppu_regs.sv. It owns no storage that the engine reads - the pattern sheet
+  // and the sprite list stay next to their read ports here, and arrive as
+  // write strobes.
+  // ------------------------------------------------------------------
+  logic        sheet_we;
+  logic [10:0] sheet_waddr;
+  logic [7:0]  sheet_wdata;
+  logic        list_we;
+  logic [6:0]  list_waddr;
+  logic [33:0] list_wdata;
+  logic [7:0]  camera_x;
+  logic [6:0]  camera_y;
+  logic        tiles_en;
+  logic        ovl_en;
+  logic [3:0]  ovl_color;
   logic [7:0]  sp_count;
-  logic [7:0]  stage_x;
-  logic [6:0]  stage_y;
-  logic [7:0]  stage_base;
-  logic [2:0]  stage_rep;
-
-  // Tilemap: 32x16 cells as two byte planes (low = base, high = attributes)
-  logic [7:0] map_lo[0:511];
-  logic [7:0] map_hi[0:511];
-  logic [7:0] camera_x;
-  logic [6:0] camera_y;
-  logic       tiles_en;
-
-  // Overlay: 1bpp, 20 bytes per row (2400 used; sized for a clean bound)
-  logic [7:0] ovl[0:2559];
-  logic       ovl_en;
-  logic [3:0] ovl_color;
-
-  // Draw state
-  logic [3:0]  dpal[0:15];   // draw palette (tiles + sprites, at blit time)
-  logic [3:0]  spal[0:15];   // screen palette (every displayed pixel)
+  logic [7:0]  bsplit;
+  logic        pal_we, pal_sel, pal_rsel;
+  logic [3:0]  pal_addr, pal_wdata, pal_raddr, pal_rdata;
   logic [15:0] palt_t;       // bit v -> pixel value v is transparent
   logic [7:0]  clip_x0, clip_x1;
   logic [6:0]  clip_y0, clip_y1;
 
-  // Line buffer: 2 banks x LANES words of 8 pixels x 4bpp. Address bit 5
-  // selects the bank, so a swap is a register toggle, not a buffer copy.
-  logic [31:0] linebuf[0:63];
-  logic        bank;    // bank being displayed; ~bank is composited
+  ppu_regs #(.H_DISPLAY(H_DISPLAY), .V_DISPLAY(V_DISPLAY)) regs(
+    .clk, .reset,
+    .cs, .rw, .addr, .di, .dout, .btn, .vsync,
+    .dma_active, .dma_write, .dma_addr, .dma_data,
+    .sheet_we, .sheet_waddr, .sheet_wdata,
+    .list_we, .list_waddr, .list_wdata,
+    .camera_x, .camera_y, .tiles_en, .ovl_en, .ovl_color,
+    .sp_count, .bsplit,
+    .pal_we, .pal_sel, .pal_addr, .pal_wdata,
+    .pal_raddr, .pal_rsel, .pal_rdata,
+    .palt_t,
+    .clip_x0, .clip_x1, .clip_y0, .clip_y1);
 
-  // Frame counter for CPU-side vsync pacing
-  logic [7:0] frame_count;
-  logic       vsync_q;
+  // The two palettes live with their readers - the draw palette in ppu_blit,
+  // the screen palette in ppu_display - so only the readback port comes back.
+  logic [3:0] dpal_rdata, spal_rdata;
+  assign pal_rdata = pal_rsel ? spal_rdata : dpal_rdata;
 
-  // Free-running LFSR (taps 16,14,13,11 - maximal length)
-  logic [15:0] lfsr;
-
-  // Background-sprite split: entries below this index draw behind the tiles
-  logic [7:0] bsplit;
-  logic       scan_pass;   // 0 = behind pass, 1 = front pass
+  // Line buffer: two banks of LANES words, in ppu_line.sv. `bank` is the one
+  // being displayed; the engine writes ~bank.
+  logic bank;
 
   // Pixel-phase tracking: hpos advances once per displayed pixel
   logic [7:0] hpos_q;
@@ -143,40 +148,73 @@ module sprite_compositor(input bit clk, input bit reset,
   // ------------------------------------------------------------------
   // Compositing engine
   // ------------------------------------------------------------------
-  typedef enum logic [3:0] { E_IDLE, E_CLEAR, E_TMAP0, E_TMAP1, E_SCAN, E_FETCH, E_RD0, E_RD1, E_WR0, E_WR1 } estate_t;
+  // E_TMAP is one state, not two: the tilemap read now runs a column ahead of
+  // the walk, so there is nothing left to wait for. See ppu_map.sv.
+  typedef enum logic [3:0] { E_IDLE, E_CLEAR, E_TMAP, E_SCAN, E_FETCH, E_RD0, E_RD1, E_WR0, E_WR1 } estate_t;
   estate_t est;
 
-  logic [7:0]  scan_i;
   logic [4:0]  clear_i;
-  logic [33:0] entry_q;
-  logic        entry_valid;
   logic        w0_wait, w1_wait;
-  logic [31:0] old_w0, old_w1;
   logic [6:0]  line_y;
+  logic        tile_mode;    // the entry in flight came from the tile pass
 
-  // Per-line latched scroll state
-  logic [7:0] camx_l;
-  logic [6:0] wy_row;
-  logic [4:0] tk;         // tile column cursor
-  logic       tile_mode;
-  wire [4:0]  tx0    = camx_l[7:3];
-  wire [2:0]  xoff   = camx_l[2:0];
-  wire [3:0]  ty     = wy_row[6:3];
-  wire [2:0]  rowoff = wy_row[2:0];
-  wire [7:0]  x_syn  = {tk, 3'b000} - {5'b0, xoff};
-  wire [6:0]  y_syn  = line_y - {4'b0, rowoff};
+  // Declared up front because the producer control below is written in terms
+  // of them: iverilog rejects use before declaration even where Verilator and
+  // yosys accept it.
+  logic        map_at_end, map_empty;
+  logic [33:0] map_entry;
+  logic [33:0] entry_q;      // the entry in flight, latched at fetch_start
+  logic        scan_valid, scan_hit, scan_exhausted, scan_pass;
+  logic [33:0] scan_entry;
+  logic        fetch_done, fetch_more, fetch_reused;
+  logic [7:0]  cell_x;
+  logic [7:0]  prow0, prow1, prow2, prow3;
+  logic [4:0]  lane, lane1;
+  logic        w0_valid, w1_valid;
+  logic [31:0] w0_data, w1_data;
+  logic [31:0] old_w0, old_w1;
+  logic        eng_rd;
+  logic [4:0]  eng_rlane;
+  logic        wr_en;
+  logic [4:0]  wr_lane;
+  logic [31:0] wr_data;
+  logic [31:0] rd_data;
 
-  // Tile cell fetch (registered read, issued in E_TMAP0)
-  wire [8:0] map_raddr = {ty, tx0 + tk};
-  logic [7:0] map_rd_lo, map_rd_hi;
-  always_ff @(posedge clk) begin
-    map_rd_lo <= map_lo[map_raddr];
-    map_rd_hi <= map_hi[map_raddr];
-  end
+  // ------------------------------------------------------------------
+  // Producer control. The tile pass is (re)started at line_start and again
+  // when the behind pass runs out; the scan advances whenever it is looking
+  // at an entry it is not going to composite.
+  // ------------------------------------------------------------------
+  wire tk_reset = (est == E_SCAN) && !scan_hit && scan_exhausted &&
+                  !scan_pass && tiles_en && !line_start;
+  wire tk_step  = (est == E_TMAP) && !map_at_end && !line_start;
 
-  wire [7:0] count_eff = (sp_count > MAX_SPRITES[7:0]) ? MAX_SPRITES[7:0] : sp_count;
-  wire [7:0] limA       = (bsplit > count_eff) ? count_eff : bsplit;
-  wire [7:0] scan_limit = scan_pass ? count_eff : limA;
+  wire scan_advance = !line_start &&
+                      (((est == E_SCAN) && !scan_hit) ||
+                       ((est == E_WR1) && !fetch_more && !tile_mode));
+  wire scan_next_pass = (est == E_SCAN) && !scan_hit && scan_exhausted &&
+                        !scan_pass && !line_start;
+
+  // ------------------------------------------------------------------
+  // The two entry producers. Both feed the same fetch/blit path, which is the
+  // interface this change exists to make explicit: the engine below sequences
+  // them, and neither knows about the other.
+  // ------------------------------------------------------------------
+  ppu_map #(.TILE_COLS(TILE_COLS)) tmap(
+    .clk, .reset,
+    .map_cs, .rw, .map_addr, .di,
+    .line_start, .camera_x, .camera_y, .next_line, .line_y,
+    .tk_reset(tk_reset), .tk_step(tk_step),
+    .at_end(map_at_end), .cell_empty(map_empty), .entry(map_entry));
+
+  ppu_scan #(.MAX_SPRITES(MAX_SPRITES)) scan(
+    .clk, .reset,
+    .list_we, .list_waddr, .list_wdata,
+    .sp_count, .bsplit, .line_y,
+    .line_start,
+    .advance(scan_advance), .next_pass(scan_next_pass),
+    .entry(scan_entry), .valid(scan_valid), .hit(scan_hit),
+    .exhausted(scan_exhausted), .front_pass(scan_pass));
 
   // Entry decode, combinational from the held entry
   wire [7:0] e_x     = entry_q[7:0];
@@ -188,169 +226,140 @@ module sprite_compositor(input bit clk, input bit reset,
   wire [3:0] e_pal   = entry_q[30:27];
   wire [2:0] e_rep   = entry_q[33:31];   // extra cells after the first
   wire [6:0] dy      = line_y - e_y;
-  wire       hit     = (dy < 7'd8) && entry_valid;
   wire [2:0] rowi    = dy[2:0] ^ {3{e_yf}};
-  wire [3:0] bmask   = {e_bppm1 == 2'd3, e_bppm1 >= 2'd2, e_bppm1 >= 2'd1, 1'b1};
 
-  // Plane-row fetch pipeline: bpp reads from the sheet's dedicated read
-  // port, address {base+p, rowi} - self-contained in the entry
-  logic [7:0] prow[0:3];
-  logic [2:0] fp;        // next plane to issue
-  logic       fpend;     // a sheet read is in flight
-  logic [1:0] fpidx;     // which plane it is for
-  wire [10:0] sheet_eaddr = {e_base + {6'b0, fp[1:0]}, rowi};
-  logic [7:0] sheet_rdata;
+
+  // Pattern fetch and the cell cursor, in ppu_fetch.sv.
+  //
+  // A fetch starts from either producer of entries: a non-empty tile cell, or
+  // a list entry that hits this line. The tile path is the awkward one -
+  // The cell position comes from entry_next rather than entry_q, because at
+  // the clock `start` is sampled entry_q has not been written yet. `e_base`,
+  // `rowi` and `e_bppm1` need no such care: they are only read while `run` is
+  // high, by which time the latch has landed.
+  wire tile_start   = (est == E_TMAP) && !map_at_end && !map_empty;
+  wire sprite_start = (est == E_SCAN) && scan_hit;
+  wire fetch_start  = !line_start && (tile_start || sprite_start);
+
+  // The producer/consumer boundary, and the one register that makes it a
+  // stream: whichever producer offers an entry, the fetch/blit path latches it
+  // once and works from the copy. Muxing the two producers' *registers* on the
+  // consumer side instead was measured and it costs 10 MHz of Fmax - the list
+  // memory's output register folds into ppu_scan's entry, so the mux lands
+  // between a block RAM output and the blit rather than in front of a
+  // flip-flop.
+  wire [33:0] entry_next = tile_start ? map_entry : scan_entry;
+
+  // The row index for the entry about to be latched: ppu_fetch samples its
+  // pattern key at `start`, one clock before entry_q holds the entry.
+  wire [6:0] dy_next   = line_y - entry_next[14:8];
+  wire [2:0] rowi_next = dy_next[2:0] ^ {3{entry_next[24]}};
   always_ff @(posedge clk)
-    sheet_rdata <= sheet[sheet_eaddr];
+    if (fetch_start)
+      entry_q <= entry_next;
 
-  // Per-pixel color and opacity for the 8-pixel row (after flips/bpp/palette)
-  logic [31:0] packed32;
-  logic [7:0]  opq8;
+
+  ppu_fetch #(.SHEET_BYTES(SHEET_BYTES)) fetch(
+    .clk, .reset,
+    .sheet_we, .sheet_waddr, .sheet_wdata,
+    .start(fetch_start),
+    // Latched on the same clock as entry_q, so both come from entry_next
+    .line_start,
+    .start_x(entry_next[7:0]),
+    .start_rep(entry_next[33:31]),
+    .run((est == E_FETCH) && !line_start),
+    .next_cell((est == E_WR1) && fetch_more && !line_start),
+    .start_base(entry_next[22:15]),
+    .start_rowi(rowi_next),
+    .start_bppm1(entry_next[26:25]),
+    .done(fetch_done), .more(fetch_more), .reused(fetch_reused), .cell_x,
+    .prow0, .prow1, .prow2, .prow3);
+
+  ppu_blit #(.LANES(LANES)) blit(
+    .clk, .reset,
+    .dpal_we(pal_we && !pal_sel), .dpal_waddr(pal_addr), .dpal_wdata(pal_wdata),
+    .dpal_raddr(pal_raddr), .dpal_rdata,
+    .prow0, .prow1, .prow2, .prow3,
+    .e_xf, .e_bppm1, .e_pal, .cell_x, .line_y,
+    .palt_t, .clip_x0, .clip_x1, .clip_y0, .clip_y1,
+    .old_w0, .old_w1,
+    .lane, .lane1, .w0_valid, .w0_data, .w1_valid, .w1_data);
+
+  // Line buffer requests. The engine addresses by lane and never sees which
+  // bank it is on - ppu_line owns that, and gives the display the read port
+  // whenever it wants one.
   always_comb begin
-    for (int j = 0; j < 8; j++) begin
-      logic [2:0] jj;
-      logic [3:0] pix;
-      jj = e_xf ? 3'd7 - j[2:0] : j[2:0];
-      pix = {prow[3][jj], prow[2][jj], prow[1][jj], prow[0][jj]} & bmask;
-      opq8[j] = ~palt_t[pix];
-      packed32[j*4 +: 4] = dpal[e_pal + pix];
-    end
+    eng_rd    = (est == E_RD0) || (est == E_RD1);
+    eng_rlane = (est == E_RD1) ? lane1 : lane;
   end
 
-  // 64-bit window covering the two lanes the row can straddle
-  // A repeated entry blits the same fetched row into consecutive cells, so
-  // the blit works from cell_x - the position of the cell being written -
-  // rather than from the entry's own x.
-  logic [7:0] cell_x;
-  logic [2:0] rcnt;
-  wire [4:0]  lane   = cell_x[7:3];
-  wire [4:0]  lane1  = lane + 5'd1;
-  wire [2:0]  off    = cell_x[2:0];
-  wire [63:0] data64 = {32'b0, packed32} << {off, 2'b00};
-  wire [15:0] mask16 = {8'b0, opq8} << off;
-
-  // Clip mask over the 2-word blit window: pixel k sits at screen x =
-  // {lane,000}+k in 8-bit arithmetic, which also clips the wrapped
-  // left-edge partial tile correctly
-  wire line_in_clip = (line_y >= clip_y0) && (line_y <= clip_y1);
-  logic [15:0] clipm;
-  always_comb
-    for (int k = 0; k < 16; k++) begin
-      logic [7:0] xk;
-      xk = {lane, 3'b000} + k[7:0];
-      clipm[k] = line_in_clip && (xk >= clip_x0) && (xk <= clip_x1);
-    end
-
-  function automatic [31:0] merge(input [31:0] old, input [31:0] nw, input [7:0] m);
-    for (int n = 0; n < 8; n++)
-      merge[n*4 +: 4] = m[n] ? nw[n*4 +: 4] : old[n*4 +: 4];
-  endfunction
-
-  // Line buffer read port: display has priority, engine takes free cycles
-  logic [5:0]  rd_addr;
-  logic [31:0] rd_data;
-  always_comb begin
-    if (disp_slot)
-      rd_addr = {bank, hpos[7:3]};
-    else if (est == E_RD0)
-      rd_addr = {~bank, lane};
-    else if (est == E_RD1)
-      rd_addr = {~bank, lane1};
-    else
-      rd_addr = 6'd0;
-  end
-  always_ff @(posedge clk)
-    rd_data <= linebuf[rd_addr];
-
-  // Line buffer write port: exclusively the engine's
-  logic        wr_en;
-  logic [5:0]  wr_addr;
-  logic [31:0] wr_data;
   always_comb begin
     wr_en = 0;
-    wr_addr = 6'd0;
+    wr_lane = 5'd0;
     wr_data = 32'd0;
     case (est)
       E_CLEAR: begin
         wr_en = 1;
-        wr_addr = {~bank, clear_i};
+        wr_lane = clear_i;
       end
-      E_WR0: if (lane < LANES[4:0]) begin
+      E_WR0: if (w0_valid) begin
         wr_en = 1;
-        wr_addr = {~bank, lane};
-        wr_data = merge(old_w0, data64[31:0], mask16[7:0] & clipm[7:0]);
+        wr_lane = lane;
+        wr_data = w0_data;
       end
-      E_WR1: if (lane1 < LANES[4:0] && (mask16[15:8] & clipm[15:8]) != 8'd0) begin
+      E_WR1: if (w1_valid) begin
         wr_en = 1;
-        wr_addr = {~bank, lane1};
-        wr_data = merge(old_w1, data64[63:32], mask16[15:8] & clipm[15:8]);
+        wr_lane = lane1;
+        wr_data = w1_data;
       end
       default: ;
     endcase
   end
-  always_ff @(posedge clk)
-    if (wr_en)
-      linebuf[wr_addr] <= wr_data;
 
-  // Overlay display read: the overlay byte for the current lane is fetched
-  // in parallel with the line-buffer read (own BRAM, own port); y*20 is
-  // (y<<4) + (y<<2), so the address is adder-only
-  wire [11:0] ovl_daddr = {1'b0, vpos, 4'b0} + {3'b0, vpos, 2'b0} + {7'b0, hpos[7:3]};
-  logic [7:0] ovl_rdata;
-  always_ff @(posedge clk)
-    ovl_rdata <= ovl[ovl_daddr];
+  ppu_line lbuf(
+    .clk, .reset,
+    .disp_slot, .disp_lane(hpos[7:3]), .line_end,
+    .eng_rd, .eng_rlane,
+    .eng_we(wr_en), .eng_wlane(wr_lane), .eng_wdata(wr_data),
+    .rd_data, .bank);
 
-  // Overlay CPU write port (write-only: the display owns the read port)
-  always_ff @(posedge clk)
-    if (ovl_cs && rw && ovl_addr < 12'd2560)
-      ovl[ovl_addr] <= di;
+  ppu_display display(
+    .clk, .reset,
+    .hpos, .vpos, .disp_slot, .rd_data,
+    .ovl_cs, .rw, .ovl_addr, .di, .ovl_en, .ovl_color,
+    .spal_we(pal_we && pal_sel), .spal_waddr(pal_addr), .spal_wdata(pal_wdata),
+    .spal_raddr(pal_raddr), .spal_rdata,
+    .color);
 
-  // Display pipeline: read issued on the pixel's first clock, color
-  // registered on the second (hpos is stable for the whole pixel)
-  logic disp_rd_q;
-
+  // ------------------------------------------------------------------
+  // The engine sequencer. All that is left of the ten-state FSM: it decides
+  // WHEN each stage runs, and no longer holds any of their state.
+  //
+  //   clear -> behind-pass scan -> tile pass -> front-pass scan -> idle
+  //
+  // with every entry either producer offers going through the same
+  // fetch -> read -> read -> write -> write path.
+  // ------------------------------------------------------------------
   always_ff @(posedge clk) begin
     if (reset) begin
       est <= E_IDLE;
-      bank <= 0;
-      entry_valid <= 0;
       tile_mode <= 0;
       w0_wait <= 0;
       w1_wait <= 0;
-      disp_rd_q <= 0;
-      color <= 0;
       hpos_q <= 0;
     end else begin
       hpos_q <= hpos;
 
-      // Display side
-      disp_rd_q <= disp_slot;
-      if (disp_rd_q) begin
-        if (ovl_en && ovl_rdata[hpos[2:0]])
-          color <= spal[ovl_color];
-        else
-          color <= spal[rd_data[{2'b0, hpos[2:0]} * 4 +: 4]];
-      end
-
-      // The composed bank becomes the displayed bank during the sync pixel
-      if (line_end)
-        bank <= ~bank;
-
-      // Engine
       if (line_start) begin
         line_y <= next_line;
-        camx_l <= camera_x;
-        wy_row <= camera_y + next_line;
         clear_i <= 0;
-        tk <= 0;
-        scan_i <= 0;
-        entry_valid <= 0;
         tile_mode <= 0;
-        scan_pass <= 0;
         w0_wait <= 0;
         w1_wait <= 0;
-        cell_x <= 0;
-        rcnt <= 0;
+        // The cell cursor and the repeat counter are deliberately NOT cleared
+        // here. They were, and it was dead code: the only path to the states
+        // that read them runs through E_FETCH, and the only path into E_FETCH
+        // is a `start`, which writes both.
         est <= E_CLEAR;
       end else begin
         case (est)
@@ -360,96 +369,43 @@ module sprite_compositor(input bit clk, input bit reset,
               est <= E_SCAN;   // behind pass first (instant when split = 0)
           end
 
-          E_TMAP0: begin
-            // Cell read for column tk goes out this cycle
-            if (tk >= TILE_COLS[4:0]) begin
+          // One clock per column. The cell for tk is already in hand - the
+          // read runs a column ahead - so this state decides and moves on:
+          // an empty cell costs one clock, and a non-empty one starts its
+          // blit on the next.
+          E_TMAP:
+            if (map_at_end) begin
               tile_mode <= 0;
-              entry_valid <= 0;
               est <= E_SCAN;
-            end else
-              est <= E_TMAP1;
-          end
-
-          E_TMAP1: begin
-            tk <= tk + 1;
-            if ({map_rd_hi, map_rd_lo} == 16'h0000)
-              est <= E_TMAP0;   // empty cell, 2 cycles
-            else begin
-              // Synthesize a sprite entry for this tile and blit it through
-              // the shared pipeline; y is chosen so dy lands on the tile row
-              entry_q <= {3'd0, map_rd_hi[7:4], map_rd_hi[3:2], map_rd_hi[1], map_rd_hi[0], map_rd_lo, y_syn, x_syn};
-              entry_valid <= 1;
-              cell_x <= x_syn;      // tiles are always a single cell
-              rcnt <= 3'd0;
-              prow[0] <= 0;
-              prow[1] <= 0;
-              prow[2] <= 0;
-              prow[3] <= 0;
-              fp <= 0;
-              fpend <= 0;
+            end else if (!map_empty)
               est <= E_FETCH;
-            end
-          end
 
-          E_SCAN: begin
-            if (hit) begin
-              // Hold the entry and fetch its plane rows from the sheet
-              cell_x <= e_x;
-              rcnt <= e_rep;
-              prow[0] <= 0;
-              prow[1] <= 0;
-              prow[2] <= 0;
-              prow[3] <= 0;
-              fp <= 0;
-              fpend <= 0;
+          E_SCAN:
+            if (scan_hit)
               est <= E_FETCH;
-            end else begin
-              // Examine the next entry (1 per clock, pipelined)
-              entry_q <= list[scan_i[6:0]];
-              if (scan_i < scan_limit) begin
-                entry_valid <= 1;
-                scan_i <= scan_i + 1;
-              end else begin
-                entry_valid <= 0;
-                if (!entry_valid) begin
-                  if (!scan_pass) begin
-                    // behind pass done: tile layer next, then the front pass
-                    scan_pass <= 1;
-                    if (tiles_en) begin
-                      tile_mode <= 1;
-                      tk <= 0;
-                      est <= E_TMAP0;
-                    end
-                    // else: stay in E_SCAN; scan_i continues at the split
-                  end else
-                    est <= E_IDLE;
+            else if (scan_exhausted) begin
+              if (!scan_pass) begin
+                // behind pass done: tile layer next, then the front pass.
+                // With tiles off, stay in E_SCAN and let the cursor carry on
+                // from the split.
+                if (tiles_en) begin
+                  tile_mode <= 1;
+                  est <= E_TMAP;
                 end
-              end
+              end else
+                est <= E_IDLE;
             end
-          end
 
-          E_FETCH: begin
-            // Pipelined issue/capture: bpp reads, one per plane, then drain
-            if (fpend)
-              prow[fpidx] <= sheet_rdata;
-            if (fp <= {1'b0, e_bppm1}) begin
-              fpend <= 1;
-              fpidx <= fp[1:0];
-              fp <= fp + 1;
-            end else begin
-              fpend <= 0;
-              if (!fpend)
-                est <= E_RD0;
-            end
-          end
+          E_FETCH:
+            if (fetch_done)
+              est <= E_RD0;
 
-          E_RD0: begin
+          E_RD0:
             // Issue the word0 read when the display isn't using the port
             if (!disp_slot) begin
               w0_wait <= 1;
               est <= E_RD1;
             end
-          end
 
           E_RD1: begin
             if (w0_wait) begin
@@ -471,26 +427,17 @@ module sprite_compositor(input bit clk, input bit reset,
             est <= E_WR1;
           end
 
-          E_WR1: begin
+          E_WR1:
             // merged word1 is written this cycle. If the entry has cells left
-            // to go, step 8 pixels right and blit the SAME row again - prow
-            // still holds it, so a run pays one sheet fetch, not one per cell.
-            if (rcnt != 3'd0) begin
-              rcnt <= rcnt - 3'd1;
-              cell_x <= cell_x + 8'd8;
+            // to go, ppu_fetch steps the cursor 8 pixels right and the SAME
+            // row is blitted again - a run pays one sheet fetch, not one per
+            // cell.
+            if (fetch_more)
               est <= E_RD0;
-            end else if (tile_mode)
-              est <= E_TMAP0;
-            else begin
-              entry_q <= list[scan_i[6:0]];
-              if (scan_i < scan_limit) begin
-                entry_valid <= 1;
-                scan_i <= scan_i + 1;
-              end else
-                entry_valid <= 0;
+            else if (tile_mode)
+              est <= E_TMAP;
+            else
               est <= E_SCAN;
-            end
-          end
 
           default: ;  // E_IDLE waits for line_start
         endcase
@@ -498,123 +445,4 @@ module sprite_compositor(input bit clk, input bit reset,
     end
   end
 
-  // ------------------------------------------------------------------
-  // Tilemap CPU write port (write-only: the fetcher owns the read ports)
-  // ------------------------------------------------------------------
-  always_ff @(posedge clk)
-    if (map_cs && rw && !map_addr[9])
-      map_lo[map_addr[8:0]] <= di;
-  always_ff @(posedge clk)
-    if (map_cs && rw && map_addr[9])
-      map_hi[map_addr[8:0]] <= di;
-
-  // ------------------------------------------------------------------
-  // Register interface - DMA writes win over CPU access
-  // ------------------------------------------------------------------
-  wire        reg_write = (dma_active && dma_write) || (cs && rw);
-  wire [5:0]  reg_addr  = (dma_active && dma_write) ? {2'b00, dma_addr} : addr;
-  wire [7:0]  reg_data  = (dma_active && dma_write) ? dma_data : di;
-
-  always_ff @(posedge clk) begin
-    if (reset) begin
-      sp_index <= 0;
-      sp_count <= 0;
-      sheet_addr <= 0;
-      camera_x <= 0;
-      camera_y <= 0;
-      tiles_en <= 0;
-      ovl_en <= 0;
-      ovl_color <= 0;
-      frame_count <= 0;
-      vsync_q <= 0;
-      lfsr <= 16'hACE1;
-      bsplit <= 0;
-      stage_rep <= 0;
-      for (int k = 0; k < 16; k++) begin
-        dpal[k] <= k[3:0];
-        spal[k] <= k[3:0];
-      end
-      palt_t <= 16'h0001;
-      clip_x0 <= 0;
-      clip_y0 <= 0;
-      clip_x1 <= H_DISPLAY[7:0] - 1;
-      clip_y1 <= V_DISPLAY[6:0] - 1;
-    end else begin
-      vsync_q <= vsync;
-      if (vsync && !vsync_q)
-        frame_count <= frame_count + 1;
-      lfsr <= {lfsr[14:0], lfsr[15] ^ lfsr[13] ^ lfsr[12] ^ lfsr[10]};
-
-      if (reg_write) begin
-        case (reg_addr)
-          6'h10, 6'h11, 6'h12, 6'h13, 6'h14, 6'h15, 6'h16, 6'h17,
-          6'h18, 6'h19, 6'h1A, 6'h1B, 6'h1C, 6'h1D, 6'h1E, 6'h1F:
-            dpal[reg_addr[3:0]] <= reg_data[3:0];
-          6'h20, 6'h21, 6'h22, 6'h23, 6'h24, 6'h25, 6'h26, 6'h27,
-          6'h28, 6'h29, 6'h2A, 6'h2B, 6'h2C, 6'h2D, 6'h2E, 6'h2F:
-            spal[reg_addr[3:0]] <= reg_data[3:0];
-          6'h30: clip_x0 <= reg_data;
-          6'h31: clip_y0 <= reg_data[6:0];
-          6'h32: clip_x1 <= reg_data;
-          6'h33: clip_y1 <= reg_data[6:0];
-          6'h34: palt_t[7:0] <= reg_data;
-          6'h35: palt_t[15:8] <= reg_data;
-          6'h36: bsplit <= reg_data;
-          6'h00: sheet_addr[7:0] <= reg_data;
-          6'h01: sheet_addr[10:8] <= reg_data[2:0];
-          6'h02: begin
-            sheet[sheet_addr] <= reg_data;
-            sheet_addr <= sheet_addr + 1;
-          end
-          6'h03: camera_x <= reg_data;
-          6'h04: camera_y <= reg_data[6:0];
-          6'h05: begin
-            tiles_en <= reg_data[0];
-            ovl_en <= reg_data[1];
-          end
-          6'h06: ovl_color <= reg_data[3:0];
-          6'h08: sp_index <= reg_data;
-          6'h09: stage_x <= reg_data;
-          6'h0A: stage_y <= reg_data[6:0];
-          6'h0B: begin
-            list[sp_index[6:0]] <= {stage_rep, reg_data[7:2], reg_data[1], reg_data[0], stage_base, stage_y, stage_x};
-            sp_index <= sp_index + 1;
-          end
-          6'h0C: sp_count <= reg_data;
-          6'h0E: stage_base <= reg_data;
-          // Repeat count in CELLS: 0 and 1 both mean one cell, so the reset
-          // value leaves every existing program unchanged. Clamped to 8.
-          6'h37: stage_rep <= (reg_data == 8'd0)   ? 3'd0 :
-                              (reg_data >= 8'd8)   ? 3'd7 :
-                                                     reg_data[2:0] - 3'd1;
-          default: ;  // $6, $7, $D, $F: unmapped / read-only
-        endcase
-      end else if (cs && !rw) begin
-        casez (addr)
-          6'h00: dout <= sheet_addr[7:0];
-          6'h01: dout <= {5'b0, sheet_addr[10:8]};
-          6'h03: dout <= camera_x;
-          6'h04: dout <= {1'b0, camera_y};
-          6'h05: dout <= {6'b0, ovl_en, tiles_en};
-          6'h06: dout <= {4'b0, ovl_color};
-          6'h07: dout <= btn;
-          6'h08: dout <= sp_index;
-          6'h0C: dout <= sp_count;
-          6'h0D: dout <= frame_count;
-          6'h0E: dout <= stage_base;
-          6'h37: dout <= {5'd0, stage_rep} + 8'd1;
-          6'b01????: dout <= {4'b0, addr[4] ? spal[addr[3:0]] : dpal[addr[3:0]]};
-          6'h30: dout <= clip_x0;
-          6'h31: dout <= {1'b0, clip_y0};
-          6'h32: dout <= clip_x1;
-          6'h33: dout <= {1'b0, clip_y1};
-          6'h34: dout <= palt_t[7:0];
-          6'h35: dout <= palt_t[15:8];
-          6'h36: dout <= bsplit;
-          6'h0F: dout <= lfsr[7:0];
-          default: dout <= 8'h00;
-        endcase
-      end
-    end
-  end
 endmodule

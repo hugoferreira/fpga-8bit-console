@@ -59,7 +59,7 @@ module cpu6502_tb();
     .IRQ(IRQ),
     .NMI(NMI),
     .RDY(RDY),
-    .dbg_pc(), .dbg_a(), .dbg_x(), .dbg_y(), .dbg_s(), .dbg_p(),
+    .dbg_pc(), .dbg_a(), .dbg_x(), .dbg_y(), .dbg_s(), .dbg_p(), .dbg_b(),
     .dbg_sync(), .dbg_trap(), .dbg_trap_ir(), .dbg_trap_pc()
   );
   

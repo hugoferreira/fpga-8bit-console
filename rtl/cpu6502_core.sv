@@ -64,6 +64,7 @@ module cpu6502_core (
     output logic [7:0]  dbg_y,
     output logic [7:0]  dbg_s,
     output logic [7:0]  dbg_p,
+    output logic [7:0]  dbg_b,
     output logic        dbg_sync,     // this cycle decodes a fetched opcode
     output logic        dbg_trap,     // an undefined opcode stopped the core
     output logic [7:0]  dbg_trap_ir,
@@ -103,6 +104,11 @@ module cpu6502_core (
     state_t      st, st_n;
     logic [15:0] pc, pc_n;
     logic [7:0]  a, a_n, x, x_n, y, y_n, s, s_n;
+    // B: the low half of the 16-bit accumulator AB. A is the high half, so
+    // every existing 8-bit instruction still works on the integer part of an
+    // 8.8 value without a transfer. B is architectural state - an interrupt
+    // must save it, which refactor-cpu-core section 5 has to account for.
+    logic [7:0]  b, b_n;
     logic        fn, fn_n, fv, fv_n, fd, fd_n;
     logic        fi, fi_n, fz, fz_n, fc, fc_n;
 
@@ -322,6 +328,20 @@ module cpu6502_core (
         cond = (cond == ir[5]);
     end
 
+    // ---- 16-bit ALU ---------------------------------------------------
+    // One 8-bit adder used twice, low half then high half, exactly as the
+    // sequence it replaces did by hand - the win is in the fetches, not in
+    // wider hardware.
+    logic       w_sub, w_cin;
+    logic [8:0] w_lo, w_hi;
+    logic [7:0] w_opnd;
+    always_comb begin
+        w_sub  = (dec_r.op == OP_SUBW) || (dec_r.op == OP_CMPW);
+        w_opnd = di_eff ^ {8{w_sub}};
+        w_lo   = {1'b0, b} + {1'b0, w_opnd} + {8'd0, w_sub};   // carry-free
+        w_hi   = {1'b0, a} + {1'b0, w_opnd} + {8'd0, cy};
+    end
+
     // ---- sequencer ----------------------------------------------------
 
     // PC control. In every arm of the sequencer that moves PC, the new PC is
@@ -349,7 +369,7 @@ module cpu6502_core (
         st_n       = st;
         pc_upd     = 1'b0;
         pc_from_pc = 1'b0;
-        a_n       = a;  x_n = x;  y_n = y;  s_n = s;
+        a_n       = a;  x_n = x;  y_n = y;  s_n = s;  b_n = b;
         fn_n     = fn; fv_n = fv; fd_n = fd;
         fi_n     = fi;  fz_n = fz; fc_n = fc;
         ir_n      = ir;
@@ -523,6 +543,45 @@ module cpu6502_core (
         end
         S_IDD3: begin ea = {di_eff + {7'b0, cy}, adl}; ea_go = 1'b1; end
 
+        // ---- 16-bit accumulator: AB ----------------------------------
+        // Two bytes fetched, two memory accesses, four cycles. The sequence
+        // this replaces - lda/add/sta/lda/adc/sta - is 12 bytes and 18 cycles.
+        S_W0: begin                       // the zero-page address arrived
+            zpa_n = di_eff;
+            ab_c  = {8'h00, di_eff};
+            if (dec_r.op == OP_STW) begin
+                we_c = 1'b1; do_c = b;    // low half first, little-endian
+                st_n = S_WS1;
+            end else begin
+                st_n = S_W1;
+            end
+        end
+        S_W1: begin                       // the low byte arrived
+            case (dec_r.op)
+                OP_LDW:  b_n = di_eff;
+                OP_CMPW: ;                                  // flags only
+                default: b_n = w_lo[7:0];                   // ADDW / SUBW
+            endcase
+            cy_n  = (dec_r.op == OP_LDW) ? 1'b0 : w_lo[8];
+            adl_n = (dec_r.op == OP_CMPW) ? w_lo[7:0] : 8'h00;  // low diff, for Z
+            ab_c  = {8'h00, zpa + 8'd1};
+            st_n  = S_W2;
+        end
+        S_WS1: begin                      // store the high half
+            ab_c = {8'h00, zpa + 8'd1}; we_c = 1'b1; do_c = a;
+            st_n = S_LAST;
+        end
+
+        S_WI0: begin                      // 16-bit immediate, low byte
+            case (dec_r.op)
+                OP_LDW:  b_n = di_eff;
+                default: b_n = w_lo[7:0];
+            endcase
+            cy_n  = (dec_r.op == OP_LDW) ? 1'b0 : w_lo[8];
+            adl_n = 8'h00;
+            ab_c  = pc; pc_upd = 1'b1; st_n = S_WI1;
+        end
+
         // ---- execute ----
         S_EXEC: begin
             commit = 1'b1;
@@ -539,6 +598,24 @@ module cpu6502_core (
             st_n = S_LAST;
         end
         S_LAST: begin ab_c = pc; pc_upd = 1'b1; st_n = S_DECODE; end
+
+        // The high byte arrived: finish the 16-bit operation and set the flags.
+        // N from the high byte, Z over BOTH halves, C and V from the high add.
+        S_W2, S_WI1: begin
+            if (dec_r.op != OP_CMPW) a_n = (dec_r.op == OP_LDW) ? di_eff
+                                                                : w_hi[7:0];
+            fn_n = (dec_r.op == OP_LDW) ? di_eff[7] : w_hi[7];
+            fz_n = (dec_r.op == OP_LDW)
+                     ? (di_eff == 8'h00 && b == 8'h00)
+                     : (dec_r.op == OP_CMPW)
+                         ? (w_hi[7:0] == 8'h00 && adl == 8'h00)
+                         : (w_hi[7:0] == 8'h00 && b_n == 8'h00);
+            if (dec_r.op != OP_LDW) begin
+                fc_n = w_hi[8];
+                fv_n = (~(a ^ w_opnd) & (a ^ w_hi[7:0]) & 8'h80) != 8'h00;
+            end
+            ab_c = pc; pc_upd = 1'b1; st_n = S_DECODE;
+        end
 
         // Implied and accumulator instructions, one cycle after their opcode
         // arrived. Every ALU input here comes from a register.
@@ -666,7 +743,7 @@ module cpu6502_core (
         if (reset) begin
             st  <= S_RST0;
             pc  <= 16'h0000;
-            a   <= 8'h00; x <= 8'h00; y <= 8'h00; s <= 8'hFD;
+            a   <= 8'h00; x <= 8'h00; y <= 8'h00; s <= 8'hFD; b <= 8'h00;
             fn <= 1'b0; fv <= 1'b0; fd <= 1'b0;
             fi  <= 1'b1; fz <= 1'b0; fc <= 1'b0;
             ir  <= 8'h00;
@@ -676,7 +753,7 @@ module cpu6502_core (
         end else if (RDY) begin
             st  <= st_n;
             pc  <= pc_n;
-            a   <= a_n; x <= x_n; y <= y_n; s <= s_n;
+            a   <= a_n; x <= x_n; y <= y_n; s <= s_n; b <= b_n;
             fn <= fn_n; fv <= fv_n; fd <= fd_n;
             fi  <= fi_n; fz <= fz_n; fc <= fc_n;
             ir  <= ir_n;
@@ -696,6 +773,7 @@ module cpu6502_core (
     assign dbg_y       = y;
     assign dbg_s       = s;
     assign dbg_p       = p_byte;
+    assign dbg_b       = b;
     assign dbg_sync    = (st == S_DECODE);
     assign dbg_trap    = trapped;
     assign dbg_trap_ir = trap_ir;

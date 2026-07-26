@@ -13,10 +13,10 @@ row.
 
 | | slots |
 | --- | --- |
-| Implemented | 161 |
+| Implemented | 169 |
 | Reserved for 65C02 compatibility | 58 |
-| Extension space, claimed | 10 |
-| Extension space, assigned but unclaimed | 23 |
+| Extension space, claimed | 18 |
+| Extension space, assigned but unclaimed | 15 |
 | Unallocated | 14 |
 | **Total** | **256** |
 
@@ -113,6 +113,7 @@ scored against this column.
 | `$7D` | ADC | absx | 3 | 4.00 ◀ | 4.50 |
 | `$7E` | ROR | absx | 3 | 5.00 ◀ | 7.00 |
 | `$81` | STA | indx | 2 | 5.00 ◀ | 6.00 |
+| `$83` | LDAB zp | | | | *add-isa-word-ops* |
 | `$84` | STY | zp | 2 | 3.00 | 3.00 |
 | `$85` | STA | zp | 2 | 3.00 | 3.00 |
 | `$86` | STX | zp | 2 | 3.00 | 3.00 |
@@ -124,6 +125,7 @@ scored against this column.
 | `$8E` | STX | abs | 3 | 4.00 | 4.00 |
 | `$90` | BCC | rel | 2 | 2.00 ◀ | 2.62 |
 | `$91` | STA | indy | 2 | 5.00 ◀ | 6.00 |
+| `$93` | STAB zp | | | | *add-isa-word-ops* |
 | `$94` | STY | zpx | 2 | 3.00 ◀ | 4.00 |
 | `$95` | STA | zpx | 2 | 3.00 ◀ | 4.00 |
 | `$96` | STX | zpy | 2 | 3.00 ◀ | 4.00 |
@@ -135,6 +137,7 @@ scored against this column.
 | `$A0` | LDY | imm | 2 | 2.00 | 2.00 |
 | `$A1` | LDA | indx | 2 | 5.00 ◀ | 6.00 |
 | `$A2` | LDX | imm | 2 | 2.00 | 2.00 |
+| `$A3` | LDAB #imm16 | | | | *add-isa-word-ops* |
 | `$A4` | LDY | zp | 2 | 3.00 | 3.00 |
 | `$A5` | LDA | zp | 2 | 3.00 | 3.00 |
 | `$A6` | LDX | zp | 2 | 3.00 | 3.00 |
@@ -146,6 +149,7 @@ scored against this column.
 | `$AE` | LDX | abs | 3 | 4.00 | 4.00 |
 | `$B0` | BCS | rel | 2 | 2.00 ◀ | 2.61 |
 | `$B1` | LDA | indy | 2 | 5.00 ◀ | 5.49 |
+| `$B3` | ADDW zp | | | | *add-isa-word-ops* |
 | `$B4` | LDY | zpx | 2 | 3.00 ◀ | 4.00 |
 | `$B5` | LDA | zpx | 2 | 3.00 ◀ | 4.00 |
 | `$B6` | LDX | zpy | 2 | 3.00 ◀ | 4.00 |
@@ -157,6 +161,7 @@ scored against this column.
 | `$BE` | LDX | absy | 3 | 4.00 ◀ | 4.49 |
 | `$C0` | CPY | imm | 2 | 2.00 | 2.00 |
 | `$C1` | CMP | indx | 2 | 5.00 ◀ | 6.00 |
+| `$C3` | SUBW zp | | | | *add-isa-word-ops* |
 | `$C4` | CPY | zp | 2 | 3.00 | 3.00 |
 | `$C5` | CMP | zp | 2 | 3.00 | 3.00 |
 | `$C6` | DEC | zp | 2 | 4.00 ◀ | 5.00 |
@@ -168,6 +173,7 @@ scored against this column.
 | `$CE` | DEC | abs | 3 | 5.00 ◀ | 6.00 |
 | `$D0` | BNE | rel | 2 | 2.00 ◀ | 2.63 |
 | `$D1` | CMP | indy | 2 | 5.00 ◀ | 5.50 |
+| `$D3` | CMPW zp | | | | *add-isa-word-ops* |
 | `$D5` | CMP | zpx | 2 | 3.00 ◀ | 4.00 |
 | `$D6` | DEC | zpx | 2 | 4.00 ◀ | 6.00 |
 | `$D8` | CLD | imp | 1 | 2.00 | 2.00 |
@@ -176,6 +182,7 @@ scored against this column.
 | `$DE` | DEC | absx | 3 | 5.00 ◀ | 7.00 |
 | `$E0` | CPX | imm | 2 | 2.00 | 2.00 |
 | `$E1` | SBC | indx | 2 | 5.00 ◀ | 6.00 |
+| `$E3` | ADDW #imm16 | | | | *add-isa-word-ops* |
 | `$E4` | CPX | zp | 2 | 3.00 | 3.00 |
 | `$E5` | SBC | zp | 2 | 3.00 | 3.00 |
 | `$E6` | INC | zp | 2 | 4.00 ◀ | 5.00 |
@@ -187,6 +194,7 @@ scored against this column.
 | `$EE` | INC | abs | 3 | 5.00 ◀ | 6.00 |
 | `$F0` | BEQ | rel | 2 | 2.00 ◀ | 2.62 |
 | `$F1` | SBC | indy | 2 | 5.00 ◀ | 5.51 |
+| `$F3` | SUBW #imm16 | | | | *add-isa-word-ops* |
 | `$F5` | SBC | zpx | 2 | 3.00 ◀ | 4.00 |
 | `$F6` | INC | zpx | 2 | 4.00 ◀ | 6.00 |
 | `$F8` | SED | imp | 1 | 2.00 | 2.00 |
@@ -275,19 +283,11 @@ option of adopting its 65C02 meaning later.
 | `$5B` | add-isa-test-and-branch |
 | `$6B` | add-isa-test-and-branch |
 | `$7B` | add-isa-test-and-branch |
-| `$83` | add-isa-word-ops |
-| `$93` | add-isa-word-ops |
-| `$A3` | add-isa-word-ops |
 | `$AB` | add-isa-pointer-ops |
-| `$B3` | add-isa-word-ops |
 | `$BB` | add-isa-pointer-ops |
-| `$C3` | add-isa-word-ops |
 | `$CB` | add-isa-pointer-ops |
-| `$D3` | add-isa-word-ops |
 | `$DB` | add-isa-pointer-ops |
-| `$E3` | add-isa-word-ops |
 | `$EB` | add-isa-pointer-ops |
-| `$F3` | add-isa-word-ops |
 | `$FB` | add-isa-pointer-ops |
 
 ## Unallocated
