@@ -281,12 +281,9 @@ player_move:
     jsr obj_ldw1
     lda w1+1
     bpl .absdone
-    lda #0                      ; w1 = abs(spd.x), inline because neg16 works
-    sub w1
-    sta w1
-    lda #0
-    sbc w1+1
-    sta w1+1
+    ldab #$0000  ; w1 = abs(spd.x), inline because neg16 works
+    subw w1
+    stab w1
 .absdone:
     jsr cmp16                   ; N set: maxrun < abs(spd.x)
     bpl .accelerate

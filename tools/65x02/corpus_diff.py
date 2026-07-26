@@ -78,7 +78,14 @@ class Rig:
             for a in range(lo, hi):
                 c.readers.setdefault(a, lambda: 0)
                 c.writers.setdefault(a, lambda v: None)
-        c.pc = sym["reset"] if "reset" in sym else sym[loop]
+        # Boot from the reset vector, exactly as the hardware does. This used
+        # to be `sym["reset"] if "reset" in sym else sym[loop]`, and breakout
+        # has no label called `reset` - so every run started at `main_loop`
+        # with initialisation SKIPPED: no sprite upload, no audio image, no
+        # `new_game`, and a zero page of all zeros, which meant lives = 0 and
+        # a game that could never leave the serve state. The comparison was
+        # still build-to-build honest, but it exercised almost nothing.
+        c.pc = c.rd16(0xFFFC)
         self.loop = sym[loop]
         # The peripheral write stream: the program's observable output.
         self.io = []
@@ -113,6 +120,46 @@ class Rig:
         return bytes(self.cpu.m[0:0x100])
 
 
+class Autopilot:
+    """Drives the paddle from the build's own zero page, so the game is played.
+
+    A fixed button script barely plays breakout: it serves, misses, and spends
+    every remaining frame in the serve state, which is how a decimal-mode
+    defect in the BCD score counter survived a "clean" differential. Tracking
+    the ball keeps rallies going and makes bricks break, which is where the
+    interesting arithmetic lives.
+
+    This is a closed loop - each build is driven by ITS OWN state - so two
+    builds only receive the same inputs for as long as they behave the same.
+    That is a feature: a divergence is amplified rather than damped, and it is
+    still reported as the first differing zero-page byte or peripheral write.
+
+    Zero-page addresses are supplied by the caller because this file knows
+    nothing about any particular game:
+
+        --autopilot ball=0x05,pad=0x0C,state=0x0D,play=1,left=0x01,right=0x02,fire=0x20
+    """
+
+    def __init__(self, spec):
+        self.f = {}
+        for part in spec.split(","):
+            k, _, v = part.partition("=")
+            self.f[k.strip()] = int(v, 0)
+
+    def buttons(self, mem, frame):
+        f = self.f
+        if mem[f["state"]] != f["play"]:
+            # the serve wants a rising edge, so the button has to let go
+            return f["fire"] if frame % 2 == 0 else 0
+        want = mem[f["ball"]] - 4
+        pad = mem[f["pad"]]
+        if want > pad + 1:
+            return f["right"]
+        if want < pad - 1:
+            return f["left"]
+        return 0
+
+
 def load_sym(path):
     sym = {}
     for line in open(path):
@@ -133,11 +180,17 @@ def main(argv):
     a = Rig(open(keys[0], "rb").read(), load_sym(keys[1]), loop)
     b = Rig(open(keys[2], "rb").read(), load_sym(keys[3]), loop)
 
-    # a fixed input script, applied identically to both
+    # a fixed input script, applied identically to both, unless the caller
+    # supplied an autopilot - which actually plays the game
     script = {0: 0x00, 8: 0x10, 12: 0x00, 18: 0x02, 26: 0x01, 32: 0x00, 38: 0x10}
+    auto = (Autopilot(argv[argv.index("--autopilot") + 1])
+            if "--autopilot" in argv else None)
 
     for f in range(frames):
-        if f in script:
+        if auto:
+            a.buttons = auto.buttons(a.cpu.m, f)
+            b.buttons = auto.buttons(b.cpu.m, f)
+        elif f in script:
             a.buttons = b.buttons = script[f]
         if not a.frames(1) or not b.frames(1):
             print(f"  a build stopped reaching {loop} at frame {f}", file=sys.stderr)

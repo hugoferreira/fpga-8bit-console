@@ -613,7 +613,14 @@ corpus-diff-breakout: hex
 	@python3 tools/sym_to_lbl.py build/ref/pre.sym build/ref/pre.lbl >/dev/null
 	python3 tools/65x02/corpus_diff.py \
 	  build/ref/pre.bin build/ref/pre.lbl \
-	  build/breakout.bin build/breakout.lbl --frames $(or $(FRAMES),40)
+	  build/breakout.bin build/breakout.lbl --frames $(or $(FRAMES),200) \
+	  --autopilot "$(BREAKOUT_AUTOPILOT)"
+
+# Without this the run serves once, misses, and sits in the serve state for
+# every remaining frame - which is how a binary `add` inside a `sed` block
+# survived a clean differential. With it the paddle tracks the ball, rallies
+# continue and the BCD score counter actually carries.
+BREAKOUT_AUTOPILOT = ball=0x05,pad=0x0C,state=0x0D,play=1,left=0x01,right=0x02,fire=0x20
 
 test-functional: $(SST_BIN) $(FUNCTEST_BIN)
 	$(SST_BIN) --fixture $(SST_FIXTURE) --functest $(FUNCTEST_BIN)

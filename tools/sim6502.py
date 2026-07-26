@@ -17,6 +17,7 @@ class Sim6502:
         self.readers = {}          # addr -> fn() -> value
         self.writers = {}          # addr -> fn(value)
         self.a = self.x = self.y = 0
+        self.b = 0        # low half of the 16-bit accumulator AB
         self.s = 0xFD
         self.trap = None   # last TRAP #imm tag, if any
         self.c = self.z = self.v = self.n = self.d = 0
@@ -193,9 +194,53 @@ class Sim6502:
     # ADC/SBC with the carry decided by the opcode rather than by a preceding
     # clc/sec, and are binary-only. See docs/opcodes.md.
     EXT = {0x03, 0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73,
-           0x8B, 0x9B}                      # add-isa-pointer-ops
+           0x8B, 0x9B,                      # add-isa-pointer-ops
+           0x83, 0x93, 0xA3, 0xB3, 0xC3, 0xD3, 0xE3, 0xF3}   # add-isa-word-ops
+
+    # add-isa-word-ops, column $x3 high half. AB is the 16-bit accumulator with
+    # A the high byte and B the low, and a zero-page operand is little-endian,
+    # so both match the convention the corpus already used by hand. The flags
+    # follow rtl/cpu6502_core.sv exactly, and the one place they differ from
+    # the byte-pair sequence they replace is Z: it is set from BOTH halves
+    # here, from the high byte alone there.
+    WORD = {0x83: ("ldw", False), 0x93: ("stw", False), 0xA3: ("ldw", True),
+            0xB3: ("addw", False), 0xC3: ("subw", False), 0xD3: ("cmpw", False),
+            0xE3: ("addw", True), 0xF3: ("subw", True)}
+
+    def _step_word(self, op):
+        kind, imm = self.WORD[op]
+        if op == 0x93:                       # STAB zp - a write, never a read
+            zp = self._fetch()
+            self.wr(zp, self.b)
+            self.wr((zp + 1) & 0xFF, self.a)
+            return True
+        if imm:
+            lo, hi = self._fetch(), self._fetch()
+        else:
+            zp = self._fetch()               # zp+1 wraps inside page zero
+            lo, hi = self.rd(zp), self.rd((zp + 1) & 0xFF)
+        if kind == "ldw":                    # LDAB: C and V untouched
+            self.b, self.a = lo, hi
+            self.n = (hi >> 7) & 1
+            self.z = 1 if (hi == 0 and lo == 0) else 0
+            return True
+        sub = kind in ("subw", "cmpw")
+        lo_o, hi_o = (lo ^ 0xFF, hi ^ 0xFF) if sub else (lo, hi)
+        t_lo = self.b + lo_o + (1 if sub else 0)
+        t_hi = self.a + hi_o + (1 if t_lo > 0xFF else 0)
+        old_a = self.a
+        if kind != "cmpw":
+            self.b = t_lo & 0xFF
+            self.a = t_hi & 0xFF
+        self.n = (t_hi >> 7) & 1
+        self.z = 1 if (t_hi & 0xFF) == 0 and (t_lo & 0xFF) == 0 else 0
+        self.c = 1 if t_hi > 0xFF else 0
+        self.v = (~(old_a ^ hi_o) & (old_a ^ t_hi) & 0x80) >> 7
+        return True
 
     def _step_ext(self, op):
+        if op in self.WORD:
+            return self._step_word(op)
         if op == 0x03:                       # MOV zp, #imm
             a = self._fetch()
             self.wr(a, self._fetch())

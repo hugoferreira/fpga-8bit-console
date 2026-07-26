@@ -64,8 +64,7 @@ start:
     ldx #1
 .sidewall:
     mov ptr, rowmap_lo + x
-    lda rowmap_hi, x
-    sta ptr+1
+    mov ptr+1, rowmap_hi + x
     ldy #1
     lda #40
     sta (ptr), y
@@ -410,12 +409,9 @@ ball_step:
     lda bvx
     ror
     sta tmp
-    lda ballx
-    add tmp
-    sta ballx
-    lda ballx+1
-    adc tmp2
-    sta ballx+1
+    ldab ballx
+    addw tmp
+    stab ballx
     lda bvy+1
     cmp #$80
     ror
@@ -423,26 +419,17 @@ ball_step:
     lda bvy
     ror
     sta tmp
-    lda bally
-    add tmp
-    sta bally
-    lda bally+1
-    adc tmp2
-    sta bally+1
+    ldab bally
+    addw tmp
+    stab bally
     jmp .moved
 .full:
-    lda ballx
-    add bvx
-    sta ballx
-    lda ballx+1
-    adc bvx+1
-    sta ballx+1
-    lda bally
-    add bvy
-    sta bally
-    lda bally+1
-    adc bvy+1
-    sta bally+1
+    ldab ballx
+    addw bvx
+    stab ballx
+    ldab bally
+    addw bvy
+    stab bally
 .moved:
 
     ; walls (ball box is sprite+2 .. sprite+5)
@@ -1169,7 +1156,8 @@ brick_hit:
     jsr sd_attr_norm
     sed
     lda score0
-    add #$10
+    clc                    ; NOT `add`: ADD is binary, and this runs in decimal
+    adc #$10
     sta score0
     lda score1
     adc #0
@@ -1212,7 +1200,8 @@ brick_hit:
     sed
 .mul:
     lda score0
-    add mulk
+    clc                    ; NOT `add`: ADD is binary, and this runs in decimal
+    adc mulk
     sta score0
     lda score1
     adc #0
@@ -1258,8 +1247,7 @@ brick_hit:
     ; rewrite the map cell at row hitr+2, col hitc+2
     ldx hitr
     mov ptr2, rowmap2_lo + x
-    lda rowmap2_hi, x
-    sta ptr2+1
+    mov ptr2+1, rowmap2_hi + x
     pla
     tax                    ; X = new type
     ldy hitc
@@ -1399,12 +1387,9 @@ move_paddle:
     lda btn
     and #BTN_L
     beq .notl
-    lda padvx
-    sub #$80
-    sta padvx
-    lda padvx+1
-    sbc #0
-    sta padvx+1
+    ldab padvx
+    subw #$0080
+    stab padvx
     cmp #$FD               ; clamp at -2.5 ($FD80)
     bcs .chkr
     mov padvx, #$80
@@ -1415,12 +1400,9 @@ move_paddle:
     lda btn
     and #BTN_R
     beq .friction
-    lda padvx
-    add #$80
-    sta padvx
-    lda padvx+1
-    adc #0
-    sta padvx+1
+    ldab padvx
+    addw #$0080
+    stab padvx
     cmp #3                 ; clamp at +2.5 ($0280)
     bcc .apply
     mov padvx, #$80
@@ -1831,8 +1813,7 @@ build_level:
     ldx #0
 .clrrow:
     mov ptr2, rowmap2_lo + x
-    lda rowmap2_hi, x
-    sta ptr2+1
+    mov ptr2+1, rowmap2_hi + x
     lda #0
     ldy #12
 .cc: sta (ptr2), y
@@ -1855,8 +1836,7 @@ build_level:
     mov bricksn, #0
     ldx level
     mov ptr, level_ptr_lo + x
-    lda level_ptr_hi, x
-    sta ptr+1
+    mov ptr+1, level_ptr_hi + x
     ldy #0
     lda (ptr), y            ; nrows
     sta rowv

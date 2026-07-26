@@ -99,22 +99,16 @@ appr:
     jsr cmp16
     bmi .up                     ; val < target: approach from below
 .down:
-    lda w0                      ; val -= amount
-    sub w2
-    sta w0
-    lda w0+1
-    sbc w2+1
-    sta w0+1
+    ldab w0  ; val -= amount
+    subw w2
+    stab w0
     jsr cmp16
     bpl .done                   ; still >= target, keep it
     jmp .clamp
 .up:
-    lda w0                      ; val += amount
-    add w2
-    sta w0
-    lda w0+1
-    adc w2+1
-    sta w0+1
+    ldab w0  ; val += amount
+    addw w2
+    stab w0
     jsr cmp16
     bmi .done                   ; still < target, keep it
 .clamp:

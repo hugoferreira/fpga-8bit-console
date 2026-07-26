@@ -43,8 +43,7 @@ load_room:
     mov level, room_levels + x
     mov has_dashed, #0
     mov pSrc, room_ptr_lo + x
-    lda room_ptr_hi, x
-    sta pSrc+1
+    mov pSrc+1, room_ptr_hi + x
 
     jsr obj_init                ; the cart's foreach(objects, destroy_object)
 

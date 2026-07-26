@@ -861,3 +861,54 @@ audio - so the comment there now says not to move it back down.
 
 Anyone who has been comparing breakout's audio against PICO-8 was comparing
 against corrupted sfx. Worth re-checking any conclusion that rested on it.
+
+---
+
+## `add-isa-word-ops` migrated into breakout and celeste — plus a decimal trap
+
+`tools/65x02/migrate_ext.py` gained a word pass, and both customasm corpora now
+use `ldab`/`stab`/`addw`/`subw`. Breakout is 36 bytes smaller, celeste 58.
+Small, because a corpus only has so much 16-bit arithmetic: 6 fused sequences in
+breakout, 12 in celeste.
+
+**Two shared files changed. Consider this the retrospective request the protocol
+asks for, in both cases with the change already made because nothing works
+without it.**
+
+**1. `tools/sim6502.py` gained the eight word opcodes** (`$83 $93 $A3 $B3 $C3
+$D3 $E3 $F3`) and a `b` register. Purely additive - a `WORD` table and a
+`_step_word`. Cross-checked by running `tools/65x02/ext_test.asm` through both
+the RTL (`make test-ext`) and the interpreter; both reach the success trap.
+
+**2. `Makefile`** gained `corpus-diff-breakout` and a `BREAKOUT_AUTOPILOT`
+variable. Additive.
+
+### The trap, which matters to anyone migrating nemo
+
+**ADD, SUB and every word op are binary by design.** `rtl/cpu6502_core.sv` says
+so at `OP_ADD`: *"Binary only, by design: these are for addresses and counters,
+where a decimal adjust is never wanted. ADC/SBC keep decimal."*
+
+Slice 1 had already rewritten breakout's `clc / adc #$10` - sitting between a
+`sed` and a `cld`, incrementing the **BCD** score - into `add #$10`. The score
+counted in binary from then on. It survived every check because the corpus
+differential's scripted input served once, missed, and never scored.
+
+Fixed three ways, all committed:
+
+- the two sites are back to `clc / adc`, with a comment saying why;
+- `migrate_ext.py` bounds every `sed` with a forward CFG walk and refuses to
+  put ADD/SUB or a word op inside one;
+- `corpus_diff.py` gained an autopilot that tracks the ball, so the game is
+  actually played and the score actually carries. Reverting the fix now fails
+  the differential at frame 62 with `score0 $00 -> $A0`.
+
+**nemo has only a reset-time `cld` and no `sed`, so it is not affected** - but
+the guard is in the tool either way.
+
+While fixing that, `corpus_diff.py` turned out to have been booting at
+`main_loop` rather than the reset vector, because breakout has no label called
+`reset`. Every earlier run therefore skipped initialisation entirely: no sprite
+upload, no audio image, no `new_game`, `lives = 0`, and a game that could not
+leave the serve state. It now boots from `$FFFC` like the hardware. Any earlier
+"identical" result from that tool proved much less than it appeared to.

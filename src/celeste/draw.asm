@@ -320,44 +320,32 @@ draw_hair:
 .node:
     ldy d_n                     ; h.x += (last.x - h.x) * 0.625
     jsr obj_ldw
-    lda hair_lx
-    sta w1
-    lda hair_lx+1
-    sta w1+1
+    ldab hair_lx
+    stab w1
     jsr hair_chase
     ldy d_n
     jsr obj_stw
-    lda w0
-    sta hair_hx
-    lda w0+1
-    sta hair_hx+1
+    ldab w0
+    stab hair_hx
 
     lda d_n
     add #2
     tay
     jsr obj_ldw
-    lda hair_ly
-    sta w1
-    lda hair_ly+1
-    sta w1+1
+    ldab hair_ly
+    stab w1
     jsr hair_chase
     lda d_n
     add #2
     tay
     jsr obj_stw
-    lda w0
-    sta hair_hy
-    lda w0+1
-    sta hair_hy+1
+    ldab w0
+    stab hair_hy
 
-    lda hair_hx                 ; this node becomes the next one's target
-    sta hair_lx
-    lda hair_hx+1
-    sta hair_lx+1
-    lda hair_hy
-    sta hair_ly
-    lda hair_hy+1
-    sta hair_ly+1
+    ldab hair_hx  ; this node becomes the next one's target
+    stab hair_lx
+    ldab hair_hy
+    stab hair_ly
 
     lda hair_col                ; blob size: 2, 2, 1, 1, 1
     sta t3
@@ -405,29 +393,21 @@ draw_hair:
 
 ; hair_chase: w0 += (w1 - w0) * 0.625, as two shifts and an add.
 hair_chase:
-    lda w1                      ; d = target - h
-    sub w0
-    sta w2
-    lda w1+1
-    sbc w0+1
-    sta w2+1
+    ldab w1  ; d = target - h
+    subw w0
+    stab w2
 
-    lda w2                      ; w1 = d >> 1
-    sta w1
-    lda w2+1
-    sta w1+1
+    ldab w2  ; w1 = d >> 1
+    stab w1
     jsr asr_w1
 
     jsr asr_w2                  ; w2 = d >> 3
     jsr asr_w2
     jsr asr_w2
 
-    lda w0
-    add w1
-    sta w0
-    lda w0+1
-    adc w1+1
-    sta w0+1
+    ldab w0
+    addw w1
+    stab w0
     lda w0
     add w2
     sta w0
