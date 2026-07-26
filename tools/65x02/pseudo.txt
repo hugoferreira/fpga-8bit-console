@@ -1,0 +1,32 @@
+# Pseudo-instruction registry: what each rule in src/isa/pseudo.asm costs today
+# and what its proposed hardware encoding would cost. This is what lets a slice
+# be scored BEFORE it is built - `migrate_ext.py --pseudo` multiplies these by
+# the site counts it finds.
+#
+# `now` is measured, not assumed: the expansion's cycles come from
+# docs/cpu-timing-v2.json, which is THIS core's timing, and this core's
+# branches are a flat 2 cycles with no taken or page-cross penalty. The
+# add-isa-test-and-branch proposal costed the same sequence at 8 cycles using
+# NMOS numbers; it is 7 here. Scoring a slice against the wrong baseline
+# inflates it, which is exactly what gate G4 exists to stop.
+#
+# `hw` is the PROPOSAL's encoding, and stays a claim until silicon exists.
+#
+# pseudo   now_b now_c   hw_b hw_c_min hw_c_max   slice
+cbeq         6     7       4      5        6      add-isa-test-and-branch
+cbne         6     7       4      5        6      add-isa-test-and-branch
+cblt         6     7       4      5        6      add-isa-test-and-branch
+cbge         6     7       4      5        6      add-isa-test-and-branch
+tbz          6     7       4      5        6      add-isa-test-and-branch
+tbnz         6     7       4      5        6      add-isa-test-and-branch
+
+# The zero tests. `lda v / beq t` is already 4 bytes and 5 cycles, and the
+# proposed CBEQ zp,#0,rel is 4 bytes and 5-6 cycles - so this idiom saves no
+# space and may cost a cycle. It buys the accumulator and nothing else. Listed
+# so the slice is scored on what it buys rather than on how often it appears.
+bzero        4     5       4      5        6      add-isa-test-and-branch
+bnzero       4     5       4      5        6      add-isa-test-and-branch
+
+# add-isa-word-ops, already built. Kept as the calibration entry: the projection
+# below should reproduce the migration's actual result of 6 bytes per site.
+addw16      12    18       6     12       12      add-isa-word-ops

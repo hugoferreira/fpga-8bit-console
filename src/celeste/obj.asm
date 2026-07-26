@@ -212,9 +212,7 @@ obj_update_all:
     jsr call_fn
 .next:
     inc obj_slot
-    lda obj_slot
-    cmp #OBJ_MAX
-    bne .loop
+    cbne obj_slot, #OBJ_MAX, .loop
     rts
 
 ; ------------------------------------------------------------------------------

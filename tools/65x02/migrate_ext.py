@@ -117,6 +117,18 @@ MNEMONICS = {l.split()[1].lower()
 MNEMONICS |= {m.group(1).lower() for m in
               re.finditer(r"//\s*([A-Z]{3,4})\b", open(DECODE_TABLE).read())}
 
+# Pseudo-instructions expand to real ones, so a corpus using them is still a
+# corpus this tool has to read. Taken from the file that DEFINES them for the
+# same reason the rest comes from the decode table: a hand-kept list is a list
+# that falls behind, and a mnemonic this tool cannot see is a mnemonic that
+# makes two instructions look adjacent when they are not.
+PSEUDO_DEF = "src/isa/pseudo.asm"
+PSEUDO_REG = "tools/65x02/pseudo.txt"
+PSEUDO = {m.group(1).lower() for m in
+          re.finditer(r"^\s*([a-z][a-z0-9_]*)\s+[^\n]*=>", open(PSEUDO_DEF).read(),
+                      re.M)} if os.path.exists(PSEUDO_DEF) else set()
+MNEMONICS |= PSEUDO
+
 
 class Line:
     __slots__ = ("raw", "label", "label_name", "mn", "operand", "idx")
@@ -322,6 +334,132 @@ def decimal_region(corpus):
     return tainted, escapes
 
 
+# --- pseudo-instruction adoption -------------------------------------------
+#
+# `lda v / cmp #k / beq t`  ->  `cbeq v, #k, t`, and friends. See
+# src/isa/pseudo.asm: each rule expands to EXACTLY the sequence it replaces, so
+# this rewrite is provably behaviour-preserving in the strongest available
+# sense - the assembled binary is bit-identical. There is no liveness question
+# to answer, because no emitted byte changes.
+#
+# That is the argument for adopting an instruction in source before building
+# it: the source says what it means, the measurement is available now, and the
+# day the hardware lands the corpus does not move.
+PSEUDO_3 = {("cmp", "beq"): "cbeq", ("cmp", "bne"): "cbne",
+            ("cmp", "bcc"): "cblt", ("cmp", "bcs"): "cbge",
+            ("and", "beq"): "tbz",  ("and", "bne"): "tbnz"}
+PSEUDO_2 = {"beq": "bzero", "bne": "bnzero"}
+
+
+def adopt_pseudo(path, paths, corpus, code, apply_, is_zp):
+    lines = corpus.lines
+    out, did, skipped = {}, Counter(), Counter()
+
+    for n in range(len(code) - 1):
+        i3 = code[n:n + 3]
+        if any(k in out for k in i3[:2]):
+            continue
+        w = [lines[k] for k in i3] if len(i3) == 3 else None
+        if w and all(x.mn for x in w) and not any(x.label for x in w[1:]):
+            key = (w[1].mn, w[2].mn)
+            if w[0].mn == "lda" and key in PSEUDO_3 and w[1].operand.startswith("#"):
+                # the pseudo-op's operand is `{v: u8}`, so a non-zero-page
+                # source has no rule and must be left alone
+                if not is_zp(w[0].operand):
+                    skipped["source is not zero page - no pseudo-op form"] += 1
+                    continue
+                if not re.match(r"^[.A-Za-z_][\w.@]*$", w[2].operand.strip()):
+                    skipped["branch target is not a plain label"] += 1
+                    continue
+                ps = PSEUDO_3[key]
+                notes = [comment_of(lines[k].raw).strip().lstrip("; ") for k in i3
+                         if comment_of(lines[k].raw)]
+                tail = ("  ; " + " ".join(notes)) if notes else ""
+                out[i3[0]] = (f"{indent_of(w[0].raw)}{ps} {w[0].operand}, "
+                              f"{w[1].operand}, {w[2].operand}{tail}")
+                out[i3[1]] = None
+                out[i3[2]] = None
+                did[f"lda/{w[1].mn}/{w[2].mn} -> {ps}"] += 1
+                continue
+
+        # the zero test is COUNTED, never applied: `lda v / beq t` is 4 bytes
+        # and the proposed CBEQ zp,#0,rel is also 4, so adopting it would show
+        # up as sites migrated while saving nothing. It is left in the report
+        # so the slice is scored on what it actually buys.
+        q = [lines[k] for k in code[n:n + 2]]
+        if len(q) == 2 and all(x.mn for x in q) and not q[1].label:
+            if q[0].mn == "lda" and q[1].mn in PSEUDO_2 and is_zp(q[0].operand):
+                did[f"(not applied) lda/{q[1].mn} -> {PSEUDO_2[q[1].mn]}"] += 1
+
+    print(f"{path}  [pseudo-instruction adoption]")
+    for k, v in sorted(did.items()):
+        print(f"    {v:>4}  {k}")
+    applied = sum(v for k, v in did.items() if not k.startswith("(not"))
+    print(f"    {applied:>4}  applied, removing {applied * 2} source lines")
+    if skipped:
+        for k, v in skipped.most_common():
+            print(f"    {v:>4}  declined: {k}")
+
+    # What the hardware would buy, per slice, from the registry.
+    reg = {}
+    for l in open(PSEUDO_REG):
+        l = l.split("#")[0].split()
+        if len(l) == 7:
+            reg[l[0]] = (int(l[1]), int(l[2]), int(l[3]), int(l[4]),
+                         int(l[5]), l[6])
+    # Count every pseudo-op ALREADY in the corpus as well as the ones this run
+    # could adopt. Otherwise the projection reads as zero the moment the
+    # adoption has been applied, which is precisely when it is wanted.
+    sites = Counter(ln.mn for ln in lines if ln.mn in PSEUDO)
+    for k, v in did.items():
+        if k.startswith("(not"):
+            sites[k.rsplit("-> ", 1)[-1]] += v
+    per_slice = {}
+    for ps, n in sites.items():
+        if ps not in reg:
+            continue
+        nb, nc, hb, hcmin, hcmax, slice_ = reg[ps]
+        d = per_slice.setdefault(slice_, [0, 0, 0, 0, Counter()])
+        d[0] += n
+        d[1] += n * (nb - hb)
+        d[2] += n * (nc - hcmax)
+        d[3] += n * (nc - hcmin)
+        d[4][ps] = n
+    if per_slice:
+        print("  projected, if the proposed encodings are built "
+              "(tools/65x02/pseudo.txt):")
+        for slice_, (n, b, cmin, cmax, by) in sorted(per_slice.items()):
+            detail = " ".join(f"{k}x{v}" for k, v in sorted(by.items()))
+            print(f"    {slice_}")
+            print(f"      {n} sites ({detail})")
+            print(f"      saves {b} bytes of image")
+            print(f"      saves {cmin} to {cmax} cycles PER EXECUTION summed "
+                  f"over the sites, not per frame")
+            print(f"      (a negative figure is a site the proposed encoding "
+                  f"would make slower)")
+
+    if apply_:
+        write_back(paths, corpus, out)
+        print(f"  written: {len(paths)} file(s)")
+    return 0
+
+
+def write_back(paths, corpus, out):
+    """Split the flat corpus back into its files, dropping the boundary line."""
+    start = 0
+    for fi, p in enumerate(paths):
+        n = sum(1 for k in range(len(corpus.owner)) if corpus.owner[k] == fi)
+        res = []
+        for i in range(start, start + n - 1):
+            if i in out:
+                if out[i] is not None:
+                    res.append(out[i])
+            else:
+                res.append(corpus.lines[i].raw)
+        open(p, "w").write("\n".join(res) + "\n")
+        start += n
+
+
 def indent_of(raw):
     return raw[:len(raw) - len(raw.lstrip())]
 
@@ -421,6 +559,9 @@ def main(argv):
 
     # index of the code lines only, so "adjacent" ignores blanks and comments
     code = [i for i, ln in enumerate(lines) if ln.mn or ln.label]
+
+    if "--pseudo" in argv:
+        return adopt_pseudo(path, paths, corpus, code, apply_, is_zp_operand)
 
     out = dict()          # line index -> replacement text, or None to delete
     did = Counter()

@@ -65,15 +65,11 @@ player_update:
     beq .go
     rts
 .go:
-    lda btn                     ; input = right and 1 or (left and -1 or 0)
-    and #BTN_R
-    beq .noright
+    tbz btn, #BTN_R, .noright  ; input = right and 1 or (left and -1 or 0)
     lda #1
     bne .haveinput
 .noright:
-    lda btn
-    and #BTN_L
-    beq .noinput
+    tbz btn, #BTN_L, .noinput
     lda #$FF
     bne .haveinput
 .noinput:
@@ -123,9 +119,7 @@ player_update:
     jsr spawn_smoke
 .nosmoke:
 
-    lda btn                     ; jump = btn(jump) and not p_jump
-    and #BTN_JUMP
-    beq .nojumpheld
+    tbz btn, #BTN_JUMP, .nojumpheld  ; jump = btn(jump) and not p_jump
     lda (pObj), #O_PBITS
     and #PB_JUMP
     bne .jumpheld
@@ -156,9 +150,7 @@ player_update:
     sta (pObj), #O_JBUF
 
 .dashedge:
-    lda btn                     ; dash = btn(dash) and not p_dash
-    and #BTN_DASH
-    beq .nodashheld
+    tbz btn, #BTN_DASH, .nodashheld  ; dash = btn(dash) and not p_dash
     lda (pObj), #O_PBITS
     and #PB_DASH
     bne .dashheld
@@ -369,12 +361,8 @@ player_move:
     jsr setw1
     jsr cmp16                   ; N set: abs(spd.y) < 0.15
     bmi .halfgrav
-    lda w0                      ; the cart's test is <=, so catch equality too
-    cmp #<SPDY_EPSILON
-    bne .slide
-    lda w0+1
-    cmp #>SPDY_EPSILON
-    bne .slide
+    cbne w0, #<SPDY_EPSILON, .slide  ; the cart's test is <=, so catch equality too
+    cbne w0+1, #>SPDY_EPSILON, .slide
 .halfgrav:
     mov p_gravity, #<GRAVITY_HALF
     mov p_gravity+1, #>GRAVITY_HALF
@@ -563,15 +551,11 @@ player_move:
     lda #10
     sta (pObj), #O_DASHE
 
-    lda btn                     ; v_input
-    and #BTN_U
-    beq .notup
+    tbz btn, #BTN_U, .notup  ; v_input
     lda #$FF
     bne .havev
 .notup:
-    lda btn
-    and #BTN_D
-    beq .nov
+    tbz btn, #BTN_D, .nov
     lda #1
     bne .havev
 .nov:
@@ -727,15 +711,11 @@ player_anim:
     lda #3
     jmp .setspr
 .onground:
-    lda btn
-    and #BTN_D
-    beq .notdown
+    tbz btn, #BTN_D, .notdown
     lda #6
     jmp .setspr
 .notdown:
-    lda btn
-    and #BTN_U
-    beq .notup
+    tbz btn, #BTN_U, .notup
     lda #7
     jmp .setspr
 .notup:
@@ -744,9 +724,7 @@ player_anim:
     iny
     ora (pObj), y
     beq .still
-    lda btn
-    and #BTN_L|BTN_R
-    beq .still
+    tbz btn, #BTN_L|BTN_R, .still
     lda (pObj), #O_SPROFF
     lsr
     lsr

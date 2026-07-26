@@ -912,3 +912,44 @@ While fixing that, `corpus_diff.py` turned out to have been booting at
 upload, no audio image, no `new_game`, `lives = 0`, and a game that could not
 leave the serve state. It now boots from `$FFFC` like the hardware. Any earlier
 "identical" result from that tool proved much less than it appeared to.
+
+---
+
+## Pseudo-instructions: adopting an ISA slice before building it
+
+`src/isa/pseudo.asm` is new. It defines instructions that do not exist in
+hardware yet, as customasm `asm { }` blocks that expand to the sequence they
+replace. Both customasm corpora now use the `add-isa-test-and-branch` set:
+
+    lda state / cmp #ST_PLAY / bne .notplay   ->   cbne state, #ST_PLAY, .notplay
+    lda btn / and #BTN_X / beq .done          ->   tbz btn, #BTN_X, .done
+
+**The images are bit-identical.** `make pseudo-check` proves it per rule, by
+assembling each pseudo-op and its expansion and comparing bytes. So this is a
+source-level change with provably no effect on the built program, and it is
+undone by deleting one `#include`.
+
+Why bother: the word ops were built first and measured second, and turned out
+to be worth 36 bytes in breakout and 58 in celeste. Nobody knew that until the
+RTL was finished. Adopting in source first makes the measurement available
+before the decode row exists - `make pseudo-report` gives sites, projected
+bytes and projected cycles from `tools/65x02/pseudo.txt`. Running it on
+test-and-branch corrected three things in that proposal, including a cycle
+baseline taken from NMOS rather than from this core.
+
+**The catch, for anyone adding a pseudo-op:** a pseudo-op and its eventual
+hardware form are not interchangeable in general. The contract in the file
+header is the WEAKEST behaviour of the two. For test-and-branch that is easy -
+the expansion clobbers A and the flags, the hardware preserves them, so the
+hardware is a refinement. For the word ops it is not: the byte-pair expansion
+sets Z from the high half and `ADDW` from both halves, so `addw16`'s contract
+can only promise that Z is undefined. Write the contract down before writing
+the rule.
+
+**Shared files touched, additively:** `Makefile` (`pseudo-check`,
+`pseudo-report`), and `tools/65x02/migrate_ext.py` (a `--pseudo` mode; it also
+now reads pseudo-op mnemonics from `src/isa/pseudo.asm` so it does not refuse
+to run on a corpus that uses them).
+
+**nemo is untouched.** If it migrates to customasm it can adopt the same layer,
+and its 35 `lda_cmp_branch` sites would be scored the same way.

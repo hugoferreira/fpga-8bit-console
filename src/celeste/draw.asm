@@ -47,9 +47,7 @@ draw_frame:
     jsr call_fn
 .next:
     inc obj_slot
-    lda obj_slot
-    cmp #OBJ_MAX
-    bne .loop
+    cbne obj_slot, #OBJ_MAX, .loop
 
     jsr fx_draw_particles       ; in front of everything, title screen included
     lda nspr
@@ -76,9 +74,7 @@ flash_palette:
     cmp #11
     bcc .mid
                                 ; > 10: white for five frames in every ten.
-    lda frames                  ; frames is 0..29, so one subtract of 20 and
-    cmp #20                     ; one of 10 is the whole of `frames % 10`
-    bcc .lt20
+    cblt frames, #20, .lt20  ; frames is 0..29, so one subtract of 20 and one of 10 is the whole of `frames % 10`
     sub #20
     jmp .lt10
 .lt20:
@@ -106,9 +102,7 @@ flash_palette:
     lda #7
     bne .apply
 .mid:
-    lda start_game_flash
-    cmp #6
-    bcs .two
+    cbge start_game_flash, #6, .two
     cmp #1
     bcs .one
 .black:
@@ -301,9 +295,7 @@ draw_hair:
     sta hair_lx+1
     mov hair_lx, #0
 
-    lda btn                     ; last.y = y + (btn(down) and 4 or 3)
-    and #BTN_D
-    beq .lastup
+    tbz btn, #BTN_D, .lastup  ; last.y = y + (btn(down) and 4 or 3)
     lda #4
     bne .lasty
 .lastup:
@@ -349,9 +341,7 @@ draw_hair:
 
     lda hair_col                ; blob size: 2, 2, 1, 1, 1
     sta t3
-    lda hair_i
-    cmp #2
-    bcs .small
+    cbge hair_i, #2, .small
     lda hair_hx+1
     sub #2
     sta t4
@@ -384,9 +374,7 @@ draw_hair:
     add #4
     sta d_n
     inc hair_i
-    lda hair_i
-    cmp #HAIR_NODES
-    beq .done
+    cbeq hair_i, #HAIR_NODES, .done
     jmp .node                   ; the node loop is longer than a branch reaches
 .done:
     rts
@@ -578,9 +566,7 @@ ovl_putc:
 .row:
     mov d_bits, font3x5 + x
     mov d_n, #0
-    lda d_x
-    and #7
-    beq .placed
+    tbz d_x, #7, .placed
     tay
 .shift:
     asl d_bits
@@ -609,9 +595,7 @@ ovl_putc:
     sta (pOvl), y
     inx
     inc d_row
-    lda d_row
-    cmp #5
-    bne .row
+    cbne d_row, #5, .row
     lda d_x
     add #4
     sta d_x
@@ -728,9 +712,7 @@ title_credits:
 ; one colour and cannot, so the text sits directly over the room.
 ; ------------------------------------------------------------------------------
 draw_room_title:
-    lda level
-    cmp #11
-    beq .oldsite
+    cbeq level, #11, .oldsite
     cmp #30
     beq .summit
 

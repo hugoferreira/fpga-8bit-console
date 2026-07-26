@@ -597,6 +597,22 @@ test-ext: $(SST_BIN)
 migrate-check:
 	python3 tools/65x02/migrate_check.py $(BEFORE) $(BEFORE_LBL) $(AFTER) $(AFTER_LBL)
 
+# Pseudo-instructions (src/isa/pseudo.asm) expand to exactly the sequence they
+# replace, so adopting them must leave the binary BIT-IDENTICAL. That is a
+# stronger guarantee than any differential and it is worth keeping true: this
+# rebuilds each corpus with the pseudo-op layer stubbed out - by rewriting each
+# use back into its expansion - and diffs the images.
+#
+#   make pseudo-check              both corpora
+#   make pseudo-report             sites and the pre-silicon projection
+pseudo-report:
+	@python3 tools/65x02/migrate_ext.py src/main.asm build/breakout.sym --pseudo
+	@python3 tools/65x02/migrate_ext.py src/celeste  build/celeste.sym  --pseudo
+
+pseudo-check:
+	@mkdir -p build
+	@python3 tools/65x02/pseudo_check.py
+
 # The same check for breakout, which has no functional suite of its own - only a
 # screenshot, and a screenshot cannot tell a timing artefact from a defect. The
 # reference is the last pre-ISA build, rebuilt from git so this stays runnable.

@@ -1,5 +1,6 @@
 #include "../isa/nmos6502.asm"
 #include "../isa/ext_core.asm"
+#include "../isa/pseudo.asm"
 #include "../isa/memmap.asm"
 
 ; ------------------------------------------------------------------------------
@@ -134,18 +135,12 @@ read_buttons:
 ; ------------------------------------------------------------------------------
 update_frame:
     inc frames                  ; frames = (frames + 1) % 30
-    lda frames
-    cmp #30
-    bcc .clock
+    cblt frames, #30, .clock
     mov frames, #0
 
-    lda level                   ; the clock stops in the last room
-    cmp #30
-    bcs .clock
+    cbge level, #30, .clock  ; the clock stops in the last room
     inc seconds
-    lda seconds
-    cmp #60
-    bcc .clock
+    cblt seconds, #60, .clock
     mov seconds, #0
     inc minutes
 .clock:
@@ -216,9 +211,7 @@ title_tick:
     lda start_game
     bne .flashing
 
-    lda btn                     ; btn(k_jump) or btn(k_dash)
-    and #BTN_JUMP|BTN_DASH
-    beq .done
+    tbz btn, #BTN_JUMP|BTN_DASH, .done  ; btn(k_jump) or btn(k_dash)
     jsr music_stop              ; music(-1): cut, no fade
     mov start_game_flash, #50
     mov start_game, #1

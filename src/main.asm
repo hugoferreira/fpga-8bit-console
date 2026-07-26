@@ -1,5 +1,6 @@
 #include "isa/nmos6502.asm"
 #include "isa/ext_core.asm"
+#include "isa/pseudo.asm"
 #include "isa/memmap.asm"
 #include "isa/console.asm"
 
@@ -182,9 +183,7 @@ main_loop:
     sta btn
     inc blink
 
-    lda state
-    cmp #ST_PLAY
-    bne .notplay
+    cbne state, #ST_PLAY, .notplay
     jmp do_play
 .notplay:
     cmp #ST_SERVE
@@ -202,21 +201,13 @@ do_serve:
     sta bally
     mov bally+1, #98
     ; blink PRESS X
-    lda blink
-    and #$0F
-    bne .noblk
+    tbnz blink, #$0F, .noblk
     jsr msg_clear
-    lda blink
-    and #$10
-    bne .noblk
+    tbnz blink, #$10, .noblk
     jsr msg_press
 .noblk:
-    lda btn
-    and #BTN_X
-    beq .done
-    lda btnprev
-    and #BTN_X
-    bne .done
+    tbz btn, #BTN_X, .done
+    tbnz btnprev, #BTN_X, .done
     jsr msg_clear
     mov state, #ST_PLAY
     ; serve at a near-vertical angle with per-serve variation
@@ -239,12 +230,8 @@ do_serve:
 
 ; --- game over -----------------------------------------------------------------
 do_over:
-    lda btn
-    and #BTN_X
-    beq .done
-    lda btnprev
-    and #BTN_X
-    bne .done
+    tbz btn, #BTN_X, .done
+    tbnz btnprev, #BTN_X, .done
     jsr msg_clear
     jsr new_game
     mov PSG_MUSIC, #MUS_TITLE
@@ -261,18 +248,12 @@ do_play:
     bne .wnb
     inc windt+1
 .wnb:
-    lda windt+1
-    cmp #2
-    bcc .wdone
-    lda windt
-    cmp #$58
-    bcc .wdone
+    cblt windt+1, #2, .wdone
+    cblt windt, #$58, .wdone
     lda #0
     sta windt
     sta windt+1
-    lda ballspd
-    cmp #2
-    bcs .wdone
+    cbge ballspd, #2, .wdone
     inc ballspd
 .wdone:
     ; chain multiplier window
@@ -304,12 +285,8 @@ do_play:
     add stuckoff
     sta ballx+1
     mov bally+1, #PAD_Y-5
-    lda btn
-    and #BTN_X
-    beq .after1
-    lda btnprev
-    and #BTN_X
-    bne .after1
+    tbz btn, #BTN_X, .after1
+    tbnz btnprev, #BTN_X, .after1
     mov stuckf, #0
     jsr pad_zone
     bcc .after1
@@ -433,32 +410,24 @@ ball_step:
 .moved:
 
     ; walls (ball box is sprite+2 .. sprite+5)
-    lda ballx+1
-    cmp #ARENA_L-1
-    bcs .notleft
+    cbge ballx+1, #ARENA_L-1, .notleft
     mov ballx+1, #ARENA_L-1
     jsr negx
     jsr snd_wall
 .notleft:
-    lda ballx+1
-    cmp #ARENA_R-7
-    bcc .notright
+    cblt ballx+1, #ARENA_R-7, .notright
     mov ballx+1, #ARENA_R-7
     jsr negx
     jsr snd_wall
 .notright:
-    lda bally+1
-    cmp #ARENA_T-1
-    bcs .nottop
+    cbge bally+1, #ARENA_T-1, .nottop
     mov bally+1, #ARENA_T-1
     jsr negy
     jsr snd_wall
 .nottop:
 
     ; death?
-    lda bally+1
-    cmp #BALL_DEATH
-    bcc .alive
+    cblt bally+1, #BALL_DEATH, .alive
     sec
     rts
 .alive:
@@ -466,9 +435,7 @@ ball_step:
     ; paddle bounce (moving down, box bottom in paddle band, x overlap)
     lda bvy+1
     bmi .nopad
-    lda bally+1
-    cmp #PAD_Y-4
-    bcc .nopad
+    cblt bally+1, #PAD_Y-4, .nopad
     cmp #PAD_Y+2
     bcs .nopad
     jsr pad_zone
@@ -499,9 +466,7 @@ ball_step:
     lda padvx+1
     bmi .bleft
     bne .bright
-    lda padvx
-    cmp #$60
-    bcc .nobias
+    cblt padvx, #$60, .nobias
 .bright:
     cpy #12
     bcs .nobias
@@ -613,9 +578,7 @@ pad_zone:
 ; mega_pass: C=1 when an active/armed megaball should pass through the
 ; brick just hit (never through invincible bricks)
 mega_pass:
-    lda hittype
-    cmp #4
-    beq .solid
+    cbeq hittype, #4, .solid
     lda t_mega
     bne .pass
     lda t_megaw
@@ -783,9 +746,7 @@ apply_pill:
 .n1:
     cmp #2
     bne .n2
-    lda lives              ; extra life (display is one digit)
-    cmp #9
-    bcs .lmax
+    cbge lives, #9, .lmax  ; extra life (display is one digit)
     inc lives
     jsr draw_hud
 .lmax:
@@ -934,9 +895,7 @@ update_sd:
     lda sd_t
     ora sd_t+1
     beq .boom
-    lda sd_blink
-    cmp #4
-    bcs .dark
+    cbge sd_blink, #4, .dark
     lda #$2C
     jsr sd_attr
     jmp .tick
@@ -1226,15 +1185,11 @@ brick_hit:
     beq .tile
     dec bricksn
     ; a destroyed powerup brick drops a pill
-    lda hittype
-    cmp #5
-    bne .nopill
+    cbne hittype, #5, .nopill
     jsr spawn_pill
 .nopill:
     ; a destroyed explosive brick detonates next frame
-    lda hittype
-    cmp #3
-    bne .noexp
+    cbne hittype, #3, .noexp
     ldy expn
     cpy #8
     bcs .noexp
@@ -1276,15 +1231,11 @@ brick_hit:
     jsr sfx_play
     lda ncmb               ; explosion side-hits do not boost the chain
     bne .snddone
-    lda chain
-    cmp #6
-    bne .chinc
+    cbne chain, #6, .chinc
     ldx #SND_CHAIN         ; max-chain fanfare on the 6->7 step (sfx 44)
     jsr sfx_play
 .chinc:
-    lda chain
-    cmp #7
-    bcs .snddone           ; already maxed, clamp
+    cbge chain, #7, .snddone  ; already maxed, clamp
     inc chain
     jmp .snddone
 .clink:
@@ -1384,9 +1335,7 @@ negy:
 ; Paddle with momentum: accelerate 0.5/frame toward +/-2.5, decay by
 ; ~x0.75 per frame when no key is held (the original decays by /1.3)
 move_paddle:
-    lda btn
-    and #BTN_L
-    beq .notl
+    tbz btn, #BTN_L, .notl
     ldab padvx
     subw #$0080
     stab padvx
@@ -1397,9 +1346,7 @@ move_paddle:
     jmp .apply
 .notl:
 .chkr:
-    lda btn
-    and #BTN_R
-    beq .friction
+    tbz btn, #BTN_R, .friction
     ldab padvx
     addw #$0080
     stab padvx
@@ -1409,9 +1356,7 @@ move_paddle:
     mov padvx+1, #$02
     jmp .apply
 .friction:
-    lda btn
-    and #BTN_L
-    bne .apply
+    tbnz btn, #BTN_L, .apply
     ; v -= v>>2 (arithmetic), toward zero
     lda padvx+1
     cmp #$80
@@ -1488,9 +1433,7 @@ spawn_particle:
 
 frame_end:
     ; ambient dust drifts up slowly, respawning at the bottom (LFSR x)
-    lda blink
-    and #3
-    bne .dustdone
+    tbnz blink, #3, .dustdone
     ldx #0
 .dustup:
     dec DUSTY, x
@@ -1509,9 +1452,7 @@ frame_end:
     bne .dustup
 .dustdone:
     ; powerup chests shimmer: rewrite their tile attribute every 8 frames
-    lda blink
-    and #7
-    bne .noblink
+    tbnz blink, #7, .noblink
     ldx #0                 ; brick row
 .brow:
     mov ptr2, rowmap2_lo + x
@@ -1531,9 +1472,7 @@ frame_end:
     lda colv
     add #2
     tay
-    lda blink
-    and #8
-    beq .balt
+    tbz blink, #8, .balt
     lda #$2C               ; alternate chest palette
     bne .bset
 .balt:
@@ -1544,9 +1483,7 @@ frame_end:
     pla
     tax
     inc colv
-    lda colv
-    cmp #11
-    bne .bcol
+    cbne colv, #11, .bcol
     inx
     cpx #10
     bne .brow
@@ -1692,9 +1629,7 @@ frame_end:
     lda PKIND, x
     cmp #1
     beq .nograv
-    lda blink
-    and #3
-    bne .nograv
+    tbnz blink, #3, .nograv
     lda PVY, x
     bmi .grav
     cmp #2
@@ -1883,9 +1818,7 @@ build_level:
     sta (ptr2), y
 .next:
     inc hitc
-    lda hitc
-    cmp #11
-    bne .colloop
+    cbne hitc, #11, .colloop
     lda ptr
     add #11
     sta ptr
@@ -2012,9 +1945,7 @@ ovl_print:
     inc ptr+1
 .nc:
     inc rowv
-    lda rowv
-    cmp #6
-    bne .row
+    cbne rowv, #6, .row
     rts
 
 msg_clear:
