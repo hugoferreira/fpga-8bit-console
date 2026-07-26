@@ -827,3 +827,37 @@ whenever you want them: `ca65_to_customasm.py`, `sym_to_lbl.py`,
 `migrate_ext.py`. The migration tool proves each rewrite safe rather than
 assuming it - it declines any site where A or the N/Z flags might still be live -
 so it is safe to run on a corpus you have not read recently.
+
+---
+
+## Breakout's scratch was overwriting sfx 14-16 and 18-20 (audio agent: read this)
+
+Running the differential on breakout (`make corpus-diff-breakout`) reported a
+divergence in the sprite stream. It was not a migration defect, but it was not
+noise either.
+
+`src/isa/console.asm` put the brick shadow map at `$2000` and the particle pool
+at `$2100`, on a comment claiming that was "well above the program image". It
+has not been for some time: breakout's image runs to `$2E13`, and `audio_data` -
+the verbatim PICO-8 audio image, 64 sfx x 68 bytes then 64 music x 4 - spans
+`$1C12-$2E11`. So:
+
+| scratch | lands on |
+| --- | --- |
+| `shadow` `$2000-$206D` | `audio_data+1006..1118` = **sfx 14-16** |
+| pool + dust + EXPQ `$2100-$2187` | `audio_data+1262..1398` = **sfx 18-20** |
+
+Every frame, the shadow clear and the particle pool wrote over those sfx. The
+pool also *read* its initial `PLIFE` flags out of them, so how many particles
+existed at reset was decided by whatever sfx bytes sat at `$2140` - which is why
+the differential fired: the two builds' code lengths differ, so those bytes
+differ, so one build booted with 1 live particle and the other with 8.
+
+**Fixed** by moving the whole scratch block to `$8000` (one `scratch =` equate
+now, so it moves as a unit) and clearing the pool page at startup rather than
+relying on the image to have zeroed it. This is the third time this scratch has
+been placed on top of live data - `$0C00` on the level data, then `$2000` on the
+audio - so the comment there now says not to move it back down.
+
+Anyone who has been comparing breakout's audio against PICO-8 was comparing
+against corrupted sfx. Worth re-checking any conclusion that rested on it.

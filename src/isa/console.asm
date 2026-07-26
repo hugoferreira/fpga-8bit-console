@@ -165,20 +165,33 @@
     expn = $5F    ; explosion queue depth
     nextch = $60    ; sfx_play round-robin steal cursor
 
-    ; Particle pool (12), one page
-    PPX = $2100
-    PPY = $2110
-    PVX = $2120
-    PVY = $2130
-    PLIFE = $2140
-    PCOL = $2150
-    PKIND = $2160  ; 0 = burst spark, 1 = ball trail, 2 = shard
-    DUSTX = $2170  ; ambient dust (8), behind the bricks
-    DUSTY = $2178
-    EXPQ = $2180  ; explosion queue: shadow indices (8)
+    ; Scratch, at $8000: far above the program image and below the $E000
+    ; peripheral window, so it cannot collide with either however much the
+    ; code grows. It has been placed too low twice now - first at $0C00, on
+    ; top of the level data, and then at $2000, on top of `audio_data`, which
+    ; ends at $2E11: the shadow clear was overwriting sfx 14-16 and the
+    ; particle pool sfx 18-20 every frame, and the pool read its initial
+    ; "live" flags out of whatever sfx bytes happened to sit at $2140. Do not
+    ; move this back down to chase a smaller image.
+    ;
+    ; This needs the full 64 KB RAM (RAM_ADDR_BITS=16: the simulator and
+    ; top_tangnano20k). On a target with a shrunken RAM $8000 aliases down -
+    ; but so does $2000, and breakout's image is ~11 KB, so it never fitted
+    ; the 8 KB tops anyway.
+    scratch = $8000
 
-    ; Brick shadow map: 10 rows x 11 cols (well above the program image,
-    ; which now extends past $1200 - the original $0C00 scratch overlapped
-    ; the level data and got wiped by the shadow clear)
-    shadow = $2000
+    ; Brick shadow map: 10 rows x 11 cols
+    shadow = scratch
+
+    ; Particle pool (12), one page
+    PPX = scratch + $100
+    PPY = scratch + $110
+    PVX = scratch + $120
+    PVY = scratch + $130
+    PLIFE = scratch + $140
+    PCOL = scratch + $150
+    PKIND = scratch + $160  ; 0 = burst spark, 1 = ball trail, 2 = shard
+    DUSTX = scratch + $170  ; ambient dust (8), behind the bricks
+    DUSTY = scratch + $178
+    EXPQ = scratch + $180  ; explosion queue: shadow indices (8)
 

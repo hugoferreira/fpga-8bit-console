@@ -139,6 +139,17 @@ start:
 
     ; First 8 list entries (ambient dust) composite behind the tile layer
     mov SPR_BSPLIT, #8
+    ; Clear the particle pool. It used to sit inside the program image and so
+    ; came up holding whatever bytes the assembler had emitted there; on real
+    ; hardware RAM comes up undefined either way, and a stale PLIFE byte
+    ; spawns a particle out of nothing. This covers PPX..EXPQ in one page.
+    ldx #0
+    lda #0
+.pclr:
+    sta PPX, x
+    inx
+    bne .pclr
+
     ; seed the dust from the hardware LFSR
     ldx #0
 .dust0:

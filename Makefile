@@ -597,6 +597,24 @@ test-ext: $(SST_BIN)
 migrate-check:
 	python3 tools/65x02/migrate_check.py $(BEFORE) $(BEFORE_LBL) $(AFTER) $(AFTER_LBL)
 
+# The same check for breakout, which has no functional suite of its own - only a
+# screenshot, and a screenshot cannot tell a timing artefact from a defect. The
+# reference is the last pre-ISA build, rebuilt from git so this stays runnable.
+# See tools/65x02/corpus_diff.py.
+BREAKOUT_REF_COMMIT = f5be1c7
+corpus-diff-breakout: hex
+	@rm -rf build/ref && mkdir -p build/ref
+	@git show $(BREAKOUT_REF_COMMIT):src/main.asm > build/ref/main.asm
+	@ln -sf $(CURDIR)/src/isa build/ref/isa
+	@for f in breakout_data breakout_tables breakout_sfx; do \
+	   ln -sf $(CURDIR)/src/$$f.asm build/ref/$$f.asm; done
+	@${CUSTOMASM} build/ref/main.asm -t 10 --color=off --legacy=off \
+	  -f binary -o build/ref/pre.bin -- -f symbols -o build/ref/pre.sym >/dev/null
+	@python3 tools/sym_to_lbl.py build/ref/pre.sym build/ref/pre.lbl >/dev/null
+	python3 tools/65x02/corpus_diff.py \
+	  build/ref/pre.bin build/ref/pre.lbl \
+	  build/breakout.bin build/breakout.lbl --frames $(or $(FRAMES),40)
+
 test-functional: $(SST_BIN) $(FUNCTEST_BIN)
 	$(SST_BIN) --fixture $(SST_FIXTURE) --functest $(FUNCTEST_BIN)
 
