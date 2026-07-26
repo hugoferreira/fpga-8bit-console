@@ -41,6 +41,11 @@ import re
 import sys
 from collections import Counter
 
+# Reads Y. `ldy #d / lda (p),y` -> `lda (p), #d` leaves Y unchanged where the
+# original left Y = d, so the rewrite needs Y dead afterwards.
+READS_Y = {"sty", "tya", "cpy", "iny", "dey", "pha"}
+KILLS_Y = {"ldy", "tay", "ply"}
+
 # Reads A, so a preceding `lda` whose value we removed would be observable.
 READS_A = {"sta", "cmp", "adc", "sbc", "and", "ora", "eor", "bit",
            "tax", "tay", "pha", "add", "sub"}
@@ -122,19 +127,19 @@ class Corpus:
         return self.globals.get(t)
 
 
-def dead_after(corpus, start, need_a, need_nz):
-    """Are A and N/Z dead on every path from `start`? Unknown counts as no."""
+def dead_after(corpus, start, need_a, need_nz, need_y=False):
+    """Are the named values dead on every path from `start`? Unknown = no."""
     seen = set()
     budget = [NODE_BUDGET]
-    # each work item: position, a_dead, nz_dead, return-address stack
-    stack = [(start, not need_a, not need_nz, ())]
+    # each work item: position, a_dead, nz_dead, y_dead, return-address stack
+    stack = [(start, not need_a, not need_nz, not need_y, ())]
     while stack:
-        i, a_dead, nz_dead, ret = stack.pop()
+        i, a_dead, nz_dead, y_dead, ret = stack.pop()
         while True:
             if budget[0] <= 0:
                 return False, "analysis budget exhausted"
             budget[0] -= 1
-            key = (i, a_dead, nz_dead, len(ret))
+            key = (i, a_dead, nz_dead, y_dead, len(ret))
             if key in seen:
                 break                       # this path already proven
             seen.add(key)
@@ -148,11 +153,16 @@ def dead_after(corpus, start, need_a, need_nz):
                 return False, f"A read by {ln.mn}"
             if not nz_dead and ln.mn in READS_NZ:
                 return False, f"N/Z read by {ln.mn}"
+            if not y_dead and (ln.mn in READS_Y or
+                               re.search(r",\s*[yY]$", ln.operand)):
+                return False, f"Y read by {ln.mn}"
             if ln.mn in KILLS_A:
                 a_dead = True
             if ln.mn in KILLS_NZ:
                 nz_dead = True
-            if a_dead and nz_dead:
+            if ln.mn in KILLS_Y:
+                y_dead = True
+            if a_dead and nz_dead and y_dead:
                 break                       # this path is safe
             if ln.mn == "jsr":
                 t = corpus.target(i, ln.operand)
@@ -178,7 +188,7 @@ def dead_after(corpus, start, need_a, need_nz):
                 t = corpus.target(i, ln.operand)
                 if t is None:
                     return False, "branch to an unresolved target"
-                stack.append((t, a_dead, nz_dead, ret))    # taken edge
+                stack.append((t, a_dead, nz_dead, y_dead, ret))   # taken edge
                 i += 1                                      # fall-through
                 continue
             if ln.mn in ("rti", "brk"):
@@ -281,6 +291,21 @@ def main(argv):
                 out[i] = None
                 out[j] = f"{indent_of(b.raw)}{new} {b.operand}{comment_of(b.raw)}"
                 did[f"{a.mn}/{want} -> {new}"] += 1
+                continue
+
+        # ldy #d / lda (p),y   ->   lda (p), #d      (and the sta form)
+        if a.mn == "ldy" and a.operand.startswith("#") and b.mn in ("lda", "sta"):
+            m = re.match(r"^\(\s*([^)]+?)\s*\)\s*,\s*[yY]$", b.operand)
+            if m:
+                disp = a.operand[1:].strip()
+                ok, why = dead_after(corpus, rest, False, False, True)
+                if not ok:
+                    skipped[f"{why} (pointer form)"] += 1
+                    continue
+                out[i] = None
+                out[j] = (f"{indent_of(b.raw)}{b.mn} ({m.group(1)}), #{disp}"
+                          f"{comment_of(b.raw)}")
+                did[f"ldy #d / {b.mn} (p),y -> {b.mn} (p),#d"] += 1
                 continue
 
         # lda #k / sta v   and   lda t,x / sta v

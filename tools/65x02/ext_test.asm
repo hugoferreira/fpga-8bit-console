@@ -77,6 +77,27 @@ start:
     cmp #0xFF
     bne fail7
 
+    ; ---- LDA (zp),#d and STA (zp),#d : field access without Y ----
+    mov 0x20, #<obj           ; pObj -> obj
+    mov 0x21, #>obj
+    ldy #0x77                 ; Y must survive
+    lda (0x20), #2            ; obj+2
+    cmp #0x22
+    bne fail8
+    cpy #0x77
+    bne fail8
+    lda #0x99
+    sta (0x20), #1            ; write obj+1
+    lda (0x20), #1
+    cmp #0x99
+    bne fail8
+    ; the displacement must carry into the pointer's high byte
+    mov 0x22, #0xFE
+    mov 0x23, #0x04           ; pSrc -> 0x04FE
+    lda (0x22), #3            ; 0x04FE + 3 = 0x0501, crossing the page
+    cmp #0x5C
+    bne fail9
+
 pass:
     jmp pass
 
@@ -93,6 +114,10 @@ fail5: lda #5
 fail6: lda #6
     jmp fail
 fail7: lda #7
+    jmp fail
+fail8: lda #8
+    jmp fail
+fail9: lda #9
 fail:
     sta 0x00FF               ; which check failed
 spin:
@@ -102,3 +127,11 @@ spin:
 
 table:
     #d8 0x00, 0x11, 0x22, 0x33, 0x44
+
+obj:
+    #d8 0x11, 0x00, 0x22, 0x33
+
+; a byte at 0x0501, to prove the displacement carries into the pointer's high
+; byte rather than wrapping inside the page
+#addr 0x0501
+    #d8 0x5C

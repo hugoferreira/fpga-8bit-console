@@ -63,6 +63,38 @@ program was written to avoid X" cannot be used to reject X.
   alternative is a genuine preference rather than an avoidance. `DBNZ`'s
   rejection does not currently pass this and should be re-heard.
 
+## G6 rejects a slice that strictly improves the program — measured
+
+`add-isa-pointer-ops` landed after this was written, and it demonstrates the
+argument better than any of the evidence above, because it is not a
+counting-methodology point: it is the gate returning the wrong answer.
+
+`LDA (zp),#d` replaces `ldy #d / lda (zp),y`. On celeste, 66 sites:
+
+| | before | after |
+| --- | --- | --- |
+| instructions | 2476 | **2410** |
+| toll | 240 | **298** |
+| plumbing | 13.2% | **15.9%** |
+
+The program got **66 instructions, 66 bytes and 66 cycles smaller**, and the
+plumbing ratio went **up**, so **G6 as written rejects it**.
+
+Two independent artefacts, both of them the metric's fault:
+
+1. **The denominator shrank.** `ldy #FIELD` is not counted as plumbing — the
+   "pointer-setup blind spot" celeste already documented — so removing 66 of
+   them makes every remaining plumbing instruction a larger share.
+2. **The numerator grew, from a rewrite that removed work.** `toll` counts
+   *adjacent* `lda`→`sta` pairs. `ldy #d / lda (p),y / sta v` had the `ldy`
+   between them; `lda (p),#d / sta v` does not. 58 pairs became "adjacent" that
+   were always the same two operations. And they are not toll in the first
+   place: a field-to-variable move has an indirect source, which no `MOV` form
+   can express.
+
+A gate that says no to 66 fewer bytes and 66 fewer cycles is not measuring what
+it claims to measure.
+
 ## Impact
 
 - **Slices 4-7 should be re-argued on intent**, not re-scored on idioms. The

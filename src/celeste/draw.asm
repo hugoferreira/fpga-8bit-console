@@ -202,8 +202,7 @@ draw_obj_sprite:
 ; Clobbers A, Y.
 ; ------------------------------------------------------------------------------
 obj_screen_pos:
-    ldy #O_X
-    lda (pObj), y
+    lda (pObj), #O_X
     add shake_x
     sta t4
     ldy #O_Y
@@ -227,11 +226,9 @@ obj_screen_pos:
 ; 0.667d, which is two shifts and an add. The trail is imperceptibly tighter.
 ; ------------------------------------------------------------------------------
 create_hair:
-    ldy #O_X
-    lda (pObj), y
+    lda (pObj), #O_X
     sta t3
-    ldy #O_Y
-    lda (pObj), y
+    lda (pObj), #O_Y
     sta t4
     ldy #O_HAIR
     ldx #HAIR_NODES
@@ -290,8 +287,7 @@ hair_flash:
     #d8 PAL_ATTR_11, PAL_ATTR_11, PAL_ATTR_11
 
 draw_hair:
-    ldy #O_FLIP                 ; last.x = x + 4 - facing*2
-    lda (pObj), y
+    lda (pObj), #O_FLIP
     and #1
     beq .faceright
     lda #6

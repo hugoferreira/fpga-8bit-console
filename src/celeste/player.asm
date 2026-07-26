@@ -44,23 +44,17 @@
 ; ------------------------------------------------------------------------------
 player_init:
     lda #1                      ; hitbox = {1,3,6,5}
-    ldy #O_HBX
-    sta (pObj), y
+    sta (pObj), #O_HBX
     lda #3
-    ldy #O_HBY
-    sta (pObj), y
+    sta (pObj), #O_HBY
     lda #6
-    ldy #O_HBW
-    sta (pObj), y
+    sta (pObj), #O_HBW
     lda #5
-    ldy #O_HBH
-    sta (pObj), y
+    sta (pObj), #O_HBH
     lda max_djump
-    ldy #O_DJUMP
-    sta (pObj), y
+    sta (pObj), #O_DJUMP
     lda #1
-    ldy #O_SPR
-    sta (pObj), y
+    sta (pObj), #O_SPR
     jmp create_hair
 
 ; ------------------------------------------------------------------------------
@@ -96,8 +90,7 @@ player_update:
     jmp kill_player
 .nospike:
 
-    ldy #O_Y                    ; bottom death. The cart tests y > 128; the
-    lda (pObj), y                ; port's positions are signed bytes, so the
+    lda (pObj), #O_Y  ; port's positions are signed bytes, so the
     bmi .notbottom              ; test moves 8 pixels up rather than wrapping
     cmp #121                    ; into "above the room", which is next_room -
     bcc .notbottom              ; and the sign has to be tested BEFORE the
@@ -116,8 +109,7 @@ player_update:
 
     lda p_onground              ; landing smoke
     beq .nosmoke
-    ldy #O_PBITS
-    lda (pObj), y
+    lda (pObj), #O_PBITS
     and #PB_GROUND
     bne .nosmoke
     ldy #O_X
@@ -134,8 +126,7 @@ player_update:
     lda btn                     ; jump = btn(jump) and not p_jump
     and #BTN_JUMP
     beq .nojumpheld
-    ldy #O_PBITS
-    lda (pObj), y
+    lda (pObj), #O_PBITS
     and #PB_JUMP
     bne .jumpheld
     mov p_jump, #1
@@ -162,15 +153,13 @@ player_update:
     jmp .dashedge
 .jbuf:
     lda #4
-    ldy #O_JBUF
-    sta (pObj), y
+    sta (pObj), #O_JBUF
 
 .dashedge:
     lda btn                     ; dash = btn(dash) and not p_dash
     and #BTN_DASH
     beq .nodashheld
-    ldy #O_PBITS
-    lda (pObj), y
+    lda (pObj), #O_PBITS
     and #PB_DASH
     bne .dashheld
     mov p_dash, #1
@@ -193,17 +182,14 @@ player_update:
     lda p_onground
     beq .airborne
     lda #6
-    ldy #O_GRACE
-    sta (pObj), y
-    ldy #O_DJUMP                ; refill the dash on landing
-    lda (pObj), y
+    sta (pObj), #O_GRACE
+    lda (pObj), #O_DJUMP
     cmp max_djump
     bcs .gracedone
     lda #54
     jsr psfx
     lda max_djump
-    ldy #O_DJUMP
-    sta (pObj), y
+    sta (pObj), #O_DJUMP
     jmp .gracedone
 .airborne:
     ldy #O_GRACE
@@ -358,8 +344,7 @@ player_move:
     iny
     ora (pObj), y
     beq .gravity
-    ldy #O_SPDX+1
-    lda (pObj), y
+    lda (pObj), #O_SPDX+1
     bmi .faceleft
     ldy #O_FLIP
     lda (pObj), y
@@ -446,22 +431,18 @@ player_move:
     jsr obj_stw
 
 .jump:
-    ldy #O_JBUF
-    lda (pObj), y
+    lda (pObj), #O_JBUF
     bne .wantjump
     jmp .dash
 .wantjump:
-    ldy #O_GRACE
-    lda (pObj), y
+    lda (pObj), #O_GRACE
     beq .walljump
 
     lda #1                      ; normal jump
     jsr psfx
     lda #0
-    ldy #O_JBUF
-    sta (pObj), y
-    ldy #O_GRACE
-    sta (pObj), y
+    sta (pObj), #O_JBUF
+    sta (pObj), #O_GRACE
     lda #<JUMP_SPD
     ldy #O_SPDY
     sta (pObj), y
@@ -496,8 +477,7 @@ player_move:
     lda #2
     jsr psfx
     lda #0
-    ldy #O_JBUF
-    sta (pObj), y
+    sta (pObj), #O_JBUF
     lda #<JUMP_SPD
     ldy #O_SPDY
     sta (pObj), y
@@ -550,8 +530,7 @@ player_move:
 .dash:
     lda p_dash
     beq .nodash
-    ldy #O_DJUMP
-    lda (pObj), y
+    lda (pObj), #O_DJUMP
     bne .dodash
     lda #9                      ; out of dashes: a puff and a raspberry
     jsr psfx
@@ -581,12 +560,10 @@ player_move:
     sub #1
     sta (pObj), y
     lda #4
-    ldy #O_DASHT
-    sta (pObj), y
+    sta (pObj), #O_DASHT
     mov has_dashed, #1
     lda #10
-    ldy #O_DASHE
-    sta (pObj), y
+    sta (pObj), #O_DASHE
 
     lda btn                     ; v_input
     and #BTN_U
@@ -644,8 +621,7 @@ player_move:
     jmp .dashdone
 
 .neutral:                       ; no direction held: the cart dashes at 1 px/frame
-    ldy #O_FLIP                 ; in the facing direction, not at d_full
-    lda (pObj), y
+    lda (pObj), #O_FLIP
     and #$01
     beq .neutralright
     lda #$FF
@@ -690,8 +666,7 @@ player_move:
     iny
     ora (pObj), y
     beq .yzero
-    ldy #O_SPDY+1
-    lda (pObj), y
+    lda (pObj), #O_SPDY+1
     bpl .ynonzero
     lda #<(-DASH_TARGET_UP & $FFFF)
     ldy #O_DTY
@@ -774,8 +749,7 @@ player_anim:
     lda btn
     and #BTN_L|BTN_R
     beq .still
-    ldy #O_SPROFF               ; 1 + spr_off % 4
-    lda (pObj), y
+    lda (pObj), #O_SPROFF
     lsr
     lsr
     add #1
@@ -783,8 +757,7 @@ player_anim:
 .still:
     lda #1
 .setspr:
-    ldy #O_SPR
-    sta (pObj), y
+    sta (pObj), #O_SPR
 
     ldy #O_Y                    ; if y < -4 then next_room()
     lda (pObj), y
@@ -794,8 +767,7 @@ player_anim:
     jsr next_room
     rts
 .stay:
-    ldy #O_PBITS                ; was_on_ground = on_ground
-    lda (pObj), y
+    lda (pObj), #O_PBITS
     and #<!PB_GROUND
     ldy p_onground
     beq .nolatch
@@ -856,8 +828,7 @@ kill_player:
 ; player_draw: clamp into the room, then hair, then the player.
 ; ------------------------------------------------------------------------------
 player_draw:
-    ldy #O_X                    ; clamp(x, -1, 121)
-    lda (pObj), y
+    lda (pObj), #O_X
     bmi .low
     cmp #122
     bcc .inside
@@ -868,16 +839,14 @@ player_draw:
     bcs .inside
     lda #$FF
 .clamped:
-    ldy #O_X
-    sta (pObj), y
+    sta (pObj), #O_X
     lda #0                      ; and stop, as the cart does
     ldy #O_SPDX
     sta (pObj), y
     iny
     sta (pObj), y
 .inside:
-    ldy #O_DJUMP
-    lda (pObj), y
+    lda (pObj), #O_DJUMP
     jsr set_hair_color
     jsr draw_hair
     jmp draw_obj_sprite
@@ -889,20 +858,14 @@ spawn_init:
     lda #4
     jsr sfx_play
     lda #3
-    ldy #O_SPR
-    sta (pObj), y
-    ldy #O_X                    ; target = where the marker tile was
-    lda (pObj), y
-    ldy #O_TGTX
-    sta (pObj), y
-    ldy #O_Y
-    lda (pObj), y
-    ldy #O_TGTY
-    sta (pObj), y
+    sta (pObj), #O_SPR
+    lda (pObj), #O_X
+    sta (pObj), #O_TGTX
+    lda (pObj), #O_Y
+    sta (pObj), #O_TGTY
 
     lda #127                    ; the cart starts at y = 128, one past what a
-    ldy #O_Y                    ; signed byte holds; one pixel lower is off
-    sta (pObj), y                ; screen either way
+    sta (pObj), #O_Y  ; screen either way
     lda #<SPAWN_SPD
     ldy #O_SPDY
     sta (pObj), y
@@ -916,16 +879,14 @@ spawn_init:
     jmp create_hair
 
 spawn_update:
-    ldy #O_STATE
-    lda (pObj), y
+    lda (pObj), #O_STATE
     beq .rising
     cmp #1
     beq .falling
     jmp .landing
 
 .rising:                        ; if y < target.y + 16 then state = 1
-    ldy #O_TGTY
-    lda (pObj), y
+    lda (pObj), #O_TGTY
     add #16
     sta t3
     ldy #O_Y
@@ -933,8 +894,7 @@ spawn_update:
     cmp t3
     bcs .done
     lda #1
-    ldy #O_STATE
-    sta (pObj), y
+    sta (pObj), #O_STATE
     lda #3
     ldy #O_DELAY
     sta (pObj), y
@@ -970,8 +930,7 @@ spawn_update:
     rts
 
 .land:
-    ldy #O_TGTY                 ; if y > target.y then land
-    lda (pObj), y
+    lda (pObj), #O_TGTY
     sta t3
     ldy #O_Y
     lda (pObj), y
@@ -979,8 +938,7 @@ spawn_update:
     bcc .done2
     beq .done2
     lda t3
-    ldy #O_Y
-    sta (pObj), y
+    sta (pObj), #O_Y
     lda #0
     ldy #O_SPDX
     sta (pObj), y
@@ -991,11 +949,9 @@ spawn_update:
     iny
     sta (pObj), y
     lda #2
-    ldy #O_STATE
-    sta (pObj), y
+    sta (pObj), #O_STATE
     lda #5
-    ldy #O_DELAY
-    sta (pObj), y
+    sta (pObj), #O_DELAY
     mov shake, #5
     ldy #O_X
     lda (pObj), y
@@ -1021,11 +977,9 @@ spawn_update:
     pla
     bpl .stillhere
 
-    ldy #O_X                    ; hand over to the player proper
-    lda (pObj), y
+    lda (pObj), #O_X
     sta spawn_x
-    ldy #O_Y
-    lda (pObj), y
+    lda (pObj), #O_Y
     sta spawn_y
     jsr destroy_object
     mov spawn_type, #T_PLAYER
@@ -1044,8 +998,7 @@ spawn_draw:
 ; ------------------------------------------------------------------------------
 smoke_init:
     lda #29
-    ldy #O_SPR
-    sta (pObj), y
+    sta (pObj), #O_SPR
     lda #<SMOKE_SPDY
     ldy #O_SPDY
     sta (pObj), y
@@ -1079,8 +1032,7 @@ smoke_init:
 
     lda SPR_RND                 ; flip.x = maybe(), flip.y = maybe()
     and #3
-    ldy #O_FLIP
-    sta (pObj), y
+    sta (pObj), #O_FLIP
     ldy #O_FLAGS
     lda (pObj), y
     and #<!F_SOLIDS
@@ -1094,8 +1046,7 @@ smoke_update:
     sta (pObj), y
     cmp #15
     bcs .gone
-    ldy #O_SPROFF
-    lda (pObj), y
+    lda (pObj), #O_SPROFF
     ldx #29
     cmp #5
     bcc .have

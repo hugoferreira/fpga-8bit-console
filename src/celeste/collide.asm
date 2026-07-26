@@ -35,24 +35,21 @@ is_ice:
 ; Clobbers A, Y.
 ; ------------------------------------------------------------------------------
 obj_box:
-    ldy #O_X
-    lda (pObj), y
+    lda (pObj), #O_X
     ldy #O_HBX
     clc
     adc (pObj), y
     add c_ox
     sta c_x
 
-    ldy #O_Y
-    lda (pObj), y
+    lda (pObj), #O_Y
     ldy #O_HBY
     clc
     adc (pObj), y
     add c_oy
     sta c_y
 
-    ldy #O_HBW
-    lda (pObj), y
+    lda (pObj), #O_HBW
     sta c_w
     ldy #O_HBH
     lda (pObj), y
@@ -273,8 +270,7 @@ spike_up:
     ldy #O_SPDY+1
     lda (pObj), y
     bmi .maybe
-    ldy #O_SPDY                 ; spd.y <= 0 means the whole word, not just the
-    lda (pObj), y                ; high byte: +0.004 is still moving down
+    lda (pObj), #O_SPDY  ; high byte: +0.004 is still moving down
     ldy #O_SPDY+1
     ora (pObj), y
     bne .no
@@ -295,8 +291,7 @@ spike_right:
     ldy #O_SPDX+1
     lda (pObj), y
     bmi .maybe
-    ldy #O_SPDX
-    lda (pObj), y
+    lda (pObj), #O_SPDX
     ldy #O_SPDX+1
     ora (pObj), y
     bne .no

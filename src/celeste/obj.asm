@@ -107,24 +107,18 @@ init_object:
     bpl .clear
 
     lda spawn_type
-    ldy #O_TYPE
-    sta (pObj), y
+    sta (pObj), #O_TYPE
     tax
     lda type_tile-1, x           ; obj.spr = type.tile
-    ldy #O_SPR
-    sta (pObj), y
+    sta (pObj), #O_SPR
     lda spawn_x
-    ldy #O_X
-    sta (pObj), y
+    sta (pObj), #O_X
     lda spawn_y
-    ldy #O_Y
-    sta (pObj), y
+    sta (pObj), #O_Y
 
     lda #8                      ; the cart's default hitbox {0,0,8,8}
-    ldy #O_HBW
-    sta (pObj), y
-    ldy #O_HBH
-    sta (pObj), y
+    sta (pObj), #O_HBW
+    sta (pObj), #O_HBH
     lda #F_COLLIDEABLE|F_SOLIDS
     ldy #O_FLAGS
     sta (pObj), y
@@ -290,8 +284,7 @@ obj_move:
 ; it was trying to be. Clobbers A, X, Y, t1, t2.
 ; ------------------------------------------------------------------------------
 move_x:
-    ldy #O_FLAGS
-    lda (pObj), y
+    lda (pObj), #O_FLAGS
     and #F_SOLIDS
     bne .solid
 
@@ -350,8 +343,7 @@ move_x:
 ; move_y: the same, vertically. Clobbers A, X, Y, t1, t2.
 ; ------------------------------------------------------------------------------
 move_y:
-    ldy #O_FLAGS
-    lda (pObj), y
+    lda (pObj), #O_FLAGS
     and #F_SOLIDS
     bne .solid
 

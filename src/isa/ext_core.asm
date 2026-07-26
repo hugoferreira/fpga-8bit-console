@@ -63,3 +63,17 @@
     sub #<{v: u16} => 0x53 @ v[7:0]
     sub #>{v: u16} => 0x53 @ v[15:8]
 }
+
+; add-isa-pointer-ops: `obj.field` without spending Y on the field offset.
+;
+; `ldy #O_Y / lda (pObj), y` is what a Lua table access costs on a 6502 - two
+; instructions, one of them purely to name the field. 239 of the 252 pointer
+; accesses across breakout and celeste are a load or a store through that
+; idiom, and 156 of them go through a single pointer. Written `(ptr), #disp`
+; because the displacement is part of the address, not a separate operand.
+#ruledef ext_ptr
+{
+    ; 3 bytes / 6 cycles, replacing `ldy #d / lda (zp),y`  (4 bytes / 7 cycles)
+    lda ({zaddr: u8}), #{disp: u8} => 0x8B @ zaddr @ disp
+    sta ({zaddr: u8}), #{disp: u8} => 0x9B @ zaddr @ disp
+}

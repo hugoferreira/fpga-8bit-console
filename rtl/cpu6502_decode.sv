@@ -48,6 +48,8 @@ typedef enum logic [4:0] {
     AM_MOVZI,    // MOV zp, #imm
     AM_MOVAI,    // MOV abs, #imm
     AM_MOVZX,    // MOV zp, abs,X
+    // --- add-isa-pointer-ops ---
+    AM_INDD,     // (zp), #disp - indirect with a constant displacement
     AM_TRAP      // no row: undefined opcode
 } amode_t;
 
@@ -106,7 +108,8 @@ typedef enum logic [5:0] {
     S_JMPI0, S_JMPI1,
     S_MOVZ0, S_MOVZ1,
     S_MOVA0, S_MOVA1, S_MOVA2,
-    S_MVX0, S_MVX1, S_MVX2, S_MVX3
+    S_MVX0, S_MVX1, S_MVX2, S_MVX3,
+    S_IDD0, S_IDD1, S_IDD2, S_IDD3
 } state_t;
 
 typedef struct packed {
@@ -171,6 +174,7 @@ module cpu6502_decode (
             AM_MOVZI:                  st_of = S_MOVZ0;
             AM_MOVAI:                  st_of = S_MOVA0;
             AM_MOVZX:                  st_of = S_MVX0;
+            AM_INDD:                   st_of = S_IDD0;
             default:                   st_of = S_DECODE;   // AM_TRAP: inert
         endcase
     endfunction
@@ -368,7 +372,15 @@ module cpu6502_decode (
         8'h63: d = row(AM_ZP,    OP_SUB,  R_A,    D_A);     // SUB zp
         8'h73: d = row(AM_IMM,   OP_TRAP, R_NONE, D_NONE);  // TRAP #imm
 
-        // The remaining 97 slots. Reserved for the ISA slices; until one claims
+        // ---- add-isa-pointer-ops, column $xB high half ----
+        // `obj.field` costs two instructions on a 6502: the field offset has to
+        // be loaded into Y first. 239 of the 252 pointer accesses across the two
+        // corpora are a load or a store through that idiom, and 156 of them go
+        // through one pointer. The displacement belongs in the instruction.
+        8'h8B: d = row(AM_INDD, OP_PASS, R_NONE, D_A);      // LDA (zp),#d
+        8'h9B: d = row(AM_INDD, OP_PASS, R_A,    D_MEM);    // STA (zp),#d
+
+        // The remaining 95 slots. Reserved for the ISA slices; until one claims
         // a slot, executing it is a named failure rather than silent corruption.
         default: d = row(AM_TRAP, OP_NOP, R_NONE, D_NONE);
         endcase

@@ -69,16 +69,14 @@ start:
     ldy #1
     lda #40
     sta (ptr), y
-    ldy #13
-    sta (ptr), y
+    sta (ptr), #13
     lda ptr+1
     add #2  ; MAP_HI page = MAP_LO page + $200
     sta ptr+1
     ldy #1
     lda #$0C
     sta (ptr), y
-    ldy #13
-    sta (ptr), y
+    sta (ptr), #13
     inx
     cpx #15
     bne .sidewall

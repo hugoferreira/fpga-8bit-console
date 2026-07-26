@@ -511,6 +511,18 @@ module cpu6502_core (
             ab_c = {8'h00, zpa}; we_c = 1'b1; do_c = di_eff; st_n = S_LAST;
         end
 
+        // ---- (zp), #disp : indirect with a constant displacement ----
+        // Three bytes, six cycles - the same three memory accesses `(zp),Y`
+        // makes, without spending Y on the field offset first.
+        S_IDD0: begin zpa_n = di_eff; ab_c = pc; pc_upd = 1'b1; st_n = S_IDD1; end
+        S_IDD1: begin adl_n = di_eff;                  // hold the displacement
+                      ab_c = {8'h00, zpa}; st_n = S_IDD2; end
+        S_IDD2: begin
+            {cy_n, adl_n} = {1'b0, di_eff} + {1'b0, adl};   // ptr low + disp
+            ab_c = {8'h00, zpa + 8'd1}; st_n = S_IDD3;
+        end
+        S_IDD3: begin ea = {di_eff + {7'b0, cy}, adl}; ea_go = 1'b1; end
+
         // ---- execute ----
         S_EXEC: begin
             commit = 1'b1;

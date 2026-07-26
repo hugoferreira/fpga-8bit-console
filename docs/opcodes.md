@@ -13,10 +13,10 @@ row.
 
 | | slots |
 | --- | --- |
-| Implemented | 159 |
+| Implemented | 161 |
 | Reserved for 65C02 compatibility | 58 |
-| Extension space, claimed | 8 |
-| Extension space, assigned but unclaimed | 25 |
+| Extension space, claimed | 10 |
+| Extension space, assigned but unclaimed | 23 |
 | Unallocated | 14 |
 | **Total** | **256** |
 
@@ -118,6 +118,7 @@ scored against this column.
 | `$86` | STX | zp | 2 | 3.00 | 3.00 |
 | `$88` | DEY | imp | 1 | 2.00 | 2.00 |
 | `$8A` | TXA | imp | 1 | 2.00 | 2.00 |
+| `$8B` | LDA (zp),#d | | | | *add-isa-pointer-ops* |
 | `$8C` | STY | abs | 3 | 4.00 | 4.00 |
 | `$8D` | STA | abs | 3 | 4.00 | 4.00 |
 | `$8E` | STX | abs | 3 | 4.00 | 4.00 |
@@ -129,6 +130,7 @@ scored against this column.
 | `$98` | TYA | imp | 1 | 2.00 | 2.00 |
 | `$99` | STA | absy | 3 | 4.00 ◀ | 5.00 |
 | `$9A` | TXS | imp | 1 | 2.00 | 2.00 |
+| `$9B` | STA (zp),#d | | | | *add-isa-pointer-ops* |
 | `$9D` | STA | absx | 3 | 4.00 ◀ | 5.00 |
 | `$A0` | LDY | imm | 2 | 2.00 | 2.00 |
 | `$A1` | LDA | indx | 2 | 5.00 ◀ | 6.00 |
@@ -274,9 +276,7 @@ option of adopting its 65C02 meaning later.
 | `$6B` | add-isa-test-and-branch |
 | `$7B` | add-isa-test-and-branch |
 | `$83` | add-isa-word-ops |
-| `$8B` | add-isa-pointer-ops |
 | `$93` | add-isa-word-ops |
-| `$9B` | add-isa-pointer-ops |
 | `$A3` | add-isa-word-ops |
 | `$AB` | add-isa-pointer-ops |
 | `$B3` | add-isa-word-ops |

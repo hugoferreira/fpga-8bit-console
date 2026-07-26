@@ -192,7 +192,8 @@ class Sim6502:
     # MOV writes memory without touching A, X, Y or any flag; ADD/SUB are
     # ADC/SBC with the carry decided by the opcode rather than by a preceding
     # clc/sec, and are binary-only. See docs/opcodes.md.
-    EXT = {0x03, 0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73}
+    EXT = {0x03, 0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73,
+           0x8B, 0x9B}                      # add-isa-pointer-ops
 
     def _step_ext(self, op):
         if op == 0x03:                       # MOV zp, #imm
@@ -217,6 +218,15 @@ class Sim6502:
             self._add(self.rd(self._fetch()) ^ 0xFF, 1)
         elif op == 0x73:                     # TRAP #imm - inert, records
             self.trap = self._fetch()
+        elif op in (0x8B, 0x9B):             # LDA/STA (zp), #disp
+            zp = self._fetch()
+            disp = self._fetch()
+            ptr = self.m[zp] | (self.m[(zp + 1) & 0xFF] << 8)
+            a = (ptr + disp) & 0xFFFF        # carries into the high byte
+            if op == 0x8B:
+                self.a = self.setnz(self.rd(a))
+            else:
+                self.wr(a, self.a)
         return True
 
     def _add(self, v, cin):
