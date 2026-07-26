@@ -54,7 +54,7 @@ load_room:
     ldy #0                      ; the room's tile ids become this port's mget
 .copy:
     lda (pSrc), y
-    sta ROOMTILES, y
+    sta [room_tiles + RoomTileBuffer.cells[y]]
     iny
     bne .copy
 

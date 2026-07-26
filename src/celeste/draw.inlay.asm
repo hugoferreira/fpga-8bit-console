@@ -93,7 +93,7 @@ flash_palette:
 .identloop:
     ldy flash_slot, x
     tya
-    sta SPR_SPAL, y              ; entry n holds n
+    sta [video + VideoRegisters.screen_palette[y]] ; entry n holds n
     dex
     bpl .identloop
     rts
@@ -117,7 +117,7 @@ flash_palette:
     ldx #5
 .set:
     ldy flash_slot, x
-    sta SPR_SPAL, y
+    sta [video + VideoRegisters.screen_palette[y]]
     dex
     bpl .set
     rts
@@ -576,9 +576,9 @@ ovl_putc:
     lda d_y
     add d_row
     tay
-    lda OVLROW_LO, y
+    lda [overlay_rows + OverlayRowPointers.low[y]]
     sta pOvl
-    lda OVLROW_HI, y
+    lda [overlay_rows + OverlayRowPointers.high[y]]
     sta pOvl+1
     lda d_x
     lsr

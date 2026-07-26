@@ -38,9 +38,9 @@
 - [x] 5.1 Move ISA/customasm rule inclusion out of `layout.inlay.asm` into the selected target prelude
 - [x] 5.2 Replace every `T_*` use with qualified `ObjectKind` values and delete the compatibility type aliases
 - [x] 5.3 Replace every `O_*` use with typed operations or explicit qualified offset materialisation and delete the compatibility offset aliases
-- [ ] 5.4 Expand video and PSG overlays to cover palette, sprite, clipping, upload, channel and music arrays
-- [ ] 5.5 Add nominal overlays for tile maps, overlay framebuffer, zero-page working locations and persistent game state
-- [ ] 5.6 Reduce `memmap.inlay.asm` to typed regions plus unavoidable bank/vector constants and assert the established addresses
+- [x] 5.4 Expand video and PSG overlays to cover palette, sprite, clipping, upload, channel and music arrays
+- [x] 5.5 Add nominal overlays for tile maps, overlay framebuffer, zero-page working locations and persistent game state
+- [x] 5.6 Reduce `memmap.inlay.asm` to typed regions plus unavoidable bank/vector constants and assert the established addresses
 
 ## 6. Scope generated data and fixed-point services
 

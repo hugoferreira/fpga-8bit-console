@@ -78,7 +78,7 @@ tile_flag_at:
     lda t4
     add t5
     tay
-    lda ROOMTILES, y             ; mget
+    lda [room_tiles + RoomTileBuffer.cells[y]] ; mget
     tay
     lda tile_flags, y
     and c_mask
@@ -200,7 +200,7 @@ spikes_at:
     lda t4
     add t5
     tay
-    lda ROOMTILES, y
+    lda [room_tiles + RoomTileBuffer.cells[y]]
     ldx #0
 .which:
     cmp spike_tile, x

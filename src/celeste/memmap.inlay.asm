@@ -1,46 +1,32 @@
 ; ------------------------------------------------------------------------------
-; Celeste - memory map, console registers, object record layout
+; Celeste - target constants and physical aliases
+;
+; Stable storage shapes and addresses live in layout.inlay.asm. The aliases
+; retained here are consumed by raw target operations whose semantics cannot
+; yet be expressed by a typed Inlay operand.
 ; ------------------------------------------------------------------------------
 
-; PPU registers
-    SPR_SHADDR_LO = $4000
-    SPR_SHADDR_HI = $4001
-    SPR_SHDATA = $4002   ; auto-incrementing sheet upload port
-    SPR_CAMX = $4003
-    SPR_CAMY = $4004   ; 7 bits: the 8 lines of vertical travel
+; PPU aliases needed by mov/cmp or non-A register transfers.
     SPR_CTRL = $4005   ; bit0 tilemap en, bit1 overlay en
     SPR_OVLCOL = $4006
-    SPR_BTN = $4007   ; 0 left 1 right 2 up 3 down 4 O 5 X
     SPR_INDEX = $4008
-    SPR_X = $4009
     SPR_Y = $400A
-    SPR_FLAGS = $400B   ; write commits the staged entry
-    SPR_COUNT = $400C
     SPR_FRAME = $400D   ; +1 per vsync
-    SPR_BASE = $400E
-    SPR_RND = $400F
     SPR_DPAL = $4010   ; draw palette, 16 entries: remaps the
                                        ;   post-base colour of tiles + sprites
-    SPR_SPAL = $4020   ; screen palette, 16 entries
-    SPR_SPLIT = $4036   ; entries below this composite BEFORE
-                                       ;   the tile layer (background sprites)
     SPR_REP = $4037   ; staged repeat, in cells: one committed
                                        ;   entry blits its row that many times
-    SPR_CLIPX0 = $4030
-    SPR_CLIPY0 = $4031
     SPR_CLIPX1 = $4032
     SPR_CLIPY1 = $4033
 
-; PSG
+; PSG aliases needed by mov, logic, or non-A register transfers.
     PSG_ADDR_LO = $4100
     PSG_ADDR_HI = $4101
-    PSG_DATA = $4102
-    PSG_STATUS = $4103   ; read: bits 0-3 channel playing
-    PSG_CH = $4110   ; +ch: SFX # to play, $80 stop
-    PSG_MUSIC = $4120
     PSG_MUSMASK = $4121
     PSG_FADE = $4122
 
+; Wide and pointer-addressed regions whose current target forms cannot consume
+; a typed fixed-overlay path directly.
     OVL = $E000   ; 160x120 1bpp, byte = y*20 + x/8,
                                        ; bit 0 = LEFTMOST pixel
     MAP_LO = $F000   ; tile pattern base, 32x16 cells
@@ -73,7 +59,6 @@
     ROOM_H = 16
     PLAYFIELD_W = 128
     CAM_Y_MAX = 8       ; 128 - 120
-    HUD_X = 128
 
 ; ------------------------------------------------------------------------------
 ; Object records. 64 bytes each, 16 slots, page-aligned pool: the base address
@@ -86,36 +71,6 @@
 ; the player uses all of it, smoke uses none.
 ; ------------------------------------------------------------------------------
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     OBJ_MAX = 16
     HAIR_NODES = 5
 
@@ -125,13 +80,6 @@
 ; The cart's marker tiles. Only player_spawn is a stage-1 type; the rest are
 ; recognised so load_room can skip them without warning, and are stage 2.
     TILE_SPAWN = 1
-    TILE_SPRING = 18
-    TILE_BALLOON = 22
-    TILE_FALL_FLOOR = 23
-    TILE_FRUIT = 26
-    TILE_FLY_FRUIT = 28
-    TILE_FAKE_WALL = 64
-
 ; Spike tiles, by the direction the spikes point.
     TILE_SPIKE_D = 17
     TILE_SPIKE_U = 27
@@ -301,4 +249,3 @@
 
     OVLSHADOW = $6000   ; 2400 bytes; the overlay is write-only
     OVL_STRIDE = 20
-    OVL_BYTES = 2400

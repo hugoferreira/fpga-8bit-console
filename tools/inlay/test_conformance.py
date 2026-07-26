@@ -29,7 +29,7 @@ CELESTE_REFERENCE_DIR = (
 )
 CELESTE_MEMMAP = CELESTE_REFERENCE_DIR / "memmap.asm"
 EXPECTED_CELESTE_TYPED_OPERATIONS = 82
-EXPECTED_CELESTE_OVERLAY_OPERATIONS = 42
+EXPECTED_CELESTE_OVERLAY_OPERATIONS = 50
 EXPECTED_CELESTE_OFFSET_SETUPS = 0
 EXPECTED_CELESTE_SEMANTIC_OFFSETS = 110
 EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 136
@@ -676,7 +676,11 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
         )
     overlay_operations = sum(
         len(re.findall(
-            r"\[(?:video|psg) \+ (?:VideoRegisters|PsgRegisters)\.",
+            r"\[(?:video|psg|framebuffer|tile_map|zero_page|game|"
+            r"room_tiles|overlay_rows|overlay_shadow) \+ "
+            r"(?:VideoRegisters|PsgRegisters|OverlayFramebuffer|TileMap|"
+            r"ZeroPageWorking|GameState|RoomTileBuffer|"
+            r"OverlayRowPointers)\.",
             text,
         ))
         for text in module_texts
@@ -739,8 +743,21 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
         "union ObjectPayload",
         "struct VideoRegisters",
         "struct PsgRegisters",
-        "overlay video : VideoRegisters at SPR_SHADDR_LO",
-        "overlay psg : PsgRegisters at PSG_ADDR_LO",
+        "struct TileMap packed",
+        "struct OverlayFramebuffer packed",
+        "struct RoomTileBuffer packed",
+        "struct OverlayRowPointers",
+        "struct ZeroPageWorking",
+        "struct GameState",
+        "overlay video : VideoRegisters at $4000 volatile",
+        "overlay psg : PsgRegisters at $4100 volatile",
+        "overlay framebuffer : OverlayFramebuffer at $e000 volatile",
+        "overlay tile_map : TileMap at $f000",
+        "overlay zero_page : ZeroPageWorking at $0000",
+        "overlay game : GameState at $0030",
+        "overlay room_tiles : RoomTileBuffer at $5400",
+        "overlay overlay_rows : OverlayRowPointers at $5500",
+        "overlay overlay_shadow : OverlayFramebuffer at $6000",
     }
     missing_layout = sorted(
         item for item in required_layout_declarations

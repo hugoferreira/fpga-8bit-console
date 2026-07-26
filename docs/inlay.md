@@ -610,15 +610,28 @@ parallel legacy game under the production directory.
 fields each variant actually owns while preserving every established byte
 offset. `ObjectKind` and `SpawnPhase` are nominal byte enums; combinable flag
 bytes remain bytes. The module also declares typed `pObj` and `pOth`
-locations, compatibility `O_*` symbols from generated properties, and the
-16-record object pool with its 64-byte stride and 1,024-byte size.
+locations and the 16-record object pool with its 64-byte stride and
+1,024-byte size. Production source contains no compatibility `O_*` or `T_*`
+aliases.
 
 The twelve player/spawn/smoke/title init, update and draw dispatch targets are
 qualified `console6502` procedures with
-`self : ptr CelesteObject in pObj`. Their low/high dispatch tables remain
-explicit and byte-identical. `VideoRegisters` and `PsgRegisters` describe the
-sparse hardware windows with explicit offsets; the fixed `video` and `psg`
-overlays now serve 42 eligible direct byte loads and stores.
+`self : ptr CelesteObject in pObj`. Their low/high dispatch tables use semantic
+qualified procedure-address declarations. `VideoRegisters` and `PsgRegisters`
+describe the sparse hardware windows with explicit offsets, including palette,
+sprite, clipping, upload, channel-row, channel-length and music controls.
+Fixed `video` and `psg` overlays serve eligible direct and indexed byte
+operations.
+
+The same layout module gives stable RAM a nominal shape. `TileMap` owns the
+pattern and attribute halves at `$f000`; `OverlayFramebuffer` describes both
+the write-only framebuffer at `$e000` and its shadow at `$6000`;
+`RoomTileBuffer` and `OverlayRowPointers` describe the room cache and row
+tables. `ZeroPageWorking` covers the physical zero-page workspace, while the
+overlapping `GameState` view rooted at `$30` names persistent state. This
+overlap is deliberate: overlays are alternative views of the same bytes, not
+allocations. Compile-time assertions pin all established offsets and absolute
+region boundaries.
 
 Every handwritten instruction module is expanded through Inlay `include`.
 The portable core deliberately uses 16-bit source slices, while the complete
@@ -627,18 +640,20 @@ explicit exception: `memmap`, `gfx`, `rooms` and `audio` are opaque target
 includes. They are still authoritative `.inlay.asm` production files and no
 legacy source is involved.
 
-The object, collision, player and draw modules contain exactly 66 typed object
-conversions. The two former
-fixed-point `+1` accesses use nested `.integer` fields, while non-equivalent
-`(zp),y` sequences remain unchanged. `obj_ptr` is expressed as a
+The object, collision, player and draw modules use typed object operations,
+prefix layout queries and documented semantic exceptions rather than
+compatibility offsets. `obj_ptr` is expressed as a
 `using console6502` procedure whose scalar input is convention-assigned and
 whose pointer result uses `return in pObj`, plus the typed pool `address`
 operation.
 
 The old direct customasm corpus lives only at
-`tests/inlay/reference/celeste-customasm/` as an independent equivalence
-oracle. Conformance rejects production references to it and enforces the exact
-production module set and opaque-include allowlist.
+`tests/inlay/reference/celeste-customasm/` as the immutable Phase-A baseline.
+Phase B intentionally changes instruction bytes, so acceptance is based on
+focused lowering references plus functional, framebuffer and PSG behavior
+rather than whole-ROM equality. Conformance rejects production references to
+the baseline and enforces the exact production module set and opaque-include
+allowlist.
 
 Regenerate the Inlay-named data files directly:
 
@@ -650,18 +665,20 @@ python3 tools/p8_audio.py cart.p8.png src/celeste/audio.inlay.asm
 The conformance gate independently:
 
 1. validates the production module set and dependency boundary;
-2. extracts and validates every reference `O_*` assignment;
-3. compares it with the generated layout constant;
-4. compares nine representative direct typed operations with handwritten bytes;
-5. compares indexed load/store, pool address, conventions, returns, scalar,
+2. rejects compatibility `O_*`, `T_*` and generated-property aliases;
+3. rejects mechanically eligible legacy field sequences unless their different
+   flag, liveness, volatility or clobber semantics are documented inline;
+4. compares direct, indexed, word, read-modify-write and overlay operations
+   with handwritten lowering references;
+5. compares pool address, conventions, returns, scalar,
    pointer and aggregate frames, and marshalled calls with handwritten bytes;
-6. assembles both complete Celeste entries;
-7. compares all 65,536 bytes;
-8. checks the established full-ROM SHA-256 digest;
-9. checks the semantic manifest and readable-source rules;
-10. reports 42 overlay operations, 127 residual `ldy #O_*` setups and 157
-    raw `(pObj|pOth),y` accesses;
-11. runs the existing reset-vector game tests against the frontend image.
+6. assembles the complete production entry with customasm;
+7. checks the semantic manifest and readable-source rules;
+8. inventories 50 overlay operations, 82 typed operations, 110 semantic
+   offset queries, zero legacy `offset y` setups and 136 residual raw
+   `(pObj|pOth),y` accesses;
+9. runs the reset-vector, framebuffer and PSG checks against the frontend
+   image.
 
 ## Measurements
 
@@ -690,9 +707,8 @@ description must generate or feed both host validation/lowering rules and the
 future in-console encoder tables. A second handwritten opcode table would
 create exactly the drift this frontend is intended to eliminate.
 
-The checked-in Celeste port covers every eligible direct `pObj` and `pOth`
-byte load/store. The residual indexed accesses are deliberately not
-mechanically disguised: many couple `ldy #O_*` to `adc`, `ora`,
-read-modify-write or two-byte helper sequences. A future typed offset
-materialisation operation must preserve their exact register and clobber
-contract before those forms can migrate.
+The checked-in Celeste port keeps residual raw target sequences visible where
+the adopted typed and custom operations do not preserve their register, flag,
+volatility or displacement contracts. Each mechanically confusable exception
+is documented at its offset materialisation; final task 10.6 audits the
+remaining target-specific sequences as subsystem namespaces are completed.

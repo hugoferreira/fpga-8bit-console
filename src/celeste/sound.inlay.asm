@@ -74,7 +74,7 @@ sfx_play:
     bne .steal
 .go:
     txa
-    sta PSG_CH, y
+    sta [psg + PsgRegisters.channels[y]]
 .none:
     rts
 
