@@ -1,5 +1,5 @@
-#ifndef LAASM_H
-#define LAASM_H
+#ifndef INLAY_H
+#define INLAY_H
 
 #include <stddef.h>
 

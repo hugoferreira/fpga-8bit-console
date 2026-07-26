@@ -1,4 +1,4 @@
-#include "laasm.h"
+#include "inlay.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -832,9 +832,9 @@ int main(void)
     test_capacities();
     test_workspace_error();
     if (failures != 0) {
-        fprintf(stderr, "%d laasm test(s) failed\n", failures);
+        fprintf(stderr, "%d Inlay test(s) failed\n", failures);
         return 1;
     }
-    puts("laasm core: all tests passed");
+    puts("Inlay core: all tests passed");
     return 0;
 }

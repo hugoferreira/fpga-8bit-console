@@ -12,8 +12,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-LAASM = ROOT / "build/laasm/laasm"
-CELESTE = ROOT / "tests/layout_aware/celeste.la.asm"
+INLAY = ROOT / "build/inlay/inlay"
+CELESTE = ROOT / "tests/inlay/celeste.inlay.asm"
 
 
 def synthetic_source() -> str:
@@ -33,7 +33,7 @@ def measure(source: Path, directory: Path) -> dict[str, object]:
     output = directory / "generated.asm"
     source_map = directory / "generated.map.json"
     command = [
-        str(LAASM), "--target", "console6502", "--output", str(output),
+        str(INLAY), "--target", "console6502", "--output", str(output),
         "--map", str(source_map), "--stats", str(source),
     ]
     samples: list[float] = []
@@ -54,10 +54,10 @@ def measure(source: Path, directory: Path) -> dict[str, object]:
 
 def main() -> int:
     with tempfile.TemporaryDirectory(
-        prefix="laasm-measure-", dir=ROOT / "build"
+        prefix="inlay-measure-", dir=ROOT / "build"
     ) as raw:
         directory = Path(raw)
-        stress = directory / "stress.la.asm"
+        stress = directory / "stress.inlay.asm"
         stress.write_text(synthetic_source())
         result = {
             "format": 1,

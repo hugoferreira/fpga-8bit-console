@@ -1,4 +1,4 @@
-#include "laasm.h"
+#include "inlay.h"
 
 #include <string.h>
 
@@ -2523,7 +2523,7 @@ static int la_parse_typed_operation(LaContext *ctx,
     event->index = index;
     event->aux = la_slice("", 0);
     event->aux2 = la_slice("", 0);
-    event->property = 0;
+    event->property = (LaPropertyKind)0;
     event->operation = indexed ?
         (operation == LA_TARGET_OP_LOAD8_PTR_DISP ?
             LA_TARGET_OP_LOAD8_PTR_INDEXED :

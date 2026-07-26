@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate compact, layout-owned Celeste module copies for laasm."""
+"""Generate compact, Inlay-owned Celeste module copies."""
 
 from pathlib import Path
 import re
@@ -157,7 +157,7 @@ def prepare_main(main: Path, destination: Path) -> None:
             name = match.group("name")
             module_includes.add(name)
             if name in FRONTEND_MODULES:
-                output.append(f'include "{name}.la.asm"')
+                output.append(f'include "{name}.inlay.asm"')
             else:
                 output.append(
                     f'{match.group("indent")}#include "../../src/celeste/{name}.asm"'
@@ -208,11 +208,13 @@ def main() -> None:
     output_dir = Path(sys.argv[4])
     modules = output_dir / "modules"
     modules.mkdir(parents=True, exist_ok=True)
-    (output_dir / "celeste.la.asm").write_bytes(layout_entry.read_bytes())
-    prepare_main(source_dir / "main.asm", modules / "celeste_body.la.asm")
+    (output_dir / "celeste.inlay.asm").write_bytes(layout_entry.read_bytes())
+    prepare_main(source_dir / "main.asm", modules / "celeste_body.inlay.asm")
     prepare_memmap(memmap, output_dir / "celeste_memmap.asm")
     results = [
-        convert_module(source_dir / f"{name}.asm", modules / f"{name}.la.asm")
+        convert_module(
+            source_dir / f"{name}.asm", modules / f"{name}.inlay.asm"
+        )
         for name in sorted(FRONTEND_MODULES)
     ]
     converted = sum(result[0] for result in results)

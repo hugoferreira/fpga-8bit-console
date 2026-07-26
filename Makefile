@@ -931,3 +931,95 @@ boards:
 	@echo "  See docs/boards.md for the toolchain and the pin map."
 
 .PHONY: boards tangnano20k tangnano20k-synth tangnano20k-prog tangnano20k-flash
+
+# ------------------------------------------------------------------------------
+# Inlay Assembly frontend and Celeste compatibility port
+#
+# The portable C core owns layout semantics. The host shell emits customasm;
+# customasm remains the instruction encoder while the native encoder is
+# deferred. Celeste's existing source files are not rewritten: the preparation
+# step removes only their handwritten O_* block, and the Inlay entry recreates
+# those symbols from generated properties.
+# ------------------------------------------------------------------------------
+INLAY_CC               ?= cc
+INLAY_HOST              = build/inlay/inlay
+INLAY_CORE_TEST         = build/inlay/test_inlay
+INLAY_MODULE_TEST       = build/inlay/test_modules
+LAASM_COMPAT            = build/laasm/laasm
+CELESTE_INLAY_DIR       = build/inlay
+CELESTE_INLAY_PREPARED  = $(CELESTE_INLAY_DIR)/.celeste-prepared
+CELESTE_INLAY_TEMPLATE  = src/inlay/celeste.inlay.asm
+CELESTE_INLAY_SOURCE    = $(CELESTE_INLAY_DIR)/celeste.inlay.asm
+CELESTE_INLAY_ASM       = $(CELESTE_INLAY_DIR)/celeste.asm
+CELESTE_INLAY_MAP       = $(CELESTE_INLAY_DIR)/celeste.map.json
+
+$(INLAY_HOST): tools/inlay/inlay.h tools/inlay/inlay_core.c \
+               tools/inlay/inlay_modules.c tools/inlay/inlay_host.c
+	@mkdir -p $(@D)
+	$(INLAY_CC) -std=c99 -pedantic -Wall -Wextra -Werror \
+	  tools/inlay/inlay_core.c tools/inlay/inlay_modules.c \
+	  tools/inlay/inlay_host.c -o $@
+
+$(INLAY_CORE_TEST): tools/inlay/inlay.h tools/inlay/inlay_core.c \
+                    tools/inlay/test_inlay.c
+	@mkdir -p $(@D)
+	$(INLAY_CC) -std=c89 -pedantic -Wall -Wextra -Werror \
+	  tools/inlay/inlay_core.c tools/inlay/test_inlay.c -o $@
+
+$(INLAY_MODULE_TEST): tools/inlay/inlay.h tools/inlay/inlay_core.c \
+                      tools/inlay/inlay_modules.c tools/inlay/test_modules.c
+	@mkdir -p $(@D)
+	$(INLAY_CC) -std=c89 -pedantic -Wall -Wextra -Werror \
+	  tools/inlay/inlay_core.c tools/inlay/inlay_modules.c \
+	  tools/inlay/test_modules.c -o $@
+
+$(LAASM_COMPAT): $(INLAY_HOST) tools/inlay/laasm-compat.sh
+	@mkdir -p $(@D)
+	cp tools/inlay/laasm-compat.sh $@
+	chmod +x $@
+
+$(CELESTE_INLAY_PREPARED): tools/inlay/prepare_celeste_modules.py \
+                           $(CELESTE_INLAY_TEMPLATE) src/celeste/main.asm \
+                           src/celeste/memmap.asm src/celeste/obj.asm \
+                           src/celeste/collide.asm src/celeste/player.asm \
+                           src/celeste/draw.asm
+	@mkdir -p $(@D)
+	python3 tools/inlay/prepare_celeste_modules.py \
+	  src/celeste src/celeste/memmap.asm $(CELESTE_INLAY_TEMPLATE) $(@D)
+	@touch $@
+
+$(CELESTE_INLAY_SOURCE): $(CELESTE_INLAY_PREPARED)
+	@test -f $@
+
+$(CELESTE_INLAY_ASM): $(INLAY_HOST) $(CELESTE_INLAY_SOURCE) \
+                      $(CELESTE_INLAY_PREPARED)
+	$(INLAY_HOST) --target console6502 --output $@ \
+	  --map $(CELESTE_INLAY_MAP) $(CELESTE_INLAY_SOURCE)
+
+test-inlay: $(INLAY_HOST) $(LAASM_COMPAT) $(INLAY_CORE_TEST) $(INLAY_MODULE_TEST)
+	$(INLAY_CORE_TEST)
+	$(INLAY_MODULE_TEST)
+	python3 tools/inlay/test_modules_host.py $(INLAY_HOST)
+	sh tools/inlay/check_portable.sh
+	python3 tools/inlay/test_conformance.py
+
+test-celeste-inlay-equivalence: $(INLAY_HOST) $(LAASM_COMPAT)
+	python3 tools/inlay/test_conformance.py
+
+# Compatibility aliases; canonical output and test labels use Inlay.
+test-layout-asm: test-inlay
+test-celeste-layout-equivalence: test-celeste-inlay-equivalence
+
+# Multiple rules add prerequisites without replacing the existing recipes.
+test: test-inlay
+test-celeste: test-celeste-inlay-equivalence
+
+# Opt Celeste into the generated frontend source while preserving the existing
+# customasm command, output formats, symbol conversion and source dependencies.
+ifeq ($(GAME),celeste)
+GAME_SRC := $(CELESTE_INLAY_ASM)
+hex: $(CELESTE_INLAY_ASM)
+endif
+
+.PHONY: test-inlay test-celeste-inlay-equivalence test-layout-asm \
+        test-celeste-layout-equivalence

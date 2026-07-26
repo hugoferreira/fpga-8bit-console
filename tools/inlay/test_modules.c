@@ -1,4 +1,4 @@
-#include "laasm.h"
+#include "inlay.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -276,6 +276,6 @@ int main(void)
         fprintf(stderr, "%d module test(s) failed\n", failures);
         return 1;
     }
-    puts("laasm module tests passed");
+    puts("Inlay module tests passed");
     return 0;
 }

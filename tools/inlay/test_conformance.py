@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host-only conformance oracle for the portable layout-aware C core."""
+"""Host-only conformance oracle for the portable Inlay C core."""
 
 from __future__ import annotations
 
@@ -13,15 +13,20 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-LAASM = ROOT / "build/laasm/laasm"
-FIXTURE = ROOT / "tests/layout_aware/celeste.la.asm"
-REFERENCE = ROOT / "tests/layout_aware/celeste_reference.asm"
-STRUCTURED_FIXTURE = ROOT / "tests/layout_aware/structured.la.asm"
-STRUCTURED_REFERENCE = ROOT / "tests/layout_aware/structured_reference.asm"
-FULL_LAYOUT = ROOT / "src/layout/celeste.la.asm"
+INLAY = ROOT / "build/inlay/inlay"
+LAASM_COMPAT = ROOT / "build/laasm/laasm"
+FIXTURE = ROOT / "tests/inlay/celeste.inlay.asm"
+REFERENCE = ROOT / "tests/inlay/celeste_reference.asm"
+STRUCTURED_FIXTURE = ROOT / "tests/inlay/structured.inlay.asm"
+STRUCTURED_REFERENCE = ROOT / "tests/inlay/structured_reference.asm"
+FULL_LAYOUT = ROOT / "src/inlay/celeste.inlay.asm"
 CELESTE_MAIN = ROOT / "src/celeste/main.asm"
 CELESTE_MEMMAP = ROOT / "src/celeste/memmap.asm"
-PREPARE = ROOT / "tools/laasm/prepare_celeste_modules.py"
+PREPARE = ROOT / "tools/inlay/prepare_celeste_modules.py"
+DEPRECATION = (
+    "laasm: deprecated; use inlay "
+    "(legacy support requires a separate removal change)\n"
+)
 
 EXPECTED_PATHS = {
     "O_TYPE": "kind",
@@ -132,7 +137,7 @@ def emitted_constants(path: Path) -> dict[str, int]:
 
 def translate(source: Path, output: Path, map_path: Path, stats: bool = False):
     args: list[object] = [
-        LAASM, "--target", "console6502", "--output", output,
+        INLAY, "--target", "console6502", "--output", output,
         "--map", map_path,
     ]
     if stats:
@@ -142,43 +147,78 @@ def translate(source: Path, output: Path, map_path: Path, stats: bool = False):
 
 
 def check_cli(tmp: Path) -> None:
-    help_text = run(LAASM, "--help").stdout
-    assert "usage: laasm" in help_text
+    help_text = run(INLAY, "--help").stdout
+    assert help_text.startswith(
+        "Inlay Assembly — Structured assembly, close to the metal.\n"
+    )
+    assert "usage: inlay" in help_text
     assert "--check-customasm" in help_text
     assert "-o, --output" in help_text
     assert "Exit status:" in help_text
-    assert run(LAASM, "-h").stdout == help_text
+    assert run(INLAY, "-h").stdout == help_text
     assert (
-        run(LAASM, "--version").stdout.strip()
-        == "laasm 0.2 language-format=1 target-format=1 map-format=2"
+        run(INLAY, "--version").stdout.strip()
+        == "inlay 0.2 language-format=1 target-format=1 map-format=2"
     )
-    assert "usage: laasm" in run(LAASM, expect=2).stderr
+    assert "usage: inlay" in run(INLAY, expect=2).stderr
+
+    compat_help = run(LAASM_COMPAT, "--help")
+    assert compat_help.stdout == help_text
+    assert compat_help.stderr == DEPRECATION
+    compat_version = run(LAASM_COMPAT, "--version")
+    assert compat_version.stdout == run(INLAY, "--version").stdout
+    assert compat_version.stderr == DEPRECATION
+
+    stats_output = tmp / "compat.asm"
+    stats_map = tmp / "compat.map.json"
+    canonical_stats = run(
+        INLAY, "--target", "console6502", "--output", stats_output,
+        "--map", stats_map, "--stats", FIXTURE
+    )
+    compat_stats = run(
+        LAASM_COMPAT, "--target", "console6502", "--output", stats_output,
+        "--map", stats_map, "--stats", FIXTURE
+    )
+    assert json.loads(compat_stats.stdout) == json.loads(canonical_stats.stdout)
+    assert compat_stats.stderr == DEPRECATION
+
+    canonical_failure = run(
+        INLAY, "--target", "missing", "--output", tmp / "x.asm",
+        "--map", tmp / "x.json", FIXTURE, expect=2
+    )
+    compat_failure = run(
+        LAASM_COMPAT, "--target", "missing", "--output", tmp / "x.asm",
+        "--map", tmp / "x.json", FIXTURE, expect=2
+    )
+    assert compat_failure.stdout == canonical_failure.stdout
+    assert compat_failure.stderr == DEPRECATION + canonical_failure.stderr
+
     result = run(
-        LAASM, "--target", "missing", "--output", tmp / "x.asm",
+        INLAY, "--target", "missing", "--output", tmp / "x.asm",
         "--map", tmp / "x.json", FIXTURE, expect=2
     )
     assert "unknown target" in result.stderr
     result = run(
-        LAASM, "--native", "--target", "console6502",
+        INLAY, "--native", "--target", "console6502",
         "--output", tmp / "x.asm", "--map", tmp / "x.json",
         FIXTURE, expect=2
     )
     assert "native-output-deferred" in result.stderr
     result = run(
-        LAASM, "--target", "console6502", "--output", FIXTURE,
+        INLAY, "--target", "console6502", "--output", FIXTURE,
         "--map", tmp / "x.json", FIXTURE, expect=2
     )
     assert "refusing to overwrite" in result.stderr
     result = run(
-        LAASM, "--target", "console6502", "--output", tmp / "same",
+        INLAY, "--target", "console6502", "--output", tmp / "same",
         "--map", tmp / "same", FIXTURE, expect=2
     )
     assert "output and map must be different" in result.stderr
 
-    input_alias = tmp / "input-alias.la.asm"
+    input_alias = tmp / "input-alias.inlay.asm"
     input_alias.symlink_to(FIXTURE)
     result = run(
-        LAASM, "--target", "console6502", "--output", input_alias,
+        INLAY, "--target", "console6502", "--output", input_alias,
         "--map", tmp / "alias-map.json", FIXTURE, expect=2
     )
     assert "refusing to overwrite" in result.stderr
@@ -188,35 +228,58 @@ def check_cli(tmp: Path) -> None:
     linked_output.write_text("existing\n")
     os.link(linked_output, linked_map)
     result = run(
-        LAASM, "--target", "console6502", "--output", linked_output,
+        INLAY, "--target", "console6502", "--output", linked_output,
         "--map", linked_map, FIXTURE, expect=2
     )
     assert "output and map must be different" in result.stderr
-    result = run(LAASM, "--target", expect=2)
+    result = run(INLAY, "--target", expect=2)
     assert "option --target requires a value" in result.stderr
 
     short_output = tmp / "short.asm"
     short_map = tmp / "short.json"
     run(
-        LAASM, "--target", "console6502", "-o", short_output,
+        INLAY, "--target", "console6502", "-o", short_output,
         "--map", short_map, FIXTURE
     )
     assert short_output.is_file()
     assert json.loads(short_map.read_text())["format"] == 2
 
-    invalid = tmp / "invalid.la.asm"
+    invalid = tmp / "invalid.inlay.asm"
     invalid.write_text("struct\n")
     preserved_output = tmp / "preserved.asm"
     preserved_map = tmp / "preserved.json"
     preserved_output.write_text("existing assembly\n")
     preserved_map.write_text("existing map\n")
     run(
-        LAASM, "--target", "console6502", "--output", preserved_output,
+        INLAY, "--target", "console6502", "--output", preserved_output,
         "--map", preserved_map, invalid, expect=1
     )
     assert preserved_output.read_text() == "existing assembly\n"
     assert preserved_map.read_text() == "existing map\n"
     assert not list(tmp.glob("preserved.*.tmp.*"))
+
+    canonical_source = tmp / "suffix.inlay.asm"
+    legacy_source = tmp / "suffix.la.asm"
+    canonical_source.write_bytes(FIXTURE.read_bytes())
+    legacy_source.write_bytes(FIXTURE.read_bytes())
+    canonical_output = tmp / "suffix-canonical.asm"
+    legacy_output = tmp / "suffix-legacy.asm"
+    canonical_map = tmp / "suffix-canonical.json"
+    legacy_map = tmp / "suffix-legacy.json"
+    run(
+        INLAY, "--target", "console6502", "--output", canonical_output,
+        "--map", canonical_map, canonical_source
+    )
+    run(
+        INLAY, "--target", "console6502", "--output", legacy_output,
+        "--map", legacy_map, legacy_source
+    )
+    assert canonical_output.read_bytes() == legacy_output.read_bytes()
+    canonical_json = json.loads(canonical_map.read_text())
+    legacy_json = json.loads(legacy_map.read_text())
+    canonical_json["sources"][0]["name"] = legacy_json["sources"][0]["name"]
+    canonical_json["generated"] = legacy_json["generated"]
+    assert canonical_json == legacy_json
 
 
 def check_negative_sources(tmp: Path) -> None:
@@ -245,10 +308,10 @@ def check_negative_sources(tmp: Path) -> None:
         ),
     }
     for name, (source, code) in cases.items():
-        source_path = tmp / f"{name}.la.asm"
+        source_path = tmp / f"{name}.inlay.asm"
         source_path.write_text(source)
         result = run(
-            LAASM, "--target", "console6502",
+            INLAY, "--target", "console6502",
             "--output", tmp / f"{name}.asm",
             "--map", tmp / f"{name}.json",
             source_path, expect=1,
@@ -260,10 +323,10 @@ def check_negative_sources(tmp: Path) -> None:
 
 
 def check_downstream_diagnostics(tmp: Path) -> None:
-    mapped = tmp / "mapped.la.asm"
+    mapped = tmp / "mapped.inlay.asm"
     mapped.write_text("bad_instruction\n")
     result = run(
-        LAASM, "--target", "console6502",
+        INLAY, "--target", "console6502",
         "--output", tmp / "mapped.asm",
         "--map", tmp / "mapped.json",
         "--check-customasm", mapped, expect=1,
@@ -276,10 +339,10 @@ def check_downstream_diagnostics(tmp: Path) -> None:
 
     included = tmp / "bad_include.asm"
     included.write_text("bad_instruction\n")
-    unmapped = tmp / "unmapped.la.asm"
+    unmapped = tmp / "unmapped.inlay.asm"
     unmapped.write_text('#include "bad_include.asm"\n')
     result = run(
-        LAASM, "--target", "console6502",
+        INLAY, "--target", "console6502",
         "--output", tmp / "unmapped.asm",
         "--map", tmp / "unmapped.json",
         "--check-customasm", unmapped, expect=1,
@@ -360,7 +423,9 @@ def check_full_rom(tmp: Path) -> tuple[int, str]:
         FULL_LAYOUT,
         tmp,
     )
-    obj_module = (tmp / "modules" / "obj.la.asm").read_text(encoding="ascii")
+    obj_module = (
+        tmp / "modules" / "obj.inlay.asm"
+    ).read_text(encoding="ascii")
     expected_signature = (
         "proc obj_ptr using console6502\n"
         "    result : ptr CelesteObject return in pObj\n"
@@ -373,7 +438,9 @@ def check_full_rom(tmp: Path) -> tuple[int, str]:
     if obj_module.count(expected_signature) != 1:
         raise AssertionError("generated obj_ptr did not use the exact unified signature")
     generated = tmp / "celeste.asm"
-    translate(tmp / "celeste.la.asm", generated, tmp / "celeste.map.json")
+    translate(
+        tmp / "celeste.inlay.asm", generated, tmp / "celeste.map.json"
+    )
     baseline = tmp / "baseline.bin"
     frontend = tmp / "frontend.bin"
     run(
@@ -392,17 +459,21 @@ def check_full_rom(tmp: Path) -> tuple[int, str]:
 
 
 def main() -> int:
-    if not LAASM.exists():
-        raise SystemExit(f"missing {LAASM}; build the host frontend first")
+    if not INLAY.exists():
+        raise SystemExit(f"missing {INLAY}; build the host frontend first")
+    if not LAASM_COMPAT.exists():
+        raise SystemExit(
+            f"missing {LAASM_COMPAT}; build the compatibility launcher first"
+        )
     version = run("customasm", "--version").stdout.strip()
     if not version.startswith("customasm v0.14.1"):
         raise AssertionError(f"expected customasm v0.14.1, got {version}")
     with (
         tempfile.TemporaryDirectory(
-            prefix="laasm-a-", dir=ROOT / "build"
+            prefix="inlay-a-", dir=ROOT / "build"
         ) as raw_a,
         tempfile.TemporaryDirectory(
-            prefix="laasm-b-", dir=ROOT / "build"
+            prefix="inlay-b-", dir=ROOT / "build"
         ) as raw_b,
     ):
         tmp_a = Path(raw_a)
@@ -414,7 +485,7 @@ def main() -> int:
         check_downstream_diagnostics(tmp_a)
         rom_size, rom_hash = check_full_rom(tmp_a)
     print(
-        "laasm conformance: passed; "
+        "Inlay conformance: passed; "
         f"fixture operations={stats['operations']}, "
         f"workspace={stats['workspaceBytes']} bytes; "
         f"Celeste ROM={rom_size} bytes sha256={rom_hash}"
