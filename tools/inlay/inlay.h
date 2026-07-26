@@ -85,7 +85,26 @@ typedef enum {
     LA_ERR_UNKNOWN_PROCEDURE,
     LA_ERR_INVOKE_BINDING,
     LA_ERR_INVOKE_SCRATCH,
-    LA_ERR_LOCAL_SYNTAX_MIGRATION
+    LA_ERR_LOCAL_SYNTAX_MIGRATION,
+    LA_ERR_ENUM_CAPACITY,
+    LA_ERR_ENUM_MEMBER_CAPACITY,
+    LA_ERR_UNION_CAPACITY,
+    LA_ERR_OVERLAY_CAPACITY,
+    LA_ERR_DUPLICATE_ENUM,
+    LA_ERR_DUPLICATE_ENUM_MEMBER,
+    LA_ERR_DUPLICATE_UNION,
+    LA_ERR_DUPLICATE_OVERLAY,
+    LA_ERR_ENUM_UNDERLYING,
+    LA_ERR_ENUM_EMPTY,
+    LA_ERR_ENUM_VALUE,
+    LA_ERR_AGGREGATE_EMPTY,
+    LA_ERR_LAYOUT_POLICY,
+    LA_ERR_LAYOUT_ALIGNMENT,
+    LA_ERR_FIELD_OFFSET,
+    LA_ERR_UNION_OFFSET,
+    LA_ERR_OVERLAY_TYPE,
+    LA_ERR_OVERLAY_BASE,
+    LA_ERR_OVERLAY_ALIGNMENT
 } LaDiagnosticCode;
 
 typedef struct {
@@ -107,6 +126,16 @@ typedef enum {
 } LaPropertyKind;
 
 typedef enum {
+    LA_AGGREGATE_STRUCT = 1,
+    LA_AGGREGATE_UNION
+} LaAggregateKind;
+
+typedef enum {
+    LA_LAYOUT_PACKED = 1,
+    LA_LAYOUT_ALIGNED
+} LaLayoutPolicy;
+
+typedef enum {
     LA_TARGET_OP_LOAD8_PTR_DISP = 1,
     LA_TARGET_OP_STORE8_PTR_DISP,
     LA_TARGET_OP_LOAD8_PTR_INDEXED,
@@ -121,7 +150,9 @@ typedef enum {
     LA_TARGET_OP_LOAD_PTR_FRAME,
     LA_TARGET_OP_INVOKE_SAVE,
     LA_TARGET_OP_INVOKE_ASSIGN,
-    LA_TARGET_OP_INVOKE_CALL
+    LA_TARGET_OP_INVOKE_CALL,
+    LA_TARGET_OP_LOAD8_OVERLAY_DISP,
+    LA_TARGET_OP_STORE8_OVERLAY_DISP
 } LaTargetOperationKind;
 
 typedef enum {
@@ -129,7 +160,9 @@ typedef enum {
     LA_EVENT_PROPERTY,
     LA_EVENT_PROCEDURE_MEMBER,
     LA_EVENT_RAW,
-    LA_EVENT_TARGET_OPERATION
+    LA_EVENT_TARGET_OPERATION,
+    LA_EVENT_ENUM_MEMBER,
+    LA_EVENT_OVERLAY
 } LaEventKind;
 
 typedef enum {
@@ -149,6 +182,46 @@ typedef enum {
 } LaSourceKind;
 
 typedef struct {
+    la_u16 handle;
+    LaSlice name;
+    LaSlice underlying;
+    la_u16 size;
+    la_u8 is_signed;
+} LaEnumRecord;
+
+typedef struct {
+    la_u16 handle;
+    la_u16 enum_handle;
+    LaSlice name;
+    la_i32 value;
+} LaEnumMemberRecord;
+
+typedef struct {
+    la_u16 handle;
+    LaSlice name;
+    LaAggregateKind kind;
+    LaLayoutPolicy policy;
+    la_u16 size;
+    la_u16 alignment;
+} LaAggregateRecord;
+
+typedef struct {
+    la_u16 aggregate_handle;
+    LaSlice name;
+    la_u16 offset;
+    la_u16 size;
+    la_u8 has_explicit_offset;
+} LaFieldLayoutRecord;
+
+typedef struct {
+    la_u16 handle;
+    LaSlice name;
+    la_u16 aggregate_handle;
+    LaSlice base;
+    la_u16 required_alignment;
+} LaOverlayRecord;
+
+typedef struct {
     LaEventKind kind;
     LaSpan span;
     LaSlice text;
@@ -160,10 +233,14 @@ typedef struct {
     LaSlice aux2;
     LaPropertyKind property;
     LaTargetOperationKind operation;
+    LaAggregateKind aggregate_kind;
+    LaLayoutPolicy layout_policy;
+    la_i32 signed_value;
     la_u16 value;
     la_u16 offset;
     la_u16 stride;
     la_u16 count;
+    la_u8 explicit_offset;
 } LaEvent;
 
 typedef int (*LaInputRead)(void *context, char *destination, la_u16 capacity);
@@ -194,7 +271,11 @@ typedef struct {
     la_u16 max_name_bytes;
     la_u16 max_tokens;
     la_u16 max_structs;
+    la_u16 max_unions;
     la_u16 max_fields;
+    la_u16 max_enums;
+    la_u16 max_enum_members;
+    la_u16 max_overlays;
     la_u16 max_locations;
     la_u16 max_pools;
     la_u16 max_procedures;
@@ -217,7 +298,11 @@ typedef struct {
     la_u16 name_bytes;
     la_u16 tokens;
     la_u16 structures;
+    la_u16 unions;
     la_u16 fields;
+    la_u16 enums;
+    la_u16 enum_members;
+    la_u16 overlays;
     la_u16 locations;
     la_u16 pools;
     la_u16 procedures;
@@ -249,6 +334,9 @@ typedef struct {
     la_u8 invoke_scratch_units;
     la_u8 invoke_exchange_supported;
     la_u8 max_frame_temporary_units;
+    la_u8 max_aggregate_alignment;
+    la_u8 max_frame_alignment;
+    la_u8 overlay_byte_operations;
 } LaTarget;
 
 typedef struct {

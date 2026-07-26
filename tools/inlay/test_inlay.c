@@ -16,6 +16,8 @@ typedef struct {
     unsigned events;
     unsigned properties;
     unsigned members;
+    unsigned enum_members;
+    unsigned overlays;
     unsigned operations;
     unsigned raw;
     int saw_hitbox_w;
@@ -74,6 +76,12 @@ static int test_event(void *context, const LaEvent *event)
     events->hash *= 16777619UL;
     events->hash ^= event->value;
     events->hash *= 16777619UL;
+    events->hash ^= (unsigned long)event->signed_value;
+    events->hash *= 16777619UL;
+    events->hash ^= (unsigned long)event->aggregate_kind;
+    events->hash *= 16777619UL;
+    events->hash ^= (unsigned long)event->layout_policy;
+    events->hash *= 16777619UL;
     hash_bytes(&events->hash, event->text.data, event->text.length);
     hash_bytes(&events->hash, event->owner.data, event->owner.length);
     hash_bytes(&events->hash, event->path.data, event->path.length);
@@ -86,6 +94,8 @@ static int test_event(void *context, const LaEvent *event)
     events->hash ^= event->stride;
     events->hash *= 16777619UL;
     events->hash ^= event->count;
+    events->hash *= 16777619UL;
+    events->hash ^= event->explicit_offset;
     events->hash *= 16777619UL;
     if (event->kind == LA_EVENT_PROPERTY) {
         ++events->properties;
@@ -134,14 +144,21 @@ static int test_event(void *context, const LaEvent *event)
         }
     } else if (event->kind == LA_EVENT_TARGET_OPERATION) {
         ++events->operations;
+    } else if (event->kind == LA_EVENT_ENUM_MEMBER) {
+        ++events->enum_members;
+    } else if (event->kind == LA_EVENT_OVERLAY) {
+        ++events->overlays;
     } else if (event->kind == LA_EVENT_RAW) {
         ++events->raw;
         check(event->owner.length == 0 && event->path.length == 0 &&
               event->base.length == 0 && event->index.length == 0 &&
               event->aux.length == 0 && event->aux2.length == 0 &&
               event->property == 0 && event->operation == 0 &&
+              event->aggregate_kind == 0 && event->layout_policy == 0 &&
+              event->signed_value == 0 &&
               event->value == 0 && event->offset == 0 &&
-              event->stride == 0 && event->count == 0,
+              event->stride == 0 && event->count == 0 &&
+              event->explicit_offset == 0,
               "raw events do not retain fields from prior events");
     }
     return 1;
@@ -155,10 +172,9 @@ static void test_diagnostic(void *context, const LaDiagnostic *diagnostic)
     capture->seen = 1;
 }
 
-static LaDiagnosticCode compile_source(const char *source, la_u16 chunk,
-                                       LaLimits limits, TestEvents *events,
-                                       TestDiagnostic *diagnostic,
-                                       LaStats *stats)
+static LaDiagnosticCode compile_source_target(
+    const char *source, la_u16 chunk, LaLimits limits, TestEvents *events,
+    TestDiagnostic *diagnostic, LaStats *stats, const LaTarget *target)
 {
     MemoryInput memory;
     LaInput input;
@@ -186,9 +202,19 @@ static LaDiagnosticCode compile_source(const char *source, la_u16 chunk,
     events->hash = 2166136261UL;
     memset(diagnostic, 0, sizeof(*diagnostic));
     result = la_compile(&input, &event_sink, &diagnostic_sink,
-                        &la_target_console6502, &limits, workspace, stats);
+                        target, &limits, workspace, stats);
     free(workspace.data);
     return result;
+}
+
+static LaDiagnosticCode compile_source(const char *source, la_u16 chunk,
+                                       LaLimits limits, TestEvents *events,
+                                       TestDiagnostic *diagnostic,
+                                       LaStats *stats)
+{
+    return compile_source_target(
+        source, chunk, limits, events, diagnostic, stats,
+        &la_target_console6502);
 }
 
 static const char celeste_source_layout_a[] =
@@ -655,6 +681,205 @@ static void test_unified_members_and_invoke(void)
         "invoke binding capacity rejected");
 }
 
+static void test_layout_variants(void)
+{
+    static const char valid_a[] =
+        "enum Kind : u8\n"
+        "none = 0\nplayer = 1\nactor = Kind.player\nend\n"
+        "enum Signed : i8\nminimum = -128\nmaximum = 127\nend\n"
+        "struct Pair\nlo : u8\nhi : u8\nend\n"
+        "struct ExplicitPair packed\nlo : u8\nhi : u8\nend\n"
+        "struct Sparse\nkind : Kind at 0\nflags : u8 at 17\nend\n"
+        "struct Aligned aligned(4)\na : u8\nb : u16\nc : u8\nend\n"
+        "union Payload\nbyte : u8\npair : Pair\nkinds : Kind[2]\n"
+        "next : ptr Object\nend\n"
+        "struct Object\nkind : Kind\npayload : Payload\nend\n";
+    static const char valid_layout_more[] =
+        "struct PointerShape aligned(4)\n"
+        "a : u8\np : ptr Pair\nend\n"
+        "struct Wide aligned(8)\nx : u8\nend\n"
+        "struct Outer aligned(4)\nprefix : u8\ninner : Wide\nend\n"
+        "pool shapes : Aligned[2] at SHAPES table SL, SH\n";
+    static const char valid_b[] =
+        "overlay sparse : Sparse at RAM\n"
+        "overlay object : Object at RAM\n"
+        "static_assert Kind.actor == 1\n"
+        "static_assert Signed.minimum == -128\n"
+        "static_assert Pair.size == ExplicitPair.size\n"
+        "static_assert Sparse.flags.offset == 17\n"
+        "static_assert Sparse.size == 18\n";
+    static const char valid_c[] =
+        "static_assert Aligned.a.offset == 0\n"
+        "static_assert Aligned.b.offset == 2\n"
+        "static_assert Aligned.c.offset == 4\n"
+        "static_assert Aligned.size == 8\n"
+        "static_assert Aligned.align == 4\n"
+        "static_assert PointerShape.p.offset == 2\n"
+        "static_assert PointerShape.size == 4\n"
+        "static_assert Outer.inner.offset == 4\n"
+        "static_assert Outer.size == 12\n";
+    static const char valid_d[] =
+        "static_assert shapes.align == 4\n"
+        "static_assert Payload.pair.hi.offset == 1\n"
+        "static_assert Payload.kinds.count == 2\n"
+        "static_assert Object.payload.pair.hi.offset == 2\n"
+        "lda [sparse + Sparse.kind]\n"
+        "sta [object + Object.payload.pair.hi]\n";
+    char *valid;
+    LaLimits limits;
+    TestEvents events_a;
+    TestEvents events_b;
+    TestEvents packed_a;
+    TestEvents packed_b;
+    TestDiagnostic diagnostic;
+    LaStats stats_a;
+    LaStats stats_b;
+    LaTarget target;
+    LaDiagnosticCode result;
+    valid = (char *)malloc(
+        strlen(valid_a) + strlen(valid_layout_more) +
+        strlen(valid_b) + strlen(valid_c) + strlen(valid_d) + 1);
+    check(valid != 0, "layout variant source allocated");
+    if (valid == 0) return;
+    strcpy(valid, valid_a);
+    strcat(valid, valid_layout_more);
+    strcat(valid, valid_b);
+    strcat(valid, valid_c);
+    strcat(valid, valid_d);
+    limits = la_default_limits();
+    result = compile_source(valid, 1, limits, &events_a, &diagnostic,
+                            &stats_a);
+    check(result == LA_OK, "layout variants compile");
+    check(!diagnostic.seen, "layout variants have no diagnostic");
+    check(stats_a.enums == 2 && stats_a.enum_members == 5,
+          "enum records counted");
+    check(stats_a.structures == 8 && stats_a.unions == 1,
+          "aggregate kinds counted independently");
+    check(stats_a.overlays == 2, "overlays counted");
+    check(events_a.enum_members == 5 && events_a.overlays == 2,
+          "variant semantic events emitted");
+    check(events_a.operations == 2, "overlay byte operations emitted");
+    limits.max_structs = 8;
+    limits.max_unions = 1;
+    limits.max_fields = 20;
+    limits.max_enums = 2;
+    limits.max_enum_members = 5;
+    limits.max_overlays = 2;
+    result = compile_source(valid, 7, limits, &events_b, &diagnostic,
+                            &stats_b);
+    check(result == LA_OK,
+          "variant fixture recompiles under a sufficient tight profile");
+    check(events_a.hash == events_b.hash,
+          "variant semantic events are deterministic");
+    free(valid);
+    limits = la_default_limits();
+    result = compile_source("struct Pair\nlo : u8\nhi : u16\nend\n",
+                            0, limits, &packed_a, &diagnostic, &stats_a);
+    check(result == LA_OK, "implicit packed spelling compiles");
+    result = compile_source(
+        "struct Pair packed\nlo : u8\nhi : u16\nend\n",
+        0, limits, &packed_b, &diagnostic, &stats_b);
+    check(result == LA_OK, "explicit packed spelling compiles");
+    check(packed_a.hash == packed_b.hash,
+          "implicit and explicit packed semantic events are identical");
+    result = compile_source(
+        "enum U16 : u16\nmaximum = 65535\nend\n"
+        "enum I16 : i16\nminimum = -32768\nmaximum = 32767\nend\n",
+        0, limits, &events_a, &diagnostic, &stats_a);
+    check(result == LA_OK, "16-bit enum range edges compile");
+    result = compile_source(
+        "enum E : u8\none = 1\nend\nlda #E.one\n",
+        0, limits, &events_a, &diagnostic, &stats_a);
+    check(result == LA_OK && events_a.raw == 1,
+          "raw enum operand remains unrewritten target assembly");
+
+    expect_error("enum Bad : u32\nx = 0\nend\n", limits,
+                 LA_ERR_ENUM_UNDERLYING,
+                 "invalid enum underlying type rejected");
+    expect_error("enum Empty : u8\nend\n", limits, LA_ERR_ENUM_EMPTY,
+                 "empty enum rejected");
+    expect_error("enum E : u8\nx = 1\nx = 2\nend\n", limits,
+                 LA_ERR_DUPLICATE_ENUM_MEMBER,
+                 "duplicate enum member rejected");
+    expect_error("enum E : u8\nx = 256\nend\n", limits,
+                 LA_ERR_ENUM_VALUE, "unsigned enum overflow rejected");
+    expect_error("enum E : i8\nx = -129\nend\n", limits,
+                 LA_ERR_ENUM_VALUE, "signed enum underflow rejected");
+    expect_error("enum E : u16\nx = 65536\nend\n", limits,
+                 LA_ERR_ENUM_VALUE, "unsigned 16-bit enum overflow rejected");
+    expect_error("enum E : i16\nx = 32768\nend\n", limits,
+                 LA_ERR_ENUM_VALUE, "signed 16-bit enum overflow rejected");
+    expect_error("enum E : u8\nx = E.y\ny = 1\nend\n", limits,
+                 LA_ERR_ENUM_VALUE, "forward enum reference rejected");
+    expect_error("enum E : u8\nx = E.x\nend\n", limits,
+                 LA_ERR_ENUM_VALUE, "self enum reference rejected");
+    expect_error("enum E : u8\nx = 1\nend\nenum E : u8\ny = 2\nend\n",
+                 limits, LA_ERR_DUPLICATE_ENUM,
+                 "duplicate enum rejected");
+
+    expect_error("struct A aligned(3)\nx : u8\nend\n", limits,
+                 LA_ERR_LAYOUT_ALIGNMENT,
+                 "non-power-of-two alignment rejected");
+    expect_error("struct A aligned(32)\nx : u8\nend\n", limits,
+                 LA_ERR_LAYOUT_ALIGNMENT,
+                 "target-excessive alignment rejected");
+    expect_error("struct A packed aligned(2)\nx : u8\nend\n", limits,
+                 LA_ERR_LAYOUT_POLICY,
+                 "conflicting layout policies rejected");
+    expect_error("struct A\nx : u8\ny : u8 at 0\nend\n", limits,
+                 LA_ERR_FIELD_OFFSET, "backward explicit offset rejected");
+    expect_error("struct A aligned(4)\nx : u8\ny : u16 at 3\nend\n",
+                 limits, LA_ERR_FIELD_OFFSET,
+                 "misaligned explicit offset rejected");
+    expect_error("struct A\nx : u8 at -1\nend\n", limits,
+                 LA_ERR_FIELD_OFFSET, "negative explicit offset rejected");
+    expect_error("struct A\nx : u8 at 70000\nend\n", limits,
+                 LA_ERR_FIELD_OFFSET, "overflowing explicit offset rejected");
+
+    expect_error("union U\nend\n", limits, LA_ERR_AGGREGATE_EMPTY,
+                 "empty union rejected");
+    expect_error("union U\nx : u8 at 0\nend\n", limits,
+                 LA_ERR_UNION_OFFSET,
+                 "explicit union offset rejected");
+    expect_error("struct A\nu : U\nend\nunion U\na : A\nend\n", limits,
+                 LA_ERR_LAYOUT_CYCLE,
+                 "mixed aggregate cycle rejected");
+    expect_error("union U\nx : u8\nx : u16\nend\n", limits,
+                 LA_ERR_DUPLICATE_FIELD,
+                 "duplicate union member rejected");
+
+    expect_error("overlay x : u8 at RAM\n", limits, LA_ERR_OVERLAY_TYPE,
+                 "primitive overlay type rejected");
+    expect_error("struct A\nx : u8\nend\n"
+                 "overlay v : A at RAM\noverlay v : A at RAM\n",
+                 limits, LA_ERR_DUPLICATE_OVERLAY,
+                 "duplicate overlay rejected");
+    expect_error("struct A aligned(4)\nx : u8\nend\n"
+                 "overlay v : A at $8003\n",
+                 limits, LA_ERR_OVERLAY_ALIGNMENT,
+                 "misaligned numeric overlay rejected");
+    expect_error("struct A\nx : u8[2]\nend\n"
+                 "overlay v : A at RAM\nlda [v + A.x[x]]\n",
+                 limits, LA_ERR_UNSUPPORTED_OPERATION,
+                 "indexed overlay rejected");
+    expect_error("struct A\nx : u16\nend\n"
+                 "overlay v : A at RAM\nlda [v + A.x]\n",
+                 limits, LA_ERR_ACCESS_WIDTH,
+                 "wide overlay byte access rejected");
+    expect_error("struct A aligned(2)\nx : u8\nend\n"
+                 "proc p\ntemporary : A in frame\nbegin\nret\nend\n",
+                 limits, LA_ERR_LAYOUT_ALIGNMENT,
+                 "unsupported aligned frame local rejected");
+    target = la_target_console6502;
+    target.overlay_byte_operations = 0;
+    result = compile_source_target(
+        "struct A\nx : u8\nend\n"
+        "overlay v : A at RAM\nlda [v + A.x]\n",
+        0, limits, &events_a, &diagnostic, &stats_a, &target);
+    check(result == LA_ERR_UNSUPPORTED_OPERATION,
+          "target without overlay operation rejects access");
+}
+
 static void test_capacities(void)
 {
     LaLimits limits;
@@ -783,6 +1008,46 @@ static void test_capacities(void)
     expect_error(
         "proc a\nx : u8 in frame\ny : u8 in frame\nbegin\nret\nend\n",
         limits, LA_ERR_LOCAL_CAPACITY, "local capacity plus one rejected");
+
+    limits = la_default_limits();
+    limits.max_enums = 1;
+    result = compile_source("enum A : u8\nx = 0\nend\n", 0, limits,
+                            &events, &diagnostic, &stats);
+    check(result == LA_OK, "enum capacity exact limit succeeds");
+    expect_error("enum A : u8\nx = 0\nend\n"
+                 "enum B : u8\ny = 1\nend\n",
+                 limits, LA_ERR_ENUM_CAPACITY,
+                 "enum capacity plus one rejected");
+
+    limits = la_default_limits();
+    limits.max_enum_members = 1;
+    result = compile_source("enum A : u8\nx = 0\nend\n", 0, limits,
+                            &events, &diagnostic, &stats);
+    check(result == LA_OK, "enum-member capacity exact limit succeeds");
+    expect_error("enum A : u8\nx = 0\ny = 1\nend\n",
+                 limits, LA_ERR_ENUM_MEMBER_CAPACITY,
+                 "enum-member capacity plus one rejected");
+
+    limits = la_default_limits();
+    limits.max_unions = 1;
+    result = compile_source("union A\nx : u8\nend\n", 0, limits,
+                            &events, &diagnostic, &stats);
+    check(result == LA_OK, "union capacity exact limit succeeds");
+    expect_error("union A\nx : u8\nend\nunion B\ny : u8\nend\n",
+                 limits, LA_ERR_UNION_CAPACITY,
+                 "union capacity plus one rejected");
+
+    limits = la_default_limits();
+    limits.max_overlays = 1;
+    result = compile_source(
+        "struct A\nx : u8\nend\noverlay a : A at RAM\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, "overlay capacity exact limit succeeds");
+    expect_error(
+        "struct A\nx : u8\nend\n"
+        "overlay a : A at RAM\noverlay b : A at RAM\n",
+        limits, LA_ERR_OVERLAY_CAPACITY,
+        "overlay capacity plus one rejected");
 }
 
 static void test_workspace_error(void)
@@ -829,6 +1094,7 @@ int main(void)
     test_comments_and_pointer_fields();
     test_indexed_pools_and_procedures();
     test_unified_members_and_invoke();
+    test_layout_variants();
     test_capacities();
     test_workspace_error();
     if (failures != 0) {

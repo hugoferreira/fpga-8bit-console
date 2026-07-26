@@ -368,6 +368,21 @@ static int emit_pointer_displacement(HostOutput *output,
     return 1;
 }
 
+static int emit_overlay_displacement(HostOutput *output,
+                                     const LaEvent *event)
+{
+    if (!begin_line(output, event->span, "overlay-operation")) return 0;
+    fprintf(output->assembly, "    %s %.*s + ",
+            event->operation == LA_TARGET_OP_LOAD8_OVERLAY_DISP ?
+                "lda" : "sta",
+            (int)event->base.length, event->base.data);
+    mangle_path(output->assembly, event->owner, event->path);
+    fprintf(output->assembly, "__offset ; inlay overlay %.*s.%.*s\n",
+            (int)event->owner.length, event->owner.data,
+            (int)event->path.length, event->path.data);
+    return 1;
+}
+
 static int emit_indexed_operation(HostOutput *output, const LaEvent *event)
 {
     unsigned shifts;
@@ -586,6 +601,9 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
         fprintf(output->assembly, "    jsr %.*s\n",
                 (int)event->owner.length, event->owner.data);
         return 1;
+    case LA_TARGET_OP_LOAD8_OVERLAY_DISP:
+    case LA_TARGET_OP_STORE8_OVERLAY_DISP:
+        return emit_overlay_displacement(output, event);
     default:
         return 0;
     }
@@ -614,6 +632,24 @@ static int host_event(void *context, const LaEvent *event)
             mangle_path(output->assembly, event->owner, event->path);
             fprintf(output->assembly, "__%s = %u\n",
                     property_suffix(event->property), (unsigned)event->value);
+        }
+        break;
+    case LA_EVENT_ENUM_MEMBER:
+        emitted = begin_line(output, event->span, "enum-member");
+        if (emitted) {
+            mangle_path(output->assembly, event->owner, event->path);
+            fprintf(output->assembly, "__value = %ld\n",
+                    (long)event->signed_value);
+        }
+        break;
+    case LA_EVENT_OVERLAY:
+        emitted = begin_line(output, event->span, "overlay");
+        if (emitted) {
+            fprintf(output->assembly,
+                    "; inlay overlay %.*s : %.*s at %.*s\n",
+                    (int)event->owner.length, event->owner.data,
+                    (int)event->aux.length, event->aux.data,
+                    (int)event->base.length, event->base.data);
         }
         break;
     case LA_EVENT_PROCEDURE_MEMBER:
@@ -1156,7 +1192,9 @@ int main(int argc, char **argv)
     if (options.print_stats) {
         printf("{\"format\":1,"
                "\"sourceBytes\":%u,\"nameBytes\":%u,\"tokens\":%u,"
-               "\"structures\":%u,\"fields\":%u,\"locations\":%u,"
+               "\"structures\":%u,\"unions\":%u,\"fields\":%u,"
+               "\"enums\":%u,\"enumMembers\":%u,\"overlays\":%u,"
+               "\"locations\":%u,"
                "\"pools\":%u,\"procedures\":%u,\"parameters\":%u,"
                "\"locals\":%u,\"invokeBindings\":%u,"
                "\"expressionNodes\":%u,\"nesting\":%u,"
@@ -1164,7 +1202,9 @@ int main(int argc, char **argv)
                "\"moduleBytes\":%u,\"moduleLines\":%u,"
                "\"moduleDepth\":%u,\"moduleWorkspaceBytes\":%lu}\n",
                stats.source_bytes, stats.name_bytes, stats.tokens,
-               stats.structures, stats.fields, stats.locations,
+               stats.structures, stats.unions, stats.fields,
+               stats.enums, stats.enum_members, stats.overlays,
+               stats.locations,
                stats.pools, stats.procedures, stats.parameters, stats.locals,
                stats.invoke_bindings,
                stats.expression_nodes, stats.nesting, stats.operations,

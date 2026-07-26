@@ -7,8 +7,11 @@ typedef struct {
     la_u16 first_field;
     la_u16 field_count;
     la_u16 size;
+    la_u16 alignment;
     la_u16 line;
     la_u8 state;
+    la_u8 kind;
+    la_u8 policy;
 } LaStructRec;
 
 typedef struct {
@@ -18,8 +21,39 @@ typedef struct {
     la_u16 offset;
     la_u16 size;
     la_u16 line;
+    la_u16 offset_source;
+    la_u16 offset_length;
     la_u8 is_pointer;
+    la_u8 has_explicit_offset;
 } LaFieldRec;
+
+typedef struct {
+    la_u16 name;
+    la_u16 first_member;
+    la_u16 member_count;
+    la_u16 line;
+    la_u8 size;
+    la_u8 is_signed;
+} LaEnumRec;
+
+typedef struct {
+    la_u16 owner;
+    la_u16 name;
+    la_i32 value;
+    la_u16 line;
+    la_u16 value_source;
+    la_u16 value_length;
+    la_u8 resolved;
+} LaEnumMemberRec;
+
+typedef struct {
+    la_u16 name;
+    la_u16 type_name;
+    la_u16 base;
+    la_u16 line;
+    la_u16 numeric_base;
+    la_u8 has_numeric_base;
+} LaOverlayRec;
 
 typedef struct {
     la_u16 name;
@@ -38,6 +72,7 @@ typedef struct {
     la_u16 count;
     la_u16 stride;
     la_u16 size;
+    la_u16 alignment;
     la_u16 base;
     la_u16 table_low;
     la_u16 table_high;
@@ -110,6 +145,9 @@ typedef struct {
     char *path_buffer;
     LaStructRec *structs;
     LaFieldRec *fields;
+    LaEnumRec *enums;
+    LaEnumMemberRec *enum_members;
+    LaOverlayRec *overlays;
     LaLocationRec *locations;
     LaPoolRec *pools;
     LaProcedureRec *procedures;
@@ -121,7 +159,12 @@ typedef struct {
     la_u16 source_length;
     la_u16 name_length;
     la_u16 struct_count;
+    la_u16 plain_struct_count;
+    la_u16 union_count;
     la_u16 field_count;
+    la_u16 enum_count;
+    la_u16 enum_member_count;
+    la_u16 overlay_count;
     la_u16 location_count;
     la_u16 pool_count;
     la_u16 procedure_count;
@@ -131,6 +174,7 @@ typedef struct {
     la_u16 token_count;
     la_u16 operation_count;
     la_u16 current_struct;
+    la_u16 current_enum;
     la_u16 current_procedure;
     LaNameCacheRec name_cache[2];
     LaDiagnosticCode error;
@@ -143,7 +187,7 @@ static const LaConvention la_console6502_conventions[] = {
 const LaTarget la_target_console6502 = {
     "console6502", 8, 2, 255, LA_TARGET_VERSION,
     la_console6502_conventions, 1,
-    "t", 8, 0, 0
+    "t", 8, 0, 0, 16, 1, 1
 };
 
 static la_u32 la_align_size(la_u32 value)
@@ -160,7 +204,11 @@ LaLimits la_default_limits(void)
     limits.max_name_bytes = 8192;
     limits.max_tokens = 8192;
     limits.max_structs = 128;
+    limits.max_unions = 64;
     limits.max_fields = 1024;
+    limits.max_enums = 128;
+    limits.max_enum_members = 512;
+    limits.max_overlays = 128;
     limits.max_locations = 128;
     limits.max_pools = 64;
     limits.max_procedures = 256;
@@ -182,8 +230,15 @@ la_u32 la_workspace_required(const LaLimits *limits)
     total += la_align_size((la_u32)limits->max_name_bytes + 1);
     total += la_align_size((la_u32)limits->max_line_bytes + 1);
     total += la_align_size((la_u32)limits->max_line_bytes + 1);
-    total += la_align_size((la_u32)limits->max_structs * sizeof(LaStructRec));
+    total += la_align_size(
+        ((la_u32)limits->max_structs + limits->max_unions) *
+        sizeof(LaStructRec));
     total += la_align_size((la_u32)limits->max_fields * sizeof(LaFieldRec));
+    total += la_align_size((la_u32)limits->max_enums * sizeof(LaEnumRec));
+    total += la_align_size((la_u32)limits->max_enum_members *
+                           sizeof(LaEnumMemberRec));
+    total += la_align_size((la_u32)limits->max_overlays *
+                           sizeof(LaOverlayRec));
     total += la_align_size((la_u32)limits->max_locations * sizeof(LaLocationRec));
     total += la_align_size((la_u32)limits->max_pools * sizeof(LaPoolRec));
     total += la_align_size((la_u32)limits->max_procedures *
@@ -421,6 +476,43 @@ static la_u16 la_find_struct_text(LaContext *ctx,
     return LA_INVALID_HANDLE;
 }
 
+static la_u16 la_find_enum_handle(LaContext *ctx, la_u16 name)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->enum_count; ++index) {
+        if (ctx->enums[index].name == name) return index;
+    }
+    return LA_INVALID_HANDLE;
+}
+
+static la_u16 la_find_enum_text(LaContext *ctx,
+                                const char *text, la_u16 length)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->enum_count; ++index) {
+        LaSlice name;
+        name = la_name_slice(ctx, ctx->enums[index].name);
+        if (name.length == length && memcmp(name.data, text, length) == 0) {
+            return index;
+        }
+    }
+    return LA_INVALID_HANDLE;
+}
+
+static la_u16 la_find_overlay_text(LaContext *ctx,
+                                   const char *text, la_u16 length)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->overlay_count; ++index) {
+        LaSlice name;
+        name = la_name_slice(ctx, ctx->overlays[index].name);
+        if (name.length == length && memcmp(name.data, text, length) == 0) {
+            return index;
+        }
+    }
+    return LA_INVALID_HANDLE;
+}
+
 static la_u16 la_find_location_text_at(LaContext *ctx,
                                        const char *text, la_u16 length,
                                        la_u16 procedure)
@@ -465,6 +557,16 @@ static int la_primitive_size(LaContext *ctx, la_u16 type_name,
     return 0;
 }
 
+static int la_scalar_size(LaContext *ctx, la_u16 type_name, la_u16 *size)
+{
+    la_u16 enumeration;
+    if (la_primitive_size(ctx, type_name, size)) return 1;
+    enumeration = la_find_enum_handle(ctx, type_name);
+    if (enumeration == LA_INVALID_HANDLE) return 0;
+    *size = ctx->enums[enumeration].size;
+    return 1;
+}
+
 static int la_line_keyword(const char *start, const char *end,
                            const char *keyword)
 {
@@ -502,22 +604,30 @@ static int la_deferred_keyword(const char *start, const char *end,
     return 0;
 }
 
-static LaDiagnosticCode la_parse_struct(LaContext *ctx,
-                                        const char *start, const char *end,
-                                        la_u16 line)
+static int la_read_identifier(const char **cursor, const char *end,
+                              const char **start, la_u16 *length);
+static int la_take_word(const char **cursor, const char *end,
+                        const char *word);
+
+static LaDiagnosticCode la_parse_aggregate(LaContext *ctx,
+                                           const char *start,
+                                           const char *end, la_u16 line,
+                                           LaAggregateKind kind)
 {
     const char *cursor;
     const char *name_start;
     la_u16 name_length;
     la_u16 name;
+    la_u16 alignment;
+    LaLayoutPolicy policy;
     cursor = la_trim_left(start, end);
-    cursor += 6;
+    cursor += kind == LA_AGGREGATE_STRUCT ? 6 : 5;
     cursor = la_trim_left(cursor, end);
     name_start = cursor;
     if (cursor >= end || !la_is_ident_start(*cursor)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line,
                        (la_u16)(cursor - start + 1), 1,
-                       la_slice("structure name", 14), la_slice("", 0), 0, 0);
+                       la_slice("aggregate name", 14), la_slice("", 0), 0, 0);
     }
     while (cursor < end && la_is_ident(*cursor)) {
         ++cursor;
@@ -527,37 +637,95 @@ static LaDiagnosticCode la_parse_struct(LaContext *ctx,
         return ctx->error;
     }
     cursor = la_trim_left(cursor, end);
-    if (!la_equal_text(cursor, (la_u16)(end - cursor), "packed")) {
-        return la_fail(ctx, LA_ERR_SYNTAX, line,
-                       (la_u16)(cursor - start + 1),
-                       (la_u16)(end - cursor),
-                       la_slice("packed", 6), la_slice(cursor,
-                       (la_u16)(end - cursor)), 0, 0);
+    policy = LA_LAYOUT_PACKED;
+    alignment = 1;
+    if (cursor != end) {
+        if (la_equal_text(cursor, (la_u16)(end - cursor), "packed")) {
+            policy = LA_LAYOUT_PACKED;
+        } else if ((la_u16)(end - cursor) >= 9 &&
+                   memcmp(cursor, "aligned(", 8) == 0 &&
+                   end[-1] == ')') {
+            la_u32 parsed;
+            const char *number;
+            number = cursor + 8;
+            parsed = 0;
+            if (number == end - 1) {
+                return la_fail(ctx, LA_ERR_LAYOUT_POLICY, line,
+                               (la_u16)(cursor - start + 1),
+                               (la_u16)(end - cursor),
+                               la_slice(cursor, (la_u16)(end - cursor)),
+                               la_slice("aligned(power-of-two)", 21), 0, 0);
+            }
+            while (number < end - 1 && *number >= '0' && *number <= '9') {
+                parsed = parsed * 10 + (la_u32)(*number++ - '0');
+            }
+            if (number != end - 1 || parsed == 0 || parsed > 255 ||
+                (parsed & (parsed - 1)) != 0 ||
+                parsed > ctx->target->max_aggregate_alignment) {
+                return la_fail(ctx, LA_ERR_LAYOUT_ALIGNMENT, line,
+                               (la_u16)(cursor - start + 1),
+                               (la_u16)(end - cursor),
+                               la_slice(cursor, (la_u16)(end - cursor)),
+                               la_slice("target maximum", 14),
+                               (la_i32)parsed,
+                               ctx->target->max_aggregate_alignment);
+            }
+            policy = LA_LAYOUT_ALIGNED;
+            alignment = (la_u16)parsed;
+        } else {
+            return la_fail(ctx, LA_ERR_LAYOUT_POLICY, line,
+                           (la_u16)(cursor - start + 1),
+                           (la_u16)(end - cursor),
+                           la_slice(cursor, (la_u16)(end - cursor)),
+                           la_slice("packed or aligned(N)", 20), 0, 0);
+        }
     }
     name = la_intern(ctx, name_start, name_length, line,
                      (la_u16)(name_start - start + 1));
     if (name == LA_INVALID_HANDLE) {
         return ctx->error;
     }
-    if (la_find_struct_handle(ctx, name) != LA_INVALID_HANDLE) {
-        return la_fail(ctx, LA_ERR_DUPLICATE_STRUCT, line,
+    if (la_find_struct_handle(ctx, name) != LA_INVALID_HANDLE ||
+        la_find_enum_handle(ctx, name) != LA_INVALID_HANDLE) {
+        return la_fail(ctx, kind == LA_AGGREGATE_STRUCT ?
+                       LA_ERR_DUPLICATE_STRUCT : LA_ERR_DUPLICATE_UNION, line,
                        (la_u16)(name_start - start + 1), name_length,
                        la_name_slice(ctx, name), la_slice("", 0), 0, 0);
     }
-    if (ctx->struct_count >= ctx->limits->max_structs) {
-        return la_fail(ctx, LA_ERR_STRUCT_CAPACITY, line, 1, name_length,
-                       la_name_slice(ctx, name), la_slice("structures", 10),
-                       ctx->struct_count + 1, ctx->limits->max_structs);
+    if ((kind == LA_AGGREGATE_STRUCT &&
+         ctx->plain_struct_count >= ctx->limits->max_structs) ||
+        (kind == LA_AGGREGATE_UNION &&
+         ctx->union_count >= ctx->limits->max_unions)) {
+        if (kind == LA_AGGREGATE_STRUCT) {
+            return la_fail(ctx, LA_ERR_STRUCT_CAPACITY,
+                           line, 1, name_length, la_name_slice(ctx, name),
+                           la_slice("structures", 10),
+                           ctx->plain_struct_count + 1,
+                           ctx->limits->max_structs);
+        }
+        return la_fail(ctx, LA_ERR_UNION_CAPACITY,
+                       line, 1, name_length, la_name_slice(ctx, name),
+                       la_slice("unions", 6), ctx->union_count + 1,
+                       ctx->limits->max_unions);
     }
     ctx->current_struct = ctx->struct_count;
     ctx->structs[ctx->struct_count].name = name;
     ctx->structs[ctx->struct_count].first_field = ctx->field_count;
     ctx->structs[ctx->struct_count].field_count = 0;
     ctx->structs[ctx->struct_count].size = 0;
+    ctx->structs[ctx->struct_count].alignment = alignment;
     ctx->structs[ctx->struct_count].line = line;
     ctx->structs[ctx->struct_count].state = 0;
+    ctx->structs[ctx->struct_count].kind = (la_u8)kind;
+    ctx->structs[ctx->struct_count].policy = (la_u8)policy;
     ++ctx->struct_count;
-    ctx->stats->structures = ctx->struct_count;
+    if (kind == LA_AGGREGATE_STRUCT) {
+        ++ctx->plain_struct_count;
+        ctx->stats->structures = ctx->plain_struct_count;
+    } else {
+        ++ctx->union_count;
+        ctx->stats->unions = ctx->union_count;
+    }
     return LA_OK;
 }
 
@@ -575,6 +743,8 @@ static LaDiagnosticCode la_parse_field(LaContext *ctx,
     la_u16 count;
     la_u16 field_index;
     int is_pointer;
+    int has_explicit_offset;
+    const char *offset_start;
     cursor = la_trim_left(start, end);
     name_start = cursor;
     if (cursor >= end || !la_is_ident_start(*cursor)) {
@@ -612,6 +782,8 @@ static LaDiagnosticCode la_parse_field(LaContext *ctx,
     }
     type_length = (la_u16)(cursor - type_start);
     count = 1;
+    has_explicit_offset = 0;
+    offset_start = 0;
     cursor = la_trim_left(cursor, end);
     if (cursor < end && *cursor == '[') {
         la_u32 parsed;
@@ -636,6 +808,25 @@ static LaDiagnosticCode la_parse_field(LaContext *ctx,
         count = (la_u16)parsed;
         ++cursor;
         cursor = la_trim_left(cursor, end);
+    }
+    if (la_take_word(&cursor, end, "at")) {
+        if (ctx->structs[ctx->current_struct].kind == LA_AGGREGATE_UNION) {
+            return la_fail(ctx, LA_ERR_UNION_OFFSET, line,
+                           (la_u16)(cursor - start + 1), 2,
+                           la_slice(name_start, name_length),
+                           la_name_slice(
+                               ctx, ctx->structs[ctx->current_struct].name),
+                           0, 0);
+        }
+        offset_start = la_trim_left(cursor, end);
+        if (offset_start == end) {
+            return la_fail(ctx, LA_ERR_FIELD_OFFSET, line,
+                           (la_u16)(cursor - start + 1), 1,
+                           la_slice("constant expression", 19),
+                           la_slice("", 0), 0, 0);
+        }
+        has_explicit_offset = 1;
+        cursor = end;
     }
     if (cursor != end) {
         return la_fail(ctx, LA_ERR_SYNTAX, line,
@@ -676,10 +867,240 @@ static LaDiagnosticCode la_parse_field(LaContext *ctx,
     ctx->fields[ctx->field_count].offset = 0;
     ctx->fields[ctx->field_count].size = 0;
     ctx->fields[ctx->field_count].line = line;
+    ctx->fields[ctx->field_count].offset_source =
+        has_explicit_offset ? (la_u16)(offset_start - ctx->source) : 0;
+    ctx->fields[ctx->field_count].offset_length =
+        has_explicit_offset ? (la_u16)(end - offset_start) : 0;
     ctx->fields[ctx->field_count].is_pointer = (la_u8)is_pointer;
+    ctx->fields[ctx->field_count].has_explicit_offset =
+        (la_u8)has_explicit_offset;
     ++ctx->field_count;
     ++ctx->structs[ctx->current_struct].field_count;
     ctx->stats->fields = ctx->field_count;
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_parse_enum(LaContext *ctx,
+                                      const char *start, const char *end,
+                                      la_u16 line)
+{
+    const char *cursor;
+    const char *name_start;
+    const char *type_start;
+    la_u16 name_length;
+    la_u16 type_length;
+    la_u16 name;
+    LaEnumRec *record;
+    cursor = la_trim_left(start, end) + 4;
+    if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("enum name", 9), la_slice("", 0), 0, 0);
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != ':' ||
+        !la_read_identifier(&cursor, end, &type_start, &type_length) ||
+        la_trim_left(cursor, end) != end) {
+        return la_fail(ctx, LA_ERR_ENUM_UNDERLYING, line, 1, 1,
+                       la_slice("u8, i8, u16, or i16", 20),
+                       la_slice("", 0), 0, 0);
+    }
+    if (!(la_equal_text(type_start, type_length, "u8") ||
+          la_equal_text(type_start, type_length, "i8") ||
+          la_equal_text(type_start, type_length, "u16") ||
+          la_equal_text(type_start, type_length, "i16"))) {
+        return la_fail(ctx, LA_ERR_ENUM_UNDERLYING, line, 1, type_length,
+                       la_slice(type_start, type_length),
+                       la_slice("u8, i8, u16, or i16", 20), 0, 0);
+    }
+    name = la_intern(ctx, name_start, name_length, line, 1);
+    if (name == LA_INVALID_HANDLE) return ctx->error;
+    if (la_find_enum_handle(ctx, name) != LA_INVALID_HANDLE ||
+        la_find_struct_handle(ctx, name) != LA_INVALID_HANDLE) {
+        return la_fail(ctx, LA_ERR_DUPLICATE_ENUM, line, 1, name_length,
+                       la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+    }
+    if (ctx->enum_count >= ctx->limits->max_enums) {
+        return la_fail(ctx, LA_ERR_ENUM_CAPACITY, line, 1, name_length,
+                       la_slice("enums", 5), la_slice("", 0),
+                       ctx->enum_count + 1, ctx->limits->max_enums);
+    }
+    record = &ctx->enums[ctx->enum_count];
+    memset(record, 0, sizeof(*record));
+    record->name = name;
+    record->first_member = ctx->enum_member_count;
+    record->line = line;
+    record->size = (la_u8)(type_length == 3 ? 2 : 1);
+    record->is_signed = (la_u8)(type_start[0] == 'i');
+    ctx->current_enum = ctx->enum_count++;
+    ctx->stats->enums = ctx->enum_count;
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_parse_enum_member(LaContext *ctx,
+                                             const char *start,
+                                             const char *end, la_u16 line)
+{
+    const char *cursor;
+    const char *name_start;
+    const char *value_start;
+    la_u16 name_length;
+    la_u16 name;
+    la_u16 index;
+    LaEnumRec *owner;
+    LaEnumMemberRec *member;
+    cursor = la_trim_left(start, end);
+    if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("enum member", 11), la_slice("", 0), 0, 0);
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != '=') {
+        return la_fail(ctx, LA_ERR_ENUM_VALUE, line, 1, 1,
+                       la_slice("explicit enum value", 19),
+                       la_slice("", 0), 0, 0);
+    }
+    value_start = la_trim_left(cursor, end);
+    if (value_start == end) {
+        return la_fail(ctx, LA_ERR_ENUM_VALUE, line, 1, 1,
+                       la_slice("enum value expression", 21),
+                       la_slice("", 0), 0, 0);
+    }
+    owner = &ctx->enums[ctx->current_enum];
+    name = la_intern(ctx, name_start, name_length, line, 1);
+    if (name == LA_INVALID_HANDLE) return ctx->error;
+    for (index = owner->first_member;
+         index < owner->first_member + owner->member_count; ++index) {
+        if (ctx->enum_members[index].name == name) {
+            return la_fail(ctx, LA_ERR_DUPLICATE_ENUM_MEMBER, line, 1,
+                           name_length, la_name_slice(ctx, name),
+                           la_name_slice(ctx, owner->name), 0, 0);
+        }
+    }
+    if (ctx->enum_member_count >= ctx->limits->max_enum_members) {
+        return la_fail(ctx, LA_ERR_ENUM_MEMBER_CAPACITY, line, 1, name_length,
+                       la_slice("enum members", 12), la_slice("", 0),
+                       ctx->enum_member_count + 1,
+                       ctx->limits->max_enum_members);
+    }
+    member = &ctx->enum_members[ctx->enum_member_count++];
+    memset(member, 0, sizeof(*member));
+    member->owner = ctx->current_enum;
+    member->name = name;
+    member->line = line;
+    member->value_source = (la_u16)(value_start - ctx->source);
+    member->value_length = (la_u16)(end - value_start);
+    ++owner->member_count;
+    ctx->stats->enum_members = ctx->enum_member_count;
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_parse_overlay(LaContext *ctx,
+                                         const char *start,
+                                         const char *end, la_u16 line)
+{
+    const char *cursor;
+    const char *name_start;
+    const char *type_start;
+    const char *base_start;
+    const char *base_end;
+    la_u16 name_length;
+    la_u16 type_length;
+    la_u16 base_length;
+    la_u16 name;
+    LaOverlayRec *overlay;
+    la_u32 numeric;
+    int is_numeric;
+    int radix;
+    int digits;
+    cursor = la_trim_left(start, end) + 7;
+    if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("overlay name", 12), la_slice("", 0), 0, 0);
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != ':' ||
+        !la_read_identifier(&cursor, end, &type_start, &type_length) ||
+        !la_take_word(&cursor, end, "at")) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("overlay NAME : TYPE at BASE", 27),
+                       la_slice("", 0), 0, 0);
+    }
+    cursor = la_trim_left(cursor, end);
+    base_start = cursor;
+    numeric = 0;
+    radix = 10;
+    digits = 0;
+    is_numeric = cursor < end &&
+        ((*cursor >= '0' && *cursor <= '9') || *cursor == '$');
+    if (is_numeric) {
+        if (*cursor == '$') {
+            radix = 16;
+            ++cursor;
+        } else if ((la_u16)(end - cursor) >= 2 && cursor[0] == '0' &&
+                   (cursor[1] == 'x' || cursor[1] == 'X')) {
+            radix = 16;
+            cursor += 2;
+        }
+        while (cursor < end) {
+            int digit;
+            digit = -1;
+            if (*cursor >= '0' && *cursor <= '9') {
+                digit = *cursor - '0';
+            } else if (radix == 16 && *cursor >= 'a' && *cursor <= 'f') {
+                digit = *cursor - 'a' + 10;
+            } else if (radix == 16 && *cursor >= 'A' && *cursor <= 'F') {
+                digit = *cursor - 'A' + 10;
+            }
+            if (digit < 0 || digit >= radix) break;
+            numeric = numeric * (la_u32)radix + (la_u32)digit;
+            ++cursor;
+            ++digits;
+        }
+        base_end = cursor;
+        if (digits == 0 || numeric > 65535) {
+            return la_fail(ctx, LA_ERR_OVERLAY_BASE, line, 1,
+                           (la_u16)(cursor - base_start),
+                           la_slice(base_start,
+                                    (la_u16)(cursor - base_start)),
+                           la_slice("16-bit fixed address", 20),
+                           (la_i32)numeric, 65535);
+        }
+    } else if (!la_read_identifier(&cursor, end, &base_start, &base_length)) {
+        return la_fail(ctx, LA_ERR_OVERLAY_BASE, line, 1, 1,
+                       la_slice("target symbol", 13), la_slice("", 0), 0, 0);
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor != end) {
+        return la_fail(ctx, LA_ERR_OVERLAY_BASE, line, 1,
+                       (la_u16)(end - cursor),
+                       la_slice(cursor, (la_u16)(end - cursor)),
+                       la_slice("single base", 11), 0, 0);
+    }
+    if (is_numeric) base_length = (la_u16)(base_end - base_start);
+    name = la_intern(ctx, name_start, name_length, line, 1);
+    if (name == LA_INVALID_HANDLE) return ctx->error;
+    if (la_find_overlay_text(ctx, name_start, name_length) !=
+        LA_INVALID_HANDLE) {
+        return la_fail(ctx, LA_ERR_DUPLICATE_OVERLAY, line, 1, name_length,
+                       la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+    }
+    if (ctx->overlay_count >= ctx->limits->max_overlays) {
+        return la_fail(ctx, LA_ERR_OVERLAY_CAPACITY, line, 1, name_length,
+                       la_slice("overlays", 8), la_slice("", 0),
+                       ctx->overlay_count + 1, ctx->limits->max_overlays);
+    }
+    overlay = &ctx->overlays[ctx->overlay_count++];
+    memset(overlay, 0, sizeof(*overlay));
+    overlay->name = name;
+    overlay->type_name =
+        la_intern(ctx, type_start, type_length, line, 1);
+    overlay->base = la_intern(ctx, base_start, base_length, line, 1);
+    if (overlay->type_name == LA_INVALID_HANDLE ||
+        overlay->base == LA_INVALID_HANDLE) return ctx->error;
+    overlay->line = line;
+    overlay->has_numeric_base = (la_u8)is_numeric;
+    overlay->numeric_base = (la_u16)numeric;
+    ctx->stats->overlays = ctx->overlay_count;
     return LA_OK;
 }
 
@@ -927,6 +1348,7 @@ static LaDiagnosticCode la_parse_pool(LaContext *ctx,
     pool->count = (la_u16)count;
     pool->stride = 0;
     pool->size = 0;
+    pool->alignment = 1;
     pool->line = line;
     ctx->stats->pools = ctx->pool_count;
     return LA_OK;
@@ -1199,15 +1621,18 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
     const char *source_end;
     la_u16 line;
     int in_struct;
+    int in_enum;
     int in_procedure;
     int in_body;
     cursor = ctx->source;
     source_end = ctx->source + ctx->source_length;
     line = 1;
     in_struct = 0;
+    in_enum = 0;
     in_procedure = 0;
     in_body = 0;
     ctx->current_struct = LA_INVALID_HANDLE;
+    ctx->current_enum = LA_INVALID_HANDLE;
     ctx->current_procedure = LA_INVALID_HANDLE;
     while (cursor < source_end) {
         const char *line_end;
@@ -1229,10 +1654,37 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
         if (trimmed < content_end && *trimmed != ';') {
             if (in_struct) {
                 if (la_line_keyword(trimmed, content_end, "end")) {
+                    if (ctx->structs[ctx->current_struct].kind ==
+                            LA_AGGREGATE_UNION &&
+                        ctx->structs[ctx->current_struct].field_count == 0) {
+                        return la_fail(
+                            ctx, LA_ERR_AGGREGATE_EMPTY,
+                            ctx->structs[ctx->current_struct].line, 1, 1,
+                            la_name_slice(
+                                ctx,
+                                ctx->structs[ctx->current_struct].name),
+                            la_slice("union", 5), 0, 1);
+                    }
                     in_struct = 0;
                     ctx->current_struct = LA_INVALID_HANDLE;
                 } else if (la_parse_field(ctx, cursor, content_end, line) !=
                            LA_OK) {
+                    return ctx->error;
+                }
+            } else if (in_enum) {
+                if (la_line_keyword(trimmed, content_end, "end")) {
+                    if (ctx->enums[ctx->current_enum].member_count == 0) {
+                        return la_fail(
+                            ctx, LA_ERR_ENUM_EMPTY,
+                            ctx->enums[ctx->current_enum].line, 1, 1,
+                            la_name_slice(
+                                ctx, ctx->enums[ctx->current_enum].name),
+                            la_slice("", 0), 0, 1);
+                    }
+                    in_enum = 0;
+                    ctx->current_enum = LA_INVALID_HANDLE;
+                } else if (la_parse_enum_member(
+                               ctx, cursor, content_end, line) != LA_OK) {
                     return ctx->error;
                 }
             } else if (in_procedure) {
@@ -1291,10 +1743,25 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
                     }
                 }
             } else if (la_line_keyword(trimmed, content_end, "struct")) {
-                if (la_parse_struct(ctx, cursor, content_end, line) != LA_OK) {
+                if (la_parse_aggregate(ctx, cursor, content_end, line,
+                                       LA_AGGREGATE_STRUCT) != LA_OK) {
                     return ctx->error;
                 }
                 in_struct = 1;
+            } else if (la_line_keyword(trimmed, content_end, "union")) {
+                if (la_parse_aggregate(ctx, cursor, content_end, line,
+                                       LA_AGGREGATE_UNION) != LA_OK) {
+                    return ctx->error;
+                }
+                in_struct = 1;
+            } else if (la_line_keyword(trimmed, content_end, "enum")) {
+                if (la_parse_enum(ctx, cursor, content_end, line) != LA_OK) {
+                    return ctx->error;
+                }
+                in_enum = 1;
+            } else if (la_line_keyword(trimmed, content_end, "overlay")) {
+                if (la_parse_overlay(ctx, cursor, content_end, line) !=
+                    LA_OK) return ctx->error;
             } else if (la_line_keyword(trimmed, content_end, "pool")) {
                 if (la_parse_pool(ctx, cursor, content_end, line) != LA_OK) {
                     return ctx->error;
@@ -1328,11 +1795,57 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
         cursor = line_end;
         ++line;
     }
-    if (in_struct || in_procedure) {
+    if (in_struct || in_enum || in_procedure) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
                        la_slice("end", 3), la_slice("", 0), 0, 0);
     }
     return LA_OK;
+}
+
+static LaDiagnosticCode la_eval_expression(LaContext *ctx,
+                                           const char *text,
+                                           const char *end,
+                                           la_u16 line, la_i32 *result);
+
+static LaDiagnosticCode la_resolve_enums(LaContext *ctx)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->enum_member_count; ++index) {
+        LaEnumMemberRec *member;
+        LaEnumRec *owner;
+        la_i32 value;
+        la_i32 minimum;
+        la_i32 maximum;
+        member = &ctx->enum_members[index];
+        owner = &ctx->enums[member->owner];
+        if (la_eval_expression(
+                ctx, ctx->source + member->value_source,
+                ctx->source + member->value_source + member->value_length,
+                member->line, &value) != LA_OK) return ctx->error;
+        if (owner->is_signed) {
+            minimum = owner->size == 1 ? -128 : -32768;
+            maximum = owner->size == 1 ? 127 : 32767;
+        } else {
+            minimum = 0;
+            maximum = owner->size == 1 ? 255 : 65535;
+        }
+        if (value < minimum || value > maximum) {
+            return la_fail(ctx, LA_ERR_ENUM_VALUE, member->line, 1, 1,
+                           la_name_slice(ctx, member->name),
+                           la_name_slice(ctx, owner->name), value, maximum);
+        }
+        member->value = value;
+        member->resolved = 1;
+    }
+    return LA_OK;
+}
+
+static la_u16 la_round_up(la_u16 value, la_u16 alignment)
+{
+    la_u32 result;
+    result = ((la_u32)value + alignment - 1) &
+             ~((la_u32)alignment - 1);
+    return result > 65535 ? LA_INVALID_HANDLE : (la_u16)result;
 }
 
 static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
@@ -1352,8 +1865,8 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
             }
         } else {
             la_u16 size;
-            if (!la_primitive_size(ctx, ctx->locations[index].type_name,
-                                   &size)) {
+            if (!la_scalar_size(ctx, ctx->locations[index].type_name,
+                                &size)) {
                 return la_fail(
                     ctx, LA_ERR_UNKNOWN_TYPE, ctx->locations[index].line,
                     1, 1,
@@ -1369,6 +1882,7 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
             LaStructRec *record;
             la_u16 field_index;
             la_u16 offset;
+            la_u16 extent;
             int ready;
             record = &ctx->structs[index];
             if (record->state != 0) {
@@ -1376,13 +1890,19 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
             }
             ready = 1;
             offset = 0;
+            extent = 0;
             for (field_index = record->first_field;
                  field_index < record->first_field + record->field_count;
                  ++field_index) {
                 LaFieldRec *field;
                 la_u16 unit_size;
+                la_u16 unit_alignment;
                 la_u16 nested;
+                la_u16 enumeration;
+                la_u16 placement;
                 field = &ctx->fields[field_index];
+                nested = LA_INVALID_HANDLE;
+                enumeration = LA_INVALID_HANDLE;
                 if (field->is_pointer) {
                     nested = la_find_struct_handle(ctx, field->type_name);
                     if (nested == LA_INVALID_HANDLE) {
@@ -1392,8 +1912,15 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                                        la_name_slice(ctx, record->name), 0, 0);
                     }
                     unit_size = ctx->target->pointer_units;
+                    unit_alignment = unit_size;
                 } else if (!la_primitive_size(ctx, field->type_name,
                                               &unit_size)) {
+                    enumeration =
+                        la_find_enum_handle(ctx, field->type_name);
+                    if (enumeration != LA_INVALID_HANDLE) {
+                        unit_size = ctx->enums[enumeration].size;
+                        unit_alignment = unit_size;
+                    } else {
                     nested = la_find_struct_handle(ctx, field->type_name);
                     if (nested == LA_INVALID_HANDLE) {
                         return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, field->line,
@@ -1406,18 +1933,81 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                         break;
                     }
                     unit_size = ctx->structs[nested].size;
+                    unit_alignment = ctx->structs[nested].alignment;
+                    }
+                } else {
+                    unit_alignment = unit_size;
                 }
-                if ((la_u32)unit_size * field->count + offset > 65535) {
+                if (record->policy == LA_LAYOUT_PACKED) {
+                    unit_alignment = 1;
+                } else if (unit_alignment > record->alignment) {
+                    unit_alignment = record->alignment;
+                }
+                placement = record->kind == LA_AGGREGATE_UNION ? 0 : offset;
+                if (record->kind == LA_AGGREGATE_STRUCT &&
+                    field->has_explicit_offset) {
+                    la_i32 requested;
+                    if (la_eval_expression(
+                            ctx, ctx->source + field->offset_source,
+                            ctx->source + field->offset_source +
+                                field->offset_length,
+                            field->line, &requested) != LA_OK) {
+                        return ctx->error;
+                    }
+                    if (requested < 0 || requested > 65535 ||
+                        requested < offset) {
+                        return la_fail(
+                            ctx, LA_ERR_FIELD_OFFSET, field->line, 1, 1,
+                            la_name_slice(ctx, field->name),
+                            la_name_slice(ctx, record->name),
+                            requested, offset);
+                    }
+                    if ((requested % unit_alignment) != 0) {
+                        return la_fail(
+                            ctx, LA_ERR_FIELD_OFFSET, field->line, 1, 1,
+                            la_name_slice(ctx, field->name),
+                            la_slice("effective alignment", 19),
+                            requested, unit_alignment);
+                    }
+                    placement = (la_u16)requested;
+                } else if (record->kind == LA_AGGREGATE_STRUCT &&
+                           record->policy == LA_LAYOUT_ALIGNED) {
+                    placement = la_round_up(offset, unit_alignment);
+                    if (placement == LA_INVALID_HANDLE) {
+                        return la_fail(ctx, LA_ERR_FIELD_OFFSET,
+                                       field->line, 1, 1,
+                                       la_name_slice(ctx, field->name),
+                                       la_slice("layout overflow", 15),
+                                       offset, 65535);
+                    }
+                }
+                if ((la_u32)unit_size * field->count + placement > 65535) {
                     return la_fail(ctx, LA_ERR_SYNTAX, field->line, 1, 1,
                                    la_slice("layout overflow", 15),
                                    la_name_slice(ctx, field->name), 0, 65535);
                 }
-                field->offset = offset;
+                field->offset = placement;
                 field->size = (la_u16)(unit_size * field->count);
-                offset = (la_u16)(offset + field->size);
+                if (record->kind == LA_AGGREGATE_STRUCT) {
+                    offset = (la_u16)(placement + field->size);
+                    extent = offset;
+                } else if (field->size > extent) {
+                    extent = field->size;
+                }
             }
             if (ready) {
-                record->size = offset;
+                if (record->policy == LA_LAYOUT_ALIGNED) {
+                    record->size = la_round_up(extent, record->alignment);
+                    if (record->size == LA_INVALID_HANDLE) {
+                        return la_fail(ctx, LA_ERR_LAYOUT_ALIGNMENT,
+                                       record->line, 1, 1,
+                                       la_name_slice(ctx, record->name),
+                                       la_slice("layout overflow", 15),
+                                       extent, 65535);
+                    }
+                } else {
+                    record->size = extent;
+                }
                 record->state = 1;
                 --unresolved;
                 progress = 1;
@@ -1445,6 +2035,7 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                            la_name_slice(ctx, pool->name), 0, 0);
         }
         pool->stride = ctx->structs[sid].size;
+        pool->alignment = ctx->structs[sid].alignment;
         if ((la_u32)pool->stride * pool->count > 65535) {
             return la_fail(ctx, LA_ERR_SYNTAX, pool->line, 1, 1,
                            la_slice("pool size overflow", 18),
@@ -1453,6 +2044,25 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                            65535);
         }
         pool->size = (la_u16)(pool->stride * pool->count);
+    }
+    for (index = 0; index < ctx->overlay_count; ++index) {
+        la_u16 sid;
+        LaOverlayRec *overlay;
+        overlay = &ctx->overlays[index];
+        sid = la_find_struct_handle(ctx, overlay->type_name);
+        if (sid == LA_INVALID_HANDLE) {
+            return la_fail(ctx, LA_ERR_OVERLAY_TYPE, overlay->line, 1, 1,
+                           la_name_slice(ctx, overlay->type_name),
+                           la_name_slice(ctx, overlay->name), 0, 0);
+        }
+        if (overlay->has_numeric_base &&
+            overlay->numeric_base % ctx->structs[sid].alignment != 0) {
+            return la_fail(ctx, LA_ERR_OVERLAY_ALIGNMENT, overlay->line,
+                           1, 1, la_name_slice(ctx, overlay->name),
+                           la_name_slice(ctx, overlay->type_name),
+                           overlay->numeric_base,
+                           ctx->structs[sid].alignment);
+        }
     }
     for (index = 0; index < ctx->procedure_count; ++index) {
         LaProcedureRec *procedure;
@@ -1550,7 +2160,7 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                                    la_slice("pointer local", 13), 0, 0);
                 }
                 size = ctx->target->pointer_units;
-            } else if (!la_primitive_size(ctx, local->type_name, &size)) {
+            } else if (!la_scalar_size(ctx, local->type_name, &size)) {
                 la_u16 sid;
                 sid = la_find_struct_handle(ctx, local->type_name);
                 if (sid == LA_INVALID_HANDLE) {
@@ -1560,6 +2170,15 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                                    la_slice("frame local", 11), 0, 0);
                 }
                 size = ctx->structs[sid].size;
+                if (ctx->structs[sid].alignment >
+                    ctx->target->max_frame_alignment) {
+                    return la_fail(
+                        ctx, LA_ERR_LAYOUT_ALIGNMENT, local->line, 1, 1,
+                        la_name_slice(ctx, local->name),
+                        la_slice("frame alignment", 15),
+                        ctx->structs[sid].alignment,
+                        ctx->target->max_frame_alignment);
+                }
             }
             if ((la_u32)procedure->frame_size + size > 255) {
                 return la_fail(ctx, LA_ERR_FRAME_LOCAL, local->line, 1, 1,
@@ -1897,6 +2516,7 @@ static LaDiagnosticCode la_property_value(LaContext *ctx,
     const char *cursor;
     la_u16 sid;
     la_u16 pool_index;
+    la_u16 enum_index;
     last_dot = 0;
     first_dot = 0;
     for (cursor = text; cursor < text + length; ++cursor) {
@@ -1908,6 +2528,50 @@ static LaDiagnosticCode la_property_value(LaContext *ctx,
     if (first_dot == 0 || last_dot == 0) {
         return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1, length,
                        la_slice(text, length), la_slice("", 0), 0, 0);
+    }
+    enum_index = la_find_enum_text(ctx, text,
+                                   (la_u16)(first_dot - text));
+    if (enum_index != LA_INVALID_HANDLE && first_dot == last_dot) {
+        LaEnumRec *enumeration;
+        const char *member_text;
+        la_u16 member_length;
+        la_u16 member_index;
+        enumeration = &ctx->enums[enum_index];
+        member_text = first_dot + 1;
+        member_length =
+            (la_u16)(text + length - member_text);
+        if (la_equal_text(member_text, member_length, "size")) {
+            *value = enumeration->size;
+            return LA_OK;
+        }
+        if (la_equal_text(member_text, member_length, "align")) {
+            *value = 1;
+            return LA_OK;
+        }
+        for (member_index = enumeration->first_member;
+             member_index < enumeration->first_member +
+                            enumeration->member_count;
+             ++member_index) {
+            LaEnumMemberRec *member;
+            LaSlice member_name;
+            member = &ctx->enum_members[member_index];
+            member_name = la_name_slice(ctx, member->name);
+            if (member_name.length == member_length &&
+                memcmp(member_name.data, member_text, member_length) == 0) {
+                if (!member->resolved) {
+                    return la_fail(
+                        ctx, LA_ERR_ENUM_VALUE, line, 1, length,
+                        la_slice(text, length),
+                        la_slice("unresolved or forward enum member", 33),
+                        0, 0);
+                }
+                *value = member->value;
+                return LA_OK;
+            }
+        }
+        return la_fail(ctx, LA_ERR_ENUM_VALUE, line, 1, length,
+                       la_slice(text, length),
+                       la_name_slice(ctx, enumeration->name), 0, 0);
     }
     pool_index = la_find_pool_text(ctx, text,
                                    (la_u16)(first_dot - text));
@@ -1925,6 +2589,10 @@ static LaDiagnosticCode la_property_value(LaContext *ctx,
         }
         if (la_equal_text(property.data, property.length, "stride")) {
             *value = ctx->pools[pool_index].stride;
+            return LA_OK;
+        }
+        if (la_equal_text(property.data, property.length, "align")) {
+            *value = ctx->pools[pool_index].alignment;
             return LA_OK;
         }
         return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1, property.length,
@@ -1948,7 +2616,7 @@ static LaDiagnosticCode la_property_value(LaContext *ctx,
             return LA_OK;
         }
         if (la_equal_text(property.data, property.length, "align")) {
-            *value = 1;
+            *value = ctx->structs[sid].alignment;
             return LA_OK;
         }
         return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1, property.length,
@@ -2245,11 +2913,40 @@ static int la_emit_property(LaContext *ctx, la_u16 line,
                             LaPropertyKind kind, la_u16 value)
 {
     LaEvent event;
+    la_u16 aggregate;
     la_init_event(ctx, &event, LA_EVENT_PROPERTY, line, 1);
     event.owner = owner;
     event.path = path;
     event.property = kind;
     event.value = value;
+    aggregate = la_find_struct_text(ctx, owner.data, owner.length);
+    if (aggregate != LA_INVALID_HANDLE) {
+        event.aggregate_kind =
+            (LaAggregateKind)ctx->structs[aggregate].kind;
+        event.layout_policy =
+            (LaLayoutPolicy)ctx->structs[aggregate].policy;
+    }
+    return la_write_event(ctx, &event);
+}
+
+static int la_emit_field_offset(LaContext *ctx, LaFieldRec *field,
+                                LaSlice owner, LaSlice path, la_u16 value)
+{
+    LaEvent event;
+    la_u16 aggregate;
+    la_init_event(ctx, &event, LA_EVENT_PROPERTY, field->line, 1);
+    event.owner = owner;
+    event.path = path;
+    event.property = LA_PROPERTY_FIELD_OFFSET;
+    event.value = value;
+    event.explicit_offset = field->has_explicit_offset;
+    aggregate = la_find_struct_text(ctx, owner.data, owner.length);
+    if (aggregate != LA_INVALID_HANDLE) {
+        event.aggregate_kind =
+            (LaAggregateKind)ctx->structs[aggregate].kind;
+        event.layout_policy =
+            (LaLayoutPolicy)ctx->structs[aggregate].policy;
+    }
     return la_write_event(ctx, &event);
 }
 
@@ -2283,7 +2980,8 @@ static int la_emit_struct_properties(LaContext *ctx, la_u16 root_sid)
                           la_slice("", 0), LA_PROPERTY_STRUCT_SIZE,
                           ctx->structs[root_sid].size)) return 0;
     if (!la_emit_property(ctx, ctx->structs[root_sid].line, owner,
-                          la_slice("", 0), LA_PROPERTY_STRUCT_ALIGN, 1)) {
+                          la_slice("", 0), LA_PROPERTY_STRUCT_ALIGN,
+                          ctx->structs[root_sid].alignment)) {
         return 0;
     }
     depth = 0;
@@ -2315,10 +3013,10 @@ static int la_emit_struct_properties(LaContext *ctx, la_u16 root_sid)
             field_name = la_name_slice(ctx, field->name);
             saved_path = path_length;
             if (!la_append_path(ctx, &path_length, field_name)) return 0;
-            if (!la_emit_property(ctx, field->line, owner,
-                                  la_slice(ctx->path_buffer, path_length),
-                                  LA_PROPERTY_FIELD_OFFSET,
-                                  (la_u16)(frame->base + field->offset))) {
+            if (!la_emit_field_offset(
+                    ctx, field, owner,
+                    la_slice(ctx->path_buffer, path_length),
+                    (la_u16)(frame->base + field->offset))) {
                 return 0;
             }
             if (!la_emit_property(ctx, field->line, owner,
@@ -2389,6 +3087,7 @@ static int la_parse_typed_operation(LaContext *ctx,
     const char *first_dot;
     const char *path_start;
     la_u16 location_index;
+    la_u16 overlay_index;
     la_u16 root_length;
     la_u16 field_index;
     la_u16 offset;
@@ -2398,6 +3097,7 @@ static int la_parse_typed_operation(LaContext *ctx,
     la_u16 leaf_size;
     LaSlice index;
     int indexed;
+    int is_overlay;
     LaTargetOperationKind operation;
     cursor = la_trim_left(start, end);
     if ((la_u16)(end - cursor) >= 4 && memcmp(cursor, "lda ", 4) == 0) {
@@ -2431,17 +3131,30 @@ static int la_parse_typed_operation(LaContext *ctx,
     procedure = la_procedure_at_line(ctx, line);
     location_index = la_find_location_text_at(
         ctx, base_start, (la_u16)(base_end - base_start), procedure);
+    overlay_index = LA_INVALID_HANDLE;
+    is_overlay = 0;
     if (location_index == LA_INVALID_HANDLE) {
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
-                (la_u16)(base_start - start + 1),
-                (la_u16)(base_end - base_start),
-                la_slice(base_start, (la_u16)(base_end - base_start)),
-                la_slice("typed location", 14), 0, 0);
-        return -1;
+        overlay_index = la_find_overlay_text(
+            ctx, base_start, (la_u16)(base_end - base_start));
+        if (overlay_index == LA_INVALID_HANDLE) {
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
+                    (la_u16)(base_start - start + 1),
+                    (la_u16)(base_end - base_start),
+                    la_slice(base_start, (la_u16)(base_end - base_start)),
+                    la_slice("typed location or overlay", 25), 0, 0);
+            return -1;
+        }
+        is_overlay = 1;
     }
     {
         LaSlice declared;
-        declared = la_name_slice(ctx, ctx->locations[location_index].type_name);
+        if (is_overlay) {
+            declared =
+                la_name_slice(ctx, ctx->overlays[overlay_index].type_name);
+        } else {
+            declared =
+                la_name_slice(ctx, ctx->locations[location_index].type_name);
+        }
         if (declared.length != root_length ||
             memcmp(declared.data, root_start, root_length) != 0) {
             la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
@@ -2451,6 +3164,13 @@ static int la_parse_typed_operation(LaContext *ctx,
         }
     }
     indexed = memchr(path_start, '[', (size_t)(close - path_start)) != 0;
+    if (is_overlay && indexed) {
+        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
+                (la_u16)(close - path_start),
+                la_slice(path_start, (la_u16)(close - path_start)),
+                la_slice("indexed overlay", 15), 0, 0);
+        return -1;
+    }
     index.data = 0;
     index.length = 0;
     stride = 0;
@@ -2518,16 +3238,35 @@ static int la_parse_typed_operation(LaContext *ctx,
     event->text = la_slice("", 0);
     event->owner = la_slice(root_start, root_length);
     event->path = la_slice(path_start, (la_u16)(close - path_start));
-    event->base =
-        la_name_slice(ctx, ctx->locations[location_index].physical);
+    if (is_overlay) {
+        event->base =
+            la_name_slice(ctx, ctx->overlays[overlay_index].base);
+    } else {
+        event->base =
+            la_name_slice(ctx, ctx->locations[location_index].physical);
+    }
     event->index = index;
     event->aux = la_slice("", 0);
     event->aux2 = la_slice("", 0);
     event->property = (LaPropertyKind)0;
-    event->operation = indexed ?
+    if (is_overlay) {
+        if (!ctx->target->overlay_byte_operations) {
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
+                    (la_u16)(end - start),
+                    la_slice(start, (la_u16)(end - start)),
+                    la_slice("static overlay byte access", 26), 0, 0);
+            return -1;
+        }
+        event->operation =
+            operation == LA_TARGET_OP_LOAD8_PTR_DISP ?
+                LA_TARGET_OP_LOAD8_OVERLAY_DISP :
+                LA_TARGET_OP_STORE8_OVERLAY_DISP;
+    } else {
+        event->operation = indexed ?
         (operation == LA_TARGET_OP_LOAD8_PTR_DISP ?
             LA_TARGET_OP_LOAD8_PTR_INDEXED :
             LA_TARGET_OP_STORE8_PTR_INDEXED) : operation;
+    }
     event->value = offset;
     event->stride = stride;
     event->count = count;
@@ -3275,8 +4014,62 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
                            (la_u16)strlen(ctx->target->name));
     event.value = LA_FORMAT_VERSION;
     if (!la_write_event(ctx, &event)) return ctx->error;
+    for (sid = 0; sid < ctx->enum_count; ++sid) {
+        LaSlice owner;
+        owner = la_name_slice(ctx, ctx->enums[sid].name);
+        if (!la_emit_property(ctx, ctx->enums[sid].line, owner,
+                              la_slice("", 0), LA_PROPERTY_STRUCT_SIZE,
+                              ctx->enums[sid].size) ||
+            !la_emit_property(ctx, ctx->enums[sid].line, owner,
+                              la_slice("", 0), LA_PROPERTY_STRUCT_ALIGN,
+                              1)) return ctx->error;
+    }
+    for (sid = 0; sid < ctx->enum_member_count; ++sid) {
+        LaEnumMemberRec *member;
+        LaEnumRec *enumeration;
+        member = &ctx->enum_members[sid];
+        enumeration = &ctx->enums[member->owner];
+        la_init_event(ctx, &event, LA_EVENT_ENUM_MEMBER,
+                      member->line, 1);
+        event.owner = la_name_slice(ctx, enumeration->name);
+        event.path = la_name_slice(ctx, member->name);
+        if (enumeration->is_signed) {
+            if (enumeration->size == 1) {
+                event.aux = la_slice("i8", 2);
+            } else {
+                event.aux = la_slice("i16", 3);
+            }
+        } else {
+            if (enumeration->size == 1) {
+                event.aux = la_slice("u8", 2);
+            } else {
+                event.aux = la_slice("u16", 3);
+            }
+        }
+        event.signed_value = member->value;
+        event.offset = enumeration->size;
+        event.count = enumeration->is_signed;
+        if (!la_write_event(ctx, &event)) return ctx->error;
+    }
     for (sid = 0; sid < ctx->struct_count; ++sid) {
         if (!la_emit_struct_properties(ctx, sid)) return ctx->error;
+    }
+    for (sid = 0; sid < ctx->overlay_count; ++sid) {
+        LaOverlayRec *overlay;
+        la_u16 aggregate;
+        overlay = &ctx->overlays[sid];
+        aggregate = la_find_struct_handle(ctx, overlay->type_name);
+        la_init_event(ctx, &event, LA_EVENT_OVERLAY, overlay->line, 1);
+        event.owner = la_name_slice(ctx, overlay->name);
+        event.aux = la_name_slice(ctx, overlay->type_name);
+        event.base = la_name_slice(ctx, overlay->base);
+        event.value = ctx->structs[aggregate].size;
+        event.offset = ctx->structs[aggregate].alignment;
+        event.aggregate_kind =
+            (LaAggregateKind)ctx->structs[aggregate].kind;
+        event.layout_policy =
+            (LaLayoutPolicy)ctx->structs[aggregate].policy;
+        if (!la_write_event(ctx, &event)) return ctx->error;
     }
     for (sid = 0; sid < ctx->pool_count; ++sid) {
         LaSlice owner;
@@ -3289,7 +4082,10 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
                               ctx->pools[sid].stride) ||
             !la_emit_property(ctx, ctx->pools[sid].line, owner,
                               la_slice("", 0), LA_PROPERTY_FIELD_SIZE,
-                              ctx->pools[sid].size)) return ctx->error;
+                              ctx->pools[sid].size) ||
+            !la_emit_property(ctx, ctx->pools[sid].line, owner,
+                              la_slice("", 0), LA_PROPERTY_STRUCT_ALIGN,
+                              ctx->pools[sid].alignment)) return ctx->error;
     }
     cursor = ctx->source;
     source_end = ctx->source + ctx->source_length;
@@ -3309,7 +4105,9 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
         trimmed = la_trim_left(cursor, content_end);
         if (in_struct) {
             if (la_line_keyword(trimmed, content_end, "end")) in_struct = 0;
-        } else if (la_line_keyword(trimmed, content_end, "struct")) {
+        } else if (la_line_keyword(trimmed, content_end, "struct") ||
+                   la_line_keyword(trimmed, content_end, "union") ||
+                   la_line_keyword(trimmed, content_end, "enum")) {
             in_struct = 1;
         } else if (active_procedure != LA_INVALID_HANDLE &&
                    line <= ctx->procedures[active_procedure].begin_line) {
@@ -3334,8 +4132,9 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
                     ctx->procedures[procedure].naked ?
                         LA_TARGET_OP_PROC_NAKED :
                         LA_TARGET_OP_PROC_FRAME)) return ctx->error;
-        } else if (la_line_keyword(trimmed, content_end, "pool")) {
-            /* Pool declaration is semantic-only. */
+        } else if (la_line_keyword(trimmed, content_end, "pool") ||
+                   la_line_keyword(trimmed, content_end, "overlay")) {
+            /* Storage declarations are semantic-only. */
         } else if (la_line_keyword(trimmed, content_end, "location") ||
                    la_line_keyword(trimmed, content_end, "static_assert")) {
             /* semantic-only */
@@ -3504,6 +4303,7 @@ LaDiagnosticCode la_compile(const LaInput *input,
     ctx.limits = limits;
     ctx.stats = stats;
     ctx.current_struct = LA_INVALID_HANDLE;
+    ctx.current_enum = LA_INVALID_HANDLE;
     ctx.current_procedure = LA_INVALID_HANDLE;
     ctx.error = LA_OK;
     required = la_workspace_required(limits);
@@ -3531,10 +4331,20 @@ LaDiagnosticCode la_compile(const LaInput *input,
                                       (la_u32)limits->max_line_bytes + 1);
     ctx.structs = (LaStructRec *)la_take(
         &cursor, &remaining,
-        (la_u32)limits->max_structs * sizeof(LaStructRec));
+        ((la_u32)limits->max_structs + limits->max_unions) *
+        sizeof(LaStructRec));
     ctx.fields = (LaFieldRec *)la_take(
         &cursor, &remaining,
         (la_u32)limits->max_fields * sizeof(LaFieldRec));
+    ctx.enums = (LaEnumRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_enums * sizeof(LaEnumRec));
+    ctx.enum_members = (LaEnumMemberRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_enum_members * sizeof(LaEnumMemberRec));
+    ctx.overlays = (LaOverlayRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_overlays * sizeof(LaOverlayRec));
     ctx.locations = (LaLocationRec *)la_take(
         &cursor, &remaining,
         (la_u32)limits->max_locations * sizeof(LaLocationRec));
@@ -3559,13 +4369,15 @@ LaDiagnosticCode la_compile(const LaInput *input,
     ctx.frames = (LaPropertyFrame *)la_take(
         &cursor, &remaining,
         (la_u32)limits->max_nesting * sizeof(LaPropertyFrame));
-    if (ctx.bindings == 0 || ctx.frames == 0) {
+    if (ctx.enums == 0 || ctx.enum_members == 0 || ctx.overlays == 0 ||
+        ctx.bindings == 0 || ctx.frames == 0) {
         return LA_ERR_WORKSPACE;
     }
     stats->workspace_used = required;
     ctx.names[0] = 0;
     if (la_load_source(&ctx) != LA_OK) return ctx.error;
     if (la_first_pass(&ctx) != LA_OK) return ctx.error;
+    if (la_resolve_enums(&ctx) != LA_OK) return ctx.error;
     if (la_resolve_layouts(&ctx) != LA_OK) return ctx.error;
     if (la_check_assertions(&ctx) != LA_OK) return ctx.error;
     if (la_emit_all(&ctx) != LA_OK) return ctx.error;
@@ -3594,7 +4406,13 @@ const char *la_diagnostic_name(LaDiagnosticCode code)
         "procedure-scope", "frame-local", "frame-stack-mutation",
         "member-role", "member-placement", "calling-convention",
         "invoke-capacity", "unknown-procedure", "invoke-binding",
-        "invoke-scratch", "local-syntax-migration"
+        "invoke-scratch", "local-syntax-migration",
+        "enum-capacity", "enum-member-capacity", "union-capacity",
+        "overlay-capacity", "duplicate-enum", "duplicate-enum-member",
+        "duplicate-union", "duplicate-overlay", "enum-underlying",
+        "enum-empty", "enum-value", "aggregate-empty", "layout-policy",
+        "layout-alignment", "field-offset", "union-offset",
+        "overlay-type", "overlay-base", "overlay-alignment"
     };
     if ((la_u16)code >= (la_u16)(sizeof(names) / sizeof(names[0]))) {
         return "unknown-diagnostic";

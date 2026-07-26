@@ -19,6 +19,8 @@ FIXTURE = ROOT / "tests/inlay/celeste.inlay.asm"
 REFERENCE = ROOT / "tests/inlay/celeste_reference.asm"
 STRUCTURED_FIXTURE = ROOT / "tests/inlay/structured.inlay.asm"
 STRUCTURED_REFERENCE = ROOT / "tests/inlay/structured_reference.asm"
+VARIANT_FIXTURE = ROOT / "tests/inlay/variants.inlay.asm"
+VARIANT_REFERENCE = ROOT / "tests/inlay/variants_reference.asm"
 FULL_LAYOUT = ROOT / "src/inlay/celeste.inlay.asm"
 CELESTE_MAIN = ROOT / "src/celeste/main.asm"
 CELESTE_MEMMAP = ROOT / "src/celeste/memmap.asm"
@@ -414,6 +416,40 @@ def check_structured_fixture(first: Path, second: Path) -> None:
         )
 
 
+def check_variant_fixture(first: Path, second: Path) -> None:
+    outputs = []
+    maps = []
+    for directory in (first, second):
+        output = directory / "variants.asm"
+        map_path = directory / "variants.map.json"
+        translate(VARIANT_FIXTURE, output, map_path)
+        outputs.append(output)
+        maps.append(map_path)
+    if outputs[0].read_bytes() != outputs[1].read_bytes():
+        raise AssertionError("layout-variant output is not deterministic")
+    if maps[0].read_bytes() != maps[1].read_bytes():
+        raise AssertionError("layout-variant source map is not deterministic")
+    generated = outputs[0].read_text()
+    required = {
+        "__la_10_ObjectKind__6_player__value = 1",
+        "__la_10_HeaderView__5_flags__offset = 17",
+        "__la_12_AlignedShape__1_b__offset = 2",
+        "__la_12_AlignedShape__size = 8",
+        "__la_13_ObjectPayload__4_pair__2_hi__offset = 1",
+    }
+    missing = sorted(line for line in required if line not in generated)
+    if missing:
+        raise AssertionError(f"missing variant constants: {missing}")
+    frontend = first / "variants.bin"
+    reference = first / "variants-reference.bin"
+    run("customasm", outputs[0], "-f", "binary", "-o", frontend)
+    run("customasm", VARIANT_REFERENCE, "-f", "binary", "-o", reference)
+    if frontend.read_bytes() != reference.read_bytes():
+        raise AssertionError(
+            "enum/layout/union/overlay output differs from reference bytes"
+        )
+
+
 def check_full_rom(tmp: Path) -> tuple[int, str]:
     run(
         sys.executable,
@@ -481,6 +517,7 @@ def main() -> int:
         check_cli(tmp_a)
         stats = check_fixture(tmp_a, tmp_b)
         check_structured_fixture(tmp_a, tmp_b)
+        check_variant_fixture(tmp_a, tmp_b)
         check_negative_sources(tmp_a)
         check_downstream_diagnostics(tmp_a)
         rom_size, rom_hash = check_full_rom(tmp_a)

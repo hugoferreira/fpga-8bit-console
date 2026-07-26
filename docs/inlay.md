@@ -14,9 +14,10 @@ sha256  d85795e3daa7f1fbea0cef869efd554871f316c6196586dac3938e6340ae011a
 ```
 
 customasm v0.14.1 remains the host instruction encoder. The frontend owns
-layouts, compile-time expressions, typed locations, procedure conventions,
-typed frames, marshalled invocation and structured field operations; it does
-not yet own banks, ordinary instructions or machine-code encoding.
+packed and aligned layouts, enums, unions, sparse views, overlays, compile-time
+expressions, typed locations, procedure conventions, typed frames, marshalled
+invocation and structured field operations; it does not yet own banks,
+ordinary instructions or machine-code encoding.
 
 ## Architecture
 
@@ -71,13 +72,25 @@ Inlay source files use the `.inlay.asm` suffix. The implemented declarations
 are:
 
 ```asm
-struct Name packed
+struct Name
     scalar : u8
     signed : i16
     nested : Other
     links  : ptr Other
     array  : Other[5]
 end
+
+enum State : u8
+    idle = 0
+    moving = 1
+end
+
+union Value
+    byte : u8
+    word : u16
+end
+
+overlay state_view : Name at OBJECT_RAM
 
 location pObj : ptr Name
 pool objects : Name[16] at OBJPOOL table obj_lo, obj_hi
@@ -92,15 +105,117 @@ static_assert objects.stride == Name.size
 
 The fixed-width primitive types are `u8`, `i8`, `u16` and `i16`. Pointer width
 comes from the target and is two storage units for `console6502`. Layouts are
-nominal, packed, ordered and alignment-one. Forward nominal references are
-allowed; unknown types and recursive by-value layouts are rejected. Pointer
-references do not create a by-value cycle.
+nominal. Forward nominal references are allowed; unknown types and recursive
+by-value structure/union graphs are rejected. Pointer references do not create
+a by-value cycle.
+
+### Enums, layout policies, unions and overlays
+
+Packed layout is the default. The explicit `packed` keyword is accepted as an
+identical assertion:
+
+```asm
+struct Dense
+    a : u8
+    b : u16
+end
+
+struct AlsoDense packed
+    a : u8
+    b : u16
+end
+```
+
+`aligned(N)` is the deterministic alternative; it is not a target ABI request.
+`N` is a positive power-of-two count of target storage units and cannot exceed
+the target's advertised maximum. Primitive and enum fields align to
+`min(size,N)`, pointers to `min(pointer-size,N)`, nested aggregates to
+`min(declared-align,N)`, and arrays to their element alignment. The aggregate
+size is rounded to `N`.
+
+```asm
+struct Shape aligned(4)
+    a : u8
+    b : u16
+    c : u8
+end
+
+static_assert Shape.a.offset == 0
+static_assert Shape.b.offset == 2
+static_assert Shape.c.offset == 4
+static_assert Shape.size == 8
+static_assert Shape.align == 4
+```
+
+A structure field may advance the monotonic layout cursor explicitly:
+
+```asm
+struct HeaderView
+    kind  : ObjectKind at 0
+    flags : u8         at 17
+end
+```
+
+The bytes between fields are deliberately omitted from this nominal view.
+They have no path and are not allocated, reserved or initialised. A later
+field cannot backfill a gap or overlap an earlier field. In `aligned(N)`,
+explicit offsets must also satisfy the field's effective alignment.
+
+Enums require an underlying `u8`, `i8`, `u16` or `i16` type and an explicit
+value for every member:
+
+```asm
+enum ObjectKind : u8
+    player = 1
+    actor = ObjectKind.player
+    balloon = 2
+end
+```
+
+Members resolve in declaration order. Equal-value aliases are valid;
+self/forward references and values outside the underlying signed or unsigned
+range are errors. Enums are nominal scalar field types. Qualified values work
+in frontend compile-time expressions and are emitted as stable generated
+constants. Inlay does not search or rewrite arbitrary raw instruction text
+containing an enum name.
+
+Unions accept the same field types and arrays as structures. Every member is
+at offset zero; `packed` unions have alignment one and the largest member size,
+while `aligned(N)` rounds that extent to `N`. They track no active member and
+perform no runtime conversion or validation.
+
+```asm
+union Payload
+    byte : u8
+    pair : Pair
+end
+```
+
+An overlay assigns a complete structure or union type to an existing target
+symbol without emitting storage:
+
+```asm
+overlay header : HeaderView at OBJECT_RAM
+overlay motion : MotionView at OBJECT_RAM
+
+lda [header + HeaderView.kind]
+sta [motion + MotionView.vy]
+```
+
+Multiple overlays may share a base, have different sizes, omit different
+offsets and overlap each other. Each underlying structure remains internally
+non-overlapping. On `console6502`, byte leaves lower to absolute
+`BASE + displacement` loads/stores. Indexed overlays and non-byte overlay
+accesses are rejected. A numeric fixed base is checked against an aligned
+aggregate's placement requirement; symbolic bases publish that alignment for
+downstream validation.
 
 Expressions support decimal integer constants, parentheses, unary `-` and `!`,
 `* / %`, `+ -`, comparisons, equality, `&&` and `||`, in that precedence
-order. Available properties are:
+order. Available properties and values are:
 
-- structure `.size` and `.align`;
+- structure, union and enum `.size` and `.align`;
+- qualified enum member values such as `ObjectKind.player`;
 - field `.offset` and `.size`;
 - array field `.count` and `.stride`.
 
@@ -157,7 +272,8 @@ address pObj, objects[a]
 
 The declaration describes fixed contiguous storage and a pre-existing
 low/high address-table strategy. It provides `.count`, `.stride` and `.size`;
-it does not allocate slots or emit the storage or tables. On console6502,
+aligned element types also publish `.align`. It does not allocate slots or emit
+the storage or tables. On console6502,
 `address` requires physical source `A` and a two-byte destination location and
 lowers to `TAX`, the low-table move, the high-table load and the high-byte
 store.
@@ -222,7 +338,9 @@ relative to the aggregate's frame offset. Semantic `ret` restores `SP` with
 `TSX`/`INX`/`TXS` before `RTS`, preserving `A`. A zero-size frame emits no
 frame-management instructions. Frame members in naked procedures, raw stack
 mutation, whole-aggregate copies, and raw `RTS` while a frame is active are
-rejected.
+rejected. The current console6502 frame backend guarantees alignment one, so
+an `aligned(N)` aggregate with `N > 1` is rejected as a frame member rather
+than silently weakened to packed layout.
 
 `invoke` marshals the declared inputs of an earlier procedure:
 
@@ -270,7 +388,11 @@ The portable defaults are:
 | interned-name bytes | 8,192 |
 | tokens | 8,192 |
 | structures | 128 |
+| unions | 64 |
 | fields | 1,024 |
+| enums | 128 |
+| enum members | 512 |
+| overlays | 128 |
 | typed locations | 128 |
 | fixed pools | 64 |
 | procedures | 256 |
@@ -281,7 +403,7 @@ The portable defaults are:
 | nesting/property traversal | 32 |
 | structured target operations | 2,048 |
 | line/path bytes | 512 |
-| total reserved workspace | 110,488 bytes |
+| host-profile reserved workspace | 131,352 bytes |
 
 Every bounded resource has a stable diagnostic code. Core tests exercise exact
 limits and one-past-limit failures for the active tables. Diagnostics carry a
@@ -314,9 +436,16 @@ components:
 __la_13_CelesteObject__size
 ```
 
+Enum constants use the same collision-free family:
+
+```text
+__la_10_ObjectKind__6_player__value
+```
+
 The generated header records language format 1 and target format 1. Source-map
 format 2 is deterministic JSON containing a logical source table and a source
-id on every ordered header, property, raw and target-operation mapping.
+id on every ordered header, enum member, property, overlay, raw and
+target-operation mapping.
 Absolute host paths are deliberately excluded. Frontend and mapped downstream
 diagnostics use the included module's logical name and original line.
 

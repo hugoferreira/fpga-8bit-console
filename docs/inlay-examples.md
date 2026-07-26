@@ -7,15 +7,17 @@ and does not propose changes to the console ISA. The implemented first slice,
 host/console boundary, exact grammar, limits and build commands are documented
 in `docs/inlay.md`.
 
-Implemented today: packed structures, fixed arrays, nested field paths,
+Implemented today: default/explicit packed structures, deterministic
+`aligned(N)` layouts, fixed-width enums, explicit sparse offsets, unions,
+non-owning fixed overlays, fixed arrays, nested field paths,
 `u8`/`i8`/`u16`/`i16`, pointer fields, typed pointer locations,
-`static_assert`, generated layout and pool properties, direct and single-index
-byte operands, fixed pools with explicit address tables, scoped procedures,
-physical parameters, default `frame`, explicit `naked`, scalar frame locals
-and semantic `ret` lowering for `console6502`. The current slice also has the
-target-owned `console6502` convention, return aliases, pointer and packed
-aggregate frame locations, and compact parallel-assignment `invoke`. Celeste's
-normal build derives
+`static_assert`, generated layout and pool properties, direct, overlay and
+single-index byte operands, fixed pools with explicit address tables, scoped
+procedures, physical parameters, default `frame`, explicit `naked`, scalar
+frame locals and semantic `ret` lowering for `console6502`. The current slice
+also has the target-owned `console6502` convention, return aliases, pointer and
+packed aggregate frame locations, and compact parallel-assignment `invoke`.
+Celeste's normal build derives
 every `O_*` offset and its pool stride from the layout and is byte-identical to
 the former direct-customasm build. Its build-only module copies express all 66
 eligible direct `pObj`/`pOth` byte operations as typed paths and migrate
@@ -142,6 +144,54 @@ model.
 The explicit `reserved` tail is preferable to an implicit size override. It
 makes the seven unused bytes visible and ensures that adding a field cannot
 silently grow the record past its pool stride.
+
+### Sparse views over the same Celeste object
+
+Code that needs only the common header or motion fields can describe exactly
+those offsets without manufacturing padding fields:
+
+```asm
+enum ObjectKind : u8
+    empty = 0
+    player = 1
+    spawn = 2
+end
+
+struct ObjectHeaderView
+    kind  : ObjectKind at 0
+    flags : u8         at 17
+end
+
+struct ObjectMotionView
+    x  : i8      at 2
+    y  : i8      at 3
+    vx : Fixed8_8 at 4
+    vy : Fixed8_8 at 6
+end
+
+overlay header : ObjectHeaderView at OBJPOOL
+overlay motion : ObjectMotionView at OBJPOOL
+```
+
+The gaps in each structure mean “not part of this view”; they do not reserve,
+clear or own the omitted bytes. Both overlays deliberately cover the same
+fixed storage, may differ in size, and may overlap. A byte access such as
+`lda [header + ObjectHeaderView.flags]` lowers to the same absolute
+`OBJPOOL + 17` access a programmer would write by hand.
+
+Alternative payload interpretations use a union rather than overlapping
+fields inside one structure:
+
+```asm
+union ObjectPayload
+    raw    : u8[46]
+    player : PlayerState
+    smoke  : SmokeState
+end
+```
+
+This supplies offset and size calculations only. There is no active-member
+tag, runtime check, construction, destruction or coupling to `ObjectKind`.
 
 ### Typed field access
 
