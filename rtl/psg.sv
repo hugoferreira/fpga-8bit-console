@@ -325,6 +325,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic        s_snd_wt;
   logic [2:0]  s_snd_id;
   logic [5:0]  s_snd_pitch;
+  logic        s_pitch_direct;
   logic        s_ch_noiz, s_ch_buzz;
   logic [1:0]  s_ch_det, s_ch_rev, s_ch_damp;
   logic [7:0]  s_eff_vol;
@@ -341,6 +342,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [23:0] s_old_phase, s_old_inc, s_last_inc;
   logic [7:0]  s_old_vol, s_last_vol;
   logic [2:0]  s_old_wave, s_last_wave;
+  logic [5:0]  s_last_pitch;
   logic [6:0]  s_ramp;              // 0 idle; 1..64 means blend position 0..63
   // The wavetable's base address in audio RAM, recomputed rather than stored:
   // 256 + id * 68 is two shifts and an add, against 13 bits per slot of state
@@ -435,7 +437,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                           w_eff_inc[23:16]};
       4'd2:    spar_wd = {2'b0, w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz,
                           w_ch_noiz, w_snd_pitch};
-      default: spar_wd = {8'b0, w_eff_vol};
+      default: spar_wd = {7'b0, (!w_ins_on && w_cur_fx == 3'd0),
+                          w_eff_vol};
     endcase
   end
   // vwe is driven below, once seq_frozen exists - iverilog rejects use before
@@ -1451,9 +1454,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         4'd7:    sosc_wd = {s_ramp, 1'b0, s_old_phase[23:16]};
         4'd8:    sosc_wd = s_old_inc[15:0];
         4'd9:    sosc_wd = {s_old_vol, s_old_inc[23:16]};
-        4'd10:   sosc_wd = {5'b0, s_last_wave, s_last_inc[23:16]};
+        4'd10:   sosc_wd = {s_last_pitch[4:0], s_last_wave,
+                            s_last_inc[23:16]};
         4'd11:   sosc_wd = s_last_inc[15:0];
-        4'd12:   sosc_wd = {5'b0, s_old_wave, s_last_vol};
+        4'd12:   sosc_wd = {4'b0, s_last_pitch[5], s_old_wave, s_last_vol};
         default: sosc_wd = s_noise_lp;
       endcase
     end
@@ -1478,6 +1482,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [16:0] det_dq_wide =
       {1'b0, einc[23:8]} - {8'b0, det_dq_round[16:8]};
   wire [23:0] det_dq = {det_dq_wide[15:0], 8'b0};
+  wire pitch_transition = playing[pc_ch] && !s_snd_wt
+                        && s_pitch_direct
+                        && s_eff_inc != s_last_inc
+                        && s_last_vol != 0
+                        && s_snd_pitch != s_last_pitch;
   wire transition_change = playing[pc_ch] && !s_snd_wt
                          && (s_eff_inc != s_last_inc
                              || s_eff_vol != s_last_vol
@@ -1807,6 +1816,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       s_last_inc <= 0;
       s_last_vol <= 0;
       s_last_wave <= 0;
+      s_last_pitch <= 0;
       s_ramp <= 0;
       s_eff_inc <= 0;
       s_snd_wave <= 0;
@@ -1869,10 +1879,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           6'd10: if (!REALTIME_PREVIEW)
                     {s_old_vol, s_old_inc[23:16]} <= sosc_q;
           6'd11: if (!REALTIME_PREVIEW)
-                    {s_last_wave, s_last_inc[23:16]} <= sosc_q[10:0];
+                    {s_last_pitch[4:0], s_last_wave,
+                     s_last_inc[23:16]} <= sosc_q;
           6'd12: if (!REALTIME_PREVIEW) s_last_inc[15:0] <= sosc_q;
           6'd13: if (!REALTIME_PREVIEW)
-                    {s_old_wave, s_last_vol} <= sosc_q[10:0];
+                    {s_last_pitch[5], s_old_wave,
+                     s_last_vol} <= sosc_q[11:0];
           6'd14: if (!REALTIME_PREVIEW) s_noise_lp <= sosc_q;
           default: ;
         endcase
@@ -1881,7 +1893,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           6'd2: {s_snd_id, s_snd_wt, s_snd_wave, s_eff_inc[23:16]} <= spar_q[14:0];
           6'd3: {s_ch_damp, s_ch_rev, s_ch_det, s_ch_buzz, s_ch_noiz,
                  s_snd_pitch} <= spar_q[13:0];
-          6'd4: s_eff_vol <= spar_q[7:0];
+          6'd4: {s_pitch_direct, s_eff_vol} <= spar_q[8:0];
           default: ;
         endcase
 
@@ -2004,6 +2016,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               s_old_vol <= s_last_vol;
               s_old_wave <= s_last_wave;
               s_ramp <= 7'd1;
+              // PICO-8's newly calculated oscillator state emits its first
+              // changed-pitch sample at the preceding phase. The copied old
+              // state advances independently for the ramp, while the new
+              // stream consumes its new increment starting with the following
+              // sample. Without this hold, every pitch boundary leaves the
+              // new continuation one sample ahead after the crossfade.
+              if (pitch_transition)
+                s_phase <= s_phase;
               // A zero-amplitude state is not merely an inaudible running
               // oscillator in PICO-8: the next nonzero state starts from the
               // canonical phase again.  Repeated speed-2 fade-in rows export
@@ -2016,6 +2036,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             s_last_inc <= s_eff_inc;
             s_last_vol <= s_eff_vol;
             s_last_wave <= s_snd_wave;
+            s_last_pitch <= s_snd_pitch;
             // a trigger asked for this channel's filter state to be reset
             if (clr_tog[pc_ch] != clr_ack[pc_ch]) begin
               clr_ack[pc_ch] <= clr_tog[pc_ch];

@@ -125,6 +125,31 @@ def probes() -> list[Probe]:
             64,
         ))
 
+    # One-boundary transition probes. These distinguish oscillator-state
+    # continuation from the effect and music sequencers: exactly one parameter
+    # changes halfway through one SFX, while the other two remain fixed.
+    out.append(Probe(
+        "transition-pitch", "single pitch boundary, C-2 to C-3",
+        {0: sfx([note(24, 0, 7)] * 8 + [note(36, 0, 7)] * 8,
+                speed=1, length=16)},
+        [([0, None, None, None], False, False, True)],
+        16,
+    ))
+    out.append(Probe(
+        "transition-volume", "single volume boundary, 7 to 3",
+        {0: sfx([note(30, 0, 7)] * 8 + [note(30, 0, 3)] * 8,
+                speed=1, length=16)},
+        [([0, None, None, None], False, False, True)],
+        16,
+    ))
+    out.append(Probe(
+        "transition-waveform", "single waveform boundary, triangle to square",
+        {0: sfx([note(30, 0, 7)] * 8 + [note(30, 3, 7)] * 8,
+                speed=1, length=16)},
+        [([0, None, None, None], False, False, True)],
+        16,
+    ))
+
     out.append(Probe(
         "mix-two", "triangle C-2 volume 7 plus square G-2 volume 4",
         {0: constant(24, 0, 7), 1: constant(31, 3, 4)},

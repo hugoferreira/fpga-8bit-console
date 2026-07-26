@@ -22,6 +22,11 @@ DETERMINISTIC_TOLERANCE = {
     "correlation_min": 0.99,
     "nrmse_max": 0.10,
 }
+TRANSITION_TOLERANCE = {
+    **DETERMINISTIC_TOLERANCE,
+    "correlation_min": 0.999,
+    "nrmse_max": 0.03,
+}
 STOCHASTIC_TOLERANCE = {
     "duration_samples": 0,
     "rms_mean_relative_max": 0.10,
@@ -33,8 +38,11 @@ STOCHASTIC_TOLERANCE = {
 
 def tolerance(case: dict) -> dict:
     """Return the explicit diagnostic gate carried with this case's result."""
-    return dict(STOCHASTIC_TOLERANCE if case["stochastic"]
-                else DETERMINISTIC_TOLERANCE)
+    if case["stochastic"]:
+        return dict(STOCHASTIC_TOLERANCE)
+    if case["name"].startswith("transition-"):
+        return dict(TRANSITION_TOLERANCE)
+    return dict(DETERMINISTIC_TOLERANCE)
 
 
 def classify(case: dict, metrics: dict) -> list[str]:

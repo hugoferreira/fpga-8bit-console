@@ -10,6 +10,7 @@ import tempfile
 import wave
 
 import psg_oracle
+import psg_oracle_matrix
 
 
 def check(condition: bool, message: str) -> None:
@@ -34,6 +35,16 @@ def main() -> int:
         check(len(cases) >= 30, "expected a broad generated corpus")
         check(any(c["stochastic"] for c in cases), "noise cases are marked")
         check(any(c["long"] for c in cases), "loop-cap case is marked long")
+        names = {case["name"] for case in cases}
+        check({"transition-pitch", "transition-volume",
+               "transition-waveform"} <= names,
+              "isolated transition probes are generated")
+        transition = next(c for c in cases
+                          if c["name"] == "transition-pitch")
+        gate = psg_oracle_matrix.tolerance(transition)
+        check(gate["correlation_min"] == 0.999
+              and gate["nrmse_max"] == 0.03,
+              "transition probes carry the tightened deterministic gate")
         for case in cases:
             audio = (root / case["audio"]).read_bytes()
             check(len(audio) == 4608, f"{case['name']}: audio image size")

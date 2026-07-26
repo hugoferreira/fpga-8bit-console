@@ -355,6 +355,47 @@ PICO-8 waveform-instrument case still failed (correlation 0.9830, NRMSE
 area report therefore vetoed the implementation rather than allowing an
 unverified formula to become architecture.
 
+Three one-boundary exports now separate transition blending from oscillator
+state. A volume-only change is clean (correlation 0.9999, NRMSE 0.0164), as is
+a triangle-to-square change (correlation 0.9999, NRMSE 0.0149). An otherwise
+identical C-2 to C-3 pitch boundary reproduces the failure (correlation 0.9946,
+NRMSE 0.1034). This rejects a generic ramp rewrite: the 64-sample blend works
+for amplitude and waveform changes, while pitch continuation does not.
+
+The binary initially suggested the two phase accumulators (`p` and `q`) as the
+cause, but the complete state calculation rejects that larger rewrite for an
+ordinary unfiltered voice: it publishes `dq = dp`, so the precombined waveform
+ROM remains valid. The focused WAV instead exposes a persistent one-sample
+phase lead beginning exactly at a direct note-pitch boundary. PICO-8 emits the
+first changed-pitch sample at the preceding phase before consuming the new
+increment.
+
+The accepted correction publishes one `direct basic pitch` bit with the
+sequencer's parameter record and retains the preceding base pitch in six spare
+bits of the oscillator record. A non-silent direct note whose base pitch and
+increment both change holds the new phase for its first transition sample.
+Effect-driven increment changes and custom instruments do not take this path.
+The pitch-only probe improves from correlation 0.9946 / NRMSE 0.1034 to
+0.9998 / 0.0177, while the volume and waveform controls remain at 0.9999 /
+0.0164 and 0.9999 / 0.0149. The complete matrix is required because a broader
+increment-change hold made arpeggios and SFX instruments regress, and was
+rejected before this explicit qualifier was added.
+Those three focused cases now carry a tighter correlation floor of 0.999 and
+NRMSE ceiling of 0.03 instead of the corpus-wide 0.99 / 0.10 gate.
+
+With the three controls added, the complete bounded matrix is now 28/36
+clean. That is the previous 25/33 clean set plus all three isolated transition
+cases; no pre-existing pass regressed. The remaining eight failures are still
+slide, drop, DETUNE-1, REVERB-1, DAMPEN-1, both custom-instrument paths and
+the chained-pattern boundary. The structural Verilator PSG testbench remains
+fully green.
+
+The accepted state costs 6,120/7,680 HX8K logic cells and 19/32 EBRs at seed
+1. Routed Fmax is 31.47 MHz against the subsystem's 50 MHz constraint, with
+the soft-add tree still critical. Relative to the preceding 6,097-cell
+measurement, the direct-pitch qualifier and retained pitch consume 23 cells;
+they do not add memory or create a new critical-path class.
+
 The Verilator timing testbench completes with all structural checks passing at
 an exact clocks-per-sample relationship; its wall time is not a requirement.
 The final HX8K subsystem build uses 6,134/7,680 LCs (79%) and 19/32 EBRs (59%).
