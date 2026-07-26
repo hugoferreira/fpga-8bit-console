@@ -16,6 +16,21 @@ def pitch_hz(p):
     return 440.0 * 2.0 ** ((p - 33) / 12.0)
 
 
+# Shipping PICO-8 does not calculate equal temperament in floating point. Its
+# _get_dx_for_note routine indexes this twelve-entry integer table, applies a
+# fixed-point reciprocal multiply, then octave-shifts the 16-bit oscillator
+# increment. rtl/psg.sv uses a 24-bit phase, hence the final << 8.
+NOTE_DX = [523, 554, 587, 622, 659, 698,
+           740, 784, 831, 880, 932, 984]
+
+
+def pico8_phase_increment(p):
+    octave, chromatic = divmod(p, 12)
+    dp = ((NOTE_DX[chromatic] << 16) * 0x2F8DF18F) >> 44
+    dp = dp >> (3 - octave) if octave < 3 else dp << (octave - 3)
+    return dp << 8
+
+
 def wave(w, t):
     if w == 0:  # triangle
         return 0.5 * (1.0 - abs(4.0 * t - 2.0))
@@ -24,11 +39,11 @@ def wave(w, t):
         x = 2.0 * t / a - 1.0 if t < a else 2.0 * (1.0 - t) / (1.0 - a) - 1.0
         return 0.5 * x
     if w == 2:  # saw
-        return 0.653 * (t if t < 0.5 else t - 1.0)
+        return 0.653 * (t - 0.5)
     if w == 3:  # square
-        return 0.25 if t < 0.5 else -0.25
-    if w == 4:  # pulse ~31.6%
-        return 0.25 if t < 0.316 else -0.25
+        return -0.25 if t < 0.5 else 0.25
+    if w == 4:  # pulse: PICO-8 transition at phase 0xb000
+        return -0.25 if t < 0.6875 else 0.25
     if w == 5:  # organ
         x = 3.0 - abs(24.0 * t - 6.0) if t < 0.5 else 1.0 - abs(16.0 * t - 12.0)
         return x / 9.0
@@ -37,7 +52,7 @@ def wave(w, t):
 
 with open("rtl/psg_pitch.hex", "w") as f:
     for p in range(64):
-        f.write(f"{round((1 << 24) * pitch_hz(p) / 22050.0):06x}\n")
+        f.write(f"{pico8_phase_increment(p):06x}\n")
 
 with open("rtl/psg_waves.hex", "w") as f:
     for w in range(8):
@@ -76,4 +91,5 @@ with open("rtl/psg_recip.hex", "w") as f:
     for s in range(256):
         f.write(f"{min(0xFFFF, round(65536 / max(1, s))):04x}\n")
 
-print("pitch 33 ->", pitch_hz(33), "Hz; inc", round((1 << 24) * pitch_hz(33) / 22050.0))
+print("pitch 33 -> PICO-8 dp", pico8_phase_increment(33) >> 8,
+      "phase increment", pico8_phase_increment(33))

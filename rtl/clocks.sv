@@ -18,8 +18,9 @@
 // measures the PSG at Fmax 27.98 MHz (critical path prun -> n_res, the
 // sample x volume multiply), so 112.5 missed by 4x and the comment documented
 // a rate the hardware never had. PSGDIV = 4 gives 28.125 MHz, the first
-// division that closes, and 1275 clocks per sample - still 8x what the console
-// simulator's 159 affords, which is the budget the PSG is designed against.
+// division that closes, and 1275 clocks per sample. The interactive Verilated
+// console runs a different lowering for host throughput; that host execution
+// rate is not a synthesized scheduling constraint.
 //
 // The rate is ONE knob: rtl/top.sv derives its CLK_HZ from the same PSGDIV, so
 // the divider and the frequency the PSG computes its sample rate from cannot

@@ -8,11 +8,12 @@
       `make psg-wav` and keep the WAVs, so the rewrite can be A/B'd rather
       than judged from memory
 
-## 1. Buy the simulator's cycles: replace the serial multiply
+## 1. Historical multiplier experiment
 
-Hardware has the clocks already (16 voices = 17% of a 25 MHz sample budget).
-This section exists for the simulator, whose console runs ~7x slower and would
-be at 121%.
+This experiment was motivated by a supposed 159-clock simulator budget. That
+budget is retired: Verilator lowering and host performance do not constrain
+hardware scheduling. The single-cycle multiplier was subsequently returned to
+an exact serial implementation to save LC.
 
 - [x] 1.1 Replace the 8-cycle shift-add sample×volume unit (`n_a`/`n_p`/`n_cnt`
       in `rtl/psg.sv`) with a single-cycle 8×8 multiply, keeping the full
@@ -22,9 +23,11 @@ be at 121%.
       see 1.6
 - [x] 1.3 Measure the new per-voice clock cost (**gate P1** met): the pipeline
       now runs `pst` 0->3 with no waits, so a voice costs **4 clocks**, better
-      than design.md's estimate of 5. 16 voices = 64 clocks: 40% of the
-      simulator's 159 and 5.6% of hardware's 1134
-- [ ] 1.4 Synthesise and record the LC delta for the multiplier
+      than design.md's estimate of 5. This measurement is historical and does
+      not impose a limit on the microcoded replacement.
+- [x] 1.4 Synthesise and record the LC delta for the multiplier. The
+      single-cycle array form cost 346 LC and was reverted; the current serial
+      sample×volume unit overlaps its iterations with BRAM write-back.
 - [x] 1.6 (found during 1.1, not originally scoped) **The noise LFSR was
       clocked by the system clock, not by anything musical.** Shortening the
       multiply changed the noise, because the LFSR advanced once per system
@@ -32,11 +35,14 @@ be at 121%.
       would have changed it again, silently. The LFSR now steps once per voice
       per sample, so the noise is independent of pipeline timing. Measured:
       sequence differs, RMS unchanged to within 0.01% on NEMO's sfx 8
-- [ ] 1.5 If 1.1 does not buy enough, fall back to a PLL: both of the HX8K's
-      PLLs are unused and `rtl/pll.v` (25 -> 50 MHz) is already written but not
-      instantiated. Cost is a clock-domain crossing on the register interface
-      and the audio-RAM upload port, so this is the reserve option, not the
-      first move
+- [x] 1.7 Narrow the exact 22050 Hz fractional accumulator from 32 to 27 bits.
+      The accumulator is bounded by `CLK_HZ`, whose maximum supported value is
+      the 112.5 MHz PLL output (27 bits). iCE40 synthesis falls from 5499 to
+      **5489 LC** with the repaired effect multiplier present; 12-second NEMO
+      and Celeste renders are byte-identical.
+- [x] 1.5 Superseded: the repository now has one 112.5 MHz PLL source and an
+      integer-related clock tree. No independent sound PLL or asynchronous
+      register-interface crossing is planned.
 
 ## 2. Partition the voice state by rate
 
@@ -70,44 +76,46 @@ be at 121%.
       synthesis path contains no `[c]` index at all now (statically checked),
       so it cannot read the sequencer's voice, and any future attempt to would
       be a visible `[c]` in a `pc_ch` block rather than an invisible `[0]`
-- [ ] 2.2 Move **all** per-voice state to a BRAM register file, not just the
+- [x] 2.2 Move **all** per-voice state to a BRAM register file, not just the
       per-tick half. Synthesis (3.5) shows the marginal cost of a voice is 366
       LUT4 + 316 flops and 336 bits is one voice's state: the muxes to reach
       per-voice registers are the whole scaling cost, and the datapath is
       already shared. Target ~3900 LUT4 / ~1100 flops / ~18 BRAM for sixteen
-      voices - cheaper than today's four
+      voices - cheaper than today's four. The corrected classic PICO-8 model
+      has eight playback slots (four foreground plus four music), stored in
+      `vmem`, `spar_m` and `sosc_m`; all three infer `SB_RAM40_4K`. Measured
+      standalone: **5489 LC / 19 BRAM**, versus 9378 LUT4 / 5811 flops for the
+      abandoned sixteen-register-slot model.
 - [x] 2.2a One PLL at 112.5 MHz as the design's single clock source, with
       everything an integer division of it. `rtl/pll.v` regenerated
       (`icepll -i 25 -o 112.5`, exact), instantiated in `top.sv` for the first
       time; `clocks.sv` divides /32 for the chip (3.515625 MHz, 60.155 Hz
-      frames) and passes it undivided to the PSG. Exact 32:1 ratio means no
-      asynchronous crossing: a chip-domain signal is stable for 32 psgclk
-      edges. `dsigma` moved to psgclk too - 32x the oversampling ratio.
+      frames) and currently /4 for the PSG (28.125 MHz). Both derive from the
+      same source, so there is no asynchronous crossing. The architectural PSG
+      target remains the undivided source once routed timing permits it.
       **Corrects a long-standing wrong constant**: `top.sv` fed the PSG
       `BOARD_CLK_HZ = 25 MHz`, but this video timing at 25 MHz is 428 fps, so
       that was never the real rate. The design has always run at ~3.5 MHz
       (161 x 121 x 3 x 60 = 3,506,580 exactly), which is why `chip.sv`'s
       default said so
-- [ ] 2.2a1 Measure Fmax with nextpnr: 112.5 MHz is unproven on an HX8K.
-      56.25 MHz (/16) is the fallback and still gives 2551 clocks per sample
-- [ ] 2.2a2 The console simulator cannot mirror this: stepping the whole
-      Verilated model 32x more often would make `make run` ~32x slower and no
-      longer interactive. `top_simulator.sv` therefore ties psgclk to the chip
-      clock and **cannot run more voices than fit 159 clocks per sample**.
-      Sixteen-voice audio has to be tested through the standalone PSG model
-      (`make psg-wav`), which Verilates the PSG alone and can afford the fast
-      clock. Raise its clock and `psg_tb`'s clocks-per-sample together
-- [ ] 2.2a3 (superseded) Give the simulator a clock model matching the board. At 159
-      clocks/sample it cannot run sixteen voices streamed from BRAM (201% of
-      budget) - this blocks all testing of the pool and is no longer optional
+- [x] 2.2a1 Measure Fmax with nextpnr: **29.62 MHz** routed at seed 1 on HX8K,
+      so 112.5 MHz is disproven. The critical path is the mixer leaf into the
+      first reduction level. 56.25 MHz (/16) is not yet a valid fallback
+      either; timing optimisation remains separate from this area pass.
+- [x] 2.2a2 Retire the console simulator's 159 clocks/sample as an RTL budget.
+      It describes one Verilated lowering on one host, not the derived hardware
+      clock. Simulation SHALL verify sample/tick boundary behaviour at a
+      declared `CLK_HZ`; wall-clock execution speed is non-normative.
+- [x] 2.2a3 Superseded: matching a simulator's host stepping ratio is not a
+      prerequisite for hardware scheduling or area optimisation.
 - [ ] 2.2b (superseded) Swap only the bulk note/instrument state to BRAM.
       **Deliberately after section 3**: de-rotate, scale the pool, prove
       allocation, and only then rework storage, so the audible change is
       verifiable before the risky part and 8-voices-in-flops stays a fallback
-- [ ] 2.4 Confirm `make test-psg` still passes with four voices - the
-      partition must not change behaviour, only storage
-- [ ] 2.5 Synthesise and confirm one `SB_RAM40_4K` covers the per-tick state
-      (**gate P2**)
+- [x] 2.4 Confirm `make test-psg` still passes with the eight-slot
+      foreground/music model - the partition changes storage, not behaviour
+- [x] 2.5 Synthesise and confirm `vmem`, `spar_m` and `sosc_m` each map through
+      the iCE40 block-RAM path (**gate P2**)
 
 ## 3. Scale the pool to sixteen voices
 
@@ -175,11 +183,81 @@ be at 121%.
 - [ ] 7.5 Update `docs/hardware-gaps.md`: gaps 2 (sixteen voices) and 3
       (nonlinear pairwise mixer) are closed
 
-## 8. Verification
+## 9. Microcode-oriented PSG
 
-- [ ] 8.1 `make test-psg` green
-- [ ] 8.2 `make test-nemo` green, all three games build and run
-- [ ] 8.3 `make psg-rows` on NEMO's SFX 8 no worse than before the change
-- [ ] 8.4 Play each game and confirm no sound effect can interrupt the music,
+- [x] 9.1 Record the reproducible pre-microcode baseline: RTL fingerprint
+      `f58e26f4c158` at `919522d`, 5489 LC / 19 BRAM, 29.62 MHz routed Fmax,
+      full PSG regression passing, and byte-exact 12-second NEMO
+      (`ba4e256cecb490f614412b4a0e550d81da6169ea`) and Celeste
+      (`9c4a7f017bc04ce1580580eb3ca539e58c9dc067`) reference renders
+- [x] 9.2 Define a compact microinstruction and working-register contract for
+      tick-rate pitch, volume, slide, vibrato, arpeggio, fade and instrument
+      evaluation, preserving every current width, signed operation and clamp;
+      the six-op `xs` contract is documented beside the shared multiplier
+- [ ] 9.3 Replace the parallel tick/effect operand and result networks with the
+      microcoded engine; tick work must complete before the next 183-sample
+      boundary
+      - Measured and rejected: a general shared 25-bit ALU cost 5632 LC; split
+        25/9/9-bit lanes cost 5646 LC. Serialising both 3x3 instrument-volume
+        products reached 5446 LC but added 128 clocks per tick walk and changed
+        both reference renders; serialising one cost 5526 LC. The byte-exact
+        six-op engine remains until the commit schedule is decoupled from tick
+        evaluation.
+- [ ] 9.4 Measure LC, BRAM and routed Fmax; require `make test-psg` and the
+      reference renders to remain byte-identical
+
+## 10. Reset and register audit
+
+- [x] 10.1 Classify every PSG reset register as control/valid state that must
+      reset, or datapath/working state that is overwritten before use
+- [x] 10.2 Remove resets and redundant holding registers only where validity
+      gating proves their value unobservable; do not substitute
+      simulation-only initialization for hardware correctness
+- [x] 10.3 Measure LC/packing and rerun the full PSG and render regressions:
+      fingerprint `ea4e9846edfb` at `75b121f`, 5456 LC / 19 BRAM, 32.10 MHz
+      routed Fmax, full regression passing, and byte-exact NEMO/Celeste hashes
+      unchanged from 9.1
+
+## 11. Iterative reciprocal networks
+
+- [x] 11.1 Inventory constant reciprocal and constant-product networks,
+      beginning with `soft_add`'s exact `(excess * 52429) >> 18`, and record
+      their synthesized logic cones; the remaining `/speed` operation is
+      already a BRAM table, volume products are already serial, and `soft_add`
+      is a four-adder factored constant product
+- [ ] 11.2 Replace each selected network with an iterative shift/add sequence,
+      preserving exact truncation, saturation and pairwise reduction order
+      - Measured and rejected for LC: an exact 18-step restoring divide by five
+        cost 5465 LC / 44.78 MHz; packing dividend and quotient together cost
+        5468 LC / 44.27 MHz. Both improve Fmax substantially but exceed the
+        retained 5456-LC factored carry-chain implementation.
+- [ ] 11.3 Assert that all mix work completes before the next sample boundary
+      at the current 28.125 MHz divided clock and the 112.5 MHz target
+- [ ] 11.4 Measure LC/Fmax and require byte-exact reference renders
+
+## 12. Shared ALU/DSP synthesis walk
+
+- [ ] 12.1 Schedule phase advance, phaser ratio, noise gain, brown integration,
+      low-pass filtering, volume multiplication and mix compression around one
+      width-safe add/subtract/shift operation contract
+- [ ] 12.2 Implement the shared engine so iCE40 uses LUT/carry logic and
+      DSP-capable targets may map the same arithmetic contract to a DSP
+      - Measured and rejected: applying only the phaser/detune phase increment
+        to `s_phase2` over four clocks cost 5652 LC / 31.80 MHz because the
+        state-conditioned register-input mux outweighed the removed adder chain.
+        Further sharing must preserve one write site per working register.
+- [ ] 12.3 Add deadline assertions for completion of all eight slot visits and
+      pairwise mixing before each 22 050 Hz sample boundary
+- [ ] 12.4 Measure LC/BRAM/Fmax after each migrated operation; reduce `PSGDIV`
+      only when routed timing proves the next master-derived rate closes
+- [ ] 12.5 Run `make test-psg`, all game tests, pitch/waveform analysis and
+      byte-exact NEMO/Celeste render comparisons
+
+## 13. Verification
+
+- [ ] 13.1 `make test-psg` green
+- [ ] 13.2 `make test-nemo` green, all three games build and run
+- [ ] 13.3 `make psg-rows` on NEMO's SFX 8 no worse than before the change
+- [ ] 13.4 Play each game and confirm no sound effect can interrupt the music,
       by scrolling the NEMO level selector as fast as the input allows
       (**gate P5** - the symptom that started this)

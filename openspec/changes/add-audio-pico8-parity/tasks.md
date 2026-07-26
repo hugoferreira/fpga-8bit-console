@@ -77,3 +77,33 @@
       no longer reads the ring a cycle late
 - [x] 7.8 Re-measure: 5938 -> 3649 LUT4, 7546 -> 5101 LCs, 19.5 -> 49.2 MHz,
       80 testbench checks green, console sim still 60 fps
+
+## 8. PICO-8 export oracle
+
+- [x] 8.1 Generate bounded one-assumption `.p8` cartridges and matching
+      4608-byte audio images for waveforms, pitch/timing, effects, mixing,
+      pattern flow, filters and custom instruments
+- [x] 8.2 Automate MUSIC-mode offline export from an isolated PICO-8 process;
+      select the editor with physical modifier events, never alter the normal
+      PICO-8 home, and terminate only the launched process
+- [x] 8.3 Render each matching audio image through `sim/psg_wav.cpp` at the
+      board's 112.5 MHz derived PSG clock; remove the stale 159-clock simulator
+      budget from renderer, testbench and clock documentation
+- [x] 8.4 Implement aligned deterministic WAV diagnostics: duration, DC,
+      fitted gain, correlation, normalised RMS/peak error and row-boundary
+      timing
+- [x] 8.5 Implement stochastic diagnostics for noise: block RMS/peak
+      distribution, zero-crossing density and short-lag autocorrelation
+- [x] 8.6 Capture PICO-8 references, run the initial diagnostic matrix and
+      commit justified per-case tolerances without using the old RTL as oracle
+
+## 9. Failure-driven fidelity work
+
+- [x] 9.1 Classify every initial failure by timing, sequencer, oscillator,
+      effect, filter or mixer and record the measured evidence
+- [ ] 9.2 Fix deterministic failures one layer at a time, tightening the
+      corresponding oracle case with each correction
+- [x] 9.3 Fix stochastic noise/filter distribution failures without requiring
+      identical PRNG sequences
+- [x] 9.4 Run `rtl/psg_tb.sv`, the complete oracle matrix and an iCE40
+      synthesis/timing report; record remaining unsupported behaviour

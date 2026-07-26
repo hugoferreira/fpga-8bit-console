@@ -20,7 +20,7 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
   // Master-clock frequency, threaded to the PSG so its 22050 Hz virtual
   // sample rate is derived correctly on any board (default: the simulator's
   // 161*121*3*60 Hz pixel clock). REVERB=0 drops the reverb delay BRAM.
-  parameter CLK_HZ = 32'd3_506_580, REVERB = 1;
+  parameter CLK_HZ = 32'd3_506_580, REVERB = 1, PSG_PREVIEW = 0;
 
   // Which subsystems are present. Both default to 1, so `top.sv` and
   // `top_simulator.sv` build exactly the console they always did without being
@@ -247,13 +247,15 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
 
   // PSG: PICO-8-equivalent audio chip; all timing derived internally
   // from CLK_HZ (22050 Hz virtual sample rate, 120.49 Hz sequencer tick)
-  // The PSG runs on the undivided PLL clock: 5102 clocks per 22050 Hz sample
-  // instead of 159, which is what makes a BRAM-backed voice pool affordable.
+  // The PSG is architected for the undivided PLL clock, giving thousands of
+  // hardware clocks per 22050 Hz sample for serialized, BRAM-backed work.
+  // Simulator lowering and host throughput are not an RTL scheduling budget.
   // Same PLL, exact 32:1 ratio, so CPU-side register writes are stable for 32
   // psgclk edges and need no synchroniser.
   generate
     if (HAS_PSG) begin : g_psg
-      psg #(.CLK_HZ(CLK_HZ), .REVERB(REVERB)) psg0(
+      psg #(.CLK_HZ(CLK_HZ), .REVERB(REVERB),
+            .REALTIME_PREVIEW(PSG_PREVIEW)) psg0(
         .clk(psgclk),
         .reset(reset),
         .cs(psg_cs),

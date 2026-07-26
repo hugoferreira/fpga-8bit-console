@@ -9,48 +9,64 @@ and the `K_ROT` rotation in the sequencer walk). That structure is why the
 per-channel state is cheap to *address* and expensive to *hold*: every bit is a
 flip-flop with a rotation mux.
 
-## The two budgets
+## The hardware deadline
 
-**Cycles.** There are two clocks here and they differ by 7x, which is easy to
-get wrong: `psg.sv`/`chip.sv` default `CLK_HZ` to 3 506 580, but that default is
-only what the *simulator* uses (`rtl/top_simulator.sv` instantiates `chip`
-without the parameter). On hardware `rtl/top.sv` passes
-`BOARD_CLK_HZ = 25_000_000` and `masterclk` is the board pin straight through,
-so the real PSG runs at 25 MHz.
+There is one architectural budget: work must finish before the next observable
+audio boundary. Simulation throughput is not a second clock domain and is not
+an RTL constraint. Verilator lowering, compiler optimisation and host hardware
+all change how quickly a model executes; none changes how many hardware clocks
+exist between 22 050 Hz samples.
 
-Per voice today: 1 clock each for phase advance, main-voice fetch and
-second-voice fetch, then 9 waiting on the 8-cycle shift-add sample x volume
-unit and accumulating - about 12 clocks.
+The design has one 112.5 MHz PLL source. `rtl/clocks.sv` derives the chip clocks
+and `psgclk` from that source with integer ratios, so the domains remain
+phase-locked. The intended PSG domain is the undivided source:
 
-| | clocks/sample | 4 voices (48) | 16 voices (192) |
-| --- | ---: | ---: | ---: |
-| hardware, 25 MHz | 1134 | 4.2% | **16.9%** |
-| simulator, 3.51 MHz | 159 | 30.2% | **120.7%** |
+| PSG clock | clocks per 22 050 Hz sample | role |
+| --- | ---: | --- |
+| 112.5 MHz source | 5102 | architectural target |
+| 28.125 MHz (`PSGDIV=4`) | 1275 | current iCE40 fallback while timing is open |
 
-So **sixteen voices already fit on hardware** with the serial multiply exactly
-as it is - the cycles were never the obstacle there. What does not fit is the
-simulator, whose console runs about 7x slower than the board because it ties
-the video and master clocks together (`rtl/top_simulator.sv` derives the pixel
-clock by dividing the one clock it has, where hardware has a separate
-`videoclk`). `CLK_HZ` cannot simply be raised to compensate: it is what divides
-down to 22 050 Hz, so a wrong value detunes the audio.
+The current eight-slot BRAM pipeline takes about `8 * 19 + 3 = 155` clocks per
+sample. It therefore occupies about 12% of even the divided fallback and 3% of
+the target. The unused clocks are an area resource: this change deliberately
+spends them to replace parallel combinational networks with sequential,
+shared arithmetic.
 
-That leaves two ways to make the simulator keep up, and the cheap one is worth
-doing anyway: replace the 8-cycle serial multiply with a single-cycle 8x8
-multiply (~60 LCs on iCE40, or a DSP block on UP5K). A voice then costs about
-5 clocks, 16 voices cost 80, and the pool fits in both budgets - 7.1% on
-hardware, 50.3% in simulation. The alternative, giving the simulator its own
-video clock so its master clock can run at hardware speed, is a larger change
-to the simulator and out of scope here.
+The deadline rules are:
 
-**Headroom in reserve.** The iCE40HX8K has two PLLs and this design currently
-uses neither: `rtl/pll.v` (25 -> 50 MHz) exists but is not instantiated
-anywhere. If the pool ever does run short of clocks, or if the fractional
-sample-rate accumulator's jitter becomes audible, a PLL can give the PSG its
-own faster - or exactly divisible - audio clock. That would cost a clock-domain
-crossing on the CPU register interface and the audio-RAM upload port, which is
-why it is held in reserve rather than taken now: nothing in this change needs
-it.
+- all eight voice visits and the pairwise mix complete before `sample_en`;
+- tick-rate sequencer work completes before the next 183-sample tick;
+- no audible state advances merely because a system clock elapsed;
+- simulation verifies those boundaries at a declared `CLK_HZ`, but wall-clock
+  simulator performance never limits the synthesized schedule.
+
+The current divided clock is not the desired end state. Microcoding shortens
+combinational paths as well as reducing LC, so every optimisation stage is
+measured both for area and routed Fmax. Once the PSG closes at 112.5 MHz,
+`PSGDIV` returns to one and the full 5102-clock sample budget becomes real.
+
+## LC-for-time architecture
+
+The remaining optimisation is ordered by the amount of safe scheduling slack:
+
+1. **Microcode-oriented effect engine.** Pitch, volume, slide, vibrato,
+   arpeggio and fade evaluation happen at tick rate. A small controller and
+   accumulator replace parallel operand/result muxes and arithmetic.
+2. **Reset and register audit.** Only validity and control state reset.
+   Working datapath registers that are overwritten before use do not consume
+   reset/set routing or reset muxes.
+3. **Iterative reciprocal networks.** Exact constant-reciprocal operations,
+   including `soft_add`'s `(excess * 52429) >> 18`, execute as sequences of
+   shifts and additions through one arithmetic unit.
+4. **Shared ALU/DSP synthesis walk.** Phase advance, phaser ratio, noise gain,
+   filtering, volume multiplication and mix compression serialize around a
+   common width-safe add/subtract/shift datapath. The iCE40 maps this to
+   LUT/carry logic; devices with DSP blocks may map the same operation contract
+   to a DSP.
+
+Each stage must keep PICO-8 arithmetic widths, signedness, saturation points
+and pairwise reduction order exact. Extra latency inside a sample is invisible
+provided the sample and tick deadlines above hold.
 
 **State.** 336 bits per voice today:
 
@@ -115,21 +131,18 @@ has spare.
 
 ### What it costs: clocks
 
-Streaming ~336 bits per voice through a 16-bit BRAM port is roughly 20
-accesses per voice per sample:
+Streaming voice state through 16-bit BRAM ports costs roughly 19 clocks per
+slot in the current eight-slot implementation:
 
-| | clocks/sample | 16 voices x 20 |
+| PSG clock | clocks/sample | current 155-clock walk |
 | --- | ---: | ---: |
-| board today, 25 MHz | 1134 | 28% |
-| board on the spare PLL, 50 MHz | 2268 | 14% |
-| simulator, 3.51 MHz | 159 | **201%** |
+| 28.125 MHz divided fallback | 1275 | 12.2% |
+| 112.5 MHz source target | 5102 | 3.0% |
 
-The board affords it twice over, and one of the two unused PLLs buys a further
-2x if the streaming turns out wider than estimated. The simulator does not, and
-this is no longer a detail that can be deferred: its console ties the video and
-master clocks together and runs ~7x slower than the board, so **fixing the
-simulator's clock model becomes part of this change**, not an aside. Without it
-there is no way to test sixteen voices before hardware.
+The schedule therefore has room to grow by hundreds of clocks per sample while
+still meeting the hardware boundary. That margin is intentionally available to
+the microcoded and shared-arithmetic stages; no host simulator cycle count is
+part of this calculation.
 
 ## What the BRAM move is actually worth
 
@@ -228,40 +241,26 @@ testbench passes with a good deal of this wrong, whereas NEMO and Celeste
 rendering bit-identically through a pure restructuring is a real check. That is
 what caught nothing so far and would catch this.
 
-## Clocking: the PSG gets its own PLL
+## Clocking: one master-derived tree
 
-Sixteen voices streamed from BRAM need ~320 clocks per sample. The board has
-them; the way it is wired today does not hand them to the PSG.
+The earlier design proposed an independent sound PLL and a register-interface
+clock-domain crossing. That design is obsolete. `rtl/top.sv` already
+instantiates a 112.5 MHz PLL and `rtl/clocks.sv` derives `masterclk`,
+`videoclk`, `cpuclk` and `psgclk` from it at integer ratios. A chip-domain
+signal is stable across a known number of PSG edges, so no asynchronous
+handshake is introduced by this change.
 
-`icepll -i 25` reaches 50, 100, 150 and 200 MHz exactly from the board's
-crystal, and **both** of the HX8K's PLLs are unused - `rtl/pll.v` (25 -> 50)
-exists but is instantiated nowhere. So the clocks are there for the taking.
+`PSGDIV=4` exists only because the current combinational PSG closes around
+28 MHz rather than at the undivided 112.5 MHz source. It is a timing fallback,
+not the architectural source of the audio budget. The microcoded datapath is
+expected to reduce both LC and critical-path depth; routed synthesis after each
+stage decides when the divider can be reduced and ultimately removed.
 
-Two ways to take them, and the second is what this change does:
-
-1. **One high common clock, everything derived from it by enables.** Clean, no
-   clock-domain crossing, and it is the textbook answer. Rejected here for a
-   coordination reason, not a technical one: it means turning every
-   `always_ff @(posedge clk)` in the PPU into `if (en)`, and `refactor-ppu-core`
-   is in flight in this same checkout with a spec requirement that per-line
-   clock accounting must not regress. Two agents rewriting the PPU's clocking
-   at once is not a trade worth making.
-
-2. **An independent PLL for sound.** The PSG becomes its own clock domain at
-   50-100 MHz while the CPU and PPU keep the 25 MHz board clock untouched. The
-   cost is a clock-domain crossing on the PSG's register interface - and that
-   interface is tiny and slow: a handful of writes per frame plus the 4608-byte
-   audio upload, no read-modify-write, no burst. A toggle handshake covers it.
-
-The second is also what PICO-8 does. Its audio is pull-driven by the SDL
-callback thread, which runs completely independently of the video loop;
-`sfx()` and `music()` only mutate state, under `SDL_LockAudio`. The engine has
-no notion of audio and video sharing a clock, and the handshake here is the
-hardware equivalent of that lock.
-
-At 100 MHz the PSG gets **4535 clocks per sample**, so sixteen voices streamed
-from BRAM cost 7% of budget. That is the headroom that lets voice state live in
-RAM instead of registers, which is the whole point.
+Simulation is parameterized by the same logical `CLK_HZ` needed to derive the
+22 050 Hz sample strobe. A standalone or console model may schedule clocks in
+whatever host-efficient way is appropriate, but this is tooling behaviour:
+simulation wall time and host step count do not alter the hardware schedule or
+the audio contract.
 
 ## Superseded: partition voice state by rate
 
@@ -275,8 +274,10 @@ one of the 22 050 samples per second: `phase`(24), `phase2`(24), `eff_inc`(24),
 `snd_wave`(3), and the single bits `playing`, `snd_wt`, `ch_noiz`, `ch_buzz`
 plus `ch_det`/`ch_rev`/`ch_damp`(2 each). 16 x 147 = 2352 flops, 31% of an
 HX8K. This stays in registers - streaming it from BRAM would need ~10 word
-reads and 10 writes per voice per sample, which does not fit the 4-clock
-per-voice budget.
+reads and 10 writes per voice per sample. The earlier claim that this could not
+fit a four-clock voice budget came from the discarded simulator constraint;
+the implemented design subsequently moved this state to BRAM and spends the
+hardware clock headroom to stream it.
 
 **Per-tick state - 189 bits/voice.** Touched only by the sequencer walk, once
 per tick, and a tick is 183 samples (~29 000 clocks). This splits again, and
@@ -350,10 +351,10 @@ change. Four music voices plus four layered sound effects is very likely
 indistinguishable from PICO-8 for real carts, since a cart can only *address*
 four channels and the pool exists only so auto-picked sounds layer.
 
-Rejected as the target because the state partition is worth doing regardless —
-it is what makes the design fit — and once it is done sixteen is nearly free
-and exactly matches the reference. 8 voices remains the fallback if the
-multiply or the BRAM port turns out to be tighter than estimated.
+Rejected as the target in the original plan because the state partition was
+worth doing regardless. Later reverse engineering established that the classic
+compatibility boundary is the eight-slot foreground/music model; this is now
+the implemented target rather than a clock-budget fallback.
 
 ## Voice allocation
 
@@ -403,3 +404,64 @@ counterpart in `src/main.asm` collapse to one store to the new register.
 `--psg-trace` currently prints four channels; it grows to report voices with
 their tags, and `tools/p8_music_trace.py` comparisons keep working because the
 music still occupies tags 0–3.
+
+## Implemented microcode and reset audit
+
+The tick/effect path already has a compact six-operation micro-PC (`xs`) around
+one eight-cycle shift/add multiplier. Its contract is now explicit in
+`rtl/psg.sv`: row fraction, current volume, previous volume, pitch effect,
+volume effect, music gain, then atomic publish. Pitch-effect products retain
+the `[31:8]` truncation, volume products retain `[15:8]`, and pitch composition
+keeps its signed nine-bit clamp.
+
+Three more aggressive variants were synthesized and rejected:
+
+| Variant | LC | Result |
+|---|---:|---|
+| General shared 25-bit ALU | 5632 | wide operand mux cost more than the removed adders |
+| Split 25/9/9-bit ALUs | 5646 | narrower muxes still lost to iCE40 packing |
+| Serialize both 3x3 volume products | 5446 | area win, but 128 added walk clocks changed both byte-exact renders |
+| Serialize one 3x3 volume product | 5526 | area loss and still changed scheduling |
+
+The general-ALU direction therefore needs a fixed tick-commit boundary before
+more arithmetic is migrated. Evaluation may finish early or late within the
+large hardware deadline, but all voices must publish at the same defined point
+if renders are to remain byte-exact.
+
+The reset audit classifies the remaining reset state as follows:
+
+- Timing accumulators and event strobes, sequencer state, pending/playing
+  validity, CPU-visible registers, RAM-port replay control, noise seed,
+  synthesis/reverb control, and output registers retain reset hardware.
+- Effect multiplier operands/results and pitch/volume scratch are datapath
+  hidden by reset `m_cnt` and `xs`; their resets were removed.
+- The sequencer's BRAM record working copy is completely replaced by `V_LD`
+  before `K_ADV`. Sound-parameter scratch is gated by reset `playing` and
+  `trig_req` until trigger/effect states produce it. Those resets were removed.
+- Per-sample synthesis datapath is also validity-gated and was functionally
+  eligible, but removing its resets worsened packing from 5456 to 5485 LC, so
+  those resets remain.
+
+The retained reset changes preserve the six-op schedule and reduce the routed
+design from 5489 to 5456 LC while improving Fmax from 29.62 to 32.10 MHz.
+
+The reciprocal inventory found no remaining general divider in the tick path:
+`1/speed` is a synchronous BRAM lookup and the volume products already use the
+serial multiplier. The remaining candidate is `soft_add`'s exact
+`(excess * 52429) >> 18`, currently factored into four carry-chain additions.
+An exact 18-step restoring divide by five was implemented with the pairwise
+tree order unchanged. Separate dividend/quotient registers routed at 5465 LC
+and 44.78 MHz; a packed `{remainder, quotient}` register routed at 5468 LC and
+44.27 MHz. Both were reverted because the goal is LC reduction. The experiment
+does show a documented Fmax trade if the undivided clock later becomes more
+important than the last twelve cells.
+
+The first synthesis-walk sharing experiment serialized only the phaser/detune
+increment directly into `s_phase2`: base add followed by up to three shifted
+corrections, increasing a slot visit from 19 to 22 clocks. It routed at 5652 LC
+and 31.80 MHz. Although the arithmetic sequence was exact, multiple
+state-conditioned writes built a large input mux on every phase bit instead of
+one shared adder. It was reverted. Any later shared ALU must keep one physical
+write site per working register and place the micro-op selection before that
+site; merely spelling repeated nonblocking assignments across states does not
+make iCE40 share their carry chains.

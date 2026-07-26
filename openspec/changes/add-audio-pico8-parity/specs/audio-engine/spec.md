@@ -1,5 +1,37 @@
 ## ADDED Requirements
 
+### Requirement: PICO-8 Export Fidelity Oracle
+
+The PSG SHALL be verified against WAV audio synthesised by PICO-8's own
+MUSIC-mode offline exporter from generated cartridges that isolate one sound
+behaviour at a time. Deterministic cases SHALL compare aligned waveform,
+amplitude, pitch, row timing and channel mixing measurements. Cases containing
+noise SHALL compare timing and statistical signal properties instead of exact
+sample identity. A previous RTL implementation and Verilator host execution
+speed SHALL NOT serve as fidelity or hardware-cycle oracles.
+
+#### Scenario: Deterministic waveform regression
+
+- **WHEN** the probe corpus plays a bounded, noise-free built-in waveform and
+  both PICO-8 and the RTL renderer export it
+- **THEN** the comparison reports their alignment, gain, correlation,
+  normalised RMS error, peak error and row timing against an explicit
+  per-case tolerance
+
+#### Scenario: Noise regression
+
+- **WHEN** the probe corpus plays a bounded noise note and two PICO-8 exports
+  contain different PRNG sequences
+- **THEN** both exports can pass the same timing, block-energy,
+  zero-crossing and autocorrelation tolerances without requiring byte identity
+
+#### Scenario: Hardware clock is the scheduling constraint
+
+- **WHEN** the oracle corpus is rendered through the Verilated PSG
+- **THEN** the model uses the board's derived 112.5 MHz PSG clock, and host
+  runtime or a console-specific Verilator lowering does not impose a
+  clocks-per-sample design limit
+
 ### Requirement: SFX Instruments
 
 The PSG SHALL treat a note whose custom-instrument bit (bit 15) is set as a

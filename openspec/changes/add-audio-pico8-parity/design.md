@@ -13,8 +13,11 @@ Constraints that shape the design:
   fix must not duplicate audio RAM.
 - Audio RAM is a single-read-port memory driven by the sequencer FSM
   (`seq_addr`/`seq_q`); the synthesis datapath currently never touches it.
-- The FSM runs at `clk` and has ~29 000 clocks per tick to do ~30 states of
-  work, so extra states are free; wide combinational multipliers are not.
+- The PSG clock is derived from the board master clock and runs at 112.5 MHz on
+  the hardware targets used for fidelity and synthesis checks. That provides
+  about 5102 hardware clocks per 22.05 kHz sample and about 933 000 per
+  sequencer tick. Verilator lowering and host speed affect only how long a test
+  takes; they do not define an RTL cycle budget.
 
 ## Goals / Non-Goals
 
@@ -82,7 +85,8 @@ address mux gives the synthesiser priority for the one cycle per voice per
 sample it needs. A borrow overwrites the byte the sequencer was waiting on,
 so the FSM freezes for that cycle and for one more while the address it
 issued last is replayed from a register. Worst case (four wavetable voices
-with second voices) that is 16 frozen cycles out of the ~29 000 in a tick.
+with second voices) that is 16 frozen cycles out of roughly 933 000 hardware
+clocks in a tick.
 
 The read must stay a *single unconditional* `aram[addr]` expression for
 yosys to infer a block RAM - an earlier version used two capture registers
@@ -137,8 +141,7 @@ board. Ablation builds attributed the area: the effect unit's parallel array
 multipliers cost 1468 LUT4, the three asynchronous `pinc` read ports 439,
 the asynchronous `recip` ROM 312, and the filter decode's `$div`/`$mod` 61.
 
-The fix is to spend cycles, of which there are ~29 000 per tick and almost
-none in use, to buy back area:
+The fix is to spend otherwise idle hardware cycles to buy back area:
 
 - **One shared shift-add multiplier.** Every product the effect unit needs
   is (24-bit magnitude x 8-bit unsigned), so signs are handled outside and
@@ -185,6 +188,181 @@ delete only part of the mux trees the ring removes for free.
 Measured and left alone: the phaser's `x85` (27 LUTs - yosys already
 reduces a constant multiply to shift-adds) and the fractional clock divider
 (4 LUTs). The dampen one-pole is 131 LUTs, which is the feature's own cost.
+
+## PICO-8 WAV oracle
+
+### One assumption per generated cartridge
+
+The reference corpus is generated rather than copied from a game. Each
+cartridge contains pattern 0 with a stop flag and only the SFX required for one
+claim. This avoids accidental interactions and prevents looped songs from
+hitting PICO-8's 32768-music-tick export ceiling. Cases cover:
+
+- each built-in waveform at controlled pitch, volume and duration;
+- pitch boundaries and row speeds;
+- each note effect, including transitions that expose effect phase;
+- two- and four-channel mixes with unequal pitches and volumes;
+- pattern chaining, stop and loop flow in dedicated bounded cases;
+- filter levels, SFX instruments and waveform instruments.
+
+Noise cases are separate from deterministic cases. PICO-8's exporter preserves
+or seeds private PRNG state, so repeated noise exports have stable duration and
+distribution but are not byte-identical.
+
+### Capture and render are separate reproducible steps
+
+The reference capture tool launches the installed PICO-8 in a temporary home,
+uses physical modifier-key events to select MUSIC mode, exports pattern 0, and
+terminates only the process it launched. It never uses a global `pkill` and
+never modifies the user's normal PICO-8 configuration.
+
+The RTL renderer consumes the same generated 4608-byte music/SFX image and
+runs the PSG at 112.5 MHz, matching the board clock domain. Its execution time
+on a particular host is reported only as test cost. No Verilator host-cycle
+count is accepted as a design constraint.
+
+### Diagnostics before thresholds
+
+The comparator first validates WAV format and sample count, then aligns the
+candidate to the reference over a bounded leading window. For deterministic
+cases it reports DC offset, gain fit, correlation, normalised RMS error, peak
+error and row-boundary timing. For stochastic cases it compares block RMS,
+peak distribution, zero-crossing density and short-lag autocorrelation.
+
+Initial runs are diagnostic: their measured distribution establishes explicit
+per-case tolerances. A tolerance may only be committed with the PICO-8
+reference measurement that justifies it; the old RTL is never used to bless a
+result.
+
+The initial gates are deliberately strict enough to expose a single synthesis
+tick transition while allowing sub-sample phase and integer-rounding
+differences: deterministic duration must be exact, fitted gain must be within
+10%, correlation at least 0.99, and normalised RMS error at most 0.10.
+Stochastic cases also require exact duration; block mean RMS and peak must each
+be within 10%, while zero-crossing density and every measured autocorrelation
+lag may differ by at most 0.15 absolute. Each matrix result carries the
+applicable values, so a later threshold change cannot silently reinterpret old
+evidence.
+
+### Initial PICO-8 measurement
+
+The first valid MUSIC-mode matrix contains 33 bounded exports. The capture
+tool proved MUSIC mode from the export signature (one `%d` WAV, rather than
+the 64-file SFX signature) on every case. PICO-8 exported mono signed 16-bit
+audio at 22,050 Hz.
+
+- All seven pitch anchors from note 0 through 63 passed. This rejected the
+  floating equal-temperament table and validated the integer `_note_dx`
+  reconstruction and octave shifts.
+- Triangle, tilted saw, square, pulse and organ passed the initial oscillator
+  gate. Saw measured correlation 0.9933 / NRMSE 0.1160 and phaser 0.9009 /
+  0.4340, isolating waveform implementation differences rather than pitch.
+- Two-channel mixing passed (gain 1.0051, correlation 0.9979, NRMSE 0.0652).
+  Four-channel mixing did not (gain 0.8824, correlation 0.8703), isolating the
+  nonlinear reduction tree at higher occupancy.
+- Basic noise differed in level (mean RMS 4,364 versus PICO-8's 6,926) and
+  correlation shape, while the NOIZ-filter probe matched its zero-crossing and
+  autocorrelation shape. Noise is therefore judged statistically, never by
+  PRNG sequence identity.
+- Every note-effect probe initially failed. Exact recovery of PICO-8's
+  two-tick vibrato sequence improved its NRMSE from 0.2982 to 0.2562; fixing
+  the drop complement improved correlation from 0.0566 to 0.9118. The
+  remaining common error is consistent with PICO-8's 64-of-183-sample
+  old-state crossfade, which the RTL does not yet implement.
+- Offline export established that SFX length metadata is authoritative:
+  two length-eight chained patterns export 16 ticks, and a length-16 SFX at
+  speed two exports 32 ticks. After correcting the corpus expectation, the RTL
+  durations are exact. A separate RTL off-by-one inserted one silent tick
+  between chained patterns; advancing after zero-based tick `length-1`
+  removes it.
+
+### Failure-driven RTL work
+
+Failures are fixed in the smallest layer that explains them: clock/tick
+generation, sequencing, oscillator, effect, filter, or mixer. Every fix adds
+or tightens the corresponding oracle case and keeps the structural
+`rtl/psg_tb.sv` regression. Area and timing are measured on iCE40 after each
+cluster; fidelity thresholds are not weakened to recover LCs.
+
+### Verification after the first correction pass
+
+The complete bounded matrix was rerun after the pitch table, mixer scale,
+waveform polarity, effect-formula and pattern-boundary corrections. Sixteen of
+33 cases clear the initial gate: five basic deterministic waveforms, all seven
+pitch anchors, two- and four-channel mixing, NOIZ-filter shape and
+explicit-length playback. Seventeen remain diagnostic failures: saw and phaser
+oscillator shape; basic noise level/shape; seven note effects; four other
+filter modes; both custom-instrument paths; and the pattern-transition
+crossfade. Durations are exact in every bounded case.
+
+`make test-psg` completes with all testbench checks passing. The iCE40 HX8K
+subsystem build at RTL fingerprint `348e80c6e7d1` uses 5,391/7,680 logic cells
+(70%) and 19/32 EBRs (59%). Routed Fmax is 31.36 MHz against that target's
+50 MHz constraint; the critical path is the mixer leaf into the first
+soft-add level. The design therefore fits, but does not yet close timing at
+either 50 MHz or the 112.5 MHz master-derived PSG clock. This routed result,
+not Verilator host execution time or a fixed simulator-cycle budget, is the
+timing constraint for the next refold.
+
+The next fidelity layer is PICO-8's old-state transition renderer. It should
+reuse the existing single waveform port and multipliers over time: retain the
+previous oscillator state in the unused words of each synthesis record,
+serialize a second 64-sample continuation, and crossfade old/new products
+before the soft-add tree. That addresses the common effect and pattern-start
+signature without adding parallel oscillators or arithmetic. The remaining
+independent work is the exact phaser history comb, PICO-8's stateful noise
+generator, raw-16.16 slide interpolation, filter transfer functions and
+custom-wave interpolation.
+
+### Verification after the serialized transition/noise pass
+
+The old-state renderer now occupies the padding in each 16-word oscillator
+record and uses the existing waveform port and shift-add arithmetic over time.
+Each parameter transition renders the copied phase/increment/wave/volume
+continuation and blends it over 64 samples. The same pass added the recovered
+stateful noise distribution, integer-domain effect truncation, zero-amplitude
+phase reset, exact BUZZ thresholds and DETUNE level-1 ratio.
+
+The resulting bounded PICO-8 matrix has 25/33 cases clean. All eight built-in
+waveforms, seven pitch anchors, both mixer probes, stochastic noise, NOIZ and
+BUZZ filters, vibrato, fade-in/out, both arpeggios, explicit length and basic
+pattern timing pass. The remaining deterministic boundary is explicit:
+
+- slide: gain 1.0008, correlation 0.9923, NRMSE 0.1242;
+- drop: gain 0.9990, correlation 0.9917, NRMSE 0.1283;
+- DETUNE-1: gain 0.9905, correlation 0.9883, NRMSE 0.1523;
+- REVERB-1: gain 0.9413, correlation 0.9740, NRMSE 0.2267;
+- DAMPEN-1: gain 0.8937, correlation 0.9571, NRMSE 0.2898;
+- SFX instrument: gain 1.0038, correlation 0.9950, NRMSE 0.1002;
+- waveform instrument: gain 1.0171, correlation 0.9840, NRMSE 0.1779;
+- chained-pattern transition: gain 1.0070, correlation 0.9947,
+  NRMSE 0.1033.
+
+The effect fixes are binary-derived rather than fitted to the old RTL.
+Vibrato/drop now multiply PICO-8's integer `dp` before appending the FPGA's
+eight phase-fraction bits; slide consumes the just-completed row fraction
+instead of the preceding microprogram's value; and a zero-amplitude oscillator
+freezes and resets phase as exposed by repeated fade-in rows. Vibrato improved
+from correlation 0.9748 / NRMSE 0.2229 to 0.9999 / 0.0163, and fade-in from
+effectively uncorrelated to 0.9999 / 0.0160. DETUNE's recovered
+`floor(dp*255/256)` secondary improved correlation from 0.7987 to 0.9883; a
+shift-only 13/16 normalization corrected fitted gain from 0.7579 to 0.9905.
+
+A serialized adjacent-read wavetable interpolation was implemented and
+measured, then rejected. It increased the subsystem to 6,641 LCs while the
+PICO-8 waveform-instrument case still failed (correlation 0.9830, NRMSE
+0.1835), slightly worse than the smaller nearest-sample path. The oracle and
+area report therefore vetoed the implementation rather than allowing an
+unverified formula to become architecture.
+
+The Verilator timing testbench completes with all structural checks passing at
+an exact clocks-per-sample relationship; its wall time is not a requirement.
+The final HX8K subsystem build uses 6,134/7,680 LCs (79%) and 19/32 EBRs (59%).
+Routed Fmax is 31.68 MHz against the subsystem target's 50 MHz constraint, with
+the soft-add tree still critical. It fits but does not close the target or the
+112.5 MHz board-derived PSG clock, so timing closure and the eight oracle
+failures remain open work rather than being hidden by a simulator-cycle
+budget.
 
 ## Risks / Trade-offs
 

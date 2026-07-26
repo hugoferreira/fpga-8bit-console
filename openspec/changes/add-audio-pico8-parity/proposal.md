@@ -33,6 +33,13 @@ been mixed at a third of its level, so a full-volume triangle reaches a
 sixth of full scale instead of the half scale the mixer's clamp and shift
 are sized for.
 
+The manual audit and the previous RTL are useful evidence, but neither is the
+fidelity oracle. PICO-8's own MUSIC-mode WAV exporter synthesises complete
+patterns, including channel mixing and pattern flow, and is therefore the
+reference implementation for the remaining acoustic work. The parity change
+adds a generated probe corpus and comparison harness so each assumption can be
+tested independently against WAVs exported by PICO-8.
+
 ## What Changes
 
 - **SFX instruments**: a note with bit 15 set runs SFX 0-7 as a per-channel
@@ -63,8 +70,22 @@ are sized for.
   would have had inside the whole record.
 - `src/main.asm` uses the fade register for the cart's `music(-1, 2000)` and
   honours the reserved mask in `sfx_play`.
+- A generated oracle corpus covers the built-in waveforms, pitch and row
+  timing, note effects, multi-channel mixing, pattern flow, filters and custom
+  instruments with one assumption per cartridge.
+- A macOS capture command drives PICO-8 into MUSIC mode and invokes its offline
+  WAV exporter in an isolated home. A separate command renders the same
+  4608-byte audio image through the Verilated PSG at the board's derived clock.
+- A comparator aligns the streams and reports sample, row, envelope and
+  stochastic-noise metrics. Deterministic cases are strict regression gates;
+  noise is assessed statistically because PICO-8 does not expose or reset the
+  exporter's noise PRNG state.
+- Verilator host throughput and the old 159-clocks-per-sample console lowering
+  are explicitly not architectural constraints. Hardware scheduling is checked
+  against the >=100 MHz derived PSG clock used by the board.
 
 ## Impact
 
 - Affected specs: `audio-engine`
-- Affected code: `rtl/psg.sv`, `rtl/psg_tb.sv`, `src/main.asm`
+- Affected code: `rtl/psg.sv`, `rtl/psg_tb.sv`, `src/main.asm`,
+  `sim/psg_wav.cpp`, PSG oracle tools and generated test fixtures

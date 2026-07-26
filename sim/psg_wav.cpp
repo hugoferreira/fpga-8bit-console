@@ -15,12 +15,17 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 #include <vector>
 #include "Vpsg.h"
 #include "verilated.h"
 
-static const double CLK_HZ = 3506580.0;   // rtl/psg.sv's default parameter
-static const int    RATE   = 22050;       // the PSG's virtual sample rate
+// rtl/psg.sv's compiled CLK_HZ parameter. This standalone fallback matches the
+// module default; hardware-oracle builds override both it and -GCLK_HZ with the
+// board's derived PSG clock. Verilator wall time is test cost, not an RTL clock
+// budget. The value must match the model's -GCLK_HZ or the divider detunes.
+static double    CLK_HZ = 3506580.0;
+static const int RATE   = 22050;          // the PSG's virtual sample rate
 
 static Vpsg* dut;
 
@@ -60,6 +65,7 @@ int main(int argc, char** argv) {
     const char* out = "build/psg.wav";
     int music = -1, sfx = -1, mask = 7;
     double seconds = 10.0;
+    long samples = -1;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--audio") && i + 1 < argc)   audio = argv[++i];
         else if (!strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
@@ -67,6 +73,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--sfx") && i + 1 < argc)   sfx = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--mask") && i + 1 < argc)  mask = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--seconds") && i + 1 < argc) seconds = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--samples") && i + 1 < argc) samples = atol(argv[++i]);
+        else if (!strcmp(argv[i], "--clk") && i + 1 < argc) CLK_HZ = atof(argv[++i]);
     }
     if (!audio) { fprintf(stderr, "need --audio <4608-byte image>\n"); return 1; }
 
@@ -92,17 +100,33 @@ int main(int argc, char** argv) {
     if (music >= 0) wr(0x20, (uint8_t)music);
     if (sfx >= 0)   wr(0x10, (uint8_t)sfx);
 
-    const long total = (long)(seconds * CLK_HZ);
-    const long per   = (long)(CLK_HZ / RATE + 0.5);
     // psg.sv's pcm is signed 16-bit as of the mixer-resolution fix; it was an
     // unsigned 8-bit sample before. Widening it is the whole point of that
     // change, so this reads the wide value and writes a 16-bit WAV.
     std::vector<int16_t> pcm;
-    pcm.reserve((size_t)(seconds * RATE) + 16);
+    const long want = samples >= 0 ? samples : (long)(seconds * RATE);
+    pcm.reserve((size_t)want + 16);
     int lo = 32767, hi = -32768;
-    for (long c = 0; c < total; c++) {
+
+    // Sample on the chip's own divider, not on round(CLK_HZ/RATE) clocks.
+    // The RTL derives 22050 Hz with a Bresenham accumulator, so a fixed clock
+    // count does not land on the same instants - it drifts, duplicating and
+    // dropping samples. That made the *same* audio at two different CLK_HZ
+    // compare as a >100% per-sample error while RMS stayed within 1%, which
+    // reads exactly like a synthesis bug and is not one. Mirroring the
+    // accumulator makes the captured stream independent of CLK_HZ, which is
+    // what lets a faster clock (needed once a voice costs more clocks) be
+    // A/B'd against a slower one at all.
+    const long DEC = (long)CLK_HZ - RATE;
+    long divacc = 0;
+    const auto started = std::chrono::steady_clock::now();
+    while ((long)pcm.size() < want) {
         tick();
-        if (c % per == 0) {
+        const bool strobe = (divacc >= DEC);
+        divacc += strobe ? -DEC : RATE;
+        if (strobe) {
+            // Captured at the strobe, so this is the previous walk's fully
+            // settled output rather than one being accumulated right now.
             int16_t s = (int16_t)dut->pcm;
             pcm.push_back(s);
             if (s < lo) lo = s;
@@ -110,8 +134,12 @@ int main(int argc, char** argv) {
         }
     }
     write_wav(out, pcm);
-    fprintf(stderr, "wrote %s: %zu samples at %d Hz, range %d..%d\n",
-            out, pcm.size(), RATE, lo, hi);
+    const double elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - started).count();
+    fprintf(stderr,
+            "wrote %s: %zu samples at %d Hz, range %d..%d "
+            "(%.3f s host time; non-normative)\n",
+            out, pcm.size(), RATE, lo, hi, elapsed);
     delete dut;
     return 0;
 }

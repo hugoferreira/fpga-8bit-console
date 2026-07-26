@@ -32,12 +32,15 @@ audio defect chased in this port traces back to that single divergence:
   and it still has to decide what to do when nothing is free — a decision
   PICO-8 never has to make.
 
-The measurements say the hardware can afford the real thing. On the board the
-PSG runs at 25 MHz, so it has 1134 clocks per sample and today's four voices
-use 4% of them; sixteen would use 17% with the datapath exactly as it is. The
-real cost is state — 336 bits per voice, all of it in flip-flops, which at
-sixteen voices would be 70% of an HX8K — and the fix is to move the half of it
-that only changes once per tick into a block RAM. See `design.md`.
+The measurements say the hardware can afford the real thing in time but not in
+logic. The PSG clock is derived from the design's 112.5 MHz PLL source. The
+current iCE40 implementation divides it by four while the existing
+combinational datapath is timing-limited, still providing 1275 clocks per
+22 050 Hz sample; closing at the undivided source provides 5102. A Verilated
+console's host-dependent execution rate is not a hardware clock budget and
+does not constrain the RTL. The real cost is state and parallel arithmetic,
+so the fix is to store voice state in block RAM and trade the hardware's clock
+headroom for a microcoded, time-shared datapath. See `design.md`.
 
 ## What Changes
 
@@ -57,10 +60,12 @@ that only changes once per tick into a block RAM. See `design.md`.
 - **The mix becomes PICO-8's pairwise `soft_add` reduction tree** instead of a
   flat sum with a hard clip — the natural way to reduce sixteen voices, and a
   known gap in its own right.
-- **The serial 8-cycle sample×volume multiply becomes a single-cycle multiply.**
-  Not needed for the board, which has clocks to spare, but the simulator's
-  console runs ~7x slower than hardware and sixteen voices do not fit its
-  159-clock sample budget without it.
+- **Arithmetic becomes microcoded and time-shared.** Effects are evaluated by
+  a microcode-oriented engine; redundant resets and registers are removed;
+  reciprocal networks become iterative; and sample-rate arithmetic is
+  serialised around a shared ALU/DSP. Correctness is gated on completing work
+  before the next sample or tick boundary, never on a Verilator host-cycle
+  estimate.
 
 ## Impact
 

@@ -1,5 +1,27 @@
 ## ADDED Requirements
 
+### Requirement: Hardware-Budgeted Synthesis Scheduling
+
+The console SHALL derive PSG execution from its master PLL clock tree, whose
+source frequency is at least 100 MHz. The implementation MAY apply an integer
+divider required by routed timing, but SHALL complete every voice update and
+mix reduction before the next 22 050 Hz sample boundary, and every sequencer
+update before its tick boundary. The implementation MAY trade additional
+hardware clocks for fewer logic cells. A simulator's host execution rate or
+lowered Verilator cycle cost SHALL NOT define an RTL cycle limit.
+
+#### Scenario: Current divided iCE40 clock meets the sample deadline
+
+- **WHEN** the 112.5 MHz master source supplies the PSG through the current
+  divide-by-four clock
+- **THEN** synthesis completes within the resulting 1275-clock sample interval
+
+#### Scenario: Simulation host does not change audio behaviour
+
+- **WHEN** the same PSG is simulated on hosts with different performance or
+  Verilator lowering
+- **THEN** its 22 050 Hz sample stream and tick-boundary state are unchanged
+
 ### Requirement: Sixteen-Voice Pool
 
 The PSG SHALL synthesise from a pool of sixteen voices, each carrying a
