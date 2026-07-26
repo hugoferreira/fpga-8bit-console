@@ -1,0 +1,3603 @@
+#include "laasm.h"
+
+#include <string.h>
+
+typedef struct {
+    la_u16 name;
+    la_u16 first_field;
+    la_u16 field_count;
+    la_u16 size;
+    la_u16 line;
+    la_u8 state;
+} LaStructRec;
+
+typedef struct {
+    la_u16 name;
+    la_u16 type_name;
+    la_u16 count;
+    la_u16 offset;
+    la_u16 size;
+    la_u16 line;
+    la_u8 is_pointer;
+} LaFieldRec;
+
+typedef struct {
+    la_u16 name;
+    la_u16 type_name;
+    la_u16 physical;
+    la_u16 line;
+    la_u16 procedure;
+    la_u8 is_pointer;
+    la_u8 role;
+    la_u8 explicit_placement;
+} LaLocationRec;
+
+typedef struct {
+    la_u16 name;
+    la_u16 type_name;
+    la_u16 count;
+    la_u16 stride;
+    la_u16 size;
+    la_u16 base;
+    la_u16 table_low;
+    la_u16 table_high;
+    la_u16 line;
+} LaPoolRec;
+
+typedef struct {
+    la_u16 name;
+    la_u16 line;
+    la_u16 begin_line;
+    la_u16 end_line;
+    la_u16 first_local;
+    la_u16 local_count;
+    la_u16 frame_size;
+    la_u16 convention;
+    la_u16 first_parameter;
+    la_u16 parameter_count;
+    la_u8 naked;
+} LaProcedureRec;
+
+typedef struct {
+    la_u16 name;
+    la_u16 type_name;
+    la_u16 procedure;
+    la_u16 offset;
+    la_u16 size;
+    la_u16 line;
+    la_u8 is_pointer;
+} LaLocalRec;
+
+typedef struct {
+    la_u16 name;
+    la_u16 source;
+    la_i32 immediate;
+    la_u8 source_kind;
+    la_u8 scratch;
+} LaInvokeBindingRec;
+
+typedef struct {
+    la_u16 handle;
+    la_u16 hash;
+    la_u8 valid;
+} LaNameCacheRec;
+
+typedef struct {
+    la_i32 value;
+} LaValueRec;
+
+typedef struct {
+    la_u8 op;
+} LaOperatorRec;
+
+typedef struct {
+    la_u16 sid;
+    la_u16 next_field;
+    la_u16 base;
+    la_u16 path_length;
+} LaPropertyFrame;
+
+typedef struct {
+    const LaInput *input;
+    const LaEventSink *events;
+    const LaDiagnosticSink *diagnostics;
+    const LaTarget *target;
+    const LaLimits *limits;
+    LaStats *stats;
+    char *source;
+    char *names;
+    char *line_buffer;
+    char *path_buffer;
+    LaStructRec *structs;
+    LaFieldRec *fields;
+    LaLocationRec *locations;
+    LaPoolRec *pools;
+    LaProcedureRec *procedures;
+    LaLocalRec *locals;
+    LaInvokeBindingRec *bindings;
+    LaValueRec *values;
+    LaOperatorRec *operators;
+    LaPropertyFrame *frames;
+    la_u16 source_length;
+    la_u16 name_length;
+    la_u16 struct_count;
+    la_u16 field_count;
+    la_u16 location_count;
+    la_u16 pool_count;
+    la_u16 procedure_count;
+    la_u16 parameter_count;
+    la_u16 local_count;
+    la_u16 invoke_binding_highwater;
+    la_u16 token_count;
+    la_u16 operation_count;
+    la_u16 current_struct;
+    la_u16 current_procedure;
+    LaNameCacheRec name_cache[2];
+    LaDiagnosticCode error;
+} LaContext;
+
+static const LaConvention la_console6502_conventions[] = {
+    {"console6502", {"a", "x", "y", 0}, 3, "a"}
+};
+
+const LaTarget la_target_console6502 = {
+    "console6502", 8, 2, 255, LA_TARGET_VERSION,
+    la_console6502_conventions, 1,
+    "t", 8, 0, 0
+};
+
+static la_u32 la_align_size(la_u32 value)
+{
+    la_u32 alignment;
+    alignment = (la_u32)sizeof(void *);
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
+LaLimits la_default_limits(void)
+{
+    LaLimits limits;
+    limits.max_source_bytes = 32767;
+    limits.max_name_bytes = 8192;
+    limits.max_tokens = 8192;
+    limits.max_structs = 128;
+    limits.max_fields = 1024;
+    limits.max_locations = 128;
+    limits.max_pools = 64;
+    limits.max_procedures = 256;
+    limits.max_parameters = 512;
+    limits.max_locals = 512;
+    limits.max_invoke_bindings = 64;
+    limits.max_expression_nodes = 256;
+    limits.max_nesting = 32;
+    limits.max_operations = 2048;
+    limits.max_line_bytes = 512;
+    return limits;
+}
+
+la_u32 la_workspace_required(const LaLimits *limits)
+{
+    la_u32 total;
+    total = 0;
+    total += la_align_size((la_u32)limits->max_source_bytes + 1);
+    total += la_align_size((la_u32)limits->max_name_bytes + 1);
+    total += la_align_size((la_u32)limits->max_line_bytes + 1);
+    total += la_align_size((la_u32)limits->max_line_bytes + 1);
+    total += la_align_size((la_u32)limits->max_structs * sizeof(LaStructRec));
+    total += la_align_size((la_u32)limits->max_fields * sizeof(LaFieldRec));
+    total += la_align_size((la_u32)limits->max_locations * sizeof(LaLocationRec));
+    total += la_align_size((la_u32)limits->max_pools * sizeof(LaPoolRec));
+    total += la_align_size((la_u32)limits->max_procedures *
+                           sizeof(LaProcedureRec));
+    total += la_align_size((la_u32)limits->max_locals * sizeof(LaLocalRec));
+    total += la_align_size((la_u32)limits->max_invoke_bindings *
+                           sizeof(LaInvokeBindingRec));
+    total += la_align_size((la_u32)limits->max_expression_nodes * sizeof(LaValueRec));
+    total += la_align_size((la_u32)limits->max_expression_nodes * sizeof(LaOperatorRec));
+    total += la_align_size((la_u32)limits->max_nesting * sizeof(LaPropertyFrame));
+    return total;
+}
+
+static void *la_take(char **cursor, la_u32 *remaining, la_u32 amount)
+{
+    void *result;
+    la_u32 aligned;
+    aligned = la_align_size(amount);
+    if (*remaining < aligned) {
+        return 0;
+    }
+    result = *cursor;
+    *cursor += aligned;
+    *remaining -= aligned;
+    return result;
+}
+
+static LaSlice la_slice(const char *data, la_u16 length)
+{
+    LaSlice slice;
+    slice.data = data;
+    slice.length = length;
+    return slice;
+}
+
+static void la_set_span(LaContext *ctx, LaSpan *span,
+                        la_u16 line, la_u16 column, la_u16 length)
+{
+    span->source_id = ctx->input->source_id;
+    span->line = line;
+    span->column = column;
+    span->length = length;
+    if (ctx->input->origin != 0) {
+        ctx->input->origin(ctx->input->context, line, span);
+        span->column = column;
+        span->length = length;
+    }
+}
+
+static LaDiagnosticCode la_fail(LaContext *ctx, LaDiagnosticCode code,
+                                la_u16 line, la_u16 column, la_u16 length,
+                                LaSlice arg0, LaSlice arg1,
+                                la_i32 value, la_i32 limit)
+{
+    LaDiagnostic diagnostic;
+    if (ctx->error != LA_OK) {
+        return ctx->error;
+    }
+    ctx->error = code;
+    diagnostic.code = code;
+    la_set_span(ctx, &diagnostic.span, line, column, length);
+    diagnostic.arg0 = arg0;
+    diagnostic.arg1 = arg1;
+    diagnostic.value = value;
+    diagnostic.limit = limit;
+    if (ctx->diagnostics != 0 && ctx->diagnostics->write != 0) {
+        ctx->diagnostics->write(ctx->diagnostics->context, &diagnostic);
+    }
+    return code;
+}
+
+static int la_is_space(char value)
+{
+    return value == ' ' || value == '\t' || value == '\r';
+}
+
+static int la_is_ident_start(char value)
+{
+    return (value >= 'A' && value <= 'Z') ||
+           (value >= 'a' && value <= 'z') || value == '_';
+}
+
+static int la_is_ident(char value)
+{
+    return la_is_ident_start(value) || (value >= '0' && value <= '9');
+}
+
+static const char *la_trim_left(const char *text, const char *end)
+{
+    while (text < end && la_is_space(*text)) {
+        ++text;
+    }
+    return text;
+}
+
+static const char *la_trim_right(const char *text, const char *end)
+{
+    while (end > text && la_is_space(end[-1])) {
+        --end;
+    }
+    return end;
+}
+
+static const char *la_code_end(const char *text, const char *end)
+{
+    const char *cursor;
+    cursor = text;
+    while (cursor < end && *cursor != ';') ++cursor;
+    return la_trim_right(text, cursor);
+}
+
+static int la_equal_text(const char *left, la_u16 left_length,
+                         const char *right)
+{
+    la_u16 right_length;
+    right_length = (la_u16)strlen(right);
+    return left_length == right_length &&
+           memcmp(left, right, left_length) == 0;
+}
+
+static LaSlice la_name_slice(LaContext *ctx, la_u16 handle)
+{
+    const char *name;
+    if (handle == LA_INVALID_HANDLE) {
+        return la_slice("", 0);
+    }
+    name = ctx->names + handle;
+    return la_slice(name, (la_u16)strlen(name));
+}
+
+static LaDiagnosticCode la_token(LaContext *ctx, la_u16 line, la_u16 column)
+{
+    if (ctx->token_count >= ctx->limits->max_tokens) {
+        return la_fail(ctx, LA_ERR_TOKEN_CAPACITY, line, column, 1,
+                       la_slice("tokens", 6), la_slice("", 0),
+                       ctx->token_count + 1, ctx->limits->max_tokens);
+    }
+    ++ctx->token_count;
+    if (ctx->token_count > ctx->stats->tokens) {
+        ctx->stats->tokens = ctx->token_count;
+    }
+    return LA_OK;
+}
+
+static la_u16 la_name_hash(const char *text, la_u16 length)
+{
+    la_u16 hash;
+    la_u16 index;
+    hash = 21661;
+    for (index = 0; index < length; ++index) {
+        hash = (la_u16)((hash ^ (la_u8)text[index]) * 251);
+    }
+    return hash;
+}
+
+static void la_cache_name(LaContext *ctx, la_u16 handle, la_u16 hash)
+{
+    ctx->name_cache[1] = ctx->name_cache[0];
+    ctx->name_cache[0].handle = handle;
+    ctx->name_cache[0].hash = hash;
+    ctx->name_cache[0].valid = 1;
+}
+
+static la_u16 la_intern(LaContext *ctx, const char *text, la_u16 length,
+                        la_u16 line, la_u16 column)
+{
+    la_u16 cursor;
+    la_u16 hash;
+    la_u16 cached;
+    hash = la_name_hash(text, length);
+    for (cached = 0; cached < 2; ++cached) {
+        LaNameCacheRec *entry;
+        const char *existing;
+        la_u16 handle;
+        entry = &ctx->name_cache[cached];
+        if (!entry->valid || entry->hash != hash) continue;
+        handle = entry->handle;
+        existing = ctx->names + handle;
+        if (strlen(existing) == length &&
+            memcmp(existing, text, length) == 0) {
+            if (cached != 0) la_cache_name(ctx, handle, hash);
+            return handle;
+        }
+    }
+    cursor = 0;
+    while (cursor < ctx->name_length) {
+        la_u16 existing_length;
+        existing_length = (la_u16)strlen(ctx->names + cursor);
+        if (existing_length == length &&
+            memcmp(ctx->names + cursor, text, length) == 0) {
+            la_cache_name(ctx, cursor, hash);
+            return cursor;
+        }
+        cursor = (la_u16)(cursor + existing_length + 1);
+    }
+    if ((la_u32)ctx->name_length + length + 1 >
+        ctx->limits->max_name_bytes) {
+        la_fail(ctx, LA_ERR_NAME_CAPACITY, line, column, length,
+                la_slice(text, length), la_slice("names", 5),
+                ctx->name_length + length + 1,
+                ctx->limits->max_name_bytes);
+        return LA_INVALID_HANDLE;
+    }
+    cursor = ctx->name_length;
+    memcpy(ctx->names + cursor, text, length);
+    ctx->names[cursor + length] = 0;
+    ctx->name_length = (la_u16)(ctx->name_length + length + 1);
+    ctx->stats->name_bytes = ctx->name_length;
+    la_cache_name(ctx, cursor, hash);
+    return cursor;
+}
+
+static la_u16 la_find_struct_handle(LaContext *ctx, la_u16 name)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->struct_count; ++index) {
+        if (ctx->structs[index].name == name) {
+            return index;
+        }
+    }
+    return LA_INVALID_HANDLE;
+}
+
+static la_u16 la_find_struct_text(LaContext *ctx,
+                                  const char *text, la_u16 length)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->struct_count; ++index) {
+        LaSlice name;
+        name = la_name_slice(ctx, ctx->structs[index].name);
+        if (name.length == length && memcmp(name.data, text, length) == 0) {
+            return index;
+        }
+    }
+    return LA_INVALID_HANDLE;
+}
+
+static la_u16 la_find_location_text_at(LaContext *ctx,
+                                       const char *text, la_u16 length,
+                                       la_u16 procedure)
+{
+    la_u16 index;
+    la_u16 global;
+    global = LA_INVALID_HANDLE;
+    for (index = 0; index < ctx->location_count; ++index) {
+        LaSlice name;
+        name = la_name_slice(ctx, ctx->locations[index].name);
+        if (name.length == length && memcmp(name.data, text, length) == 0) {
+            if (ctx->locations[index].procedure == procedure) return index;
+            if (ctx->locations[index].procedure == LA_INVALID_HANDLE) {
+                global = index;
+            }
+        }
+    }
+    return global;
+}
+
+static la_u16 la_find_location_text(LaContext *ctx,
+                                    const char *text, la_u16 length)
+{
+    return la_find_location_text_at(ctx, text, length, LA_INVALID_HANDLE);
+}
+
+static int la_primitive_size(LaContext *ctx, la_u16 type_name,
+                             la_u16 *size)
+{
+    LaSlice type;
+    type = la_name_slice(ctx, type_name);
+    if (la_equal_text(type.data, type.length, "u8") ||
+        la_equal_text(type.data, type.length, "i8")) {
+        *size = 1;
+        return 1;
+    }
+    if (la_equal_text(type.data, type.length, "u16") ||
+        la_equal_text(type.data, type.length, "i16")) {
+        *size = 2;
+        return 1;
+    }
+    return 0;
+}
+
+static int la_line_keyword(const char *start, const char *end,
+                           const char *keyword)
+{
+    la_u16 length;
+    const char *cursor;
+    cursor = la_trim_left(start, end);
+    length = (la_u16)strlen(keyword);
+    return (la_u16)(end - cursor) >= length &&
+           memcmp(cursor, keyword, length) == 0 &&
+           ((la_u16)(end - cursor) == length ||
+            la_is_space(cursor[length]) || cursor[length] == ':');
+}
+
+static int la_deferred_keyword(const char *start, const char *end,
+                               LaSlice *found)
+{
+    static const char *keywords[] = {
+        "callconv", "invoke", "object", "interface", "method_table"
+    };
+    la_u16 index;
+    const char *cursor;
+    cursor = la_trim_left(start, end);
+    for (index = 0; index < (la_u16)(sizeof(keywords) / sizeof(keywords[0]));
+         ++index) {
+        la_u16 length;
+        length = (la_u16)strlen(keywords[index]);
+        if ((la_u16)(end - cursor) >= length &&
+            memcmp(cursor, keywords[index], length) == 0 &&
+            ((la_u16)(end - cursor) == length ||
+             la_is_space(cursor[length]))) {
+            *found = la_slice(cursor, length);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static LaDiagnosticCode la_parse_struct(LaContext *ctx,
+                                        const char *start, const char *end,
+                                        la_u16 line)
+{
+    const char *cursor;
+    const char *name_start;
+    la_u16 name_length;
+    la_u16 name;
+    cursor = la_trim_left(start, end);
+    cursor += 6;
+    cursor = la_trim_left(cursor, end);
+    name_start = cursor;
+    if (cursor >= end || !la_is_ident_start(*cursor)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line,
+                       (la_u16)(cursor - start + 1), 1,
+                       la_slice("structure name", 14), la_slice("", 0), 0, 0);
+    }
+    while (cursor < end && la_is_ident(*cursor)) {
+        ++cursor;
+    }
+    name_length = (la_u16)(cursor - name_start);
+    if (la_token(ctx, line, (la_u16)(name_start - start + 1)) != LA_OK) {
+        return ctx->error;
+    }
+    cursor = la_trim_left(cursor, end);
+    if (!la_equal_text(cursor, (la_u16)(end - cursor), "packed")) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line,
+                       (la_u16)(cursor - start + 1),
+                       (la_u16)(end - cursor),
+                       la_slice("packed", 6), la_slice(cursor,
+                       (la_u16)(end - cursor)), 0, 0);
+    }
+    name = la_intern(ctx, name_start, name_length, line,
+                     (la_u16)(name_start - start + 1));
+    if (name == LA_INVALID_HANDLE) {
+        return ctx->error;
+    }
+    if (la_find_struct_handle(ctx, name) != LA_INVALID_HANDLE) {
+        return la_fail(ctx, LA_ERR_DUPLICATE_STRUCT, line,
+                       (la_u16)(name_start - start + 1), name_length,
+                       la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+    }
+    if (ctx->struct_count >= ctx->limits->max_structs) {
+        return la_fail(ctx, LA_ERR_STRUCT_CAPACITY, line, 1, name_length,
+                       la_name_slice(ctx, name), la_slice("structures", 10),
+                       ctx->struct_count + 1, ctx->limits->max_structs);
+    }
+    ctx->current_struct = ctx->struct_count;
+    ctx->structs[ctx->struct_count].name = name;
+    ctx->structs[ctx->struct_count].first_field = ctx->field_count;
+    ctx->structs[ctx->struct_count].field_count = 0;
+    ctx->structs[ctx->struct_count].size = 0;
+    ctx->structs[ctx->struct_count].line = line;
+    ctx->structs[ctx->struct_count].state = 0;
+    ++ctx->struct_count;
+    ctx->stats->structures = ctx->struct_count;
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_parse_field(LaContext *ctx,
+                                       const char *start, const char *end,
+                                       la_u16 line)
+{
+    const char *cursor;
+    const char *name_start;
+    const char *type_start;
+    la_u16 name_length;
+    la_u16 type_length;
+    la_u16 name;
+    la_u16 type_name;
+    la_u16 count;
+    la_u16 field_index;
+    int is_pointer;
+    cursor = la_trim_left(start, end);
+    name_start = cursor;
+    if (cursor >= end || !la_is_ident_start(*cursor)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("field name", 10), la_slice("", 0), 0, 0);
+    }
+    while (cursor < end && la_is_ident(*cursor)) {
+        ++cursor;
+    }
+    name_length = (la_u16)(cursor - name_start);
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor != ':') {
+        return la_fail(ctx, LA_ERR_SYNTAX, line,
+                       (la_u16)(cursor - start + 1), 1,
+                       la_slice(":", 1), la_slice("", 0), 0, 0);
+    }
+    ++cursor;
+    cursor = la_trim_left(cursor, end);
+    is_pointer = 0;
+    if ((la_u16)(end - cursor) >= 3 &&
+        memcmp(cursor, "ptr", 3) == 0 &&
+        (cursor + 3 == end || la_is_space(cursor[3]))) {
+        is_pointer = 1;
+        cursor += 3;
+        cursor = la_trim_left(cursor, end);
+    }
+    type_start = cursor;
+    if (cursor >= end || !la_is_ident_start(*cursor)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line,
+                       (la_u16)(cursor - start + 1), 1,
+                       la_slice("field type", 10), la_slice("", 0), 0, 0);
+    }
+    while (cursor < end && la_is_ident(*cursor)) {
+        ++cursor;
+    }
+    type_length = (la_u16)(cursor - type_start);
+    count = 1;
+    cursor = la_trim_left(cursor, end);
+    if (cursor < end && *cursor == '[') {
+        la_u32 parsed;
+        ++cursor;
+        parsed = 0;
+        if (cursor >= end || *cursor < '0' || *cursor > '9') {
+            return la_fail(ctx, LA_ERR_SYNTAX, line,
+                           (la_u16)(cursor - start + 1), 1,
+                           la_slice("positive array count", 20),
+                           la_slice("", 0), 0, 0);
+        }
+        while (cursor < end && *cursor >= '0' && *cursor <= '9') {
+            parsed = parsed * 10 + (la_u32)(*cursor - '0');
+            ++cursor;
+        }
+        if (cursor >= end || *cursor != ']' || parsed == 0 || parsed > 65535) {
+            return la_fail(ctx, LA_ERR_SYNTAX, line,
+                           (la_u16)(cursor - start + 1), 1,
+                           la_slice("valid array count", 17),
+                           la_slice("", 0), (la_i32)parsed, 65535);
+        }
+        count = (la_u16)parsed;
+        ++cursor;
+        cursor = la_trim_left(cursor, end);
+    }
+    if (cursor != end) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line,
+                       (la_u16)(cursor - start + 1),
+                       (la_u16)(end - cursor),
+                       la_slice("end of field", 12),
+                       la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
+    }
+    if (la_token(ctx, line, (la_u16)(name_start - start + 1)) != LA_OK ||
+        la_token(ctx, line, (la_u16)(type_start - start + 1)) != LA_OK) {
+        return ctx->error;
+    }
+    name = la_intern(ctx, name_start, name_length, line,
+                     (la_u16)(name_start - start + 1));
+    type_name = la_intern(ctx, type_start, type_length, line,
+                          (la_u16)(type_start - start + 1));
+    if (name == LA_INVALID_HANDLE || type_name == LA_INVALID_HANDLE) {
+        return ctx->error;
+    }
+    for (field_index = ctx->structs[ctx->current_struct].first_field;
+         field_index < ctx->field_count; ++field_index) {
+        if (ctx->fields[field_index].name == name) {
+            return la_fail(ctx, LA_ERR_DUPLICATE_FIELD, line,
+                           (la_u16)(name_start - start + 1), name_length,
+                           la_name_slice(ctx, name),
+                           la_name_slice(ctx,
+                               ctx->structs[ctx->current_struct].name), 0, 0);
+        }
+    }
+    if (ctx->field_count >= ctx->limits->max_fields) {
+        return la_fail(ctx, LA_ERR_FIELD_CAPACITY, line, 1, name_length,
+                       la_name_slice(ctx, name), la_slice("fields", 6),
+                       ctx->field_count + 1, ctx->limits->max_fields);
+    }
+    ctx->fields[ctx->field_count].name = name;
+    ctx->fields[ctx->field_count].type_name = type_name;
+    ctx->fields[ctx->field_count].count = count;
+    ctx->fields[ctx->field_count].offset = 0;
+    ctx->fields[ctx->field_count].size = 0;
+    ctx->fields[ctx->field_count].line = line;
+    ctx->fields[ctx->field_count].is_pointer = (la_u8)is_pointer;
+    ++ctx->field_count;
+    ++ctx->structs[ctx->current_struct].field_count;
+    ctx->stats->fields = ctx->field_count;
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_parse_location(LaContext *ctx,
+                                          const char *start, const char *end,
+                                          la_u16 line)
+{
+    const char *cursor;
+    const char *name_start;
+    const char *type_start;
+    la_u16 name_length;
+    la_u16 type_length;
+    la_u16 name;
+    la_u16 type_name;
+    cursor = la_trim_left(start, end) + 8;
+    cursor = la_trim_left(cursor, end);
+    name_start = cursor;
+    if (cursor >= end || !la_is_ident_start(*cursor)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("location name", 13), la_slice("", 0), 0, 0);
+    }
+    while (cursor < end && la_is_ident(*cursor)) {
+        ++cursor;
+    }
+    name_length = (la_u16)(cursor - name_start);
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor != ':') {
+        return la_fail(ctx, LA_ERR_SYNTAX, line,
+                       (la_u16)(cursor - start + 1), 1,
+                       la_slice(":", 1), la_slice("", 0), 0, 0);
+    }
+    ++cursor;
+    cursor = la_trim_left(cursor, end);
+    if ((la_u16)(end - cursor) < 3 || memcmp(cursor, "ptr", 3) != 0 ||
+        ((la_u16)(end - cursor) > 3 && !la_is_space(cursor[3]))) {
+        return la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
+                       (la_u16)(cursor - start + 1), 3,
+                       la_slice("ptr T", 5), la_slice(cursor,
+                       (la_u16)(end - cursor)), 0, 0);
+    }
+    cursor += 3;
+    cursor = la_trim_left(cursor, end);
+    type_start = cursor;
+    if (cursor >= end || !la_is_ident_start(*cursor)) {
+        return la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
+                       (la_u16)(cursor - start + 1), 1,
+                       la_slice("pointee type", 12), la_slice("", 0), 0, 0);
+    }
+    while (cursor < end && la_is_ident(*cursor)) {
+        ++cursor;
+    }
+    type_length = (la_u16)(cursor - type_start);
+    cursor = la_trim_left(cursor, end);
+    if (cursor != end) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line,
+                       (la_u16)(cursor - start + 1),
+                       (la_u16)(end - cursor),
+                       la_slice("end of location", 15),
+                       la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
+    }
+    name = la_intern(ctx, name_start, name_length, line, 1);
+    type_name = la_intern(ctx, type_start, type_length, line, 1);
+    if (name == LA_INVALID_HANDLE || type_name == LA_INVALID_HANDLE) {
+        return ctx->error;
+    }
+    if (la_find_location_text(ctx, name_start, name_length) !=
+        LA_INVALID_HANDLE) {
+        return la_fail(ctx, LA_ERR_DUPLICATE_LOCATION, line, 1, name_length,
+                       la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+    }
+    if (ctx->location_count >= ctx->limits->max_locations) {
+        return la_fail(ctx, LA_ERR_LOCATION_CAPACITY, line, 1, name_length,
+                       la_name_slice(ctx, name), la_slice("locations", 9),
+                       ctx->location_count + 1,
+                       ctx->limits->max_locations);
+    }
+    ctx->locations[ctx->location_count].name = name;
+    ctx->locations[ctx->location_count].type_name = type_name;
+    ctx->locations[ctx->location_count].physical = name;
+    ctx->locations[ctx->location_count].line = line;
+    ctx->locations[ctx->location_count].procedure = LA_INVALID_HANDLE;
+    ctx->locations[ctx->location_count].is_pointer = 1;
+    ctx->locations[ctx->location_count].role = LA_MEMBER_INPUT;
+    ctx->locations[ctx->location_count].explicit_placement = 1;
+    ++ctx->location_count;
+    ctx->stats->locations = ctx->location_count;
+    return LA_OK;
+}
+
+static la_u16 la_find_pool_text(LaContext *ctx,
+                                const char *text, la_u16 length)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->pool_count; ++index) {
+        LaSlice name;
+        name = la_name_slice(ctx, ctx->pools[index].name);
+        if (name.length == length && memcmp(name.data, text, length) == 0) {
+            return index;
+        }
+    }
+    return LA_INVALID_HANDLE;
+}
+
+static la_u16 la_find_procedure_text(LaContext *ctx,
+                                     const char *text, la_u16 length)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->procedure_count; ++index) {
+        LaSlice name;
+        name = la_name_slice(ctx, ctx->procedures[index].name);
+        if (name.length == length && memcmp(name.data, text, length) == 0) {
+            return index;
+        }
+    }
+    return LA_INVALID_HANDLE;
+}
+
+static la_u16 la_find_local_text(LaContext *ctx, la_u16 procedure,
+                                 const char *text, la_u16 length)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->local_count; ++index) {
+        LaSlice name;
+        if (ctx->locals[index].procedure != procedure) continue;
+        name = la_name_slice(ctx, ctx->locals[index].name);
+        if (name.length == length && memcmp(name.data, text, length) == 0) {
+            return index;
+        }
+    }
+    return LA_INVALID_HANDLE;
+}
+
+static int la_read_identifier(const char **cursor, const char *end,
+                              const char **start, la_u16 *length)
+{
+    const char *value;
+    *cursor = la_trim_left(*cursor, end);
+    value = *cursor;
+    if (value >= end || !la_is_ident_start(*value)) return 0;
+    while (*cursor < end && la_is_ident(**cursor)) ++*cursor;
+    *start = value;
+    *length = (la_u16)(*cursor - value);
+    return 1;
+}
+
+static int la_take_word(const char **cursor, const char *end,
+                        const char *word)
+{
+    la_u16 length;
+    *cursor = la_trim_left(*cursor, end);
+    length = (la_u16)strlen(word);
+    if ((la_u16)(end - *cursor) < length ||
+        memcmp(*cursor, word, length) != 0 ||
+        ((la_u16)(end - *cursor) > length &&
+         !la_is_space((*cursor)[length]))) {
+        return 0;
+    }
+    *cursor += length;
+    return 1;
+}
+
+static LaDiagnosticCode la_parse_pool(LaContext *ctx,
+                                      const char *start, const char *end,
+                                      la_u16 line)
+{
+    const char *cursor;
+    const char *name_start;
+    const char *type_start;
+    const char *base_start;
+    const char *low_start;
+    const char *high_start;
+    la_u16 name_length;
+    la_u16 type_length;
+    la_u16 base_length;
+    la_u16 low_length;
+    la_u16 high_length;
+    la_u32 count;
+    LaPoolRec *pool;
+    cursor = la_trim_left(start, end) + 4;
+    if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("pool name", 9), la_slice("", 0), 0, 0);
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != ':') {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice(":", 1), la_slice("", 0), 0, 0);
+    }
+    if (!la_read_identifier(&cursor, end, &type_start, &type_length)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("pool element type", 17),
+                       la_slice("", 0), 0, 0);
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != '[') {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("[count]", 7), la_slice("", 0), 0, 0);
+    }
+    count = 0;
+    while (cursor < end && *cursor >= '0' && *cursor <= '9') {
+        count = count * 10 + (la_u32)(*cursor++ - '0');
+    }
+    if (count == 0 || count > 65535 || cursor >= end || *cursor++ != ']') {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("positive pool count", 19),
+                       la_slice("", 0), (la_i32)count, 65535);
+    }
+    if (!la_take_word(&cursor, end, "at") ||
+        !la_read_identifier(&cursor, end, &base_start, &base_length) ||
+        !la_take_word(&cursor, end, "table") ||
+        !la_read_identifier(&cursor, end, &low_start, &low_length)) {
+        return la_fail(ctx, LA_ERR_POOL_STRATEGY, line, 1, 1,
+                       la_slice("at BASE table LOW, HIGH", 23),
+                       la_slice("", 0), 0, 0);
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != ',' ||
+        !la_read_identifier(&cursor, end, &high_start, &high_length) ||
+        la_trim_left(cursor, end) != end) {
+        return la_fail(ctx, LA_ERR_POOL_STRATEGY, line, 1, 1,
+                       la_slice("at BASE table LOW, HIGH", 23),
+                       la_slice("", 0), 0, 0);
+    }
+    if (la_find_pool_text(ctx, name_start, name_length) != LA_INVALID_HANDLE) {
+        return la_fail(ctx, LA_ERR_DUPLICATE_POOL, line, 1, name_length,
+                       la_slice(name_start, name_length), la_slice("", 0),
+                       0, 0);
+    }
+    if (ctx->pool_count >= ctx->limits->max_pools) {
+        return la_fail(ctx, LA_ERR_POOL_CAPACITY, line, 1, name_length,
+                       la_slice("pools", 5), la_slice("", 0),
+                       ctx->pool_count + 1, ctx->limits->max_pools);
+    }
+    pool = &ctx->pools[ctx->pool_count++];
+    pool->name = la_intern(ctx, name_start, name_length, line, 1);
+    pool->type_name = la_intern(ctx, type_start, type_length, line, 1);
+    pool->base = la_intern(ctx, base_start, base_length, line, 1);
+    pool->table_low = la_intern(ctx, low_start, low_length, line, 1);
+    pool->table_high = la_intern(ctx, high_start, high_length, line, 1);
+    if (pool->name == LA_INVALID_HANDLE ||
+        pool->type_name == LA_INVALID_HANDLE ||
+        pool->base == LA_INVALID_HANDLE ||
+        pool->table_low == LA_INVALID_HANDLE ||
+        pool->table_high == LA_INVALID_HANDLE) return ctx->error;
+    pool->count = (la_u16)count;
+    pool->stride = 0;
+    pool->size = 0;
+    pool->line = line;
+    ctx->stats->pools = ctx->pool_count;
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_parse_procedure(LaContext *ctx,
+                                           const char *start,
+                                           const char *end, la_u16 line)
+{
+    const char *cursor;
+    const char *name_start;
+    la_u16 name_length;
+    la_u16 index;
+    LaProcedureRec *procedure;
+    cursor = la_trim_left(start, end) + 4;
+    if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("procedure name", 14), la_slice("", 0), 0, 0);
+    }
+    for (index = 0; index < ctx->procedure_count; ++index) {
+        LaSlice name;
+        name = la_name_slice(ctx, ctx->procedures[index].name);
+        if (name.length == name_length &&
+            memcmp(name.data, name_start, name_length) == 0) {
+            return la_fail(ctx, LA_ERR_DUPLICATE_PROCEDURE, line, 1,
+                           name_length, name, la_slice("", 0), 0, 0);
+        }
+    }
+    if (ctx->procedure_count >= ctx->limits->max_procedures) {
+        return la_fail(ctx, LA_ERR_PROCEDURE_CAPACITY, line, 1, name_length,
+                       la_slice("procedures", 10), la_slice("", 0),
+                       ctx->procedure_count + 1,
+                       ctx->limits->max_procedures);
+    }
+    procedure = &ctx->procedures[ctx->procedure_count];
+    memset(procedure, 0, sizeof(*procedure));
+    procedure->name = la_intern(ctx, name_start, name_length, line, 1);
+    if (procedure->name == LA_INVALID_HANDLE) return ctx->error;
+    procedure->convention = LA_INVALID_HANDLE;
+    cursor = la_trim_left(cursor, end);
+    if (la_take_word(&cursor, end, "using")) {
+        const char *convention_start;
+        la_u16 convention_length;
+        la_u16 convention_index;
+        if (!la_read_identifier(&cursor, end, &convention_start,
+                                &convention_length)) {
+            return la_fail(ctx, LA_ERR_CONVENTION, line, 1, 1,
+                           la_slice("convention", 10), la_slice("", 0), 0, 0);
+        }
+        convention_index = LA_INVALID_HANDLE;
+        for (index = 0; index < ctx->target->convention_count; ++index) {
+            const char *candidate;
+            candidate = ctx->target->conventions[index].name;
+            if (la_equal_text(convention_start, convention_length,
+                              candidate)) {
+                convention_index = index;
+                break;
+            }
+        }
+        if (convention_index == LA_INVALID_HANDLE) {
+            return la_fail(ctx, LA_ERR_CONVENTION, line, 1,
+                           convention_length,
+                           la_slice(convention_start, convention_length),
+                           la_slice(ctx->target->name,
+                                    (la_u16)strlen(ctx->target->name)),
+                           0, 0);
+        }
+        procedure->convention = convention_index;
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor != end) {
+        if (la_equal_text(cursor, (la_u16)(end - cursor), "naked")) {
+            procedure->naked = 1;
+        } else if (!la_equal_text(cursor, (la_u16)(end - cursor), "frame")) {
+            return la_fail(ctx, LA_ERR_SYNTAX, line, 1,
+                           (la_u16)(end - cursor),
+                           la_slice("[using CONVENTION] [frame|naked]", 34),
+                           la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
+        }
+    }
+    procedure->line = line;
+    procedure->first_local = ctx->local_count;
+    procedure->first_parameter = ctx->location_count;
+    ctx->current_procedure = ctx->procedure_count++;
+    ctx->stats->procedures = ctx->procedure_count;
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_parse_member(LaContext *ctx,
+                                        const char *start,
+                                        const char *end, la_u16 line)
+{
+    const char *cursor;
+    const char *name_start;
+    const char *type_start;
+    const char *physical_start;
+    la_u16 name_length;
+    la_u16 type_length;
+    la_u16 physical_length;
+    la_u16 index;
+    int is_pointer;
+    LaLocationRec *parameter;
+    LaProcedureRec *procedure;
+    int role;
+    int is_local;
+    int explicit_placement;
+    procedure = &ctx->procedures[ctx->current_procedure];
+    cursor = la_trim_left(start, end);
+    if (la_line_keyword(cursor, end, "local")) {
+        return la_fail(ctx, LA_ERR_LOCAL_SYNTAX_MIGRATION, line, 1, 5,
+                       la_slice("local", 5),
+                       la_slice("NAME : TYPE in frame", 20), 0, 0);
+    }
+    if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("parameter", 9), la_slice("", 0), 0, 0);
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != ':') {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice(":", 1), la_slice("", 0), 0, 0);
+    }
+    cursor = la_trim_left(cursor, end);
+    is_pointer = la_take_word(&cursor, end, "ptr");
+    if (!la_read_identifier(&cursor, end, &type_start, &type_length)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("member type", 11), la_slice("", 0), 0, 0);
+    }
+    role = LA_MEMBER_INPUT;
+    is_local = 0;
+    explicit_placement = 0;
+    physical_start = 0;
+    physical_length = 0;
+    cursor = la_trim_left(cursor, end);
+    if (la_take_word(&cursor, end, "return")) {
+        role = LA_MEMBER_RETURN;
+        cursor = la_trim_left(cursor, end);
+        if (cursor != end) {
+            if (!la_take_word(&cursor, end, "in") ||
+                !la_read_identifier(&cursor, end, &physical_start,
+                                    &physical_length) ||
+                la_trim_left(cursor, end) != end) {
+                return la_fail(ctx, LA_ERR_MEMBER_ROLE, line, 1, 1,
+                               la_slice("return [in PHYSICAL]", 20),
+                               la_slice("", 0), 0, 0);
+            }
+            explicit_placement = 1;
+            if (la_equal_text(physical_start, physical_length, "frame")) {
+                return la_fail(ctx, LA_ERR_MEMBER_ROLE, line, 1,
+                               physical_length,
+                               la_slice("return cannot use frame", 23),
+                               la_slice("NAME : TYPE in frame", 20), 0, 0);
+            }
+        }
+    } else if (la_take_word(&cursor, end, "in")) {
+        if (!la_read_identifier(&cursor, end, &physical_start,
+                                &physical_length) ||
+            la_trim_left(cursor, end) != end) {
+            return la_fail(ctx, LA_ERR_MEMBER_PLACEMENT, line, 1, 1,
+                           la_slice("in PHYSICAL", 11), la_slice("", 0), 0, 0);
+        }
+        if (la_equal_text(physical_start, physical_length, "frame")) {
+            is_local = 1;
+        } else {
+            explicit_placement = 1;
+        }
+    } else if (cursor != end) {
+        return la_fail(ctx, LA_ERR_MEMBER_ROLE, line, 1,
+                       (la_u16)(end - cursor),
+                       la_slice("in PLACE or return [in PLACE]", 29),
+                       la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
+    }
+    if (is_local) {
+        LaLocalRec *local;
+        if (procedure->naked) {
+            return la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, name_length,
+                           la_slice(name_start, name_length),
+                           la_slice("naked", 5), 0, 0);
+        }
+        if (la_find_local_text(ctx, ctx->current_procedure,
+                               name_start, name_length) != LA_INVALID_HANDLE) {
+            return la_fail(ctx, LA_ERR_DUPLICATE_LOCAL, line, 1, name_length,
+                           la_slice(name_start, name_length),
+                           la_slice("", 0), 0, 0);
+        }
+        for (index = 0; index < ctx->location_count; ++index) {
+            LaSlice other;
+            if (ctx->locations[index].procedure != ctx->current_procedure)
+                continue;
+            other = la_name_slice(ctx, ctx->locations[index].name);
+            if (other.length == name_length &&
+                memcmp(other.data, name_start, name_length) == 0) {
+                return la_fail(ctx, LA_ERR_DUPLICATE_LOCAL, line, 1,
+                               name_length, other, la_slice("", 0), 0, 0);
+            }
+        }
+        if (ctx->local_count >= ctx->limits->max_locals) {
+            return la_fail(ctx, LA_ERR_LOCAL_CAPACITY, line, 1, name_length,
+                           la_slice("locals", 6), la_slice("", 0),
+                           ctx->local_count + 1, ctx->limits->max_locals);
+        }
+        local = &ctx->locals[ctx->local_count++];
+        memset(local, 0, sizeof(*local));
+        local->name = la_intern(ctx, name_start, name_length, line, 1);
+        local->type_name = la_intern(ctx, type_start, type_length, line, 1);
+        if (local->name == LA_INVALID_HANDLE ||
+            local->type_name == LA_INVALID_HANDLE) return ctx->error;
+        local->procedure = ctx->current_procedure;
+        local->line = line;
+        local->is_pointer = (la_u8)is_pointer;
+        ++procedure->local_count;
+        ctx->stats->locals = ctx->local_count;
+        return LA_OK;
+    }
+    if (la_find_local_text(ctx, ctx->current_procedure,
+                           name_start, name_length) != LA_INVALID_HANDLE) {
+        return la_fail(ctx, LA_ERR_DUPLICATE_PARAMETER, line, 1,
+                       name_length, la_slice(name_start, name_length),
+                       la_slice("procedure member", 16), 0, 0);
+    }
+    for (index = 0; index < ctx->location_count; ++index) {
+        LaSlice name;
+        if (ctx->locations[index].procedure != ctx->current_procedure) continue;
+        name = la_name_slice(ctx, ctx->locations[index].name);
+        if (name.length == name_length &&
+            memcmp(name.data, name_start, name_length) == 0) {
+            return la_fail(ctx, LA_ERR_DUPLICATE_PARAMETER, line, 1,
+                           name_length, name, la_slice("", 0), 0, 0);
+        }
+    }
+    if (ctx->parameter_count >= ctx->limits->max_parameters) {
+        return la_fail(ctx, LA_ERR_PARAMETER_CAPACITY, line, 1, name_length,
+                       la_slice("parameters", 10), la_slice("", 0),
+                       ctx->parameter_count + 1,
+                       ctx->limits->max_parameters);
+    }
+    if (ctx->location_count >= ctx->limits->max_locations) {
+        return la_fail(ctx, LA_ERR_LOCATION_CAPACITY, line, 1, name_length,
+                       la_slice("locations", 9), la_slice("", 0),
+                       ctx->location_count + 1,
+                       ctx->limits->max_locations);
+    }
+    parameter = &ctx->locations[ctx->location_count++];
+    parameter->name = la_intern(ctx, name_start, name_length, line, 1);
+    parameter->type_name = la_intern(ctx, type_start, type_length, line, 1);
+    parameter->physical = LA_INVALID_HANDLE;
+    if (explicit_placement) {
+        parameter->physical =
+            la_intern(ctx, physical_start, physical_length, line, 1);
+    }
+    if (parameter->name == LA_INVALID_HANDLE ||
+        parameter->type_name == LA_INVALID_HANDLE ||
+        (explicit_placement &&
+         parameter->physical == LA_INVALID_HANDLE)) return ctx->error;
+    parameter->line = line;
+    parameter->procedure = ctx->current_procedure;
+    parameter->is_pointer = (la_u8)is_pointer;
+    parameter->role = (la_u8)role;
+    parameter->explicit_placement = (la_u8)explicit_placement;
+    ++ctx->parameter_count;
+    ++procedure->parameter_count;
+    ctx->stats->parameters = ctx->parameter_count;
+    ctx->stats->locations = ctx->location_count;
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_first_pass(LaContext *ctx)
+{
+    const char *cursor;
+    const char *source_end;
+    la_u16 line;
+    int in_struct;
+    int in_procedure;
+    int in_body;
+    cursor = ctx->source;
+    source_end = ctx->source + ctx->source_length;
+    line = 1;
+    in_struct = 0;
+    in_procedure = 0;
+    in_body = 0;
+    ctx->current_struct = LA_INVALID_HANDLE;
+    ctx->current_procedure = LA_INVALID_HANDLE;
+    while (cursor < source_end) {
+        const char *line_end;
+        const char *content_end;
+        const char *trimmed;
+        LaSlice deferred;
+        line_end = cursor;
+        while (line_end < source_end && *line_end != '\n') {
+            ++line_end;
+        }
+        content_end = line_end;
+        while (content_end > cursor &&
+               (content_end[-1] == '\r' || content_end[-1] == ' ' ||
+                content_end[-1] == '\t')) {
+            --content_end;
+        }
+        content_end = la_code_end(cursor, content_end);
+        trimmed = la_trim_left(cursor, content_end);
+        if (trimmed < content_end && *trimmed != ';') {
+            if (in_struct) {
+                if (la_line_keyword(trimmed, content_end, "end")) {
+                    in_struct = 0;
+                    ctx->current_struct = LA_INVALID_HANDLE;
+                } else if (la_parse_field(ctx, cursor, content_end, line) !=
+                           LA_OK) {
+                    return ctx->error;
+                }
+            } else if (in_procedure) {
+                LaProcedureRec *procedure;
+                procedure = &ctx->procedures[ctx->current_procedure];
+                if (!in_body) {
+                    if (la_line_keyword(trimmed, content_end, "begin")) {
+                        if (!la_equal_text(trimmed,
+                                           (la_u16)(content_end - trimmed),
+                                           "begin")) {
+                            return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                                           la_slice("begin", 5),
+                                           la_slice("", 0), 0, 0);
+                        }
+                        procedure->begin_line = line;
+                        in_body = 1;
+                    } else if (la_parse_member(ctx, cursor, content_end,
+                                               line) != LA_OK) {
+                        return ctx->error;
+                    }
+                } else if (la_line_keyword(trimmed, content_end, "end")) {
+                    if (!la_equal_text(trimmed,
+                                       (la_u16)(content_end - trimmed),
+                                       "end")) {
+                        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                                       la_slice("end", 3),
+                                       la_slice("", 0), 0, 0);
+                    }
+                    procedure->end_line = line;
+                    in_procedure = 0;
+                    in_body = 0;
+                    ctx->current_procedure = LA_INVALID_HANDLE;
+                } else if (procedure->local_count != 0) {
+                    static const char *mutators[] = {
+                        "pha", "pla", "php", "plp", "txs"
+                    };
+                    la_u16 mutator;
+                    for (mutator = 0;
+                         mutator < (la_u16)(sizeof(mutators) /
+                                            sizeof(mutators[0]));
+                         ++mutator) {
+                        if (la_line_keyword(trimmed, content_end,
+                                            mutators[mutator])) {
+                            return la_fail(
+                                ctx, LA_ERR_FRAME_STACK_MUTATION, line, 1,
+                                (la_u16)strlen(mutators[mutator]),
+                                la_slice(mutators[mutator],
+                                         (la_u16)strlen(mutators[mutator])),
+                                la_name_slice(ctx, procedure->name), 0, 0);
+                        }
+                    }
+                    if (la_line_keyword(trimmed, content_end, "rts")) {
+                        return la_fail(ctx, LA_ERR_FRAME_STACK_MUTATION,
+                                       line, 1, 3, la_slice("rts", 3),
+                                       la_slice("use ret", 7), 0, 0);
+                    }
+                }
+            } else if (la_line_keyword(trimmed, content_end, "struct")) {
+                if (la_parse_struct(ctx, cursor, content_end, line) != LA_OK) {
+                    return ctx->error;
+                }
+                in_struct = 1;
+            } else if (la_line_keyword(trimmed, content_end, "pool")) {
+                if (la_parse_pool(ctx, cursor, content_end, line) != LA_OK) {
+                    return ctx->error;
+                }
+            } else if (la_line_keyword(trimmed, content_end, "proc")) {
+                if (la_parse_procedure(ctx, cursor, content_end, line) !=
+                    LA_OK) return ctx->error;
+                in_procedure = 1;
+                in_body = 0;
+            } else if (la_line_keyword(trimmed, content_end, "location")) {
+                if (la_parse_location(ctx, cursor, content_end, line) !=
+                    LA_OK) {
+                    return ctx->error;
+                }
+            } else if (la_deferred_keyword(trimmed, content_end, &deferred)) {
+                return la_fail(ctx, LA_ERR_DEFERRED_FEATURE, line,
+                               (la_u16)(trimmed - cursor + 1),
+                               deferred.length, deferred, la_slice("", 0),
+                               0, 0);
+            } else if ((la_u16)(content_end - trimmed) >= 5 &&
+                       memcmp(trimmed, "__la_", 5) == 0) {
+                return la_fail(ctx, LA_ERR_RESERVED_SYMBOL, line,
+                               (la_u16)(trimmed - cursor + 1), 5,
+                               la_slice(trimmed, 5), la_slice("__la_", 5),
+                               0, 0);
+            }
+        }
+        if (line_end < source_end) {
+            ++line_end;
+        }
+        cursor = line_end;
+        ++line;
+    }
+    if (in_struct || in_procedure) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("end", 3), la_slice("", 0), 0, 0);
+    }
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
+{
+    la_u16 unresolved;
+    la_u16 index;
+    int progress;
+    for (index = 0; index < ctx->location_count; ++index) {
+        if (ctx->locations[index].is_pointer) {
+            if (la_find_struct_handle(ctx, ctx->locations[index].type_name) ==
+                LA_INVALID_HANDLE) {
+                return la_fail(
+                    ctx, LA_ERR_UNKNOWN_TYPE, ctx->locations[index].line,
+                    1, 1,
+                    la_name_slice(ctx, ctx->locations[index].type_name),
+                    la_slice("", 0), 0, 0);
+            }
+        } else {
+            la_u16 size;
+            if (!la_primitive_size(ctx, ctx->locations[index].type_name,
+                                   &size)) {
+                return la_fail(
+                    ctx, LA_ERR_UNKNOWN_TYPE, ctx->locations[index].line,
+                    1, 1,
+                    la_name_slice(ctx, ctx->locations[index].type_name),
+                    la_slice("scalar parameter", 16), 0, 0);
+            }
+        }
+    }
+    unresolved = ctx->struct_count;
+    do {
+        progress = 0;
+        for (index = 0; index < ctx->struct_count; ++index) {
+            LaStructRec *record;
+            la_u16 field_index;
+            la_u16 offset;
+            int ready;
+            record = &ctx->structs[index];
+            if (record->state != 0) {
+                continue;
+            }
+            ready = 1;
+            offset = 0;
+            for (field_index = record->first_field;
+                 field_index < record->first_field + record->field_count;
+                 ++field_index) {
+                LaFieldRec *field;
+                la_u16 unit_size;
+                la_u16 nested;
+                field = &ctx->fields[field_index];
+                if (field->is_pointer) {
+                    nested = la_find_struct_handle(ctx, field->type_name);
+                    if (nested == LA_INVALID_HANDLE) {
+                        return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, field->line,
+                                       1, 1,
+                                       la_name_slice(ctx, field->type_name),
+                                       la_name_slice(ctx, record->name), 0, 0);
+                    }
+                    unit_size = ctx->target->pointer_units;
+                } else if (!la_primitive_size(ctx, field->type_name,
+                                              &unit_size)) {
+                    nested = la_find_struct_handle(ctx, field->type_name);
+                    if (nested == LA_INVALID_HANDLE) {
+                        return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, field->line,
+                                       1, 1,
+                                       la_name_slice(ctx, field->type_name),
+                                       la_name_slice(ctx, record->name), 0, 0);
+                    }
+                    if (ctx->structs[nested].state == 0) {
+                        ready = 0;
+                        break;
+                    }
+                    unit_size = ctx->structs[nested].size;
+                }
+                if ((la_u32)unit_size * field->count + offset > 65535) {
+                    return la_fail(ctx, LA_ERR_SYNTAX, field->line, 1, 1,
+                                   la_slice("layout overflow", 15),
+                                   la_name_slice(ctx, field->name), 0, 65535);
+                }
+                field->offset = offset;
+                field->size = (la_u16)(unit_size * field->count);
+                offset = (la_u16)(offset + field->size);
+            }
+            if (ready) {
+                record->size = offset;
+                record->state = 1;
+                --unresolved;
+                progress = 1;
+            }
+        }
+    } while (unresolved != 0 && progress);
+    if (unresolved != 0) {
+        for (index = 0; index < ctx->struct_count; ++index) {
+            if (ctx->structs[index].state == 0) {
+                return la_fail(ctx, LA_ERR_LAYOUT_CYCLE,
+                               ctx->structs[index].line, 1, 1,
+                               la_name_slice(ctx, ctx->structs[index].name),
+                               la_slice("", 0), unresolved, 0);
+            }
+        }
+    }
+    for (index = 0; index < ctx->pool_count; ++index) {
+        la_u16 sid;
+        LaPoolRec *pool;
+        pool = &ctx->pools[index];
+        sid = la_find_struct_handle(ctx, pool->type_name);
+        if (sid == LA_INVALID_HANDLE) {
+            return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, pool->line, 1, 1,
+                           la_name_slice(ctx, pool->type_name),
+                           la_name_slice(ctx, pool->name), 0, 0);
+        }
+        pool->stride = ctx->structs[sid].size;
+        if ((la_u32)pool->stride * pool->count > 65535) {
+            return la_fail(ctx, LA_ERR_SYNTAX, pool->line, 1, 1,
+                           la_slice("pool size overflow", 18),
+                           la_name_slice(ctx, pool->name),
+                           (la_i32)((la_u32)pool->stride * pool->count),
+                           65535);
+        }
+        pool->size = (la_u16)(pool->stride * pool->count);
+    }
+    for (index = 0; index < ctx->procedure_count; ++index) {
+        LaProcedureRec *procedure;
+        const LaConvention *convention;
+        la_u16 member_index;
+        la_u16 local_index;
+        la_u16 scalar_slot;
+        procedure = &ctx->procedures[index];
+        convention = procedure->convention == LA_INVALID_HANDLE ? 0 :
+            &ctx->target->conventions[procedure->convention];
+        scalar_slot = 0;
+        for (member_index = procedure->first_parameter;
+             member_index < procedure->first_parameter +
+                            procedure->parameter_count;
+             ++member_index) {
+            LaLocationRec *member;
+            member = &ctx->locations[member_index];
+            if (member->physical != LA_INVALID_HANDLE) continue;
+            if (procedure->convention == LA_INVALID_HANDLE) {
+                return la_fail(ctx, LA_ERR_MEMBER_PLACEMENT, member->line,
+                               1, 1, la_name_slice(ctx, member->name),
+                               la_slice("using convention or in physical", 31),
+                               0, 0);
+            }
+            if (member->is_pointer) {
+                return la_fail(ctx, LA_ERR_MEMBER_PLACEMENT, member->line,
+                               1, 1, la_name_slice(ctx, member->name),
+                               la_slice("explicit pointer location", 25),
+                               0, 0);
+            }
+            if (member->role == LA_MEMBER_RETURN) {
+                member->physical = la_intern(
+                    ctx, convention->scalar_return,
+                    (la_u16)strlen(convention->scalar_return),
+                    member->line, 1);
+            } else {
+                int assigned;
+                assigned = 0;
+                while (scalar_slot < convention->scalar_input_count &&
+                       !assigned) {
+                    la_u16 other_index;
+                    int used;
+                    used = 0;
+                    for (other_index = procedure->first_parameter;
+                         other_index < procedure->first_parameter +
+                                       procedure->parameter_count;
+                         ++other_index) {
+                        LaLocationRec *other;
+                        LaSlice physical;
+                        other = &ctx->locations[other_index];
+                        if (other == member ||
+                            other->physical == LA_INVALID_HANDLE ||
+                            other->role != LA_MEMBER_INPUT) continue;
+                        physical = la_name_slice(ctx, other->physical);
+                        if (la_equal_text(physical.data, physical.length,
+                                          convention->
+                                              scalar_inputs[scalar_slot])) {
+                            used = 1;
+                            break;
+                        }
+                    }
+                    if (!used) {
+                        member->physical = la_intern(
+                            ctx, convention->scalar_inputs[scalar_slot],
+                            (la_u16)strlen(
+                                convention->scalar_inputs[scalar_slot]),
+                            member->line, 1);
+                        assigned = 1;
+                    }
+                    ++scalar_slot;
+                }
+                if (!assigned) {
+                    return la_fail(ctx, LA_ERR_CONVENTION, member->line,
+                                   1, 1, la_name_slice(ctx, member->name),
+                                   la_slice("scalar input locations", 22),
+                                   convention->scalar_input_count + 1,
+                                   convention->scalar_input_count);
+                }
+            }
+            if (member->physical == LA_INVALID_HANDLE) return ctx->error;
+        }
+        procedure->frame_size = 0;
+        for (local_index = procedure->first_local;
+             local_index < procedure->first_local + procedure->local_count;
+             ++local_index) {
+            LaLocalRec *local;
+            la_u16 size;
+            local = &ctx->locals[local_index];
+            if (local->is_pointer) {
+                if (la_find_struct_handle(ctx, local->type_name) ==
+                    LA_INVALID_HANDLE) {
+                    return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, local->line,
+                                   1, 1,
+                                   la_name_slice(ctx, local->type_name),
+                                   la_slice("pointer local", 13), 0, 0);
+                }
+                size = ctx->target->pointer_units;
+            } else if (!la_primitive_size(ctx, local->type_name, &size)) {
+                la_u16 sid;
+                sid = la_find_struct_handle(ctx, local->type_name);
+                if (sid == LA_INVALID_HANDLE) {
+                    return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, local->line,
+                                   1, 1,
+                                   la_name_slice(ctx, local->type_name),
+                                   la_slice("frame local", 11), 0, 0);
+                }
+                size = ctx->structs[sid].size;
+            }
+            if ((la_u32)procedure->frame_size + size > 255) {
+                return la_fail(ctx, LA_ERR_FRAME_LOCAL, local->line, 1, 1,
+                               la_name_slice(ctx, local->name),
+                               la_slice("frame bytes", 11),
+                               procedure->frame_size + size, 255);
+            }
+            local->offset = procedure->frame_size;
+            local->size = size;
+            procedure->frame_size =
+                (la_u16)(procedure->frame_size + size);
+        }
+    }
+    return LA_OK;
+}
+
+static la_u16 la_find_field(LaContext *ctx, la_u16 sid,
+                            const char *name, la_u16 length)
+{
+    la_u16 index;
+    LaStructRec *record;
+    record = &ctx->structs[sid];
+    for (index = record->first_field;
+         index < record->first_field + record->field_count; ++index) {
+        LaSlice field_name;
+        field_name = la_name_slice(ctx, ctx->fields[index].name);
+        if (field_name.length == length &&
+            memcmp(field_name.data, name, length) == 0) {
+            return index;
+        }
+    }
+    return LA_INVALID_HANDLE;
+}
+
+static LaDiagnosticCode la_resolve_path(LaContext *ctx,
+                                        const char *root, la_u16 root_length,
+                                        const char *path, la_u16 path_length,
+                                        la_u16 line, la_u16 *field_out,
+                                        la_u16 *offset_out)
+{
+    la_u16 sid;
+    la_u16 total;
+    const char *cursor;
+    const char *end;
+    sid = la_find_struct_text(ctx, root, root_length);
+    if (sid == LA_INVALID_HANDLE) {
+        return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, line, 1, root_length,
+                       la_slice(root, root_length), la_slice("", 0), 0, 0);
+    }
+    total = 0;
+    cursor = path;
+    end = path + path_length;
+    while (cursor < end) {
+        const char *component_end;
+        la_u16 field_index;
+        component_end = cursor;
+        while (component_end < end && *component_end != '.') {
+            ++component_end;
+        }
+        field_index = la_find_field(ctx, sid, cursor,
+                                    (la_u16)(component_end - cursor));
+        if (field_index == LA_INVALID_HANDLE) {
+            return la_fail(ctx, LA_ERR_UNKNOWN_FIELD, line, 1,
+                           (la_u16)(component_end - cursor),
+                           la_slice(cursor,
+                                    (la_u16)(component_end - cursor)),
+                           la_name_slice(ctx, ctx->structs[sid].name), 0, 0);
+        }
+        total = (la_u16)(total + ctx->fields[field_index].offset);
+        if (component_end == end) {
+            *field_out = field_index;
+            *offset_out = total;
+            return LA_OK;
+        }
+        if (ctx->fields[field_index].is_pointer) {
+            sid = LA_INVALID_HANDLE;
+        } else {
+            sid = la_find_struct_handle(ctx,
+                                        ctx->fields[field_index].type_name);
+        }
+        if (sid == LA_INVALID_HANDLE || ctx->fields[field_index].count != 1) {
+            return la_fail(ctx, LA_ERR_UNKNOWN_FIELD, line, 1,
+                           (la_u16)(component_end - cursor),
+                           la_slice(cursor,
+                                    (la_u16)(component_end - cursor)),
+                           la_slice("non-structure", 13), 0, 0);
+        }
+        cursor = component_end + 1;
+    }
+    return la_fail(ctx, LA_ERR_UNKNOWN_FIELD, line, 1, path_length,
+                   la_slice(path, path_length), la_slice("", 0), 0, 0);
+}
+
+static LaDiagnosticCode la_resolve_indexed_path(
+    LaContext *ctx, const char *root, la_u16 root_length,
+    const char *path, la_u16 path_length, la_u16 line,
+    la_u16 *field_out, la_u16 *offset_out, LaSlice *index_out,
+    la_u16 *stride_out, la_u16 *count_out)
+{
+    la_u16 sid;
+    la_u16 total;
+    const char *cursor;
+    const char *end;
+    int saw_index;
+    sid = la_find_struct_text(ctx, root, root_length);
+    if (sid == LA_INVALID_HANDLE) {
+        return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, line, 1, root_length,
+                       la_slice(root, root_length), la_slice("", 0), 0, 0);
+    }
+    total = 0;
+    cursor = path;
+    end = path + path_length;
+    saw_index = 0;
+    index_out->data = 0;
+    index_out->length = 0;
+    *stride_out = 0;
+    *count_out = 0;
+    while (cursor < end) {
+        const char *name_end;
+        const char *component_end;
+        const char *index_start;
+        const char *index_end;
+        la_u16 field_index;
+        int indexed;
+        name_end = cursor;
+        while (name_end < end && *name_end != '.' && *name_end != '[') {
+            ++name_end;
+        }
+        component_end = name_end;
+        indexed = 0;
+        index_start = 0;
+        index_end = 0;
+        if (name_end < end && *name_end == '[') {
+            indexed = 1;
+            index_start = name_end + 1;
+            index_end = index_start;
+            while (index_end < end && *index_end != ']') ++index_end;
+            if (index_end == end || index_end == index_start) {
+                return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1,
+                               (la_u16)(end - name_end),
+                               la_slice(name_end,
+                                        (la_u16)(end - name_end)),
+                               la_slice("closed physical index", 21), 0, 0);
+            }
+            component_end = index_end + 1;
+        }
+        field_index = la_find_field(ctx, sid, cursor,
+                                    (la_u16)(name_end - cursor));
+        if (field_index == LA_INVALID_HANDLE) {
+            return la_fail(ctx, LA_ERR_UNKNOWN_FIELD, line, 1,
+                           (la_u16)(name_end - cursor),
+                           la_slice(cursor, (la_u16)(name_end - cursor)),
+                           la_name_slice(ctx, ctx->structs[sid].name), 0, 0);
+        }
+        total = (la_u16)(total + ctx->fields[field_index].offset);
+        if (indexed) {
+            const char *check;
+            LaSlice expected;
+            if (saw_index || ctx->fields[field_index].count == 1) {
+                if (saw_index) {
+                    expected = la_slice("one index", 9);
+                } else {
+                    expected = la_slice("array field", 11);
+                }
+                return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1,
+                               (la_u16)(component_end - cursor),
+                               la_slice(cursor,
+                                        (la_u16)(component_end - cursor)),
+                               expected,
+                               ctx->fields[field_index].count, 0);
+            }
+            check = index_start;
+            if (!la_is_ident_start(*check)) {
+                return la_fail(ctx, LA_ERR_INDEX_LOCATION, line, 1,
+                               (la_u16)(index_end - index_start),
+                               la_slice(index_start,
+                                        (la_u16)(index_end - index_start)),
+                               la_slice("physical index", 14), 0, 0);
+            }
+            while (check < index_end && la_is_ident(*check)) ++check;
+            if (check != index_end) {
+                return la_fail(ctx, LA_ERR_INDEX_LOCATION, line, 1,
+                               (la_u16)(index_end - index_start),
+                               la_slice(index_start,
+                                        (la_u16)(index_end - index_start)),
+                               la_slice("physical index", 14), 0, 0);
+            }
+            index_out->data = index_start;
+            index_out->length = (la_u16)(index_end - index_start);
+            *stride_out = (la_u16)(ctx->fields[field_index].size /
+                                   ctx->fields[field_index].count);
+            *count_out = ctx->fields[field_index].count;
+            saw_index = 1;
+        } else if (ctx->fields[field_index].count != 1) {
+            return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1,
+                           (la_u16)(name_end - cursor),
+                           la_slice(cursor, (la_u16)(name_end - cursor)),
+                           la_slice("array index", 11), 0, 0);
+        }
+        if (component_end == end) {
+            *field_out = field_index;
+            *offset_out = total;
+            if (!saw_index) {
+                return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1,
+                               path_length, la_slice(path, path_length),
+                               la_slice("indexed array", 13), 0, 0);
+            }
+            return LA_OK;
+        }
+        if (*component_end != '.') {
+            return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1,
+                           (la_u16)(end - component_end),
+                           la_slice(component_end,
+                                    (la_u16)(end - component_end)),
+                           la_slice(".", 1), 0, 0);
+        }
+        if (ctx->fields[field_index].is_pointer) {
+            sid = LA_INVALID_HANDLE;
+        } else {
+            sid = la_find_struct_handle(ctx,
+                                        ctx->fields[field_index].type_name);
+        }
+        if (sid == LA_INVALID_HANDLE) {
+            return la_fail(ctx, LA_ERR_UNKNOWN_FIELD, line, 1,
+                           (la_u16)(name_end - cursor),
+                           la_slice(cursor, (la_u16)(name_end - cursor)),
+                           la_slice("non-structure", 13), 0, 0);
+        }
+        cursor = component_end + 1;
+    }
+    return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1, path_length,
+                   la_slice(path, path_length), la_slice("", 0), 0, 0);
+}
+
+enum {
+    LA_OP_NONE = 0,
+    LA_OP_OR,
+    LA_OP_AND,
+    LA_OP_EQ,
+    LA_OP_NE,
+    LA_OP_LT,
+    LA_OP_LE,
+    LA_OP_GT,
+    LA_OP_GE,
+    LA_OP_ADD,
+    LA_OP_SUB,
+    LA_OP_MUL,
+    LA_OP_DIV,
+    LA_OP_MOD,
+    LA_OP_NOT,
+    LA_OP_NEG,
+    LA_OP_LPAREN
+};
+
+static int la_precedence(la_u8 op)
+{
+    if (op == LA_OP_OR) return 1;
+    if (op == LA_OP_AND) return 2;
+    if (op == LA_OP_EQ || op == LA_OP_NE) return 3;
+    if (op == LA_OP_LT || op == LA_OP_LE ||
+        op == LA_OP_GT || op == LA_OP_GE) return 4;
+    if (op == LA_OP_ADD || op == LA_OP_SUB) return 5;
+    if (op == LA_OP_MUL || op == LA_OP_DIV || op == LA_OP_MOD) return 6;
+    if (op == LA_OP_NOT || op == LA_OP_NEG) return 7;
+    return 0;
+}
+
+static LaDiagnosticCode la_apply_operator(LaContext *ctx, la_u8 op,
+                                          la_u16 *value_count,
+                                          la_u16 line)
+{
+    la_i32 left;
+    la_i32 right;
+    if (op == LA_OP_NOT || op == LA_OP_NEG) {
+        if (*value_count < 1) {
+            return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                           la_slice("expression operand", 18),
+                           la_slice("", 0), 0, 0);
+        }
+        right = ctx->values[*value_count - 1].value;
+        ctx->values[*value_count - 1].value =
+            op == LA_OP_NOT ? !right : -right;
+        return LA_OK;
+    }
+    if (*value_count < 2) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("binary operands", 15),
+                       la_slice("", 0), 0, 0);
+    }
+    right = ctx->values[*value_count - 1].value;
+    left = ctx->values[*value_count - 2].value;
+    *value_count = (la_u16)(*value_count - 1);
+    switch (op) {
+    case LA_OP_OR: left = left || right; break;
+    case LA_OP_AND: left = left && right; break;
+    case LA_OP_EQ: left = left == right; break;
+    case LA_OP_NE: left = left != right; break;
+    case LA_OP_LT: left = left < right; break;
+    case LA_OP_LE: left = left <= right; break;
+    case LA_OP_GT: left = left > right; break;
+    case LA_OP_GE: left = left >= right; break;
+    case LA_OP_ADD: left += right; break;
+    case LA_OP_SUB: left -= right; break;
+    case LA_OP_MUL: left *= right; break;
+    case LA_OP_DIV:
+        if (right == 0) {
+            return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                           la_slice("division by zero", 16),
+                           la_slice("", 0), 0, 0);
+        }
+        left /= right;
+        break;
+    case LA_OP_MOD:
+        if (right == 0) {
+            return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                           la_slice("modulo by zero", 14),
+                           la_slice("", 0), 0, 0);
+        }
+        left %= right;
+        break;
+    default:
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("operator", 8), la_slice("", 0), op, 0);
+    }
+    ctx->values[*value_count - 1].value = left;
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_property_value(LaContext *ctx,
+                                          const char *text, la_u16 length,
+                                          la_u16 line, la_i32 *value)
+{
+    const char *last_dot;
+    const char *first_dot;
+    const char *cursor;
+    la_u16 sid;
+    la_u16 pool_index;
+    last_dot = 0;
+    first_dot = 0;
+    for (cursor = text; cursor < text + length; ++cursor) {
+        if (*cursor == '.') {
+            if (first_dot == 0) first_dot = cursor;
+            last_dot = cursor;
+        }
+    }
+    if (first_dot == 0 || last_dot == 0) {
+        return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1, length,
+                       la_slice(text, length), la_slice("", 0), 0, 0);
+    }
+    pool_index = la_find_pool_text(ctx, text,
+                                   (la_u16)(first_dot - text));
+    if (pool_index != LA_INVALID_HANDLE && first_dot == last_dot) {
+        LaSlice property;
+        property = la_slice(first_dot + 1,
+                            (la_u16)(text + length - first_dot - 1));
+        if (la_equal_text(property.data, property.length, "size")) {
+            *value = ctx->pools[pool_index].size;
+            return LA_OK;
+        }
+        if (la_equal_text(property.data, property.length, "count")) {
+            *value = ctx->pools[pool_index].count;
+            return LA_OK;
+        }
+        if (la_equal_text(property.data, property.length, "stride")) {
+            *value = ctx->pools[pool_index].stride;
+            return LA_OK;
+        }
+        return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1, property.length,
+                       property, la_name_slice(ctx,
+                                               ctx->pools[pool_index].name),
+                       0, 0);
+    }
+    sid = la_find_struct_text(ctx, text, (la_u16)(first_dot - text));
+    if (sid == LA_INVALID_HANDLE) {
+        return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, line, 1,
+                       (la_u16)(first_dot - text),
+                       la_slice(text, (la_u16)(first_dot - text)),
+                       la_slice("", 0), 0, 0);
+    }
+    if (first_dot == last_dot) {
+        LaSlice property;
+        property = la_slice(first_dot + 1,
+                            (la_u16)(text + length - first_dot - 1));
+        if (la_equal_text(property.data, property.length, "size")) {
+            *value = ctx->structs[sid].size;
+            return LA_OK;
+        }
+        if (la_equal_text(property.data, property.length, "align")) {
+            *value = 1;
+            return LA_OK;
+        }
+        return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1, property.length,
+                       property, la_name_slice(ctx, ctx->structs[sid].name),
+                       0, 0);
+    } else {
+        la_u16 field_index;
+        la_u16 offset;
+        LaSlice property;
+        property = la_slice(last_dot + 1,
+                            (la_u16)(text + length - last_dot - 1));
+        if (la_resolve_path(ctx, text, (la_u16)(first_dot - text),
+                            first_dot + 1,
+                            (la_u16)(last_dot - first_dot - 1), line,
+                            &field_index, &offset) != LA_OK) {
+            return ctx->error;
+        }
+        if (la_equal_text(property.data, property.length, "offset")) {
+            *value = offset;
+            return LA_OK;
+        }
+        if (la_equal_text(property.data, property.length, "size")) {
+            *value = ctx->fields[field_index].size;
+            return LA_OK;
+        }
+        if (la_equal_text(property.data, property.length, "count")) {
+            if (ctx->fields[field_index].count == 1) {
+                return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1,
+                               property.length, property,
+                               la_slice("scalar field", 12), 0, 0);
+            }
+            *value = ctx->fields[field_index].count;
+            return LA_OK;
+        }
+        if (la_equal_text(property.data, property.length, "stride")) {
+            if (ctx->fields[field_index].count == 1) {
+                return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1,
+                               property.length, property,
+                               la_slice("scalar field", 12), 0, 0);
+            }
+            *value = ctx->fields[field_index].size /
+                     ctx->fields[field_index].count;
+            return LA_OK;
+        }
+        return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1, property.length,
+                       property, la_slice("field property", 14), 0, 0);
+    }
+}
+
+static LaDiagnosticCode la_eval_expression(LaContext *ctx,
+                                           const char *text, const char *end,
+                                           la_u16 line, la_i32 *result)
+{
+    const char *cursor;
+    la_u16 value_count;
+    la_u16 op_count;
+    int expect_value;
+    cursor = text;
+    value_count = 0;
+    op_count = 0;
+    expect_value = 1;
+    while (1) {
+        la_u8 op;
+        cursor = la_trim_left(cursor, end);
+        if (cursor == end) break;
+        if (expect_value) {
+            la_i32 value;
+            if (*cursor == '(') {
+                if (op_count >= ctx->limits->max_expression_nodes ||
+                    op_count >= ctx->limits->max_nesting) {
+                    return la_fail(ctx, LA_ERR_NESTING_CAPACITY, line,
+                                   (la_u16)(cursor - text + 1), 1,
+                                   la_slice("expression nesting", 18),
+                                   la_slice("", 0), op_count + 1,
+                                   ctx->limits->max_nesting);
+                }
+                ctx->operators[op_count++].op = LA_OP_LPAREN;
+                if (op_count > ctx->stats->nesting) {
+                    ctx->stats->nesting = op_count;
+                }
+                ++cursor;
+                continue;
+            }
+            if (*cursor == '!' || *cursor == '-') {
+                op = *cursor == '!' ? LA_OP_NOT : LA_OP_NEG;
+                if (op_count >= ctx->limits->max_expression_nodes) {
+                    return la_fail(ctx, LA_ERR_EXPRESSION_CAPACITY, line,
+                                   (la_u16)(cursor - text + 1), 1,
+                                   la_slice("operators", 9), la_slice("", 0),
+                                   op_count + 1,
+                                   ctx->limits->max_expression_nodes);
+                }
+                ctx->operators[op_count++].op = op;
+                ++cursor;
+                continue;
+            }
+            if (*cursor >= '0' && *cursor <= '9') {
+                value = 0;
+                while (cursor < end && *cursor >= '0' && *cursor <= '9') {
+                    value = value * 10 + (*cursor - '0');
+                    ++cursor;
+                }
+            } else if (la_is_ident_start(*cursor)) {
+                const char *start;
+                start = cursor;
+                while (cursor < end &&
+                       (la_is_ident(*cursor) || *cursor == '.')) {
+                    ++cursor;
+                }
+                if (la_property_value(ctx, start,
+                                      (la_u16)(cursor - start), line,
+                                      &value) != LA_OK) {
+                    return ctx->error;
+                }
+            } else {
+                return la_fail(ctx, LA_ERR_SYNTAX, line,
+                               (la_u16)(cursor - text + 1), 1,
+                               la_slice("expression value", 16),
+                               la_slice(cursor, 1), 0, 0);
+            }
+            if (value_count >= ctx->limits->max_expression_nodes) {
+                return la_fail(ctx, LA_ERR_EXPRESSION_CAPACITY, line,
+                               (la_u16)(cursor - text + 1), 1,
+                               la_slice("values", 6), la_slice("", 0),
+                               value_count + 1,
+                               ctx->limits->max_expression_nodes);
+            }
+            ctx->values[value_count++].value = value;
+            if (value_count + op_count > ctx->stats->expression_nodes) {
+                ctx->stats->expression_nodes =
+                    (la_u16)(value_count + op_count);
+            }
+            while (op_count > 0 &&
+                   (ctx->operators[op_count - 1].op == LA_OP_NOT ||
+                    ctx->operators[op_count - 1].op == LA_OP_NEG)) {
+                op = ctx->operators[--op_count].op;
+                if (la_apply_operator(ctx, op, &value_count, line) != LA_OK) {
+                    return ctx->error;
+                }
+            }
+            expect_value = 0;
+        } else if (*cursor == ')') {
+            while (op_count > 0 &&
+                   ctx->operators[op_count - 1].op != LA_OP_LPAREN) {
+                op = ctx->operators[--op_count].op;
+                if (la_apply_operator(ctx, op, &value_count, line) != LA_OK) {
+                    return ctx->error;
+                }
+            }
+            if (op_count == 0) {
+                return la_fail(ctx, LA_ERR_SYNTAX, line,
+                               (la_u16)(cursor - text + 1), 1,
+                               la_slice("matching (", 10), la_slice("", 0),
+                               0, 0);
+            }
+            --op_count;
+            ++cursor;
+        } else {
+            la_u8 next_op;
+            next_op = LA_OP_NONE;
+            if ((la_u16)(end - cursor) >= 2) {
+                if (cursor[0] == '|' && cursor[1] == '|') next_op = LA_OP_OR;
+                else if (cursor[0] == '&' && cursor[1] == '&') next_op = LA_OP_AND;
+                else if (cursor[0] == '=' && cursor[1] == '=') next_op = LA_OP_EQ;
+                else if (cursor[0] == '!' && cursor[1] == '=') next_op = LA_OP_NE;
+                else if (cursor[0] == '<' && cursor[1] == '=') next_op = LA_OP_LE;
+                else if (cursor[0] == '>' && cursor[1] == '=') next_op = LA_OP_GE;
+                if (next_op != LA_OP_NONE) cursor += 2;
+            }
+            if (next_op == LA_OP_NONE) {
+                if (*cursor == '<') next_op = LA_OP_LT;
+                else if (*cursor == '>') next_op = LA_OP_GT;
+                else if (*cursor == '+') next_op = LA_OP_ADD;
+                else if (*cursor == '-') next_op = LA_OP_SUB;
+                else if (*cursor == '*') next_op = LA_OP_MUL;
+                else if (*cursor == '/') next_op = LA_OP_DIV;
+                else if (*cursor == '%') next_op = LA_OP_MOD;
+                if (next_op != LA_OP_NONE) ++cursor;
+            }
+            if (next_op == LA_OP_NONE) {
+                return la_fail(ctx, LA_ERR_SYNTAX, line,
+                               (la_u16)(cursor - text + 1), 1,
+                               la_slice("expression operator", 19),
+                               la_slice(cursor, 1), 0, 0);
+            }
+            while (op_count > 0 &&
+                   ctx->operators[op_count - 1].op != LA_OP_LPAREN &&
+                   la_precedence(ctx->operators[op_count - 1].op) >=
+                   la_precedence(next_op)) {
+                op = ctx->operators[--op_count].op;
+                if (la_apply_operator(ctx, op, &value_count, line) != LA_OK) {
+                    return ctx->error;
+                }
+            }
+            if (op_count >= ctx->limits->max_expression_nodes) {
+                return la_fail(ctx, LA_ERR_EXPRESSION_CAPACITY, line, 1, 1,
+                               la_slice("operators", 9), la_slice("", 0),
+                               op_count + 1,
+                               ctx->limits->max_expression_nodes);
+            }
+            ctx->operators[op_count++].op = next_op;
+            expect_value = 1;
+        }
+    }
+    if (expect_value || value_count == 0) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("complete expression", 19),
+                       la_slice("", 0), 0, 0);
+    }
+    while (op_count > 0) {
+        la_u8 op;
+        op = ctx->operators[--op_count].op;
+        if (op == LA_OP_LPAREN) {
+            return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                           la_slice("matching )", 10), la_slice("", 0),
+                           0, 0);
+        }
+        if (la_apply_operator(ctx, op, &value_count, line) != LA_OK) {
+            return ctx->error;
+        }
+    }
+    if (value_count != 1) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("single expression result", 24),
+                       la_slice("", 0), value_count, 1);
+    }
+    *result = ctx->values[0].value;
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_check_assertions(LaContext *ctx)
+{
+    const char *cursor;
+    const char *source_end;
+    la_u16 line;
+    cursor = ctx->source;
+    source_end = ctx->source + ctx->source_length;
+    line = 1;
+    while (cursor < source_end) {
+        const char *line_end;
+        const char *content_end;
+        const char *trimmed;
+        line_end = cursor;
+        while (line_end < source_end && *line_end != '\n') ++line_end;
+        content_end = la_code_end(cursor, line_end);
+        trimmed = la_trim_left(cursor, content_end);
+        if (la_line_keyword(trimmed, content_end, "static_assert")) {
+            la_i32 value;
+            const char *expression;
+            expression = trimmed + 13;
+            expression = la_trim_left(expression, content_end);
+            if (la_eval_expression(ctx, expression, content_end,
+                                   line, &value) != LA_OK) {
+                return ctx->error;
+            }
+            if (!value) {
+                return la_fail(ctx, LA_ERR_ASSERTION, line,
+                               (la_u16)(expression - cursor + 1),
+                               (la_u16)(content_end - expression),
+                               la_slice(expression,
+                                        (la_u16)(content_end - expression)),
+                               la_slice("", 0), value, 1);
+            }
+        }
+        if (line_end < source_end) ++line_end;
+        cursor = line_end;
+        ++line;
+    }
+    return LA_OK;
+}
+
+static int la_write_event(LaContext *ctx, LaEvent *event)
+{
+    if (ctx->events == 0 || ctx->events->write == 0) return 1;
+    if (!ctx->events->write(ctx->events->context, event)) {
+        la_fail(ctx, LA_ERR_IO, event->span.line, event->span.column,
+                event->span.length, la_slice("event sink", 10),
+                la_slice("", 0), 0, 0);
+        return 0;
+    }
+    return 1;
+}
+
+static void la_init_event(LaContext *ctx, LaEvent *event, LaEventKind kind,
+                          la_u16 line, la_u16 length)
+{
+    memset(event, 0, sizeof(*event));
+    event->kind = kind;
+    la_set_span(ctx, &event->span, line, 1, length);
+}
+
+static int la_emit_property(LaContext *ctx, la_u16 line,
+                            LaSlice owner, LaSlice path,
+                            LaPropertyKind kind, la_u16 value)
+{
+    LaEvent event;
+    la_init_event(ctx, &event, LA_EVENT_PROPERTY, line, 1);
+    event.owner = owner;
+    event.path = path;
+    event.property = kind;
+    event.value = value;
+    return la_write_event(ctx, &event);
+}
+
+static int la_append_path(LaContext *ctx, la_u16 *path_length,
+                          LaSlice component)
+{
+    la_u16 needed;
+    needed = component.length + (*path_length != 0 ? 1 : 0);
+    if ((la_u32)*path_length + needed + 1 >
+        ctx->limits->max_line_bytes) {
+        la_fail(ctx, LA_ERR_NESTING_CAPACITY, 1, 1, 1,
+                la_slice("field path bytes", 16), la_slice("", 0),
+                *path_length + needed + 1,
+                ctx->limits->max_line_bytes);
+        return 0;
+    }
+    if (*path_length != 0) ctx->path_buffer[(*path_length)++] = '.';
+    memcpy(ctx->path_buffer + *path_length, component.data, component.length);
+    *path_length = (la_u16)(*path_length + component.length);
+    ctx->path_buffer[*path_length] = 0;
+    return 1;
+}
+
+static int la_emit_struct_properties(LaContext *ctx, la_u16 root_sid)
+{
+    LaSlice owner;
+    la_u16 depth;
+    la_u16 path_length;
+    owner = la_name_slice(ctx, ctx->structs[root_sid].name);
+    if (!la_emit_property(ctx, ctx->structs[root_sid].line, owner,
+                          la_slice("", 0), LA_PROPERTY_STRUCT_SIZE,
+                          ctx->structs[root_sid].size)) return 0;
+    if (!la_emit_property(ctx, ctx->structs[root_sid].line, owner,
+                          la_slice("", 0), LA_PROPERTY_STRUCT_ALIGN, 1)) {
+        return 0;
+    }
+    depth = 0;
+    path_length = 0;
+    ctx->frames[0].sid = root_sid;
+    ctx->frames[0].next_field = ctx->structs[root_sid].first_field;
+    ctx->frames[0].base = 0;
+    ctx->frames[0].path_length = 0;
+    while (1) {
+        LaPropertyFrame *frame;
+        LaStructRec *record;
+        frame = &ctx->frames[depth];
+        record = &ctx->structs[frame->sid];
+        if (frame->next_field >=
+            record->first_field + record->field_count) {
+            if (depth == 0) break;
+            path_length = frame->path_length;
+            ctx->path_buffer[path_length] = 0;
+            --depth;
+            continue;
+        } else {
+            la_u16 field_index;
+            LaFieldRec *field;
+            LaSlice field_name;
+            la_u16 nested_sid;
+            la_u16 saved_path;
+            field_index = frame->next_field++;
+            field = &ctx->fields[field_index];
+            field_name = la_name_slice(ctx, field->name);
+            saved_path = path_length;
+            if (!la_append_path(ctx, &path_length, field_name)) return 0;
+            if (!la_emit_property(ctx, field->line, owner,
+                                  la_slice(ctx->path_buffer, path_length),
+                                  LA_PROPERTY_FIELD_OFFSET,
+                                  (la_u16)(frame->base + field->offset))) {
+                return 0;
+            }
+            if (!la_emit_property(ctx, field->line, owner,
+                                  la_slice(ctx->path_buffer, path_length),
+                                  LA_PROPERTY_FIELD_SIZE, field->size)) {
+                return 0;
+            }
+            if (field->count != 1) {
+                la_u16 stride;
+                stride = (la_u16)(field->size / field->count);
+                if (!la_emit_property(ctx, field->line, owner,
+                                      la_slice(ctx->path_buffer, path_length),
+                                      LA_PROPERTY_FIELD_COUNT, field->count) ||
+                    !la_emit_property(ctx, field->line, owner,
+                                      la_slice(ctx->path_buffer, path_length),
+                                      LA_PROPERTY_FIELD_STRIDE, stride)) {
+                    return 0;
+                }
+            }
+            nested_sid = field->is_pointer ? LA_INVALID_HANDLE :
+                la_find_struct_handle(ctx, field->type_name);
+            if (nested_sid != LA_INVALID_HANDLE && field->count == 1) {
+                if (depth + 1 >= ctx->limits->max_nesting) {
+                    la_fail(ctx, LA_ERR_NESTING_CAPACITY, field->line, 1, 1,
+                            la_slice("layout nesting", 14), owner,
+                            depth + 2, ctx->limits->max_nesting);
+                    return 0;
+                }
+                ++depth;
+                if (depth + 1 > ctx->stats->nesting) {
+                    ctx->stats->nesting = (la_u16)(depth + 1);
+                }
+                ctx->frames[depth].sid = nested_sid;
+                ctx->frames[depth].next_field =
+                    ctx->structs[nested_sid].first_field;
+                ctx->frames[depth].base =
+                    (la_u16)(frame->base + field->offset);
+                ctx->frames[depth].path_length = saved_path;
+            } else {
+                path_length = saved_path;
+                ctx->path_buffer[path_length] = 0;
+            }
+        }
+    }
+    return 1;
+}
+
+static la_u16 la_procedure_at_line(LaContext *ctx, la_u16 line)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->procedure_count; ++index) {
+        if (line > ctx->procedures[index].begin_line &&
+            line < ctx->procedures[index].end_line) return index;
+    }
+    return LA_INVALID_HANDLE;
+}
+
+static int la_parse_typed_operation(LaContext *ctx,
+                                    const char *start, const char *end,
+                                    la_u16 line, LaEvent *event)
+{
+    const char *cursor;
+    const char *bracket;
+    const char *close;
+    const char *base_start;
+    const char *base_end;
+    const char *root_start;
+    const char *first_dot;
+    const char *path_start;
+    la_u16 location_index;
+    la_u16 root_length;
+    la_u16 field_index;
+    la_u16 offset;
+    la_u16 procedure;
+    la_u16 stride;
+    la_u16 count;
+    la_u16 leaf_size;
+    LaSlice index;
+    int indexed;
+    LaTargetOperationKind operation;
+    cursor = la_trim_left(start, end);
+    if ((la_u16)(end - cursor) >= 4 && memcmp(cursor, "lda ", 4) == 0) {
+        operation = LA_TARGET_OP_LOAD8_PTR_DISP;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "sta ", 4) == 0) {
+        operation = LA_TARGET_OP_STORE8_PTR_DISP;
+    } else {
+        return 0;
+    }
+    bracket = cursor + 3;
+    bracket = la_trim_left(bracket, end);
+    if (bracket >= end || *bracket != '[') return 0;
+    close = end;
+    while (close > bracket && la_is_space(close[-1])) --close;
+    if (close <= bracket || close[-1] != ']') return 0;
+    --close;
+    base_start = la_trim_left(bracket + 1, close);
+    base_end = base_start;
+    while (base_end < close && la_is_ident(*base_end)) ++base_end;
+    if (base_end == base_start) return 0;
+    cursor = la_trim_left(base_end, close);
+    if (cursor >= close || *cursor != '+') return 0;
+    ++cursor;
+    root_start = la_trim_left(cursor, close);
+    first_dot = root_start;
+    while (first_dot < close && *first_dot != '.') ++first_dot;
+    if (first_dot == close) return 0;
+    root_length = (la_u16)(first_dot - root_start);
+    path_start = first_dot + 1;
+    procedure = la_procedure_at_line(ctx, line);
+    location_index = la_find_location_text_at(
+        ctx, base_start, (la_u16)(base_end - base_start), procedure);
+    if (location_index == LA_INVALID_HANDLE) {
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
+                (la_u16)(base_start - start + 1),
+                (la_u16)(base_end - base_start),
+                la_slice(base_start, (la_u16)(base_end - base_start)),
+                la_slice("typed location", 14), 0, 0);
+        return -1;
+    }
+    {
+        LaSlice declared;
+        declared = la_name_slice(ctx, ctx->locations[location_index].type_name);
+        if (declared.length != root_length ||
+            memcmp(declared.data, root_start, root_length) != 0) {
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
+                    (la_u16)(root_start - start + 1), root_length,
+                    declared, la_slice(root_start, root_length), 0, 0);
+            return -1;
+        }
+    }
+    indexed = memchr(path_start, '[', (size_t)(close - path_start)) != 0;
+    index.data = 0;
+    index.length = 0;
+    stride = 0;
+    count = 0;
+    if (indexed) {
+        if (la_resolve_indexed_path(
+                ctx, root_start, root_length, path_start,
+                (la_u16)(close - path_start), line, &field_index, &offset,
+                &index, &stride, &count) != LA_OK) return -1;
+        if (!la_equal_text(index.data, index.length, "x")) {
+            la_fail(ctx, LA_ERR_INDEX_LOCATION, line, 1, index.length,
+                    index, la_slice("x", 1), 0, 0);
+            return -1;
+        }
+        if (stride != 1 && stride != 2 && stride != 4 && stride != 8) {
+            la_fail(ctx, LA_ERR_INDEX_STRIDE, line, 1, index.length,
+                    index, la_slice("1, 2, 4, or 8", 13), stride, 8);
+            return -1;
+        }
+        if ((la_u32)offset + (la_u32)(count - 1) * stride >
+            ctx->target->max_displacement) {
+            la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1, index.length,
+                    index, la_slice("indexed displacement", 20),
+                    (la_i32)((la_u32)offset +
+                             (la_u32)(count - 1) * stride),
+                    ctx->target->max_displacement);
+            return -1;
+        }
+    } else if (la_resolve_path(ctx, root_start, root_length, path_start,
+                               (la_u16)(close - path_start), line,
+                               &field_index, &offset) != LA_OK) {
+        return -1;
+    }
+    leaf_size = ctx->fields[field_index].count == 1 ?
+        ctx->fields[field_index].size :
+        (la_u16)(ctx->fields[field_index].size /
+                 ctx->fields[field_index].count);
+    if (leaf_size != 1 ||
+        (!indexed && ctx->fields[field_index].count != 1)) {
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line,
+                (la_u16)(path_start - start + 1),
+                (la_u16)(close - path_start),
+                la_name_slice(ctx, ctx->fields[field_index].name),
+                la_slice("byte", 4), leaf_size, 1);
+        return -1;
+    }
+    if (offset > ctx->target->max_displacement) {
+        la_fail(ctx, LA_ERR_DISPLACEMENT, line,
+                (la_u16)(path_start - start + 1),
+                (la_u16)(close - path_start),
+                la_slice(path_start, (la_u16)(close - path_start)),
+                la_slice("", 0), offset, ctx->target->max_displacement);
+        return -1;
+    }
+    if (ctx->operation_count >= ctx->limits->max_operations) {
+        la_fail(ctx, LA_ERR_OPERATION_CAPACITY, line, 1, 1,
+                la_slice("target operations", 17), la_slice("", 0),
+                ctx->operation_count + 1, ctx->limits->max_operations);
+        return -1;
+    }
+    ++ctx->operation_count;
+    ctx->stats->operations = ctx->operation_count;
+    event->kind = LA_EVENT_TARGET_OPERATION;
+    la_set_span(ctx, &event->span, line, 1, (la_u16)(end - start));
+    event->text = la_slice("", 0);
+    event->owner = la_slice(root_start, root_length);
+    event->path = la_slice(path_start, (la_u16)(close - path_start));
+    event->base =
+        la_name_slice(ctx, ctx->locations[location_index].physical);
+    event->index = index;
+    event->aux = la_slice("", 0);
+    event->aux2 = la_slice("", 0);
+    event->property = 0;
+    event->operation = indexed ?
+        (operation == LA_TARGET_OP_LOAD8_PTR_DISP ?
+            LA_TARGET_OP_LOAD8_PTR_INDEXED :
+            LA_TARGET_OP_STORE8_PTR_INDEXED) : operation;
+    event->value = offset;
+    event->stride = stride;
+    event->count = count;
+    return 1;
+}
+
+static int la_has_explicit_typed_operand(const char *start, const char *end)
+{
+    const char *open;
+    const char *plus;
+    const char *close;
+    open = start;
+    while (open < end && *open != '[') ++open;
+    if (open == end) return 0;
+    close = open + 1;
+    while (close < end && *close != ']') ++close;
+    if (close == end) return 0;
+    plus = open + 1;
+    while (plus < close && *plus != '+') ++plus;
+    return plus < close;
+}
+
+static int la_count_operation(LaContext *ctx, la_u16 line)
+{
+    if (ctx->operation_count >= ctx->limits->max_operations) {
+        la_fail(ctx, LA_ERR_OPERATION_CAPACITY, line, 1, 1,
+                la_slice("target operations", 17), la_slice("", 0),
+                ctx->operation_count + 1, ctx->limits->max_operations);
+        return 0;
+    }
+    ++ctx->operation_count;
+    ctx->stats->operations = ctx->operation_count;
+    return 1;
+}
+
+static int la_parse_pool_address(LaContext *ctx,
+                                 const char *start, const char *end,
+                                 la_u16 line, LaEvent *event)
+{
+    const char *cursor;
+    const char *destination_start;
+    const char *pool_start;
+    const char *index_start;
+    la_u16 destination_length;
+    la_u16 pool_length;
+    la_u16 index_length;
+    la_u16 procedure;
+    la_u16 location;
+    la_u16 pool_index;
+    LaPoolRec *pool;
+    cursor = la_trim_left(start, end);
+    if (!la_line_keyword(cursor, end, "address")) return 0;
+    cursor += 7;
+    if (!la_read_identifier(&cursor, end, &destination_start,
+                            &destination_length)) return -1;
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != ',' ||
+        !la_read_identifier(&cursor, end, &pool_start, &pool_length)) {
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                la_slice("address DEST, POOL[INDEX]", 25),
+                la_slice("", 0), 0, 0);
+        return -1;
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != '[' ||
+        !la_read_identifier(&cursor, end, &index_start, &index_length) ||
+        cursor >= end || *cursor++ != ']' ||
+        la_trim_left(cursor, end) != end) {
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                la_slice("address DEST, POOL[INDEX]", 25),
+                la_slice("", 0), 0, 0);
+        return -1;
+    }
+    procedure = la_procedure_at_line(ctx, line);
+    location = la_find_location_text_at(
+        ctx, destination_start, destination_length, procedure);
+    if (location == LA_INVALID_HANDLE ||
+        !ctx->locations[location].is_pointer) {
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, destination_length,
+                la_slice(destination_start, destination_length),
+                la_slice("pointer destination", 19), 0, 0);
+        return -1;
+    }
+    pool_index = la_find_pool_text(ctx, pool_start, pool_length);
+    if (pool_index == LA_INVALID_HANDLE) {
+        la_fail(ctx, LA_ERR_UNKNOWN_POOL, line, 1, pool_length,
+                la_slice(pool_start, pool_length), la_slice("", 0), 0, 0);
+        return -1;
+    }
+    pool = &ctx->pools[pool_index];
+    if (ctx->locations[location].type_name != pool->type_name) {
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, destination_length,
+                la_name_slice(ctx, ctx->locations[location].type_name),
+                la_name_slice(ctx, pool->type_name), 0, 0);
+        return -1;
+    }
+    if (!la_equal_text(index_start, index_length, "a")) {
+        la_fail(ctx, LA_ERR_INDEX_LOCATION, line, 1, index_length,
+                la_slice(index_start, index_length), la_slice("a", 1), 0, 0);
+        return -1;
+    }
+    if (!la_count_operation(ctx, line)) return -1;
+    la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
+                  (la_u16)(end - start));
+    event->owner = la_name_slice(ctx, pool->name);
+    event->path = la_name_slice(ctx, pool->base);
+    event->base = la_name_slice(ctx, ctx->locations[location].physical);
+    event->index = la_slice(index_start, index_length);
+    event->aux = la_name_slice(ctx, pool->table_low);
+    event->aux2 = la_name_slice(ctx, pool->table_high);
+    event->operation = LA_TARGET_OP_ADDRESS_POOL_TABLE;
+    event->stride = pool->stride;
+    event->count = pool->count;
+    return 1;
+}
+
+static int la_parse_local_operation(LaContext *ctx,
+                                    const char *start, const char *end,
+                                    la_u16 line, LaEvent *event)
+{
+    const char *cursor;
+    const char *name_start;
+    la_u16 name_length;
+    la_u16 procedure;
+    la_u16 local_index;
+    la_u16 field_offset;
+    LaProcedureRec *record;
+    LaLocalRec *local;
+    LaTargetOperationKind operation;
+    int qualified;
+    cursor = la_trim_left(start, end);
+    if ((la_u16)(end - cursor) >= 4 && memcmp(cursor, "lda ", 4) == 0) {
+        operation = LA_TARGET_OP_LOAD8_FRAME_LOCAL;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "sta ", 4) == 0) {
+        operation = LA_TARGET_OP_STORE8_FRAME_LOCAL;
+    } else {
+        return 0;
+    }
+    cursor = la_trim_left(cursor + 3, end);
+    if (cursor >= end || *cursor++ != '[') return 0;
+    if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
+        la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, 1,
+                la_slice("local name", 10), la_slice("", 0), 0, 0);
+        return -1;
+    }
+    field_offset = 0;
+    qualified = 0;
+    cursor = la_trim_left(cursor, end);
+    if (cursor < end && *cursor == '+') {
+        const char *root_start;
+        const char *path_start;
+        const char *close;
+        la_u16 root_length;
+        la_u16 field_index;
+        ++cursor;
+        qualified = 1;
+        if (!la_read_identifier(&cursor, end, &root_start, &root_length)) {
+            la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, 1,
+                    la_slice("TYPE.field", 10), la_slice("", 0), 0, 0);
+            return -1;
+        }
+        if (cursor >= end || *cursor++ != '.') {
+            la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, 1,
+                    la_slice("TYPE.field", 10), la_slice("", 0), 0, 0);
+            return -1;
+        }
+        path_start = cursor;
+        close = cursor;
+        while (close < end && *close != ']') ++close;
+        procedure = la_procedure_at_line(ctx, line);
+        local_index = la_find_local_text(ctx, procedure,
+                                         name_start, name_length);
+        if (local_index == LA_INVALID_HANDLE) {
+            return 0;
+        }
+        local = &ctx->locals[local_index];
+        if (local->is_pointer ||
+            !la_equal_text(root_start, root_length,
+                           la_name_slice(ctx, local->type_name).data)) {
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, root_length,
+                    la_slice(root_start, root_length),
+                    la_name_slice(ctx, local->type_name), 0, 0);
+            return -1;
+        }
+        if (la_resolve_path(ctx, root_start, root_length, path_start,
+                            (la_u16)(close - path_start), line,
+                            &field_index, &field_offset) != LA_OK) return -1;
+        if (ctx->fields[field_index].size != 1 ||
+            ctx->fields[field_index].count != 1) {
+            la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
+                    (la_u16)(close - path_start),
+                    la_slice(path_start, (la_u16)(close - path_start)),
+                    la_slice("byte", 4), ctx->fields[field_index].size, 1);
+            return -1;
+        }
+        cursor = close;
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != ']' ||
+        la_trim_left(cursor, end) != end) {
+        la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, 1,
+                la_slice("[NAME] or [NAME + TYPE.field]", 29),
+                la_slice("", 0), 0, 0);
+        return -1;
+    }
+    procedure = la_procedure_at_line(ctx, line);
+    if (procedure == LA_INVALID_HANDLE) {
+        la_fail(ctx, LA_ERR_PROCEDURE_SCOPE, line, 1, name_length,
+                la_slice(name_start, name_length),
+                la_slice("procedure", 9), 0, 0);
+        return -1;
+    }
+    local_index = la_find_local_text(ctx, procedure, name_start, name_length);
+    if (local_index == LA_INVALID_HANDLE) {
+        la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, name_length,
+                la_slice(name_start, name_length),
+                la_slice("declared local", 14), 0, 0);
+        return -1;
+    }
+    local = &ctx->locals[local_index];
+    record = &ctx->procedures[procedure];
+    if (!qualified && local->size != 1) {
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, name_length,
+                la_slice(name_start, name_length), la_slice("byte", 4),
+                local->size, 1);
+        return -1;
+    }
+    if (!la_count_operation(ctx, line)) return -1;
+    la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
+                  (la_u16)(end - start));
+    event->owner = la_name_slice(ctx, record->name);
+    event->path = la_name_slice(ctx, local->name);
+    event->operation = operation;
+    event->value =
+        (la_u16)(record->frame_size - (local->offset + field_offset));
+    event->count = record->frame_size;
+    return 1;
+}
+
+static int la_parse_frame_pointer_move(LaContext *ctx,
+                                       const char *start, const char *end,
+                                       la_u16 line, LaEvent *event)
+{
+    const char *cursor;
+    const char *left_start;
+    const char *right_start;
+    la_u16 left_length;
+    la_u16 right_length;
+    la_u16 procedure;
+    la_u16 local_index;
+    la_u16 location_index;
+    int store;
+    cursor = la_trim_left(start, end);
+    if ((la_u16)(end - cursor) < 4 || memcmp(cursor, "mov ", 4) != 0) {
+        return 0;
+    }
+    cursor += 4;
+    cursor = la_trim_left(cursor, end);
+    store = cursor < end && *cursor == '[';
+    if (store) {
+        ++cursor;
+        if (!la_read_identifier(&cursor, end, &left_start, &left_length) ||
+            cursor >= end || *cursor++ != ']') return 0;
+    } else if (!la_read_identifier(&cursor, end, &left_start, &left_length)) {
+        return 0;
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != ',') return 0;
+    cursor = la_trim_left(cursor, end);
+    if (store) {
+        if (!la_read_identifier(&cursor, end, &right_start, &right_length) ||
+            la_trim_left(cursor, end) != end) return 0;
+    } else {
+        if (cursor >= end || *cursor++ != '[' ||
+            !la_read_identifier(&cursor, end, &right_start, &right_length) ||
+            cursor >= end || *cursor++ != ']' ||
+            la_trim_left(cursor, end) != end) return 0;
+    }
+    procedure = la_procedure_at_line(ctx, line);
+    if (procedure == LA_INVALID_HANDLE) return 0;
+    local_index = la_find_local_text(
+        ctx, procedure, store ? left_start : right_start,
+        store ? left_length : right_length);
+    location_index = la_find_location_text_at(
+        ctx, store ? right_start : left_start,
+        store ? right_length : left_length, procedure);
+    if (local_index == LA_INVALID_HANDLE ||
+        location_index == LA_INVALID_HANDLE) return 0;
+    if (!ctx->locals[local_index].is_pointer ||
+        !ctx->locations[location_index].is_pointer ||
+        ctx->locals[local_index].type_name !=
+            ctx->locations[location_index].type_name) {
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, 1,
+                la_slice(store ? left_start : right_start,
+                         store ? left_length : right_length),
+                la_slice("matching pointer locations", 26), 0, 0);
+        return -1;
+    }
+    if (!la_count_operation(ctx, line)) return -1;
+    la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
+                  (la_u16)(end - start));
+    event->owner =
+        la_name_slice(ctx, ctx->procedures[procedure].name);
+    event->path = la_name_slice(ctx, ctx->locals[local_index].name);
+    event->base =
+        la_name_slice(ctx, ctx->locations[location_index].physical);
+    event->aux2 = la_slice("a", 1);
+    event->operation = store ? LA_TARGET_OP_STORE_PTR_FRAME :
+                               LA_TARGET_OP_LOAD_PTR_FRAME;
+    event->value = (la_u16)(
+        ctx->procedures[procedure].frame_size -
+        ctx->locals[local_index].offset);
+    event->stride = ctx->target->pointer_units;
+    event->count = ctx->procedures[procedure].frame_size;
+    return 1;
+}
+
+static int la_emit_invoke_operation(LaContext *ctx, la_u16 line,
+                                    LaTargetOperationKind operation,
+                                    LaSlice owner, LaSlice path,
+                                    LaSlice base, LaSlice aux, LaSlice aux2,
+                                    la_u16 value, la_u16 stride,
+                                    la_u16 count)
+{
+    LaEvent event;
+    if (!la_count_operation(ctx, line)) return 0;
+    la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
+    event.owner = owner;
+    event.path = path;
+    event.base = base;
+    event.aux = aux;
+    event.aux2 = aux2;
+    event.operation = operation;
+    event.value = value;
+    event.stride = stride;
+    event.count = count;
+    return la_write_event(ctx, &event);
+}
+
+static int la_slice_is_register(LaSlice slice)
+{
+    return slice.length == 1 &&
+           (slice.data[0] == 'a' || slice.data[0] == 'x' ||
+            slice.data[0] == 'y');
+}
+
+static la_u16 la_find_invoke_member(LaContext *ctx,
+                                    const LaProcedureRec *procedure,
+                                    const char *name, la_u16 length)
+{
+    la_u16 scan;
+    for (scan = procedure->first_parameter;
+         scan < procedure->first_parameter + procedure->parameter_count;
+         ++scan) {
+        LaSlice member_name;
+        member_name = la_name_slice(ctx, ctx->locations[scan].name);
+        if (ctx->locations[scan].role == LA_MEMBER_INPUT &&
+            member_name.length == length &&
+            memcmp(member_name.data, name, length) == 0) {
+            return scan;
+        }
+    }
+    return LA_INVALID_HANDLE;
+}
+
+static int la_invoke_has_binding(LaContext *ctx, la_u16 count,
+                                 la_u16 member)
+{
+    la_u16 scan;
+    for (scan = 0; scan < count; ++scan) {
+        if (ctx->bindings[scan].name == member) return 1;
+    }
+    return 0;
+}
+
+static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
+                                  const char *end, la_u16 line,
+                                  la_u16 caller, la_u16 member_index,
+                                  LaInvokeBindingRec *binding)
+{
+    const char *source_start;
+    la_u16 source_length;
+    la_u16 source_location;
+    if (*cursor < end && **cursor == '#') ++*cursor;
+    if (*cursor < end && **cursor >= '0' && **cursor <= '9') {
+        la_i32 value;
+        value = 0;
+        while (*cursor < end && **cursor >= '0' && **cursor <= '9') {
+            value = value * 10 + (*(*cursor)++ - '0');
+        }
+        if (value > 255 || ctx->locations[member_index].is_pointer) {
+            la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                    la_slice("byte immediate", 14),
+                    la_name_slice(
+                        ctx, ctx->locations[member_index].type_name),
+                    value, 255);
+            return 0;
+        }
+        binding->source_kind = LA_SOURCE_IMMEDIATE;
+        binding->immediate = value;
+        return 1;
+    }
+    if (!la_read_identifier(cursor, end, &source_start, &source_length)) {
+        la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                la_slice("value", 5), la_slice("", 0), 0, 0);
+        return 0;
+    }
+    source_location = la_find_location_text_at(
+        ctx, source_start, source_length, caller);
+    if (source_location != LA_INVALID_HANDLE) {
+        if (ctx->locations[source_location].is_pointer !=
+                ctx->locations[member_index].is_pointer ||
+            (ctx->locations[source_location].is_pointer &&
+             ctx->locations[source_location].type_name !=
+                ctx->locations[member_index].type_name)) {
+            la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, source_length,
+                    la_slice(source_start, source_length),
+                    la_name_slice(
+                        ctx, ctx->locations[member_index].type_name),
+                    0, 0);
+            return 0;
+        }
+        binding->source = ctx->locations[source_location].physical;
+    } else {
+        LaSlice source;
+        source = la_slice(source_start, source_length);
+        if (ctx->locations[member_index].is_pointer ||
+            !la_slice_is_register(source)) {
+            la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, source_length,
+                    source, la_slice("typed source or a/x/y", 21), 0, 0);
+            return 0;
+        }
+        binding->source =
+            la_intern(ctx, source_start, source_length, line, 1);
+        if (binding->source == LA_INVALID_HANDLE) return 0;
+    }
+    binding->source_kind = LA_SOURCE_PHYSICAL;
+    return 1;
+}
+
+static int la_parse_invoke_binding(LaContext *ctx, const char **cursor,
+                                   const char *end, la_u16 line,
+                                   la_u16 caller,
+                                   const LaProcedureRec *procedure,
+                                   la_u16 *binding_count)
+{
+    const char *name_start;
+    la_u16 name_length;
+    la_u16 member_index;
+    LaInvokeBindingRec *binding;
+    if (*(*cursor)++ != ',') {
+        la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                la_slice(",", 1), la_slice("", 0), 0, 0);
+        return 0;
+    }
+    if (!la_read_identifier(cursor, end, &name_start, &name_length)) {
+        la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                la_slice("binding name", 12), la_slice("", 0), 0, 0);
+        return 0;
+    }
+    *cursor = la_trim_left(*cursor, end);
+    if (*cursor >= end || *(*cursor)++ != '=') {
+        la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                la_slice("=", 1), la_slice("", 0), 0, 0);
+        return 0;
+    }
+    *cursor = la_trim_left(*cursor, end);
+    if (*binding_count >= ctx->limits->max_invoke_bindings) {
+        la_fail(ctx, LA_ERR_INVOKE_CAPACITY, line, 1, name_length,
+                la_slice(name_start, name_length),
+                la_slice("invoke bindings", 15), *binding_count + 1,
+                ctx->limits->max_invoke_bindings);
+        return 0;
+    }
+    member_index = la_find_invoke_member(
+        ctx, procedure, name_start, name_length);
+    if (member_index == LA_INVALID_HANDLE) {
+        la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, name_length,
+                la_slice(name_start, name_length),
+                la_slice("callee input", 12), 0, 0);
+        return 0;
+    }
+    if (la_invoke_has_binding(ctx, *binding_count, member_index)) {
+        la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, name_length,
+                la_slice(name_start, name_length),
+                la_slice("unique binding", 14), 0, 0);
+        return 0;
+    }
+    binding = &ctx->bindings[(*binding_count)++];
+    memset(binding, 0, sizeof(*binding));
+    binding->name = member_index;
+    if (!la_parse_invoke_source(
+            ctx, cursor, end, line, caller, member_index, binding)) {
+        return 0;
+    }
+    *cursor = la_trim_left(*cursor, end);
+    return 1;
+}
+
+static int la_validate_invoke_inputs(LaContext *ctx,
+                                     const LaProcedureRec *procedure,
+                                     la_u16 binding_count, la_u16 line)
+{
+    la_u16 scan;
+    for (scan = procedure->first_parameter;
+         scan < procedure->first_parameter + procedure->parameter_count;
+         ++scan) {
+        if (ctx->locations[scan].role != LA_MEMBER_INPUT) continue;
+        if (!la_invoke_has_binding(ctx, binding_count, scan)) {
+            la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                    la_name_slice(ctx, ctx->locations[scan].name),
+                    la_slice("required input", 14), 0, 0);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int la_reserve_invoke_scratch(LaContext *ctx, la_u16 binding_count,
+                                     la_u16 line, LaSlice scratch_name,
+                                     la_u16 *scratch)
+{
+    la_u16 bind;
+    *scratch = 0;
+    for (bind = 0; bind < binding_count; ++bind) {
+        LaInvokeBindingRec *binding;
+        la_u16 width;
+        binding = &ctx->bindings[bind];
+        if (binding->source_kind != LA_SOURCE_PHYSICAL) continue;
+        width = ctx->locations[binding->name].is_pointer ?
+            ctx->target->pointer_units : 1;
+        if (*scratch + width > ctx->target->invoke_scratch_units) {
+            la_fail(ctx, LA_ERR_INVOKE_SCRATCH, line, 1, 1,
+                    scratch_name, la_slice("invoke snapshot", 15),
+                    *scratch + width, ctx->target->invoke_scratch_units);
+            return 0;
+        }
+        binding->scratch = (la_u8)*scratch;
+        *scratch = (la_u16)(*scratch + width);
+    }
+    return 1;
+}
+
+static int la_emit_invoke_saves(LaContext *ctx,
+                                const LaProcedureRec *procedure,
+                                la_u16 binding_count, la_u16 line,
+                                LaSlice scratch_name, int registers)
+{
+    la_u16 bind;
+    LaSlice owner;
+    owner = la_name_slice(ctx, procedure->name);
+    for (bind = 0; bind < binding_count; ++bind) {
+        LaInvokeBindingRec *binding;
+        LaSlice source;
+        la_u16 width;
+        binding = &ctx->bindings[bind];
+        if (binding->source_kind != LA_SOURCE_PHYSICAL) continue;
+        source = la_name_slice(ctx, binding->source);
+        if (la_slice_is_register(source) != registers) continue;
+        width = ctx->locations[binding->name].is_pointer ?
+            ctx->target->pointer_units : 1;
+        if (!la_emit_invoke_operation(
+                ctx, line, LA_TARGET_OP_INVOKE_SAVE, owner,
+                la_name_slice(ctx, ctx->locations[binding->name].name),
+                la_slice("", 0), source, scratch_name,
+                binding->scratch, width, LA_SOURCE_PHYSICAL)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int la_emit_invoke_assignments(LaContext *ctx,
+                                      const LaProcedureRec *procedure,
+                                      la_u16 binding_count, la_u16 line,
+                                      LaSlice scratch_name)
+{
+    la_u16 bind;
+    LaSlice owner;
+    owner = la_name_slice(ctx, procedure->name);
+    for (bind = 0; bind < binding_count; ++bind) {
+        LaInvokeBindingRec *binding;
+        la_u16 width;
+        LaSlice source;
+        binding = &ctx->bindings[bind];
+        width = ctx->locations[binding->name].is_pointer ?
+            ctx->target->pointer_units : 1;
+        if (binding->source_kind == LA_SOURCE_PHYSICAL) {
+            source = la_name_slice(ctx, binding->source);
+        } else {
+            source = la_slice("", 0);
+        }
+        if (!la_emit_invoke_operation(
+                ctx, line, LA_TARGET_OP_INVOKE_ASSIGN, owner,
+                la_name_slice(ctx, ctx->locations[binding->name].name),
+                la_name_slice(ctx, ctx->locations[binding->name].physical),
+                source, scratch_name,
+                binding->source_kind == LA_SOURCE_PHYSICAL ?
+                    binding->scratch : (la_u16)binding->immediate,
+                width, binding->source_kind)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int la_parse_invoke(LaContext *ctx,
+                           const char *start, const char *end,
+                           la_u16 line, la_u16 caller)
+{
+    const char *cursor;
+    const char *callee_start;
+    la_u16 callee_length;
+    la_u16 callee;
+    la_u16 binding_count;
+    la_u16 scratch;
+    LaProcedureRec *procedure;
+    LaSlice owner;
+    LaSlice scratch_name;
+    cursor = la_trim_left(start, end);
+    if (!la_line_keyword(cursor, end, "invoke")) return 0;
+    cursor += 6;
+    if (!la_read_identifier(&cursor, end, &callee_start, &callee_length)) {
+        la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                la_slice("callee", 6), la_slice("", 0), 0, 0);
+        return -1;
+    }
+    callee = la_find_procedure_text(ctx, callee_start, callee_length);
+    if (callee == LA_INVALID_HANDLE) {
+        la_fail(ctx, LA_ERR_UNKNOWN_PROCEDURE, line, 1, callee_length,
+                la_slice(callee_start, callee_length), la_slice("", 0), 0, 0);
+        return -1;
+    }
+    procedure = &ctx->procedures[callee];
+    binding_count = 0;
+    cursor = la_trim_left(cursor, end);
+    while (cursor < end) {
+        if (!la_parse_invoke_binding(
+                ctx, &cursor, end, line, caller, procedure,
+                &binding_count)) return -1;
+    }
+    if (!la_validate_invoke_inputs(
+            ctx, procedure, binding_count, line)) return -1;
+    if (binding_count > ctx->invoke_binding_highwater) {
+        ctx->invoke_binding_highwater = binding_count;
+        ctx->stats->invoke_bindings = binding_count;
+    }
+    scratch_name = la_slice(
+        ctx->target->invoke_scratch_prefix,
+        (la_u16)strlen(ctx->target->invoke_scratch_prefix));
+    if (!la_reserve_invoke_scratch(
+            ctx, binding_count, line, scratch_name, &scratch)) return -1;
+    /*
+     * Save registers first. Other snapshots may use A as their load register
+     * and must not destroy an unsaved A value.
+     */
+    if (!la_emit_invoke_saves(
+            ctx, procedure, binding_count, line, scratch_name, 1) ||
+        !la_emit_invoke_saves(
+            ctx, procedure, binding_count, line, scratch_name, 0) ||
+        !la_emit_invoke_assignments(
+            ctx, procedure, binding_count, line, scratch_name)) {
+        return -1;
+    }
+    owner = la_name_slice(ctx, procedure->name);
+    if (!la_emit_invoke_operation(
+            ctx, line, LA_TARGET_OP_INVOKE_CALL, owner, la_slice("", 0),
+            la_slice("", 0), la_slice("", 0),
+            scratch_name,
+            scratch, binding_count, 0)) {
+        return -1;
+    }
+    return 1;
+}
+
+static int la_emit_procedure_event(LaContext *ctx, la_u16 procedure,
+                                   la_u16 line,
+                                   LaTargetOperationKind operation)
+{
+    LaEvent event;
+    LaProcedureRec *record;
+    record = &ctx->procedures[procedure];
+    if (!la_count_operation(ctx, line)) return 0;
+    la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
+    event.owner = la_name_slice(ctx, record->name);
+    event.operation = operation;
+    event.value = record->frame_size;
+    event.count = record->local_count;
+    return la_write_event(ctx, &event);
+}
+
+static int la_emit_member_events(LaContext *ctx, la_u16 procedure)
+{
+    LaProcedureRec *record;
+    la_u16 index;
+    record = &ctx->procedures[procedure];
+    for (index = record->first_parameter;
+         index < record->first_parameter + record->parameter_count; ++index) {
+        LaLocationRec *member;
+        LaEvent event;
+        member = &ctx->locations[index];
+        la_init_event(ctx, &event, LA_EVENT_PROCEDURE_MEMBER,
+                      member->line, 1);
+        event.owner = la_name_slice(ctx, record->name);
+        event.path = la_name_slice(ctx, member->name);
+        event.base = la_name_slice(ctx, member->physical);
+        event.aux = la_name_slice(ctx, member->type_name);
+        event.value = member->role;
+        event.stride = member->is_pointer ?
+            ctx->target->pointer_units : 1;
+        event.count = LA_PLACEMENT_PHYSICAL;
+        if (!la_write_event(ctx, &event)) return 0;
+    }
+    for (index = record->first_local;
+         index < record->first_local + record->local_count; ++index) {
+        LaLocalRec *local;
+        LaEvent event;
+        local = &ctx->locals[index];
+        la_init_event(ctx, &event, LA_EVENT_PROCEDURE_MEMBER,
+                      local->line, 1);
+        event.owner = la_name_slice(ctx, record->name);
+        event.path = la_name_slice(ctx, local->name);
+        event.aux = la_name_slice(ctx, local->type_name);
+        event.value = LA_MEMBER_FRAME;
+        event.offset = local->offset;
+        event.stride = local->size;
+        event.count = LA_PLACEMENT_FRAME;
+        if (!la_write_event(ctx, &event)) return 0;
+    }
+    return 1;
+}
+
+static LaDiagnosticCode la_emit_all(LaContext *ctx)
+{
+    LaEvent event;
+    const char *cursor;
+    const char *source_end;
+    la_u16 line;
+    la_u16 sid;
+    int in_struct;
+    la_u16 active_procedure;
+    la_init_event(ctx, &event, LA_EVENT_HEADER, 1, 1);
+    event.owner = la_slice(ctx->target->name,
+                           (la_u16)strlen(ctx->target->name));
+    event.value = LA_FORMAT_VERSION;
+    if (!la_write_event(ctx, &event)) return ctx->error;
+    for (sid = 0; sid < ctx->struct_count; ++sid) {
+        if (!la_emit_struct_properties(ctx, sid)) return ctx->error;
+    }
+    for (sid = 0; sid < ctx->pool_count; ++sid) {
+        LaSlice owner;
+        owner = la_name_slice(ctx, ctx->pools[sid].name);
+        if (!la_emit_property(ctx, ctx->pools[sid].line, owner,
+                              la_slice("", 0), LA_PROPERTY_FIELD_COUNT,
+                              ctx->pools[sid].count) ||
+            !la_emit_property(ctx, ctx->pools[sid].line, owner,
+                              la_slice("", 0), LA_PROPERTY_FIELD_STRIDE,
+                              ctx->pools[sid].stride) ||
+            !la_emit_property(ctx, ctx->pools[sid].line, owner,
+                              la_slice("", 0), LA_PROPERTY_FIELD_SIZE,
+                              ctx->pools[sid].size)) return ctx->error;
+    }
+    cursor = ctx->source;
+    source_end = ctx->source + ctx->source_length;
+    line = 1;
+    in_struct = 0;
+    active_procedure = LA_INVALID_HANDLE;
+    while (cursor < source_end) {
+        const char *line_end;
+        const char *content_end;
+        const char *trimmed;
+        int typed;
+        la_u16 extra_lines;
+        extra_lines = 0;
+        line_end = cursor;
+        while (line_end < source_end && *line_end != '\n') ++line_end;
+        content_end = la_code_end(cursor, line_end);
+        trimmed = la_trim_left(cursor, content_end);
+        if (in_struct) {
+            if (la_line_keyword(trimmed, content_end, "end")) in_struct = 0;
+        } else if (la_line_keyword(trimmed, content_end, "struct")) {
+            in_struct = 1;
+        } else if (active_procedure != LA_INVALID_HANDLE &&
+                   line <= ctx->procedures[active_procedure].begin_line) {
+            /* Procedure header, parameters, locals and begin are semantic. */
+        } else if (active_procedure != LA_INVALID_HANDLE &&
+                   line == ctx->procedures[active_procedure].end_line) {
+            active_procedure = LA_INVALID_HANDLE;
+        } else if (la_line_keyword(trimmed, content_end, "proc")) {
+            la_u16 procedure;
+            procedure = LA_INVALID_HANDLE;
+            for (sid = 0; sid < ctx->procedure_count; ++sid) {
+                if (ctx->procedures[sid].line == line) {
+                    procedure = sid;
+                    break;
+                }
+            }
+            if (procedure == LA_INVALID_HANDLE) return LA_ERR_PROCEDURE_SCOPE;
+            active_procedure = procedure;
+            if (!la_emit_member_events(ctx, procedure)) return ctx->error;
+            if (!la_emit_procedure_event(
+                    ctx, procedure, line,
+                    ctx->procedures[procedure].naked ?
+                        LA_TARGET_OP_PROC_NAKED :
+                        LA_TARGET_OP_PROC_FRAME)) return ctx->error;
+        } else if (la_line_keyword(trimmed, content_end, "pool")) {
+            /* Pool declaration is semantic-only. */
+        } else if (la_line_keyword(trimmed, content_end, "location") ||
+                   la_line_keyword(trimmed, content_end, "static_assert")) {
+            /* semantic-only */
+        } else if (active_procedure != LA_INVALID_HANDLE &&
+                   la_line_keyword(trimmed, content_end, "ret")) {
+            if (!la_equal_text(trimmed, (la_u16)(content_end - trimmed),
+                               "ret")) {
+                return la_fail(ctx, LA_ERR_SYNTAX, line, 1,
+                               (la_u16)(content_end - trimmed),
+                               la_slice("ret", 3),
+                               la_slice(trimmed,
+                                        (la_u16)(content_end - trimmed)),
+                               0, 0);
+            }
+            if (!la_emit_procedure_event(ctx, active_procedure, line,
+                                         LA_TARGET_OP_PROC_RETURN)) {
+                return ctx->error;
+            }
+        } else if (active_procedure != LA_INVALID_HANDLE &&
+                   la_line_keyword(trimmed, content_end, "invoke")) {
+            la_u16 length;
+            const char *logical_end;
+            length = (la_u16)(content_end - trimmed);
+            if (length > ctx->limits->max_line_bytes) {
+                return la_fail(ctx, LA_ERR_INVOKE_CAPACITY, line, 1, length,
+                               la_slice("invoke line", 11),
+                               la_slice("", 0), length,
+                               ctx->limits->max_line_bytes);
+            }
+            memcpy(ctx->line_buffer, trimmed, length);
+            logical_end = content_end;
+            while (length != 0 && ctx->line_buffer[length - 1] == ',') {
+                const char *next_start;
+                const char *next_end;
+                const char *next_code_end;
+                const char *next_trimmed;
+                if (line_end >= source_end) {
+                    return la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                                   la_slice("continued binding", 17),
+                                   la_slice("", 0), 0, 0);
+                }
+                next_start = line_end + 1;
+                next_end = next_start;
+                while (next_end < source_end && *next_end != '\n') ++next_end;
+                next_code_end = la_code_end(next_start, next_end);
+                next_trimmed = la_trim_left(next_start, next_code_end);
+                if ((la_u32)length + 1 +
+                    (la_u16)(next_code_end - next_trimmed) >
+                    ctx->limits->max_line_bytes) {
+                    return la_fail(ctx, LA_ERR_INVOKE_CAPACITY, line, 1, 1,
+                                   la_slice("logical invoke", 14),
+                                   la_slice("", 0), length + 1 +
+                                   (la_u16)(next_code_end - next_trimmed),
+                                   ctx->limits->max_line_bytes);
+                }
+                ctx->line_buffer[length++] = ' ';
+                memcpy(ctx->line_buffer + length, next_trimmed,
+                       (size_t)(next_code_end - next_trimmed));
+                length = (la_u16)(length +
+                                  (next_code_end - next_trimmed));
+                line_end = next_end;
+                logical_end = next_code_end;
+                ++extra_lines;
+            }
+            (void)logical_end;
+            ctx->line_buffer[length] = 0;
+            typed = la_parse_invoke(
+                ctx, ctx->line_buffer, ctx->line_buffer + length,
+                line, active_procedure);
+            if (typed < 0) return ctx->error;
+        } else {
+            typed = la_parse_frame_pointer_move(ctx, cursor, content_end,
+                                                line, &event);
+            if (typed == 0) {
+                typed = la_parse_local_operation(ctx, cursor, content_end,
+                                                 line, &event);
+            }
+            if (typed == 0) {
+                typed = la_parse_pool_address(ctx, cursor, content_end,
+                                              line, &event);
+            }
+            if (typed == 0) {
+                typed = la_parse_typed_operation(ctx, cursor, content_end,
+                                                 line, &event);
+            }
+            if (typed < 0) return ctx->error;
+            if (typed > 0) {
+                if (!la_write_event(ctx, &event)) return ctx->error;
+            } else if (la_has_explicit_typed_operand(cursor, content_end)) {
+                return la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
+                               (la_u16)(content_end - cursor),
+                               la_slice(cursor,
+                                        (la_u16)(content_end - cursor)),
+                               la_slice("raw assembly escape hatch", 24),
+                               0, 0);
+            } else {
+                la_init_event(ctx, &event, LA_EVENT_RAW, line,
+                              (la_u16)(line_end - cursor));
+                event.text = la_slice(cursor, (la_u16)(line_end - cursor));
+                if (!la_write_event(ctx, &event)) return ctx->error;
+            }
+        }
+        if (line_end < source_end) ++line_end;
+        cursor = line_end;
+        line = (la_u16)(line + 1 + extra_lines);
+    }
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_load_source(LaContext *ctx)
+{
+    int amount;
+    la_u16 remaining;
+    remaining = ctx->limits->max_source_bytes;
+    ctx->source_length = 0;
+    while (1) {
+        if (remaining == 0) {
+            char extra;
+            amount = ctx->input->read(ctx->input->context, &extra, 1);
+            if (amount > 0) {
+                return la_fail(ctx, LA_ERR_SOURCE_CAPACITY, 1, 1, 1,
+                               la_slice("source", 6), la_slice("", 0),
+                               ctx->source_length + 1,
+                               ctx->limits->max_source_bytes);
+            }
+            break;
+        }
+        amount = ctx->input->read(ctx->input->context,
+                                  ctx->source + ctx->source_length, remaining);
+        if (amount < 0) {
+            return la_fail(ctx, LA_ERR_IO, 1, 1, 1,
+                           la_slice("input", 5), la_slice("", 0), amount, 0);
+        }
+        if (amount == 0) break;
+        if ((la_u16)amount > remaining) {
+            return la_fail(ctx, LA_ERR_IO, 1, 1, 1,
+                           la_slice("input overflow", 14),
+                           la_slice("", 0), amount, remaining);
+        }
+        ctx->source_length = (la_u16)(ctx->source_length + amount);
+        remaining = (la_u16)(remaining - amount);
+    }
+    ctx->source[ctx->source_length] = 0;
+    ctx->stats->source_bytes = ctx->source_length;
+    return LA_OK;
+}
+
+LaDiagnosticCode la_compile(const LaInput *input,
+                            const LaEventSink *events,
+                            const LaDiagnosticSink *diagnostics,
+                            const LaTarget *target,
+                            const LaLimits *limits,
+                            LaWorkspace workspace,
+                            LaStats *stats)
+{
+    LaContext ctx;
+    char *cursor;
+    la_u32 remaining;
+    la_u32 required;
+    memset(&ctx, 0, sizeof(ctx));
+    memset(stats, 0, sizeof(*stats));
+    ctx.input = input;
+    ctx.events = events;
+    ctx.diagnostics = diagnostics;
+    ctx.target = target;
+    ctx.limits = limits;
+    ctx.stats = stats;
+    ctx.current_struct = LA_INVALID_HANDLE;
+    ctx.current_procedure = LA_INVALID_HANDLE;
+    ctx.error = LA_OK;
+    required = la_workspace_required(limits);
+    if (workspace.data == 0 || workspace.size < required) {
+        ctx.error = LA_ERR_WORKSPACE;
+        if (diagnostics != 0 && diagnostics->write != 0) {
+            LaDiagnostic diagnostic;
+            memset(&diagnostic, 0, sizeof(diagnostic));
+            diagnostic.code = LA_ERR_WORKSPACE;
+            diagnostic.value = (la_i32)required;
+            diagnostic.limit = (la_i32)workspace.size;
+            diagnostics->write(diagnostics->context, &diagnostic);
+        }
+        return ctx.error;
+    }
+    cursor = (char *)workspace.data;
+    remaining = workspace.size;
+    ctx.source = (char *)la_take(&cursor, &remaining,
+                                 (la_u32)limits->max_source_bytes + 1);
+    ctx.names = (char *)la_take(&cursor, &remaining,
+                                (la_u32)limits->max_name_bytes + 1);
+    ctx.line_buffer = (char *)la_take(&cursor, &remaining,
+                                      (la_u32)limits->max_line_bytes + 1);
+    ctx.path_buffer = (char *)la_take(&cursor, &remaining,
+                                      (la_u32)limits->max_line_bytes + 1);
+    ctx.structs = (LaStructRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_structs * sizeof(LaStructRec));
+    ctx.fields = (LaFieldRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_fields * sizeof(LaFieldRec));
+    ctx.locations = (LaLocationRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_locations * sizeof(LaLocationRec));
+    ctx.pools = (LaPoolRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_pools * sizeof(LaPoolRec));
+    ctx.procedures = (LaProcedureRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_procedures * sizeof(LaProcedureRec));
+    ctx.locals = (LaLocalRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_locals * sizeof(LaLocalRec));
+    ctx.bindings = (LaInvokeBindingRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_invoke_bindings * sizeof(LaInvokeBindingRec));
+    ctx.values = (LaValueRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_expression_nodes * sizeof(LaValueRec));
+    ctx.operators = (LaOperatorRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_expression_nodes * sizeof(LaOperatorRec));
+    ctx.frames = (LaPropertyFrame *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_nesting * sizeof(LaPropertyFrame));
+    if (ctx.bindings == 0 || ctx.frames == 0) {
+        return LA_ERR_WORKSPACE;
+    }
+    stats->workspace_used = required;
+    ctx.names[0] = 0;
+    if (la_load_source(&ctx) != LA_OK) return ctx.error;
+    if (la_first_pass(&ctx) != LA_OK) return ctx.error;
+    if (la_resolve_layouts(&ctx) != LA_OK) return ctx.error;
+    if (la_check_assertions(&ctx) != LA_OK) return ctx.error;
+    if (la_emit_all(&ctx) != LA_OK) return ctx.error;
+    return LA_OK;
+}
+
+const char *la_diagnostic_name(LaDiagnosticCode code)
+{
+    static const char *names[] = {
+        "ok", "workspace-capacity", "source-capacity", "token-capacity",
+        "name-capacity", "structure-capacity", "field-capacity",
+        "location-capacity", "expression-capacity", "nesting-capacity",
+        "operation-capacity", "syntax", "duplicate-structure",
+        "duplicate-field", "unknown-type", "layout-cycle", "unknown-field",
+        "bad-property", "assertion-failed", "duplicate-location",
+        "location-type", "unsupported-operation", "access-width",
+        "displacement", "reserved-symbol", "deferred-feature",
+        "native-output-deferred", "io", "module-workspace",
+        "module-capacity", "module-source-capacity",
+        "module-line-capacity", "module-depth", "module-not-found",
+        "module-cycle", "module-duplicate", "module-syntax",
+        "pool-capacity", "procedure-capacity", "parameter-capacity",
+        "local-capacity", "duplicate-pool", "duplicate-procedure",
+        "duplicate-parameter", "duplicate-local", "indexed-field",
+        "index-location", "index-stride", "unknown-pool", "pool-strategy",
+        "procedure-scope", "frame-local", "frame-stack-mutation",
+        "member-role", "member-placement", "calling-convention",
+        "invoke-capacity", "unknown-procedure", "invoke-binding",
+        "invoke-scratch", "local-syntax-migration"
+    };
+    if ((la_u16)code >= (la_u16)(sizeof(names) / sizeof(names[0]))) {
+        return "unknown-diagnostic";
+    }
+    return names[code];
+}
