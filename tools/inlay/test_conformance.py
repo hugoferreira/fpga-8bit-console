@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,10 +22,57 @@ STRUCTURED_FIXTURE = ROOT / "tests/inlay/structured.inlay.asm"
 STRUCTURED_REFERENCE = ROOT / "tests/inlay/structured_reference.asm"
 VARIANT_FIXTURE = ROOT / "tests/inlay/variants.inlay.asm"
 VARIANT_REFERENCE = ROOT / "tests/inlay/variants_reference.asm"
-FULL_LAYOUT = ROOT / "src/inlay/celeste.inlay.asm"
-CELESTE_MAIN = ROOT / "src/celeste/main.asm"
-CELESTE_MEMMAP = ROOT / "src/celeste/memmap.asm"
-PREPARE = ROOT / "tools/inlay/prepare_celeste_modules.py"
+CELESTE_DIR = ROOT / "src/celeste"
+CELESTE_INLAY = CELESTE_DIR / "main.inlay.asm"
+CELESTE_REFERENCE_DIR = (
+    ROOT / "tests/inlay/reference/celeste-customasm"
+)
+CELESTE_MEMMAP = CELESTE_REFERENCE_DIR / "memmap.asm"
+EXPECTED_CELESTE_TYPED_OPERATIONS = 80
+EXPECTED_CELESTE_OVERLAY_OPERATIONS = 42
+EXPECTED_CELESTE_OFFSET_SETUPS = 0
+EXPECTED_CELESTE_SEMANTIC_OFFSETS = 112
+EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 143
+READABLE_CELESTE_MODULES = {
+    "main.inlay.asm",
+    "obj.inlay.asm",
+    "collide.inlay.asm",
+    "player.inlay.asm",
+    "draw.inlay.asm",
+}
+EXPECTED_CELESTE_MODULES = {
+    "audio.inlay.asm",
+    "collide.inlay.asm",
+    "draw.inlay.asm",
+    "fx.inlay.asm",
+    "gfx.inlay.asm",
+    "layout.inlay.asm",
+    "main.inlay.asm",
+    "math.inlay.asm",
+    "memmap.inlay.asm",
+    "obj.inlay.asm",
+    "player.inlay.asm",
+    "room.inlay.asm",
+    "rooms.inlay.asm",
+    "sound.inlay.asm",
+}
+EXPECTED_CELESTE_SEMANTIC_INCLUDES = {
+    "layout.inlay.asm",
+    "math.inlay.asm",
+    "obj.inlay.asm",
+    "collide.inlay.asm",
+    "player.inlay.asm",
+    "room.inlay.asm",
+    "draw.inlay.asm",
+    "fx.inlay.asm",
+    "sound.inlay.asm",
+}
+EXPECTED_CELESTE_OPAQUE_INCLUDES = {
+    "memmap.inlay.asm",
+    "gfx.inlay.asm",
+    "rooms.inlay.asm",
+    "audio.inlay.asm",
+}
 DEPRECATION = (
     "laasm: deprecated; use inlay "
     "(legacy support requires a separate removal change)\n"
@@ -450,17 +498,219 @@ def check_variant_fixture(first: Path, second: Path) -> None:
         )
 
 
-def check_full_rom(tmp: Path) -> tuple[int, str]:
-    run(
-        sys.executable,
-        PREPARE,
-        CELESTE_MAIN.parent,
-        CELESTE_MEMMAP,
-        FULL_LAYOUT,
-        tmp,
+def check_celeste_source_boundary(
+    directory: Path = CELESTE_DIR,
+) -> list[Path]:
+    files = sorted(path for path in directory.iterdir() if path.is_file())
+    names = {path.name for path in files}
+    if names != EXPECTED_CELESTE_MODULES:
+        raise AssertionError(
+            "Celeste production module set changed: "
+            f"expected {sorted(EXPECTED_CELESTE_MODULES)}, "
+            f"got {sorted(names)}"
+        )
+    non_inlay = [path.name for path in files if not path.name.endswith(".inlay.asm")]
+    if non_inlay:
+        raise AssertionError(f"non-Inlay Celeste production files: {non_inlay}")
+
+    semantic = set()
+    opaque = set()
+    semantic_pattern = re.compile(r'^include "([^"]+)"$')
+    opaque_pattern = re.compile(r'^\s*#include "([^"]+)"$')
+    for path in files:
+        for number, line in enumerate(path.read_text(encoding="ascii").splitlines(), 1):
+            if "tests/inlay/reference/celeste-customasm" in line:
+                raise AssertionError(
+                    f"{path}:{number}: production source references test oracle"
+                )
+            match = semantic_pattern.fullmatch(line)
+            if match:
+                requested = match.group(1)
+                if "/" in requested or requested not in EXPECTED_CELESTE_MODULES:
+                    raise AssertionError(
+                        f"{path}:{number}: invalid local Inlay include {requested}"
+                    )
+                semantic.add(requested)
+                continue
+            match = opaque_pattern.fullmatch(line)
+            if not match:
+                continue
+            requested = match.group(1)
+            marker = "../../src/celeste/"
+            if requested.startswith(marker):
+                name = requested.removeprefix(marker)
+                if name not in EXPECTED_CELESTE_OPAQUE_INCLUDES:
+                    raise AssertionError(
+                        f"{path}:{number}: unapproved opaque include {requested}"
+                    )
+                opaque.add(name)
+    if semantic != EXPECTED_CELESTE_SEMANTIC_INCLUDES:
+        raise AssertionError(
+            "Celeste semantic include set changed: "
+            f"expected {sorted(EXPECTED_CELESTE_SEMANTIC_INCLUDES)}, "
+            f"got {sorted(semantic)}"
+        )
+    if opaque != EXPECTED_CELESTE_OPAQUE_INCLUDES:
+        raise AssertionError(
+            "Celeste opaque include set changed: "
+            f"expected {sorted(EXPECTED_CELESTE_OPAQUE_INCLUDES)}, "
+            f"got {sorted(opaque)}"
+        )
+    return files
+
+
+def expect_celeste_boundary_failure(directory: Path, fragment: str) -> None:
+    try:
+        check_celeste_source_boundary(directory)
+    except AssertionError as error:
+        if fragment not in str(error):
+            raise AssertionError(
+                f"boundary failure did not mention {fragment!r}: {error}"
+            ) from error
+    else:
+        raise AssertionError(
+            f"Celeste source boundary accepted invalid case {fragment!r}"
+        )
+
+
+def check_celeste_boundary_failures(tmp: Path) -> None:
+    corpus = tmp / "celeste-boundary"
+    shutil.copytree(CELESTE_DIR, corpus)
+    legacy = corpus / "legacy.asm"
+    legacy.write_text("; forbidden legacy production source\n", encoding="ascii")
+    expect_celeste_boundary_failure(corpus, "module set changed")
+    legacy.unlink()
+
+    main = corpus / "main.inlay.asm"
+    original = main.read_text(encoding="ascii")
+    main.write_text(
+        original + '#include "../../src/celeste/math.inlay.asm"\n',
+        encoding="ascii",
     )
+    expect_celeste_boundary_failure(corpus, "unapproved opaque include")
+    main.write_text(
+        original
+        + '#include "../../tests/inlay/reference/'
+        + 'celeste-customasm/main.asm"\n',
+        encoding="ascii",
+    )
+    expect_celeste_boundary_failure(corpus, "test oracle")
+
+
+def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
+    production_files = check_celeste_source_boundary()
+    module_texts = [
+        path.read_text(encoding="ascii")
+        for path in production_files
+    ]
+    typed_operations = sum(
+        len(re.findall(r"\[(?:pObj|pOth) \+ CelesteObject\.", text))
+        for text in module_texts
+    )
+    if typed_operations != EXPECTED_CELESTE_TYPED_OPERATIONS:
+        raise AssertionError(
+            "checked-in Celeste typed-operation count changed: "
+            f"expected {EXPECTED_CELESTE_TYPED_OPERATIONS}, "
+            f"got {typed_operations}"
+        )
+    overlay_operations = sum(
+        len(re.findall(
+            r"\[(?:video|psg) \+ (?:VideoRegisters|PsgRegisters)\.",
+            text,
+        ))
+        for text in module_texts
+    )
+    if overlay_operations != EXPECTED_CELESTE_OVERLAY_OPERATIONS:
+        raise AssertionError(
+            "checked-in Celeste overlay-operation count changed: "
+            f"expected {EXPECTED_CELESTE_OVERLAY_OPERATIONS}, "
+            f"got {overlay_operations}"
+        )
+    offset_setups = sum(
+        len(re.findall(r"^\s*ldy\s+#O_[A-Z0-9_]+\b", text, re.MULTILINE))
+        for text in module_texts
+    )
+    if offset_setups != EXPECTED_CELESTE_OFFSET_SETUPS:
+        raise AssertionError(
+            "checked-in Celeste legacy offset-setup count changed: "
+            f"expected {EXPECTED_CELESTE_OFFSET_SETUPS}, got {offset_setups}"
+        )
+    semantic_offsets = sum(
+        len(re.findall(
+            r"^\s*offset\s+[axy],\s+CelesteObject\.",
+            text,
+            re.MULTILINE,
+        ))
+        for text in module_texts
+    )
+    if semantic_offsets != EXPECTED_CELESTE_SEMANTIC_OFFSETS:
+        raise AssertionError(
+            "checked-in Celeste semantic offset count changed: "
+            f"expected {EXPECTED_CELESTE_SEMANTIC_OFFSETS}, "
+            f"got {semantic_offsets}"
+        )
+    raw_indirects = sum(
+        len(re.findall(r"\((?:pObj|pOth)\),\s*y\b", text))
+        for text in module_texts
+    )
+    if raw_indirects != EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS:
+        raise AssertionError(
+            "checked-in Celeste raw object-indirect count changed: "
+            f"expected {EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS}, "
+            f"got {raw_indirects}"
+        )
+    for path, text in zip(production_files, module_texts):
+        if path.name not in READABLE_CELESTE_MODULES:
+            continue
+        comment_lines = sum(
+            line.lstrip().startswith(";") for line in text.splitlines()
+        )
+        if comment_lines == 0:
+            raise AssertionError(f"{path.name}: restored commentary is missing")
+        if re.search(r"\n[ \t]*\n[ \t]*\n[ \t]*\n", text):
+            raise AssertionError(f"{path.name}: excessive blank-line run")
+    layout_module = (CELESTE_DIR / "layout.inlay.asm").read_text(
+        encoding="ascii"
+    )
+    required_layout_declarations = {
+        "enum ObjectKind : u8",
+        "enum SpawnPhase : u8",
+        "union ObjectPayload",
+        "struct VideoRegisters",
+        "struct PsgRegisters",
+        "overlay video : VideoRegisters at SPR_SHADDR_LO",
+        "overlay psg : PsgRegisters at PSG_ADDR_LO",
+    }
+    missing_layout = sorted(
+        item for item in required_layout_declarations
+        if layout_module.count(item) != 1
+    )
+    if missing_layout:
+        raise AssertionError(
+            f"Celeste semantic layout manifest changed: {missing_layout}"
+        )
+    lifecycle_module = (CELESTE_DIR / "player.inlay.asm").read_text(
+        encoding="ascii"
+    )
+    lifecycle_names = {
+        f"{kind}.{operation}"
+        for kind in ("Player", "Spawn", "Smoke", "Title")
+        for operation in ("init", "update", "draw")
+    }
+    declared_lifecycle = set(re.findall(
+        r"^proc ((?:Player|Spawn|Smoke|Title)\.(?:init|update|draw)) "
+        r"using console6502$",
+        lifecycle_module,
+        re.MULTILINE,
+    ))
+    if declared_lifecycle != lifecycle_names:
+        raise AssertionError(
+            "Celeste lifecycle procedure manifest changed: "
+            f"expected {sorted(lifecycle_names)}, "
+            f"got {sorted(declared_lifecycle)}"
+        )
     obj_module = (
-        tmp / "modules" / "obj.inlay.asm"
+        CELESTE_DIR / "obj.inlay.asm"
     ).read_text(encoding="ascii")
     expected_signature = (
         "proc obj_ptr using console6502\n"
@@ -472,26 +722,39 @@ def check_full_rom(tmp: Path) -> tuple[int, str]:
         "end"
     )
     if obj_module.count(expected_signature) != 1:
-        raise AssertionError("generated obj_ptr did not use the exact unified signature")
+        raise AssertionError(
+            "checked-in obj_ptr did not use the exact unified signature"
+        )
     generated = tmp / "celeste.asm"
     translate(
-        tmp / "celeste.inlay.asm", generated, tmp / "celeste.map.json"
+        CELESTE_INLAY, generated, tmp / "celeste.map.json"
     )
-    baseline = tmp / "baseline.bin"
+    generated_text = generated.read_text(encoding="ascii")
+    for name in lifecycle_names:
+        target_name = "__inlay_q" + "".join(
+            f"{len(component)}_{component}"
+            for component in name.split(".")
+        ) + ":"
+        if generated_text.count(target_name) != 1:
+            raise AssertionError(
+                f"qualified procedure {name} did not lower to {target_name}"
+            )
     frontend = tmp / "frontend.bin"
-    run(
-        "customasm", CELESTE_MAIN, "-t", "10", "--color=off",
-        "--legacy=off", "-f", "binary", "-o", baseline
-    )
     run(
         "customasm", generated, "-t", "10", "--color=off",
         "--legacy=off", "-f", "binary", "-o", frontend
     )
-    baseline_bytes = baseline.read_bytes()
-    if baseline_bytes != frontend.read_bytes():
-        raise AssertionError("full Celeste ROM is not byte-for-byte equivalent")
     import hashlib
-    return len(baseline_bytes), hashlib.sha256(baseline_bytes).hexdigest()
+    frontend_bytes = frontend.read_bytes()
+    digest = hashlib.sha256(frontend_bytes).hexdigest()
+    if len(frontend_bytes) != 65536:
+        raise AssertionError(
+            f"Celeste ROM size changed: expected 65536, got {len(frontend_bytes)}"
+        )
+    return (
+        len(frontend_bytes), digest, overlay_operations,
+        offset_setups, raw_indirects,
+    )
 
 
 def main() -> int:
@@ -520,12 +783,19 @@ def main() -> int:
         check_variant_fixture(tmp_a, tmp_b)
         check_negative_sources(tmp_a)
         check_downstream_diagnostics(tmp_a)
-        rom_size, rom_hash = check_full_rom(tmp_a)
+        check_celeste_boundary_failures(tmp_a)
+        (
+            rom_size, rom_hash, overlay_operations,
+            offset_setups, raw_indirects,
+        ) = check_full_rom(tmp_a)
     print(
         "Inlay conformance: passed; "
         f"fixture operations={stats['operations']}, "
         f"workspace={stats['workspaceBytes']} bytes; "
-        f"Celeste ROM={rom_size} bytes sha256={rom_hash}"
+        f"Celeste overlay operations={overlay_operations}, "
+        f"legacy offset setups={offset_setups}, "
+        f"raw object indirects={raw_indirects}; "
+        f"ROM={rom_size} bytes sha256={rom_hash}"
     )
     return 0
 

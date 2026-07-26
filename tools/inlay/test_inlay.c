@@ -420,7 +420,7 @@ static void test_indexed_pools_and_procedures(void)
         "    ret\n"
         "end\n";
     static const char source_b[] =
-        "proc address_record\n"
+        "proc Record.address\n"
         "    out : ptr Record in p\n"
         "    slot : u8 in a\n"
         "begin\n"
@@ -458,6 +458,12 @@ static void test_indexed_pools_and_procedures(void)
     check(stats.locals == 1, "one local counted");
     check(stats.operations == 10, "all structured operations counted");
     free(source);
+
+    expect_error(
+        "proc Player.update\nbegin\nend\n"
+        "proc Player.update\nbegin\nend\n",
+        limits, LA_ERR_DUPLICATE_PROCEDURE,
+        "duplicate qualified procedure rejected");
 
     expect_error(
         "struct R packed\nx : u8\nend\nlocation p : ptr R\n"
@@ -1050,6 +1056,150 @@ static void test_capacities(void)
         "overlay capacity plus one rejected");
 }
 
+static void test_namespaces(void)
+{
+    static const char source[] =
+        "proc helper naked\n"
+        "begin\n"
+        "ret\n"
+        "end\n"
+        "namespace Player\n"
+        "export run\n"
+        "export speed\n"
+        "speed = $0A\n"
+        "twice = speed * 2\n"
+        "proc helper naked\n"
+        "begin\n"
+        "ret\n"
+        "end\n"
+        "proc run naked\n"
+        "begin\n"
+        "mov a, #twice\n"
+        "cmp #Player.speed\n"
+        "invoke helper\n"
+        "invoke Player.helper\n"
+        "ret\n"
+        "end\n"
+        "namespace Hair\n"
+        "proc draw naked\n"
+        "begin\n"
+        "ret\n"
+        "end\n"
+        "end\n"
+        "end\n"
+        "data u8 low(Player.run), high(Player.run)\n"
+        "data u16 addr(Player.run)\n";
+    LaLimits limits;
+    TestEvents events;
+    TestDiagnostic diagnostic;
+    LaStats stats;
+    LaDiagnosticCode result;
+    limits = la_default_limits();
+    result = compile_source(source, 0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, "nested namespaces and lexical invokes compile");
+    check(stats.namespaces == 2, "namespace records counted");
+    check(stats.exports == 2, "export records counted");
+    check(stats.constants == 2, "namespace constants counted");
+    check(stats.procedures == 4, "namespaced procedures counted");
+
+    limits = la_default_limits();
+    limits.max_constants = 1;
+    result = compile_source(
+        "namespace A\none = 1\nend\n", 0, limits,
+        &events, &diagnostic, &stats);
+    check(result == LA_OK, "constant capacity exact limit succeeds");
+    expect_error(
+        "namespace A\none = 1\ntwo = 2\nend\n",
+        limits, LA_ERR_CONSTANT_CAPACITY,
+        "constant capacity plus one rejected");
+    expect_error(
+        "namespace A\none = 1\none = 2\nend\n",
+        la_default_limits(), LA_ERR_DUPLICATE_CONSTANT,
+        "duplicate namespace constant rejected");
+
+    limits = la_default_limits();
+    limits.max_namespaces = 1;
+    result = compile_source(
+        "namespace A\nend\n", 0, limits,
+        &events, &diagnostic, &stats);
+    check(result == LA_OK, "namespace capacity exact limit succeeds");
+    expect_error("namespace A\nend\nnamespace B\nend\n",
+                 limits, LA_ERR_NAMESPACE_CAPACITY,
+                 "namespace capacity plus one rejected");
+
+    limits = la_default_limits();
+    limits.max_exports = 1;
+    result = compile_source(
+        "namespace A\nexport one\nproc one naked\nbegin\nret\nend\nend\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, "export capacity exact limit succeeds");
+    expect_error(
+        "namespace A\nexport one\nexport two\n"
+        "proc one naked\nbegin\nret\nend\n"
+        "proc two naked\nbegin\nret\nend\nend\n",
+        limits, LA_ERR_EXPORT_CAPACITY,
+        "export capacity plus one rejected");
+
+    limits = la_default_limits();
+    limits.max_nesting = 1;
+    expect_error("namespace A\nnamespace B\nend\nend\n",
+                 limits, LA_ERR_NAMESPACE_DEPTH,
+                 "namespace depth plus one rejected");
+    expect_error("namespace A\nend\nnamespace A\nend\n",
+                 la_default_limits(), LA_ERR_DUPLICATE_NAMESPACE,
+                 "duplicate namespace rejected");
+    expect_error("data u8 low(Missing.run)\n",
+                 la_default_limits(), LA_ERR_UNKNOWN_PROCEDURE,
+                 "unknown procedure address rejected before emission");
+    expect_error(
+        "proc target naked\nbegin\nret\nend\n"
+        "data u8 addr(target)\n",
+        la_default_limits(), LA_ERR_ACCESS_WIDTH,
+        "full procedure address requires word data");
+    result = compile_source(
+        "struct Item\npad : u8[3]\nvalue : u8\nend\n"
+        "offset y, Item.value\n",
+        0, la_default_limits(), &events, &diagnostic, &stats);
+    check(result == LA_OK, "typed field offset materializes");
+    result = compile_source(
+        "enum Kind : u8\n"
+        "none = 0\n"
+        "item = 7\n"
+        "end\n"
+        "struct Item\n"
+        "pad : u8[3]\n"
+        "value : u8\n"
+        "end\n"
+        "mov slot, #Kind.item\n"
+        "mov y, #Item.size-1\n"
+        "cmp #Kind.none\n",
+        0, la_default_limits(), &events, &diagnostic, &stats);
+    check(result == LA_OK,
+          "qualified enum values and layout properties materialize");
+    check(stats.operations == 3,
+          "qualified immediate operations are counted");
+    expect_error(
+        "enum Kind : u8\nitem = 1\nend\n"
+        "mov slot, #Kind.missing\n",
+        la_default_limits(), LA_ERR_ENUM_VALUE,
+        "unknown qualified enum member is rejected");
+    expect_error(
+        "struct Big\nvalue : u8 at 256\nend\n"
+        "mov y, #Big.value.offset\n",
+        la_default_limits(), LA_ERR_ACCESS_WIDTH,
+        "qualified immediate beyond target range is rejected");
+    expect_error(
+        "struct Big\nvalue : u8 at 256\nend\n"
+        "offset y, Big.value\n",
+        la_default_limits(), LA_ERR_DISPLACEMENT,
+        "field offset beyond target range is rejected");
+    expect_error(
+        "struct Item\nvalue : u8\nend\n"
+        "offset t0, Item.value\n",
+        la_default_limits(), LA_ERR_MEMBER_PLACEMENT,
+        "field offset requires a supported physical destination");
+}
+
 static void test_workspace_error(void)
 {
     static const char source[] = "struct A packed\nx : u8\nend\n";
@@ -1096,6 +1246,7 @@ int main(void)
     test_unified_members_and_invoke();
     test_layout_variants();
     test_capacities();
+    test_namespaces();
     test_workspace_error();
     if (failures != 0) {
         fprintf(stderr, "%d Inlay test(s) failed\n", failures);

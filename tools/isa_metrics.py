@@ -34,15 +34,19 @@ CORPORA = [
                "src/nemo/clues.asm", "src/nemo/render.asm",
                "src/nemo/scene.asm", "src/nemo/obj.asm", "src/nemo/input.asm",
                "src/nemo/select.asm"]},
-    # Only the hand-written files. gfx.asm, rooms.asm and audio.asm are
+    # Only the hand-written files. gfx, rooms and audio are
     # generated data and contain no instructions, so listing them would say
     # nothing - but leaving them out is also the honest boundary of "what a
     # programmer wrote".
     {"name": "celeste", "frame_bound": True,
-     "files": ["src/celeste/main.asm", "src/celeste/math.asm",
-               "src/celeste/obj.asm", "src/celeste/collide.asm",
-               "src/celeste/player.asm", "src/celeste/room.asm",
-               "src/celeste/draw.asm", "src/celeste/sound.asm"]},
+     "files": ["src/celeste/main.inlay.asm",
+               "src/celeste/math.inlay.asm",
+               "src/celeste/obj.inlay.asm",
+               "src/celeste/collide.inlay.asm",
+               "src/celeste/player.inlay.asm",
+               "src/celeste/room.inlay.asm",
+               "src/celeste/draw.inlay.asm",
+               "src/celeste/sound.inlay.asm"]},
 ]
 
 CEREMONY = {"clc", "sec", "cld", "sed", "sei", "cli", "clv"}

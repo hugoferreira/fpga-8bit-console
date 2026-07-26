@@ -1,7 +1,3 @@
-#include "../isa/nmos6502.asm"
-#include "../isa/ext_core.asm"
-#include "../isa/pseudo.asm"
-#include "../isa/memmap.asm"
 
 ; ------------------------------------------------------------------------------
 ; Celeste Classic, ported to this console
@@ -40,10 +36,17 @@
 ;     physics constants are the cart's own numbers rather than halved ones.
 ; ------------------------------------------------------------------------------
 
+#include "../../src/isa/nmos6502.asm"
+#include "../../src/isa/ext_core.asm"
+#include "../../src/isa/pseudo.asm"
+#include "../../src/isa/memmap.asm"
+
+include "layout.inlay.asm"
+
 #bank ram
 #addr 0x0300
 
-    #include "memmap.asm"
+    #include "../../src/celeste/memmap.inlay.asm"
 
 ; ------------------------------------------------------------------------------
 reset:
@@ -117,7 +120,7 @@ begin_game:
     jmp load_room
 
 wait_frame:
-    lda SPR_FRAME
+    lda [video + VideoRegisters.frame]
 .wait:
     cmp SPR_FRAME
     beq .wait
@@ -126,7 +129,7 @@ wait_frame:
 read_buttons:
     lda btn
     sta btnprev
-    lda SPR_BTN
+    lda [video + VideoRegisters.buttons]
     sta btn
     rts
 
@@ -169,11 +172,11 @@ update_frame:
     dec shake
     lda shake
     beq .noshake
-    lda SPR_RND                 ; -2 + rnd(5), on both axes
+    lda [video + VideoRegisters.random]                 ; -2 + rnd(5), on both axes
     and #3
     sub #2
     sta shake_x
-    lda SPR_RND
+    lda [video + VideoRegisters.random]
     and #3
     sub #2
     sta shake_y
@@ -231,18 +234,18 @@ title_tick:
 ; ------------------------------------------------------------------------------
 ; The generated files come first: their .defines (sheet slot numbers, room
 ; count) are textual, so every user of them has to be assembled afterwards.
-    #include "gfx.asm"
-    #include "rooms.asm"
-    #include "audio.asm"
+    #include "../../src/celeste/gfx.inlay.asm"
+    #include "../../src/celeste/rooms.inlay.asm"
+    #include "../../src/celeste/audio.inlay.asm"
 
-    #include "math.asm"
-    #include "obj.asm"
-    #include "collide.asm"
-    #include "player.asm"
-    #include "room.asm"
-    #include "draw.asm"
-    #include "fx.asm"
-    #include "sound.asm"
+include "math.inlay.asm"
+include "obj.inlay.asm"
+include "collide.inlay.asm"
+include "player.inlay.asm"
+include "room.inlay.asm"
+include "draw.inlay.asm"
+include "fx.inlay.asm"
+include "sound.inlay.asm"
 
 
 ; ------------------------------------------------------------------------------
@@ -268,8 +271,8 @@ palette_upload:
 ; ------------------------------------------------------------------------------
 sheet_upload:
     lda #0
-    sta SPR_SHADDR_LO
-    sta SPR_SHADDR_HI
+    sta [video + VideoRegisters.sheet_address_low]
+    sta [video + VideoRegisters.sheet_address_high]
     mov pSrc, #<celeste_sheet
     mov pSrc+1, #>celeste_sheet
     mov t0, #<SHEET_BYTES
@@ -277,7 +280,7 @@ sheet_upload:
     ldy #0
 .byte:
     lda (pSrc), y
-    sta SPR_SHDATA
+    sta [video + VideoRegisters.sheet_data]
     inc pSrc
     bne .nohi
     inc pSrc+1

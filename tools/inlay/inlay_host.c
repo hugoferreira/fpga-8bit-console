@@ -334,6 +334,29 @@ static void mangle_path(FILE *file, LaSlice owner, LaSlice path)
     }
 }
 
+static void emit_target_symbol(FILE *file, LaSlice symbol)
+{
+    const char *cursor;
+    const char *end;
+    if (memchr(symbol.data, '.', symbol.length) == 0) {
+        fwrite(symbol.data, 1, symbol.length, file);
+        return;
+    }
+    fputs("__inlay_q", file);
+    cursor = symbol.data;
+    end = symbol.data + symbol.length;
+    while (cursor < end) {
+        const char *component_end;
+        component_end = cursor;
+        while (component_end < end && *component_end != '.') {
+            ++component_end;
+        }
+        fprintf(file, "%u_", (unsigned)(component_end - cursor));
+        fwrite(cursor, 1, (size_t)(component_end - cursor), file);
+        cursor = component_end < end ? component_end + 1 : end;
+    }
+}
+
 static const char *property_suffix(LaPropertyKind property)
 {
     switch (property) {
@@ -442,8 +465,8 @@ static int emit_procedure_start(HostOutput *output, const LaEvent *event)
 {
     unsigned step;
     if (!begin_line(output, event->span, "procedure")) return 0;
-    fprintf(output->assembly, "%.*s:\n",
-            (int)event->owner.length, event->owner.data);
+    emit_target_symbol(output->assembly, event->owner);
+    fputs(":\n", output->assembly);
     if (event->operation == LA_TARGET_OP_PROC_FRAME) {
         for (step = 0; step < event->value; ++step) {
             if (!begin_line(output, event->span, "frame-prologue")) return 0;
@@ -598,12 +621,57 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
         return emit_invoke_assign(output, event);
     case LA_TARGET_OP_INVOKE_CALL:
         if (!begin_line(output, event->span, "invoke-call")) return 0;
-        fprintf(output->assembly, "    jsr %.*s\n",
-                (int)event->owner.length, event->owner.data);
+        fputs("    jsr ", output->assembly);
+        emit_target_symbol(output->assembly, event->owner);
+        fputc('\n', output->assembly);
         return 1;
     case LA_TARGET_OP_LOAD8_OVERLAY_DISP:
     case LA_TARGET_OP_STORE8_OVERLAY_DISP:
         return emit_overlay_displacement(output, event);
+    case LA_TARGET_OP_DATA_PROC_LOW:
+    case LA_TARGET_OP_DATA_PROC_HIGH:
+    case LA_TARGET_OP_DATA_PROC_FULL:
+        if (!begin_line(output, event->span, "procedure-address")) return 0;
+        fputs(event->operation == LA_TARGET_OP_DATA_PROC_FULL ?
+              "    #d16 " : "    #d8 ", output->assembly);
+        if (event->operation != LA_TARGET_OP_DATA_PROC_FULL) fputc('(', output->assembly);
+        emit_target_symbol(output->assembly, event->owner);
+        if (event->operation == LA_TARGET_OP_DATA_PROC_LOW) {
+            fputs(")[7:0]", output->assembly);
+        } else if (event->operation == LA_TARGET_OP_DATA_PROC_HIGH) {
+            fputs(")[15:8]", output->assembly);
+        }
+        fputc('\n', output->assembly);
+        return 1;
+    case LA_TARGET_OP_MATERIALIZE_FIELD_OFFSET:
+        if (!begin_line(output, event->span, "field-offset")) return 0;
+        fprintf(output->assembly, "    ld%.*s #%u",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value);
+        fprintf(output->assembly, " ; inlay offset %.*s.%.*s\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
+        return 1;
+    case LA_TARGET_OP_VALUE_MOV:
+        if (!begin_line(output, event->span, "qualified-immediate")) return 0;
+        if (event->base.length == 1 &&
+            (event->base.data[0] == 'a' ||
+             event->base.data[0] == 'x' ||
+             event->base.data[0] == 'y')) {
+            fprintf(output->assembly, "    ld%.*s #%ld\n",
+                    (int)event->base.length, event->base.data,
+                    (long)event->signed_value);
+        } else {
+            fprintf(output->assembly, "    mov %.*s, #%ld\n",
+                    (int)event->base.length, event->base.data,
+                    (long)event->signed_value);
+        }
+        return 1;
+    case LA_TARGET_OP_VALUE_CMP:
+        if (!begin_line(output, event->span, "qualified-immediate")) return 0;
+        fprintf(output->assembly, "    cmp #%ld\n",
+                (long)event->signed_value);
+        return 1;
     default:
         return 0;
     }
@@ -650,6 +718,14 @@ static int host_event(void *context, const LaEvent *event)
                     (int)event->owner.length, event->owner.data,
                     (int)event->aux.length, event->aux.data,
                     (int)event->base.length, event->base.data);
+        }
+        break;
+    case LA_EVENT_CONSTANT:
+        emitted = begin_line(output, event->span, "constant");
+        if (emitted) {
+            emit_target_symbol(output->assembly, event->owner);
+            fprintf(output->assembly, " = %ld\n",
+                    (long)event->signed_value);
         }
         break;
     case LA_EVENT_PROCEDURE_MEMBER:
@@ -1194,6 +1270,7 @@ int main(int argc, char **argv)
                "\"sourceBytes\":%u,\"nameBytes\":%u,\"tokens\":%u,"
                "\"structures\":%u,\"unions\":%u,\"fields\":%u,"
                "\"enums\":%u,\"enumMembers\":%u,\"overlays\":%u,"
+               "\"namespaces\":%u,\"exports\":%u,\"constants\":%u,"
                "\"locations\":%u,"
                "\"pools\":%u,\"procedures\":%u,\"parameters\":%u,"
                "\"locals\":%u,\"invokeBindings\":%u,"
@@ -1204,6 +1281,7 @@ int main(int argc, char **argv)
                stats.source_bytes, stats.name_bytes, stats.tokens,
                stats.structures, stats.unions, stats.fields,
                stats.enums, stats.enum_members, stats.overlays,
+               stats.namespaces, stats.exports, stats.constants,
                stats.locations,
                stats.pools, stats.procedures, stats.parameters, stats.locals,
                stats.invoke_bindings,

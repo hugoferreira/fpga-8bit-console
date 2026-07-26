@@ -3,7 +3,7 @@
 - [x] 1.1 Attribution posture confirmed before writing code, following the
       convention at `src/main.asm:5-7`: original 6502 implementation of the game
       logic, cart art/map/SFX data used with attribution to Matt Thorson and
-      Noel Berry. Recorded in `src/celeste/main.asm` and `docs/corpora.md`
+      Noel Berry. Recorded in `src/celeste/main.inlay.asm` and `docs/corpora.md`
 - [x] 1.2 Cart extracted from the BBS thread (`tid=2145`) with the p8.png
       pipeline: `cposts/1/15133.p8.png`, the **"Fixed for P8 v0.1.2"** revision
       the task anticipated, posted 2015-10-08. Kept out of the repo at
@@ -70,7 +70,7 @@
 
 - [x] 3.1 Object list: a 16-slot pool of 64-byte records, page-aligned, with
       per-type `init`/`update`/`draw`. **The dispatch is a jump table**, and the
-      reason is recorded at the top of `src/celeste/obj.asm`: the cart's types
+      reason is recorded at the top of `src/celeste/obj.inlay.asm`: the cart's types
       are tables with optional methods and `load_room` already maps a tile id to
       a type, so a table was the shape of the data before it was the shape of
       the code. Cost: eight instructions per dispatch, of which one does work
@@ -188,7 +188,7 @@
       framebuffer layer (`hardware-gaps.md` entry 9). That was wrong: the sprite
       list is ORDERED, and the behind-split at `$4036` already partitions it, so
       clouds staged before the split composite behind the tile layer and
-      particles staged after it land in front. `src/celeste/fx.asm`. The
+      particles staged after it land in front. `src/celeste/fx.inlay.asm`. The
       particles also put the stars back on the title screen, which the cart
       draws unconditionally.
       Counts were first reduced to 12/16 because a cloud is a run of 8x8 cells

@@ -17,15 +17,17 @@ procedures, physical parameters, default `frame`, explicit `naked`, scalar
 frame locals and semantic `ret` lowering for `console6502`. The current slice
 also has the target-owned `console6502` convention, return aliases, pointer and
 packed aggregate frame locations, and compact parallel-assignment `invoke`.
-Celeste's normal build derives
-every `O_*` offset and its pool stride from the layout and is byte-identical to
-the former direct-customasm build. Its build-only module copies express all 66
-eligible direct `pObj`/`pOth` byte operations as typed paths and migrate
-`obj_ptr` to a procedure plus typed pool address; the checked-in Celeste
-sources remain unchanged.
+Celeste's normal build derives every `O_*` offset and its pool stride from the
+layout and is byte-identical to the test-only direct-customasm oracle. Every
+production Celeste file is now an `.inlay.asm` module. The object-bearing
+modules express all 66 eligible direct `pObj`/`pOth` byte operations as typed
+variant paths; twelve lifecycle targets are qualified procedures; and 42
+direct MMIO operations use typed overlays. Conformance also reports the 127
+legacy offset setups and 157 raw object-indirect accesses that cannot yet be
+expressed without changing their 6502 register contract.
 
-Methods, user-defined conventions, richer pool strategies and native
-instruction encoding below remain design exploration.
+User-defined conventions, richer pool strategies and native instruction
+encoding below remain design exploration.
 
 The examples apply the architecture-neutral Inlay Assembly concepts to
 the three game programs in this repository:
@@ -99,51 +101,100 @@ struct HairNode packed
     y : Fixed8_8
 end
 
-struct CelesteObject packed
-    kind          : u8
-    sprite        : u8
-    x             : i8
-    y             : i8
-    speed_x       : Fixed8_8
-    speed_y       : Fixed8_8
-    remainder_x   : Fixed8_8
-    remainder_y   : Fixed8_8
-    hitbox        : Hitbox
-    flip          : u8
-    flags         : u8
-    state         : u8
-    delay         : u8
-    dash_jumps    : u8
-    grace         : u8
-    jump_buffer   : u8
-    dash_time     : u8
-    dash_effect   : u8
-    player_bits   : u8
+enum ObjectKind : u8
+    free = 0
+    player = 1
+    spawn = 2
+    smoke = 3
+    title = 4
+end
+
+enum SpawnPhase : u8
+    rising = 0
+    falling = 1
+    landing = 2
+end
+
+struct ObjectCore
+    kind : ObjectKind
+    sprite : u8
+    x : i8
+    y : i8
+    speed_x : Fixed8_8
+    speed_y : Fixed8_8
+    remainder_x : Fixed8_8
+    remainder_y : Fixed8_8
+    hitbox : Hitbox
+    flip : u8
+    flags : u8
+end
+
+struct PlayerPayload
+    state : u8
+    delay : u8
+    dash_jumps : u8
+    grace : u8
+    jump_buffer : u8
+    dash_time : u8
+    dash_effect : u8
+    player_bits : u8
     sprite_offset : u8
     dash_target_x : Fixed8_8
     dash_target_y : Fixed8_8
-    dash_accel_x  : Fixed8_8
-    dash_accel_y  : Fixed8_8
-    target_x      : i8
-    target_y      : i8
-    hair          : HairNode[5]
-    reserved      : u8[7]
+    dash_accel_x : Fixed8_8
+    dash_accel_y : Fixed8_8
+    target_x : i8
+    target_y : i8
+    hair : HairNode[5]
+    reserved : u8[7]
 end
 
-static_assert CelesteObject.x.offset == 2
-static_assert CelesteObject.speed_y.offset == 6
-static_assert CelesteObject.hitbox.w.offset == 14
-static_assert CelesteObject.hair.offset == 37
+struct SpawnPayload
+    phase : SpawnPhase at 0
+    delay : u8 at 1
+    target_x : i8 at 17
+    target_y : i8 at 18
+    hair : HairNode[5] at 19
+    reserved : u8[7] at 39
+end
+
+struct SmokePayload
+    sprite_offset : u8 at 8
+    reserved : u8 at 45
+end
+
+struct TitlePayload
+    delay : i8 at 1
+    reserved : u8 at 45
+end
+
+union ObjectPayload
+    player : PlayerPayload
+    spawn : SpawnPayload
+    smoke : SmokePayload
+    title : TitlePayload
+    raw : u8[46]
+end
+
+struct CelesteObject
+    core : ObjectCore
+    payload : ObjectPayload
+end
+
+static_assert ObjectCore.size == 18
+static_assert ObjectPayload.size == 46
+static_assert CelesteObject.core.x.offset == 2
+static_assert CelesteObject.core.hitbox.w.offset == 14
+static_assert CelesteObject.payload.player.dash_jumps.offset == 20
+static_assert CelesteObject.payload.spawn.hair.offset == 37
 static_assert CelesteObject.size == 64
 ```
 
-This declaration must emit the same bytes as the current layout. The types
-exist to calculate and validate those bytes, not to create a runtime object
-model.
-
-The explicit `reserved` tail is preferable to an implicit size override. It
-makes the seven unused bytes visible and ensures that adding a field cannot
-silently grow the record past its pool stride.
+The common prefix and variant union describe the representation that was
+already present rather than pretending all tail fields belong to every object.
+The types calculate and validate bytes; they add no runtime tag checks.
+Explicit offsets and reserved tails make deliberate gaps visible and prevent
+silent growth past the pool stride.
 
 ### Sparse views over the same Celeste object
 
@@ -198,26 +249,26 @@ tag, runtime check, construction, destruction or coupling to `ObjectKind`.
 The current `player_init` treats the zero-page pair `pObj` as its receiver.
 
 ```asm
-proc CelesteObject.player_init naked
+proc Player.init using console6502
     self : ptr CelesteObject in pObj
 begin
     lda #1
-    sta [self + CelesteObject.hitbox.x]
+    sta [self + CelesteObject.core.hitbox.x]
 
     lda #3
-    sta [self + CelesteObject.hitbox.y]
+    sta [self + CelesteObject.core.hitbox.y]
 
     lda #6
-    sta [self + CelesteObject.hitbox.w]
+    sta [self + CelesteObject.core.hitbox.w]
 
     lda #5
-    sta [self + CelesteObject.hitbox.h]
+    sta [self + CelesteObject.core.hitbox.h]
 
     lda max_djump
-    sta [self + CelesteObject.dash_jumps]
+    sta [self + CelesteObject.payload.player.dash_jumps]
 
     lda #1
-    sta [self + CelesteObject.sprite]
+    sta [self + CelesteObject.core.sprite]
 
     jmp create_hair
 end
@@ -230,7 +281,7 @@ of `pObj` is overwritten.
 The semantic store:
 
 ```asm
-sta [self + CelesteObject.hitbox.w]
+sta [self + CelesteObject.core.hitbox.w]
 ```
 
 may lower on the current extended 6502 to:
@@ -249,6 +300,37 @@ sta (pObj), y
 The field path has one compile-time meaning while the cost and clobbers belong
 to the backend. In particular, the NMOS lowering must report that it consumes
 `Y`.
+
+### Typed hardware windows
+
+Celeste's console-facing registers are sparse fixed overlays:
+
+```asm
+struct VideoRegisters
+    frame : u8 at 13
+    random : u8 at 15
+    clip_x0 : u8 at 48
+    split : u8 at 54
+end
+
+struct PsgRegisters
+    data : u8 at 2
+    status : u8 at 3
+    music : u8 at 32
+    music_mask : u8 at 33
+end
+
+overlay video : VideoRegisters at SPR_SHADDR_LO
+overlay psg : PsgRegisters at PSG_ADDR_LO
+
+lda [video + VideoRegisters.frame]
+sta [psg + PsgRegisters.music]
+```
+
+The explicit gaps omit registers irrelevant to a view; they do not allocate
+padding or storage. Each eligible operation above lowers to one absolute byte
+access. Indexed banks such as `PSG_CH,y` remain raw until overlay indexing has
+an equally explicit target contract.
 
 ## 2. Celeste's fixed object pool
 

@@ -59,8 +59,8 @@ nemo_INC  = -I src/nemo
 nemo_ASM  = ca65
 nemo_DESC = NEMO - Puzzle Pack II - PICO-8 port (mooon); ISA corpus
 
-celeste_SRC  = src/celeste/main.asm
-celeste_DEPS = $(wildcard src/celeste/*.asm)
+celeste_SRC  = src/celeste/main.inlay.asm
+celeste_DEPS = $(wildcard src/celeste/*.inlay.asm)
 celeste_INC  = -I src/celeste
 celeste_ASM  = customasm
 celeste_DESC = Celeste Classic - PICO-8 port (Thorson/Berry); ISA corpus
@@ -933,13 +933,12 @@ boards:
 .PHONY: boards tangnano20k tangnano20k-synth tangnano20k-prog tangnano20k-flash
 
 # ------------------------------------------------------------------------------
-# Inlay Assembly frontend and Celeste compatibility port
+# Inlay Assembly frontend and maintained Celeste port
 #
 # The portable C core owns layout semantics. The host shell emits customasm;
 # customasm remains the instruction encoder while the native encoder is
-# deferred. Celeste's existing source files are not rewritten: the preparation
-# step removes only their handwritten O_* block, and the Inlay entry recreates
-# those symbols from generated properties.
+# deferred. Celeste's checked-in Inlay entry owns its object layout and typed
+# modules; the direct customasm entry remains an independent equivalence oracle.
 # ------------------------------------------------------------------------------
 INLAY_CC               ?= cc
 INLAY_HOST              = build/inlay/inlay
@@ -947,9 +946,9 @@ INLAY_CORE_TEST         = build/inlay/test_inlay
 INLAY_MODULE_TEST       = build/inlay/test_modules
 LAASM_COMPAT            = build/laasm/laasm
 CELESTE_INLAY_DIR       = build/inlay
-CELESTE_INLAY_PREPARED  = $(CELESTE_INLAY_DIR)/.celeste-prepared
-CELESTE_INLAY_TEMPLATE  = src/inlay/celeste.inlay.asm
-CELESTE_INLAY_SOURCE    = $(CELESTE_INLAY_DIR)/celeste.inlay.asm
+CELESTE_INLAY_SOURCE    = src/celeste/main.inlay.asm
+CELESTE_INLAY_DEPS      = $(filter-out $(CELESTE_INLAY_SOURCE),$(celeste_DEPS)) \
+                          $(wildcard src/isa/*.asm)
 CELESTE_INLAY_ASM       = $(CELESTE_INLAY_DIR)/celeste.asm
 CELESTE_INLAY_MAP       = $(CELESTE_INLAY_DIR)/celeste.map.json
 
@@ -978,21 +977,9 @@ $(LAASM_COMPAT): $(INLAY_HOST) tools/inlay/laasm-compat.sh
 	cp tools/inlay/laasm-compat.sh $@
 	chmod +x $@
 
-$(CELESTE_INLAY_PREPARED): tools/inlay/prepare_celeste_modules.py \
-                           $(CELESTE_INLAY_TEMPLATE) src/celeste/main.asm \
-                           src/celeste/memmap.asm src/celeste/obj.asm \
-                           src/celeste/collide.asm src/celeste/player.asm \
-                           src/celeste/draw.asm
-	@mkdir -p $(@D)
-	python3 tools/inlay/prepare_celeste_modules.py \
-	  src/celeste src/celeste/memmap.asm $(CELESTE_INLAY_TEMPLATE) $(@D)
-	@touch $@
-
-$(CELESTE_INLAY_SOURCE): $(CELESTE_INLAY_PREPARED)
-	@test -f $@
-
 $(CELESTE_INLAY_ASM): $(INLAY_HOST) $(CELESTE_INLAY_SOURCE) \
-                      $(CELESTE_INLAY_PREPARED)
+                      $(CELESTE_INLAY_DEPS) $(celeste_DEPS)
+	@mkdir -p $(@D)
 	$(INLAY_HOST) --target console6502 --output $@ \
 	  --map $(CELESTE_INLAY_MAP) $(CELESTE_INLAY_SOURCE)
 
@@ -1014,7 +1001,7 @@ test-celeste-layout-equivalence: test-celeste-inlay-equivalence
 test: test-inlay
 test-celeste: test-celeste-inlay-equivalence
 
-# Opt Celeste into the generated frontend source while preserving the existing
+# Opt Celeste into the checked-in frontend source while preserving the existing
 # customasm command, output formats, symbol conversion and source dependencies.
 ifeq ($(GAME),celeste)
 GAME_SRC := $(CELESTE_INLAY_ASM)

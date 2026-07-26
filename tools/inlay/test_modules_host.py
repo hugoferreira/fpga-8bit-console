@@ -94,6 +94,73 @@ def main():
         first_json["generated"] = second_json["generated"]
         assert first_json == second_json
 
+        namespaced = base / "namespaced"
+        namespaced.mkdir()
+        namespaced_root = namespaced / "root.inlay.asm"
+        write(
+            namespaced_root,
+            "proc Player_update naked\n"
+            "begin\n"
+            ".done:\n"
+            "ret\n"
+            "end\n"
+            "namespace Player\n"
+            "export update\n"
+            "export speed\n"
+            "speed = $0A\n"
+            "proc update naked\n"
+            "begin\n"
+            ".done:\n"
+            "ret\n"
+            "end\n"
+            "end\n"
+            "proc caller naked\n"
+            "begin\n"
+            "invoke Player.update\n"
+            "ret\n"
+            "end\n"
+            "data u8 low(Player.update), high(Player.update)\n"
+            "data u16 addr(Player.update)\n"
+            "mov a, #Player.speed\n"
+            "enum Kind : u8\n"
+            "none = 0\n"
+            "player = 3\n"
+            "end\n"
+            "struct Item\n"
+            "pad : u8[3]\n"
+            "value : u8\n"
+            "end\n"
+            "mov spawn_type, #Kind.player\n"
+            "mov y, #Item.size-1\n"
+            "offset x, Item.value\n"
+            "cmp #Kind.none\n",
+        )
+        namespaced_asm = namespaced / "out.asm"
+        namespaced_map = namespaced / "out.json"
+        result = run(
+            frontend, namespaced_root, namespaced_asm, namespaced_map
+        )
+        assert result.returncode == 0, result.stderr
+        assembly = namespaced_asm.read_text(encoding="ascii")
+        assert "Player_update:" in assembly
+        assert "__inlay_q6_Player6_update:" in assembly
+        assert "jsr __inlay_q6_Player6_update" in assembly
+        assert "#d8 (__inlay_q6_Player6_update)[7:0]" in assembly
+        assert "#d8 (__inlay_q6_Player6_update)[15:8]" in assembly
+        assert "#d16 __inlay_q6_Player6_update" in assembly
+        assert "__inlay_q6_Player5_speed = 10" in assembly
+        assert "lda #10" in assembly
+        assert "mov spawn_type, #3" in assembly
+        assert "ldy #3" in assembly
+        assert "ldx #3" in assembly
+        assert "cmp #0" in assembly
+        assert assembly.count(".done:") == 2
+        mapping = json.loads(namespaced_map.read_text(encoding="ascii"))
+        assert any(
+            entry["kind"] == "invoke-call"
+            for entry in mapping["mappings"]
+        )
+
         legacy = base / "legacy"
         legacy_root = legacy / "root.la.asm"
         write(

@@ -412,9 +412,12 @@ formatting belongs to the platform shell.
 
 The default module profile reserves up to 64 modules, 32,767 flattened bytes,
 4,096 flattened lines and include depth 32. The Celeste host profile raises
-the byte/line limits to 65,534 and 12,000. Its expanded input uses 42,240
-bytes, 3,009 lines, six source views and depth 3; the module workspace
-reservation is 117,848 bytes.
+the byte/line limits to 65,534 and 12,000. The module expander removes
+semicolon comments outside quoted strings and trims trailing whitespace before
+charging source capacity, while retaining one source-mapped newline per input
+line. Celeste can therefore keep its checked-in commentary without weakening
+the bounded model. Its current expanded input uses 54,903 bytes, 3,931 lines
+and depth 2; the module workspace reservation is 117,848 bytes.
 
 The installed cc65 compiler successfully compiles the same core and ca65
 assembles its output. This is a portability smoke test, not a claim that the
@@ -441,6 +444,11 @@ Enum constants use the same collision-free family:
 ```text
 __la_10_ObjectKind__6_player__value
 ```
+
+Qualified procedure names remain qualified in frontend diagnostics and
+invocation resolution. The console6502/customasm host maps dots to underscores
+for target symbols, so `Player.update` deterministically emits
+`Player_update:` and establishes a fresh scope for following `.local` labels.
 
 The generated header records language format 1 and target format 1. Source-map
 format 2 is deterministic JSON containing a logical source table and a source
@@ -496,41 +504,68 @@ unchanged: they are compatibility namespaces, not the public language name.
 
 ## Celeste Inlay port
 
-`src/inlay/celeste.inlay.asm` is the Inlay game-entry template. It
-declares the complete object shape, typed `pObj` and `pOth` locations, and all
-legacy `O_*` compatibility symbols from generated properties. It also declares
-the 16-record object pool and asserts its 64-byte stride and 1,024-byte size.
+`src/celeste/main.inlay.asm` is the only production entry. Every regular file
+in `src/celeste/` is a flat `.inlay.asm` module: the layout, memory map, all
+handwritten code, and the generated graphics, rooms and audio data. There is no
+parallel legacy game under the production directory.
 
-`tools/inlay/prepare_celeste_modules.py` creates build-only inputs beneath
-`build/inlay/`:
+`layout.inlay.asm` declares an 18-byte `ObjectCore` followed by a 46-byte
+`ObjectPayload` union. Player, spawn, smoke, title and hair views name the
+fields each variant actually owns while preserving every established byte
+offset. `ObjectKind` and `SpawnPhase` are nominal byte enums; combinable flag
+bytes remain bytes. The module also declares typed `pObj` and `pOth`
+locations, compatibility `O_*` symbols from generated properties, and the
+16-record object pool with its 64-byte stride and 1,024-byte size.
 
-- `celeste.inlay.asm`, copied from the source-owned template;
-- `modules/celeste_body.inlay.asm`, a compact copy of the existing main body;
-- compact `obj`, `collide`, `player` and `draw` copies in which eligible
-  direct pointer operations use typed field paths;
-- `celeste_memmap.asm`, with only the contiguous `O_TYPE` through `O_SIZE`
-  block removed.
+The twelve player/spawn/smoke/title init, update and draw dispatch targets are
+qualified `console6502` procedures with
+`self : ptr CelesteObject in pObj`. Their low/high dispatch tables remain
+explicit and byte-identical. `VideoRegisters` and `PsgRegisters` describe the
+sparse hardware windows with explicit offsets; the fixed `video` and `psg`
+overlays now serve 42 eligible direct byte loads and stores.
 
-The preparation step validates the expected include structure and accepts only
-numeric `O_*` assignments, comments and blank lines in the removed block. It
-uses a closed `O_*` mapping, requires exactly 66 conversions, maps the two
-fixed-point `+1` accesses to nested `.integer` fields, and fails on an
-unfamiliar eligible direct form. Non-equivalent `(zp),y` sequences remain
-unchanged. It additionally requires exactly one byte-identical migration of
-`obj_ptr` to a `using console6502` procedure whose scalar input is
-convention-assigned and whose pointer result uses `return in pObj`, plus the
-typed pool `address` operation. Nothing under `src/celeste/` is modified.
+Every handwritten instruction module is expanded through Inlay `include`.
+The portable core deliberately uses 16-bit source slices, while the complete
+game source is about 116 KiB, so four declaration/data-only modules are an
+explicit exception: `memmap`, `gfx`, `rooms` and `audio` are opaque target
+includes. They are still authoritative `.inlay.asm` production files and no
+legacy source is involved.
+
+The object, collision, player and draw modules contain exactly 66 typed object
+conversions. The two former
+fixed-point `+1` accesses use nested `.integer` fields, while non-equivalent
+`(zp),y` sequences remain unchanged. `obj_ptr` is expressed as a
+`using console6502` procedure whose scalar input is convention-assigned and
+whose pointer result uses `return in pObj`, plus the typed pool `address`
+operation.
+
+The old direct customasm corpus lives only at
+`tests/inlay/reference/celeste-customasm/` as an independent equivalence
+oracle. Conformance rejects production references to it and enforces the exact
+production module set and opaque-include allowlist.
+
+Regenerate the Inlay-named data files directly:
+
+```sh
+python3 tools/p8_celeste.py cart.p8.png --out src/celeste
+python3 tools/p8_audio.py cart.p8.png src/celeste/audio.inlay.asm
+```
 
 The conformance gate independently:
 
-1. extracts and validates every current `O_*` assignment;
-2. compares it with the generated layout constant;
-3. compares nine representative direct typed operations with handwritten bytes;
-4. compares indexed load/store, pool address, conventions, returns, scalar,
+1. validates the production module set and dependency boundary;
+2. extracts and validates every reference `O_*` assignment;
+3. compares it with the generated layout constant;
+4. compares nine representative direct typed operations with handwritten bytes;
+5. compares indexed load/store, pool address, conventions, returns, scalar,
    pointer and aggregate frames, and marshalled calls with handwritten bytes;
-5. assembles both complete Celeste entries;
-6. compares all 65,536 bytes;
-7. runs the existing reset-vector game tests against the frontend image.
+6. assembles both complete Celeste entries;
+7. compares all 65,536 bytes;
+8. checks the established full-ROM SHA-256 digest;
+9. checks the semantic manifest and readable-source rules;
+10. reports 42 overlay operations, 127 residual `ldy #O_*` setups and 157
+    raw `(pObj|pOth),y` accesses;
+11. runs the existing reset-vector game tests against the frontend image.
 
 ## Measurements
 
@@ -549,8 +584,8 @@ Both use the fixed 110,488-byte default workspace reservation. Re-run
 
 The current slice does not implement user-defined calling conventions,
 stack-passed inputs, aggregate-by-value inputs or returns, whole-aggregate
-copies, automatic pool allocation, unions, native-aligned layout, dynamic
-dispatch, general clobber analysis or automatic register allocation. The
+copies, automatic pool allocation, dynamic dispatch, general clobber analysis
+or automatic register allocation. The
 implemented `console6502` convention, frame locations and invocation planner
 are target-owned and deliberately bounded.
 
@@ -559,6 +594,9 @@ description must generate or feed both host validation/lowering rules and the
 future in-console encoder tables. A second handwritten opcode table would
 create exactly the drift this frontend is intended to eliminate.
 
-The build-only Celeste migration now covers every eligible direct `pObj` and
-`pOth` byte load/store. Migration of additional operand forms or corpora
-remains separate work.
+The checked-in Celeste port covers every eligible direct `pObj` and `pOth`
+byte load/store. The residual indexed accesses are deliberately not
+mechanically disguised: many couple `ldy #O_*` to `adc`, `ora`,
+read-modify-write or two-byte helper sequences. A future typed offset
+materialisation operation must preserve their exact register and clobber
+contract before those forms can migrate.

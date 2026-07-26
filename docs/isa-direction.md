@@ -10,10 +10,10 @@ the 6502, or adopt something else?
 These games are PICO-8 ports. PICO-8's only number type is **16.16 fixed
 point**, so every arithmetic operation in the source is a 32-bit operation.
 
-The celeste port does **8.8**. `src/celeste/math.asm` is titled "8.8
-fixed-point helpers"; `fx.asm` comments read "spd = 1 + rnd(4), in 8.8". The
-cart's constants include `0.70710678118`, `0.05`, `0.15` — an 8.8 representation
-of 0.05 is 13/256, a 1.6% error that accumulates every frame.
+The celeste port does **8.8**. `src/celeste/math.inlay.asm` is titled "8.8
+fixed-point helpers"; `fx.inlay.asm` comments read "spd = 1 + rnd(4), in 8.8".
+The cart's constants include `0.70710678118`, `0.05`, `0.15` — an 8.8
+representation of 0.05 is 13/256, a 1.6% error that accumulates every frame.
 
 That is the sharpest piece of evidence in this whole question, and it is not
 about speed: **the ISA cost the port precision, not just cycles.** A 6502 could

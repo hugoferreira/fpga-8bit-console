@@ -11,12 +11,13 @@ room data says is solid, and that a spike kills.
 
 Usage: test_celeste.py build/celeste.bin build/celeste.lbl
 """
+import hashlib
 import re
 import sys
 
 from sim6502 import Sim6502
 
-# object record layout, from src/celeste/memmap.asm
+# object record layout, from src/celeste/layout.inlay.asm
 O_TYPE, O_SPR, O_X, O_Y = 0, 1, 2, 3
 O_SPDX, O_SPDY, O_REMX, O_REMY = 4, 6, 8, 10
 O_FLAGS, O_STATE, O_DJUMP, O_GRACE = 17, 18, 20, 21
@@ -31,6 +32,20 @@ ROOMTILES = 0x5400
 BTN_L, BTN_R, BTN_U, BTN_D, BTN_JUMP, BTN_DASH = 1, 2, 4, 8, 0x10, 0x20
 
 FAIL = []
+
+VISUAL_CHECKPOINTS = {
+    "title":
+        "9f6d80ffa88c5b2833c95c6a9b36553133d5e0bd3ea9fc24f66cbcf91d43b53c",
+    "first-room-play":
+        "f6baa171ed5e6f3d4b9689316cc397b50d40436fedf16a9ce0096d71176ed993",
+    "hud":
+        "654a80be192ffa148acc3a9924c4f9b7660671b2a7b017cc239fd0ce8a7c303f",
+    "room-transition":
+        "7520f38e450645c502cfdecdf9668522ee4db7e6b2bac37af8137653a3f29091",
+}
+AUDIO_TRACE_SHA256 = (
+    "0f40c1e74d5de88e5fa973794285010fd20cfdd02e7317451e7ae3f3f0a74ca8"
+)
 
 
 def chk(cond, msg):
@@ -47,6 +62,23 @@ def s16(v):
     return v - 65536 if v > 32767 else v
 
 
+def visual_digest(rig):
+    state = bytearray(rig.map_lo)
+    state.extend(rig.map_hi)
+    state.extend(rig.ovl)
+    for sprite in getattr(rig, "last_sprites", []):
+        for key in ("i", "x", "y", "base", "flags"):
+            state.append(sprite.get(key, 0))
+    return hashlib.sha256(state).hexdigest()
+
+
+def checkpoint_visual(rig, name):
+    actual = visual_digest(rig)
+    expected = VISUAL_CHECKPOINTS.get(name)
+    chk(expected is None or actual == expected,
+        f"{name} visual checkpoint {actual}")
+
+
 class Rig:
     def __init__(self, image, sym):
         self.sym = sym
@@ -61,6 +93,7 @@ class Rig:
         self.map_hi = bytearray(512)
         self.music = []          # (pattern, fade) in call order
         self.sfx = []
+        self.audio_trace = []
         self.fade = 0
         c = self.cpu
         c.readers[0x400D] = self._tick
@@ -98,9 +131,11 @@ class Rig:
 
     def _music(self, v):
         self.music.append((v, self.fade))
+        self.audio_trace.append(("music", v, self.fade))
 
     def _sfx(self, v):
         self.sfx.append(v)
+        self.audio_trace.append(("sfx", v))
 
     def _ovl(self, off):
         def w(v):
@@ -179,6 +214,7 @@ def main():
     lit = sum(bin(b).count("1") for b in r.ovl)
     chk(lit > 60, f"the credits are on the overlay ({lit} pixels lit)")
     chk(r.cpu.m[0x4C] == 0, "start_game is clear until a button is pressed")
+    checkpoint_visual(r, "title")
 
     print("\n== title: jump starts the game ==")
     r.music.clear()
@@ -308,6 +344,7 @@ def main():
     chk(len({s["flags"] >> 4 for s in st}) >= 2,
         "the hair carries its own palette base, so it is recoloured")
     chk(all(s["y"] < 120 for s in st), "every sprite is on screen")
+    checkpoint_visual(r, "first-room-play")
 
     print("\n== spikes kill ==")
     deaths0 = m[DEATHS]
@@ -363,6 +400,7 @@ def main():
             continue
         chk(glyph_at(px, 11) == font(want),
             f"the HUD clock's {label} digit reads {want}")
+    checkpoint_visual(r, "hud")
 
     print("\n== room transitions ==")
     p = r.player()
@@ -376,6 +414,7 @@ def main():
         # slot 0 is the title room, so the playing rooms are slots 1..3
         chk(m[ROOM_SLOT] == 2, f"advanced to resident-room slot {m[ROOM_SLOT]}")
         chk(len(r.objects(T_SPAWN)) == 1, "which spawned its own player")
+        checkpoint_visual(r, "room-transition")
 
         print("\n== the room-transition music cues ==")
         r.music.clear()
@@ -402,6 +441,10 @@ def main():
                 chk(m[LEVEL] == 0, "and wraps to the first playing room, "
                                    "never back to the title")
 
+    encoded_trace = repr(r.audio_trace).encode("ascii")
+    trace_digest = hashlib.sha256(encoded_trace).hexdigest()
+    chk(AUDIO_TRACE_SHA256 is None or trace_digest == AUDIO_TRACE_SHA256,
+        f"PSG command trace checkpoint {trace_digest}")
     return report()
 
 

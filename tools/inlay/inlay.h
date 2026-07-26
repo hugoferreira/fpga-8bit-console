@@ -104,7 +104,17 @@ typedef enum {
     LA_ERR_UNION_OFFSET,
     LA_ERR_OVERLAY_TYPE,
     LA_ERR_OVERLAY_BASE,
-    LA_ERR_OVERLAY_ALIGNMENT
+    LA_ERR_OVERLAY_ALIGNMENT,
+    LA_ERR_NAMESPACE_CAPACITY,
+    LA_ERR_EXPORT_CAPACITY,
+    LA_ERR_NAMESPACE_DEPTH,
+    LA_ERR_DUPLICATE_NAMESPACE,
+    LA_ERR_DUPLICATE_EXPORT,
+    LA_ERR_PRIVATE_NAME,
+    LA_ERR_UNKNOWN_EXPORT,
+    LA_ERR_CONSTANT_CAPACITY,
+    LA_ERR_DUPLICATE_CONSTANT,
+    LA_ERR_UNKNOWN_CONSTANT
 } LaDiagnosticCode;
 
 typedef struct {
@@ -152,7 +162,13 @@ typedef enum {
     LA_TARGET_OP_INVOKE_ASSIGN,
     LA_TARGET_OP_INVOKE_CALL,
     LA_TARGET_OP_LOAD8_OVERLAY_DISP,
-    LA_TARGET_OP_STORE8_OVERLAY_DISP
+    LA_TARGET_OP_STORE8_OVERLAY_DISP,
+    LA_TARGET_OP_DATA_PROC_LOW,
+    LA_TARGET_OP_DATA_PROC_HIGH,
+    LA_TARGET_OP_DATA_PROC_FULL,
+    LA_TARGET_OP_MATERIALIZE_FIELD_OFFSET,
+    LA_TARGET_OP_VALUE_MOV,
+    LA_TARGET_OP_VALUE_CMP
 } LaTargetOperationKind;
 
 typedef enum {
@@ -162,7 +178,8 @@ typedef enum {
     LA_EVENT_RAW,
     LA_EVENT_TARGET_OPERATION,
     LA_EVENT_ENUM_MEMBER,
-    LA_EVENT_OVERLAY
+    LA_EVENT_OVERLAY,
+    LA_EVENT_CONSTANT
 } LaEventKind;
 
 typedef enum {
@@ -276,6 +293,9 @@ typedef struct {
     la_u16 max_enums;
     la_u16 max_enum_members;
     la_u16 max_overlays;
+    la_u16 max_namespaces;
+    la_u16 max_exports;
+    la_u16 max_constants;
     la_u16 max_locations;
     la_u16 max_pools;
     la_u16 max_procedures;
@@ -303,6 +323,9 @@ typedef struct {
     la_u16 enums;
     la_u16 enum_members;
     la_u16 overlays;
+    la_u16 namespaces;
+    la_u16 exports;
+    la_u16 constants;
     la_u16 locations;
     la_u16 pools;
     la_u16 procedures;

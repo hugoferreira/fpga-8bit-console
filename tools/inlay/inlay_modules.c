@@ -119,6 +119,38 @@ static void copy_source_view(LaSourceView *destination,
     copy_slice(&destination->name, &source->name);
 }
 
+static const char *module_code_end(const char *start, const char *end)
+{
+    const char *cursor;
+    const char *code_end;
+    int quoted;
+    int escaped;
+    quoted = 0;
+    escaped = 0;
+    code_end = end;
+    for (cursor = start; cursor < end; ++cursor) {
+        if (quoted) {
+            if (escaped) {
+                escaped = 0;
+            } else if (*cursor == '\\') {
+                escaped = 1;
+            } else if (*cursor == '"') {
+                quoted = 0;
+            }
+        } else if (*cursor == '"') {
+            quoted = 1;
+        } else if (*cursor == ';') {
+            code_end = cursor;
+            break;
+        }
+    }
+    while (code_end > start &&
+           (code_end[-1] == ' ' || code_end[-1] == '\t')) {
+        --code_end;
+    }
+    return code_end;
+}
+
 static int module_storage_init(LaWorkspace workspace,
                                const LaModuleLimits *limits,
                                LaModuleStorage *storage)
@@ -155,6 +187,7 @@ static LaDiagnosticCode append_source_line(
     la_u16 *output_length, la_u16 *output_lines)
 {
     la_u16 line_length;
+    line_end = module_code_end(line_start, line_end);
     line_length = (la_u16)(line_end - line_start);
     if ((la_u32)*output_length + line_length + 1 >
         limits->max_source_bytes) {
