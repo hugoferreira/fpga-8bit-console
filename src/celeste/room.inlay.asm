@@ -74,9 +74,9 @@ load_room:
     lda ROOMTILES, x
     stx t5
     tax
-    lda tile_base, x
+    lda Gfx.tile_base, x
     sta (pDst), y
-    lda tile_attr, x
+    lda Gfx.tile_attr, x
     inc pDst+1                  ; the attribute plane is $200 higher
     inc pDst+1
     sta (pDst), y

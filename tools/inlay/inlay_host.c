@@ -357,6 +357,89 @@ static void emit_target_symbol(FILE *file, LaSlice symbol)
     }
 }
 
+static void emit_scoped_raw(FILE *file, LaSlice text)
+{
+    const char *cursor;
+    const char *end;
+    int quote;
+    int escaped;
+    cursor = text.data;
+    end = text.data + text.length;
+    quote = 0;
+    escaped = 0;
+    while (cursor < end) {
+        const char *start;
+        const char *scan;
+        const char *qualified_end;
+        char value;
+        value = *cursor;
+        if (quote != 0) {
+            fputc(value, file);
+            if (escaped) {
+                escaped = 0;
+            } else if (value == '\\') {
+                escaped = 1;
+            } else if (value == quote) {
+                quote = 0;
+            }
+            ++cursor;
+            continue;
+        }
+        if (value == ';') {
+            fwrite(cursor, 1, (size_t)(end - cursor), file);
+            break;
+        }
+        if (value == '"' || value == '\'') {
+            quote = value;
+            fputc(value, file);
+            ++cursor;
+            continue;
+        }
+        if (!((value >= 'A' && value <= 'Z') ||
+              (value >= 'a' && value <= 'z') || value == '_')) {
+            fwrite(cursor, 1, 1, file);
+            ++cursor;
+            continue;
+        }
+        start = cursor++;
+        while (cursor < end &&
+               (((*cursor >= 'A' && *cursor <= 'Z') ||
+                 (*cursor >= 'a' && *cursor <= 'z') ||
+                 (*cursor >= '0' && *cursor <= '9') ||
+                 *cursor == '_'))) {
+            ++cursor;
+        }
+        qualified_end = cursor;
+        scan = cursor;
+        while (scan < end && *scan == '.') {
+            ++scan;
+            if (scan >= end ||
+                !((*scan >= 'A' && *scan <= 'Z') ||
+                  (*scan >= 'a' && *scan <= 'z') || *scan == '_')) {
+                break;
+            }
+            ++scan;
+            while (scan < end &&
+                   (((*scan >= 'A' && *scan <= 'Z') ||
+                     (*scan >= 'a' && *scan <= 'z') ||
+                     (*scan >= '0' && *scan <= '9') ||
+                     *scan == '_'))) {
+                ++scan;
+            }
+            qualified_end = scan;
+        }
+        if (qualified_end != cursor) {
+            LaSlice symbol;
+            symbol.data = start;
+            symbol.length = (la_u16)(qualified_end - start);
+            emit_target_symbol(file, symbol);
+            cursor = qualified_end;
+        } else {
+            fwrite(start, 1, (size_t)(cursor - start), file);
+        }
+    }
+}
+
 static const char *property_suffix(LaPropertyKind property)
 {
     switch (property) {
@@ -825,6 +908,13 @@ static int host_event(void *context, const LaEvent *event)
                     (long)event->signed_value);
         }
         break;
+    case LA_EVENT_LABEL:
+        emitted = begin_line(output, event->span, "label");
+        if (emitted) {
+            emit_target_symbol(output->assembly, event->owner);
+            fputs(":\n", output->assembly);
+        }
+        break;
     case LA_EVENT_PROCEDURE_MEMBER:
         emitted = begin_line(output, event->span, "procedure-member");
         if (!emitted) break;
@@ -847,6 +937,12 @@ static int host_event(void *context, const LaEvent *event)
         if (event->text.length != 0) {
             fwrite(event->text.data, 1, event->text.length, output->assembly);
         }
+        fputc('\n', output->assembly);
+        break;
+    case LA_EVENT_SCOPED_RAW:
+        emitted = begin_line(output, event->span, "scoped-raw");
+        if (!emitted) break;
+        emit_scoped_raw(output->assembly, event->text);
         fputc('\n', output->assembly);
         break;
     case LA_EVENT_TARGET_OPERATION:
@@ -1368,6 +1464,7 @@ int main(int argc, char **argv)
                "\"structures\":%u,\"unions\":%u,\"fields\":%u,"
                "\"enums\":%u,\"enumMembers\":%u,\"overlays\":%u,"
                "\"namespaces\":%u,\"exports\":%u,\"constants\":%u,"
+               "\"labels\":%u,"
                "\"locations\":%u,"
                "\"pools\":%u,\"procedures\":%u,\"parameters\":%u,"
                "\"locals\":%u,\"invokeBindings\":%u,"
@@ -1379,6 +1476,7 @@ int main(int argc, char **argv)
                stats.structures, stats.unions, stats.fields,
                stats.enums, stats.enum_members, stats.overlays,
                stats.namespaces, stats.exports, stats.constants,
+               stats.labels,
                stats.locations,
                stats.pools, stats.procedures, stats.parameters, stats.locals,
                stats.invoke_bindings,

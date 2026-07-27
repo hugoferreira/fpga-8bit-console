@@ -34,11 +34,20 @@ EXPECTED_CELESTE_OFFSET_SETUPS = 0
 EXPECTED_CELESTE_SEMANTIC_OFFSETS = 110
 EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 136
 READABLE_CELESTE_MODULES = {
-    "main.inlay.asm",
-    "obj.inlay.asm",
+    "audio.inlay.asm",
     "collide.inlay.asm",
-    "player.inlay.asm",
     "draw.inlay.asm",
+    "fx.inlay.asm",
+    "gfx.inlay.asm",
+    "layout.inlay.asm",
+    "main.inlay.asm",
+    "math.inlay.asm",
+    "memmap.inlay.asm",
+    "obj.inlay.asm",
+    "player.inlay.asm",
+    "room.inlay.asm",
+    "rooms.inlay.asm",
+    "sound.inlay.asm",
 }
 EXPECTED_CELESTE_MODULES = {
     "audio.inlay.asm",
@@ -58,6 +67,7 @@ EXPECTED_CELESTE_MODULES = {
 }
 EXPECTED_CELESTE_SEMANTIC_INCLUDES = {
     "layout.inlay.asm",
+    "gfx.inlay.asm",
     "math.inlay.asm",
     "obj.inlay.asm",
     "collide.inlay.asm",
@@ -69,7 +79,6 @@ EXPECTED_CELESTE_SEMANTIC_INCLUDES = {
 }
 EXPECTED_CELESTE_OPAQUE_INCLUDES = {
     "memmap.inlay.asm",
-    "gfx.inlay.asm",
     "rooms.inlay.asm",
     "audio.inlay.asm",
 }
@@ -559,6 +568,41 @@ def check_celeste_source_boundary(
     return files
 
 
+def check_generated_gfx_payload() -> None:
+    def payload(path: Path) -> bytes:
+        values: list[int] = []
+        for line in path.read_text(encoding="ascii").splitlines():
+            if not line.lstrip().startswith("#d8 "):
+                continue
+            values.extend(
+                int(value, 16)
+                for value in re.findall(r"\$([0-9A-Fa-f]{2})", line)
+            )
+        return bytes(values)
+
+    current = CELESTE_DIR / "gfx.inlay.asm"
+    reference = CELESTE_REFERENCE_DIR / "gfx.asm"
+    if payload(current) != payload(reference):
+        raise AssertionError(
+            "generated Gfx payload changed from the Phase-A asset oracle"
+        )
+    text = current.read_text(encoding="ascii")
+    required = {
+        "draw_palette", "player_slots", "sheet", "tile_base", "tile_attr",
+        "upload_bytes",
+        "player_attr", "smoke_first", "smoke_attr", "hair_big",
+        "hair_small", "solid", "dot",
+    }
+    exports = set(re.findall(r"^\s*export ([a-z0-9_]+)$", text, re.MULTILINE))
+    missing = required - exports
+    if missing:
+        raise AssertionError(f"Gfx public manifest is missing {sorted(missing)}")
+    if "export smoke_stride" in text:
+        raise AssertionError("Gfx implementation stride must remain private")
+    if "export sheet_bytes" in text:
+        raise AssertionError("Gfx implementation byte count must remain private")
+
+
 def expect_celeste_boundary_failure(directory: Path, fragment: str) -> None:
     try:
         check_celeste_source_boundary(directory)
@@ -862,6 +906,7 @@ def main() -> int:
         check_negative_sources(tmp_a)
         check_downstream_diagnostics(tmp_a)
         check_celeste_boundary_failures(tmp_a)
+        check_generated_gfx_payload()
         check_legacy_exception_contract()
         (
             rom_size, rom_hash, overlay_operations,

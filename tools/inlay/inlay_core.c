@@ -133,6 +133,13 @@ typedef struct {
 
 typedef struct {
     la_u16 name;
+    la_u16 namespace_handle;
+    la_u16 source_id;
+    la_u16 line;
+} LaLabelRec;
+
+typedef struct {
+    la_u16 name;
     la_u16 type_name;
     la_u16 procedure;
     la_u16 offset;
@@ -192,6 +199,7 @@ typedef struct {
     LaNamespaceRec *namespaces;
     LaExportRec *exports;
     LaConstantRec *constants;
+    LaLabelRec *labels;
     la_u16 *namespace_stack;
     LaLocalRec *locals;
     LaInvokeBindingRec *bindings;
@@ -213,6 +221,7 @@ typedef struct {
     la_u16 namespace_count;
     la_u16 export_count;
     la_u16 constant_count;
+    la_u16 label_count;
     la_u16 namespace_depth;
     la_u16 parameter_count;
     la_u16 local_count;
@@ -259,6 +268,7 @@ LaLimits la_default_limits(void)
     limits.max_namespaces = 128;
     limits.max_exports = 256;
     limits.max_constants = 512;
+    limits.max_labels = 512;
     limits.max_locations = 128;
     limits.max_pools = 64;
     limits.max_procedures = 256;
@@ -295,6 +305,8 @@ la_u32 la_workspace_required(const LaLimits *limits)
                            sizeof(LaExportRec));
     total += la_align_size((la_u32)limits->max_constants *
                            sizeof(LaConstantRec));
+    total += la_align_size((la_u32)limits->max_labels *
+                           sizeof(LaLabelRec));
     total += la_align_size((la_u32)limits->max_nesting * sizeof(la_u16));
     total += la_align_size((la_u32)limits->max_locations * sizeof(LaLocationRec));
     total += la_align_size((la_u32)limits->max_pools * sizeof(LaPoolRec));
@@ -728,6 +740,48 @@ static int la_parse_constant(LaContext *ctx, const char *start,
     constant->value_source = (la_u16)(value_start - ctx->source);
     constant->value_length = (la_u16)(end - value_start);
     ctx->stats->constants = ctx->constant_count;
+    return 1;
+}
+
+static int la_parse_scoped_label(LaContext *ctx, const char *start,
+                                 const char *end, la_u16 line)
+{
+    const char *cursor;
+    const char *name_start;
+    la_u16 name_length;
+    la_u16 name;
+    la_u16 index;
+    LaLabelRec *label;
+    cursor = la_trim_left(start, end);
+    if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
+        return 0;
+    }
+    cursor = la_trim_left(cursor, end);
+    if (cursor == end || *cursor != ':') return 0;
+    ++cursor;
+    cursor = la_trim_left(cursor, end);
+    if (cursor != end) return 0;
+    if (ctx->label_count >= ctx->limits->max_labels) {
+        la_fail(ctx, LA_ERR_LABEL_CAPACITY, line, 1, name_length,
+                la_slice(name_start, name_length), la_slice("labels", 6),
+                ctx->label_count + 1, ctx->limits->max_labels);
+        return -1;
+    }
+    name = la_intern_qualified(ctx, name_start, name_length, line, 1);
+    if (name == LA_INVALID_HANDLE) return -1;
+    for (index = 0; index < ctx->label_count; ++index) {
+        if (ctx->labels[index].name == name) {
+            la_fail(ctx, LA_ERR_DUPLICATE_LABEL, line, 1, name_length,
+                    la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+            return -1;
+        }
+    }
+    label = &ctx->labels[ctx->label_count++];
+    label->name = name;
+    label->namespace_handle = ctx->current_namespace;
+    label->source_id = la_source_id_at_line(ctx, line);
+    label->line = line;
+    ctx->stats->labels = ctx->label_count;
     return 1;
 }
 
@@ -2350,10 +2404,17 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
                 }
             } else if (ctx->current_namespace != LA_INVALID_HANDLE) {
                 int parsed_constant;
+                int parsed_label;
                 parsed_constant = la_parse_constant(
                     ctx, cursor, content_end, line);
                 if (parsed_constant < 0) return ctx->error;
-                if (parsed_constant == 0 &&
+                parsed_label = 0;
+                if (parsed_constant == 0) {
+                    parsed_label = la_parse_scoped_label(
+                        ctx, cursor, content_end, line);
+                    if (parsed_label < 0) return ctx->error;
+                }
+                if (parsed_constant == 0 && parsed_label == 0 &&
                     la_deferred_keyword(
                         trimmed, content_end, &deferred)) {
                     return la_fail(ctx, LA_ERR_DEFERRED_FEATURE, line,
@@ -2425,11 +2486,39 @@ static LaDiagnosticCode la_validate_exports(LaContext *ctx)
         for (index = 0; index < ctx->constant_count; ++index) {
             if (ctx->constants[index].name == name) found = 1;
         }
+        for (index = 0; index < ctx->label_count; ++index) {
+            if (ctx->labels[index].name == name) found = 1;
+        }
         if (!found) {
             return la_fail(
                 ctx, LA_ERR_UNKNOWN_EXPORT,
                 ctx->exports[export_index].line, 1, 1,
                 la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+        }
+    }
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_validate_labels(LaContext *ctx)
+{
+    la_u16 label_index;
+    for (label_index = 0; label_index < ctx->label_count; ++label_index) {
+        la_u16 index;
+        LaLabelRec *label;
+        label = &ctx->labels[label_index];
+        for (index = 0; index < ctx->constant_count; ++index) {
+            if (ctx->constants[index].name == label->name) {
+                return la_fail(ctx, LA_ERR_DUPLICATE_LABEL, label->line,
+                               1, 1, la_name_slice(ctx, label->name),
+                               la_slice("constant", 8), 0, 0);
+            }
+        }
+        for (index = 0; index < ctx->procedure_count; ++index) {
+            if (ctx->procedures[index].name == label->name) {
+                return la_fail(ctx, LA_ERR_DUPLICATE_LABEL, label->line,
+                               1, 1, la_name_slice(ctx, label->name),
+                               la_slice("procedure", 9), 0, 0);
+            }
         }
     }
     return LA_OK;
@@ -5699,6 +5788,136 @@ static int la_emit_member_events(LaContext *ctx, la_u16 procedure)
     return 1;
 }
 
+static int la_validate_scoped_raw(LaContext *ctx, const char *start,
+                                  const char *end, la_u16 line)
+{
+    const char *cursor;
+    la_u16 source_id;
+    int found_any;
+    int quote;
+    int escaped;
+    cursor = start;
+    source_id = la_source_id_at_line(ctx, line);
+    found_any = 0;
+    quote = 0;
+    escaped = 0;
+    while (cursor < end) {
+        const char *name_start;
+        const char *name_end;
+        const char *part;
+        la_u16 length;
+        la_u16 index;
+        la_u16 symbol_name;
+        la_u16 symbol_source;
+        int found;
+        char value;
+        value = *cursor;
+        if (quote != 0) {
+            if (escaped) {
+                escaped = 0;
+            } else if (value == '\\') {
+                escaped = 1;
+            } else if (value == quote) {
+                quote = 0;
+            }
+            ++cursor;
+            continue;
+        }
+        if (value == '"' || value == '\'') {
+            quote = value;
+            ++cursor;
+            continue;
+        }
+        if (!la_is_ident_start(value)) {
+            ++cursor;
+            continue;
+        }
+        name_start = cursor++;
+        while (cursor < end && la_is_ident(*cursor)) ++cursor;
+        if (cursor >= end || *cursor != '.') continue;
+        name_end = cursor;
+        part = cursor;
+        while (part < end && *part == '.') {
+            ++part;
+            if (part >= end || !la_is_ident_start(*part)) break;
+            ++part;
+            while (part < end && la_is_ident(*part)) ++part;
+            name_end = part;
+        }
+        if (name_end == cursor) continue;
+        cursor = name_end;
+        length = (la_u16)(name_end - name_start);
+        found = 0;
+        symbol_name = LA_INVALID_HANDLE;
+        symbol_source = 0;
+        for (index = 0; index < ctx->label_count; ++index) {
+            LaSlice name;
+            name = la_name_slice(ctx, ctx->labels[index].name);
+            if (name.length == length &&
+                memcmp(name.data, name_start, length) == 0) {
+                found = 1;
+                symbol_name = ctx->labels[index].name;
+                symbol_source = ctx->labels[index].source_id;
+                break;
+            }
+        }
+        for (index = 0; !found && index < ctx->constant_count; ++index) {
+            LaSlice name;
+            name = la_name_slice(ctx, ctx->constants[index].name);
+            if (name.length == length &&
+                memcmp(name.data, name_start, length) == 0) {
+                found = 1;
+                symbol_name = ctx->constants[index].name;
+                symbol_source = ctx->constants[index].source_id;
+            }
+        }
+        for (index = 0; !found && index < ctx->procedure_count; ++index) {
+            LaSlice name;
+            name = la_name_slice(ctx, ctx->procedures[index].name);
+            if (name.length == length &&
+                memcmp(name.data, name_start, length) == 0) {
+                found = 1;
+                symbol_name = ctx->procedures[index].name;
+                symbol_source = ctx->procedures[index].source_id;
+            }
+        }
+        if (!found) {
+            int namespace_prefix;
+            namespace_prefix = 0;
+            for (index = 0; index < ctx->namespace_count; ++index) {
+                LaSlice namespace_name;
+                namespace_name =
+                    la_name_slice(ctx, ctx->namespaces[index].name);
+                if (namespace_name.length < length &&
+                    name_start[namespace_name.length] == '.' &&
+                    memcmp(namespace_name.data, name_start,
+                           namespace_name.length) == 0) {
+                    namespace_prefix = 1;
+                    break;
+                }
+            }
+            if (namespace_prefix) {
+                la_fail(ctx, LA_ERR_UNKNOWN_SYMBOL, line,
+                        (la_u16)(name_start - start + 1), length,
+                        la_slice(name_start, length),
+                        la_slice("", 0), 0, 0);
+                return -1;
+            }
+            continue;
+        }
+        if (symbol_source != source_id &&
+            !la_name_is_exported(ctx, symbol_name)) {
+            la_fail(ctx, LA_ERR_PRIVATE_NAME, line,
+                    (la_u16)(name_start - start + 1), length,
+                    la_slice(name_start, length),
+                    la_slice("export", 6), 0, 0);
+            return -1;
+        }
+        found_any = 1;
+    }
+    return found_any;
+}
+
 static LaDiagnosticCode la_emit_all(LaContext *ctx)
 {
     LaEvent event;
@@ -5808,6 +6027,7 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
         int typed;
         int data_emitted;
         int semantic_constant;
+        la_u16 semantic_label;
         la_u16 extra_lines;
         extra_lines = 0;
         data_emitted = 0;
@@ -5816,21 +6036,34 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
         content_end = la_code_end(cursor, line_end);
         trimmed = la_trim_left(cursor, content_end);
         semantic_constant = 0;
+        semantic_label = LA_INVALID_HANDLE;
         for (sid = 0; sid < ctx->constant_count; ++sid) {
             if (ctx->constants[sid].line == line) {
                 semantic_constant = 1;
                 break;
             }
         }
+        for (sid = 0; sid < ctx->label_count; ++sid) {
+            if (ctx->labels[sid].line == line) {
+                semantic_label = sid;
+                break;
+            }
+        }
         if (semantic_constant) {
             /* Compile-time constants were emitted semantically above. */
+        } else if (semantic_label != LA_INVALID_HANDLE) {
+            la_init_event(ctx, &event, LA_EVENT_LABEL, line, 1);
+            event.owner =
+                la_name_slice(ctx, ctx->labels[semantic_label].name);
+            if (!la_write_event(ctx, &event)) return ctx->error;
         } else if (in_struct) {
             if (la_line_keyword(trimmed, content_end, "end")) in_struct = 0;
         } else if (la_line_keyword(trimmed, content_end, "namespace")) {
             ++namespace_depth;
         } else if (la_line_keyword(trimmed, content_end, "export")) {
             /* Namespace visibility declarations are semantic-only. */
-        } else if (namespace_depth != 0 &&
+        } else if (active_procedure == LA_INVALID_HANDLE &&
+                   namespace_depth != 0 &&
                    la_line_keyword(trimmed, content_end, "end")) {
             --namespace_depth;
         } else if (la_line_keyword(trimmed, content_end, "struct") ||
@@ -5985,7 +6218,14 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
                                la_slice("raw assembly escape hatch", 24),
                                0, 0);
             } else {
-                la_init_event(ctx, &event, LA_EVENT_RAW, line,
+                int scoped_raw;
+                scoped_raw = la_validate_scoped_raw(
+                    ctx, cursor, content_end, line);
+                if (scoped_raw < 0) return ctx->error;
+                la_init_event(ctx, &event,
+                              scoped_raw ? LA_EVENT_SCOPED_RAW :
+                                           LA_EVENT_RAW,
+                              line,
                               (la_u16)(line_end - cursor));
                 event.text = la_slice(cursor, (la_u16)(line_end - cursor));
                 if (!la_write_event(ctx, &event)) return ctx->error;
@@ -6109,6 +6349,9 @@ LaDiagnosticCode la_compile(const LaInput *input,
     ctx.constants = (LaConstantRec *)la_take(
         &cursor, &remaining,
         (la_u32)limits->max_constants * sizeof(LaConstantRec));
+    ctx.labels = (LaLabelRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_labels * sizeof(LaLabelRec));
     ctx.namespace_stack = (la_u16 *)la_take(
         &cursor, &remaining,
         (la_u32)limits->max_nesting * sizeof(la_u16));
@@ -6138,6 +6381,7 @@ LaDiagnosticCode la_compile(const LaInput *input,
         (la_u32)limits->max_nesting * sizeof(LaPropertyFrame));
     if (ctx.enums == 0 || ctx.enum_members == 0 || ctx.overlays == 0 ||
         ctx.namespaces == 0 || ctx.exports == 0 || ctx.constants == 0 ||
+        ctx.labels == 0 ||
         ctx.namespace_stack == 0 || ctx.bindings == 0 || ctx.frames == 0) {
         return LA_ERR_WORKSPACE;
     }
@@ -6145,6 +6389,7 @@ LaDiagnosticCode la_compile(const LaInput *input,
     ctx.names[0] = 0;
     if (la_load_source(&ctx) != LA_OK) return ctx.error;
     if (la_first_pass(&ctx) != LA_OK) return ctx.error;
+    if (la_validate_labels(&ctx) != LA_OK) return ctx.error;
     if (la_validate_exports(&ctx) != LA_OK) return ctx.error;
     if (la_resolve_type_references(&ctx) != LA_OK) return ctx.error;
     if (la_resolve_enums(&ctx) != LA_OK) return ctx.error;
@@ -6188,7 +6433,8 @@ const char *la_diagnostic_name(LaDiagnosticCode code)
         "namespace-capacity", "export-capacity", "namespace-depth",
         "duplicate-namespace", "duplicate-export", "private-name",
         "unknown-export", "constant-capacity", "duplicate-constant",
-        "unknown-constant"
+        "unknown-constant", "label-capacity", "duplicate-label",
+        "unknown-symbol"
     };
     if ((la_u16)code >= (la_u16)(sizeof(names) / sizeof(names[0]))) {
         return "unknown-diagnostic";

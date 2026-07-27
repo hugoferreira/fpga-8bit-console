@@ -146,7 +146,7 @@ static la_u16 read_expanded(LaExpandedInput *expanded, char *output,
 static void test_comment_compaction(void)
 {
     static const char source[] =
-        "alpha   ; trailing comment\n"
+        "    alpha   ; trailing comment\n"
         "  ; comment only\n"
         "#include \"semi;colon.asm\" ; include comment\n"
         "raw \"escaped \\\"; still quoted\" ; tail\n";
@@ -175,7 +175,7 @@ static void test_comment_compaction(void)
     used = read_expanded(&expanded, output, (la_u16)sizeof(output));
     check(used == strlen(expected) &&
           memcmp(output, expected, used) == 0,
-          "comments compact outside quoted strings");
+          "comments and indentation compact outside quoted strings");
     memset(&origin, 0, sizeof(origin));
     expanded.input.origin(expanded.input.context, 2, &origin);
     check(origin.source_id == 7 && origin.line == 2,
@@ -401,6 +401,20 @@ static void test_namespace_privacy(void)
         "export secret\n"
         "secret = $2A\n"
         "end\n";
+    static const char label_root_source[] =
+        "include \"child\"\n"
+        "lda Child.palette,x\n";
+    static const char private_label_source[] =
+        "namespace Child\n"
+        "palette:\n"
+        "#d8 1\n"
+        "end\n";
+    static const char public_label_source[] =
+        "namespace Child\n"
+        "export palette\n"
+        "palette:\n"
+        "#d8 1\n"
+        "end\n";
     Fixture fixture;
     LaModuleLimits module_limits;
     LaLimits limits;
@@ -485,6 +499,24 @@ static void test_namespace_privacy(void)
     result = la_compile(&expanded.input, &event_sink, &diagnostic_sink,
                         &la_target_console6502, &limits, workspace, &stats);
     check(result == LA_OK, "export permits cross-module constant use");
+
+    fixture.views[0] = view("root", label_root_source, 1);
+    fixture.views[1] = view("child", private_label_source, 2);
+    result = expand(&fixture, module_limits, module_workspace,
+                    &expanded, &capture);
+    check(result == LA_OK, "private label fixture expands");
+    result = la_compile(&expanded.input, &event_sink, &diagnostic_sink,
+                        &la_target_console6502, &limits, workspace, &stats);
+    check(result == LA_ERR_PRIVATE_NAME,
+          "cross-module private label is rejected");
+
+    fixture.views[1] = view("child", public_label_source, 2);
+    result = expand(&fixture, module_limits, module_workspace,
+                    &expanded, &capture);
+    check(result == LA_OK, "exported label fixture expands");
+    result = la_compile(&expanded.input, &event_sink, &diagnostic_sink,
+                        &la_target_console6502, &limits, workspace, &stats);
+    check(result == LA_OK, "export permits cross-module label use");
     free(workspace.data);
     free(module_workspace.data);
 }

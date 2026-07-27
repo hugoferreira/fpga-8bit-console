@@ -188,6 +188,10 @@ static LaDiagnosticCode append_source_line(
 {
     la_u16 line_length;
     line_end = module_code_end(line_start, line_end);
+    while (line_start < line_end &&
+           (*line_start == ' ' || *line_start == '\t')) {
+        ++line_start;
+    }
     line_length = (la_u16)(line_end - line_start);
     if ((la_u32)*output_length + line_length + 1 >
         limits->max_source_bytes) {

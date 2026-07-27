@@ -44,11 +44,11 @@
 
 ## 6. Scope generated data and fixed-point services
 
-- [ ] 6.1 Extend the Celeste graphics generator to emit a `Gfx` namespace with an explicit public manifest
-- [ ] 6.2 Move cloud, particle and effects constants/helpers under `Fx` and export only its lifecycle/draw surface
-- [ ] 6.3 Create the `Fixed` namespace and migrate compare, sign, absolute-value and approach helpers
-- [ ] 6.4 Adopt `ldab`, `stab`, `addw`, `subw`, `cmpw`, `mov`, `add`, `sub` and branch pseudo-operations wherever their documented contracts match
-- [ ] 6.5 Verify generated assets remain deterministic and fixed-point behavior matches all Phase-A physics checkpoints
+- [x] 6.1 Extend the Celeste graphics generator to emit a `Gfx` namespace with an explicit public manifest
+- [x] 6.2 Move cloud, particle and effects constants/helpers under `Fx` and export only its lifecycle/draw surface
+- [x] 6.3 Create the `Fixed` namespace and migrate compare, sign, absolute-value and approach helpers
+- [x] 6.4 Adopt `ldab`, `stab`, `addw`, `subw`, `cmpw`, `mov`, `add`, `sub` and branch pseudo-operations wherever their documented contracts match
+- [x] 6.5 Verify generated assets remain deterministic and fixed-point behavior matches all Phase-A physics checkpoints
 
 ## 7. Redesign platform, game and main
 

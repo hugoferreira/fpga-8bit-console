@@ -24,7 +24,7 @@ draw_frame:
     mov nspr, #0
     jsr is_title                ; the cart draws no clouds on the title screen
     beq .nosky
-    jsr fx_draw_clouds
+    jsr Fx.draw_clouds
 .nosky:
     lda nspr                    ; everything staged so far is background
     sta [video + VideoRegisters.split]
@@ -49,7 +49,7 @@ draw_frame:
     inc obj_slot
     cbne obj_slot, #OBJ_MAX, .loop
 
-    jsr fx_draw_particles       ; in front of everything, title screen included
+    jsr Fx.draw_particles       ; in front of everything, title screen included
     lda nspr
     sta [video + VideoRegisters.sprite_count]
     jmp ovl_end
@@ -172,15 +172,15 @@ draw_obj_sprite:
     cmp #29
     bcs .smoke
     tax                         ; the player's frames are no longer a fixed
-    lda player_slot-1, x         ; stride apart: bpp is chosen per pattern, so
+    lda Gfx.player_slots-1, x    ; stride apart: bpp is chosen per pattern, so
     pha                         ; the generator emits their slots as a table
-    lda #SPR_PLAYER_ATTR
+    lda #Gfx.player_attr
     jmp .flip
 .smoke:
     sub #29
-    add #SPR_SMOKE_FIRST
+    add #Gfx.smoke_first
     pha
-    lda #SPR_SMOKE_ATTR
+    lda #Gfx.smoke_attr
 .flip:
     mov y, offset CelesteObject.core.flip
     ora (pObj), y
@@ -253,10 +253,10 @@ set_hair_color:
     beq .red
     cmp #2
     beq .flash
-    lda #PAL_ATTR_12           ; no dash left: blue
+    lda #Gfx.palette_12        ; no dash left: blue
     jmp .done
 .red:
-    lda #PAL_ATTR_8
+    lda #Gfx.palette_8
     jmp .done
 .flash:
     ldx frames                  ; 7 + flr((frames/3)%2)*4, without a divide
@@ -268,16 +268,16 @@ set_hair_color:
 ; frames is 0..29 and the cart wants (frames/3) & 1. Thirty bytes is cheaper
 ; than a division by three, and the table is the specification.
 hair_flash:
-    #d8 PAL_ATTR_7, PAL_ATTR_7, PAL_ATTR_7
-    #d8 PAL_ATTR_11, PAL_ATTR_11, PAL_ATTR_11
-    #d8 PAL_ATTR_7, PAL_ATTR_7, PAL_ATTR_7
-    #d8 PAL_ATTR_11, PAL_ATTR_11, PAL_ATTR_11
-    #d8 PAL_ATTR_7, PAL_ATTR_7, PAL_ATTR_7
-    #d8 PAL_ATTR_11, PAL_ATTR_11, PAL_ATTR_11
-    #d8 PAL_ATTR_7, PAL_ATTR_7, PAL_ATTR_7
-    #d8 PAL_ATTR_11, PAL_ATTR_11, PAL_ATTR_11
-    #d8 PAL_ATTR_7, PAL_ATTR_7, PAL_ATTR_7
-    #d8 PAL_ATTR_11, PAL_ATTR_11, PAL_ATTR_11
+    #d8 Gfx.palette_7, Gfx.palette_7, Gfx.palette_7
+    #d8 Gfx.palette_11, Gfx.palette_11, Gfx.palette_11
+    #d8 Gfx.palette_7, Gfx.palette_7, Gfx.palette_7
+    #d8 Gfx.palette_11, Gfx.palette_11, Gfx.palette_11
+    #d8 Gfx.palette_7, Gfx.palette_7, Gfx.palette_7
+    #d8 Gfx.palette_11, Gfx.palette_11, Gfx.palette_11
+    #d8 Gfx.palette_7, Gfx.palette_7, Gfx.palette_7
+    #d8 Gfx.palette_11, Gfx.palette_11, Gfx.palette_11
+    #d8 Gfx.palette_7, Gfx.palette_7, Gfx.palette_7
+    #d8 Gfx.palette_11, Gfx.palette_11, Gfx.palette_11
 
 draw_hair:
     lda [pObj + CelesteObject.core.flip]
@@ -310,26 +310,26 @@ draw_hair:
     mov d_n, #CelesteObject.payload.hair.hair.offset
 .node:
     ldy d_n                     ; h.x += (last.x - h.x) * 0.625
-    jsr obj_ldw
+    jsr Fixed.load_object
     ldab hair_lx
     stab w1
     jsr hair_chase
     ldy d_n
-    jsr obj_stw
+    jsr Fixed.store_object
     ldab w0
     stab hair_hx
 
     lda d_n
     add #2
     tay
-    jsr obj_ldw
+    jsr Fixed.load_object
     ldab hair_ly
     stab w1
     jsr hair_chase
     lda d_n
     add #2
     tay
-    jsr obj_stw
+    jsr Fixed.store_object
     ldab w0
     stab hair_hy
 
@@ -347,7 +347,7 @@ draw_hair:
     lda hair_hy+1
     sub #2
     sta t5
-    lda #SPR_HAIR_BIG
+    lda #Gfx.hair_big
     jmp .plot
 .small:
     lda hair_hx+1
@@ -356,7 +356,7 @@ draw_hair:
     lda hair_hy+1
     sub #1
     sta t5
-    lda #SPR_HAIR_SMALL
+    lda #Gfx.hair_small
 .plot:
     pha
     lda t4                      ; the hair is in world space like the object
@@ -395,12 +395,9 @@ hair_chase:
     ldab w0
     addw w1
     stab w0
-    lda w0
-    add w2
-    sta w0
-    lda w0+1
-    adc w2+1
-    sta w0+1
+    ldab w0
+    addw w2
+    stab w0
     rts
 
 asr_w1:

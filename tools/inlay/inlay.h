@@ -114,7 +114,10 @@ typedef enum {
     LA_ERR_UNKNOWN_EXPORT,
     LA_ERR_CONSTANT_CAPACITY,
     LA_ERR_DUPLICATE_CONSTANT,
-    LA_ERR_UNKNOWN_CONSTANT
+    LA_ERR_UNKNOWN_CONSTANT,
+    LA_ERR_LABEL_CAPACITY,
+    LA_ERR_DUPLICATE_LABEL,
+    LA_ERR_UNKNOWN_SYMBOL
 } LaDiagnosticCode;
 
 typedef struct {
@@ -200,7 +203,9 @@ typedef enum {
     LA_EVENT_TARGET_OPERATION,
     LA_EVENT_ENUM_MEMBER,
     LA_EVENT_OVERLAY,
-    LA_EVENT_CONSTANT
+    LA_EVENT_CONSTANT,
+    LA_EVENT_LABEL,
+    LA_EVENT_SCOPED_RAW
 } LaEventKind;
 
 typedef enum {
@@ -322,6 +327,7 @@ typedef struct {
     la_u16 max_namespaces;
     la_u16 max_exports;
     la_u16 max_constants;
+    la_u16 max_labels;
     la_u16 max_locations;
     la_u16 max_pools;
     la_u16 max_procedures;
@@ -352,6 +358,7 @@ typedef struct {
     la_u16 namespaces;
     la_u16 exports;
     la_u16 constants;
+    la_u16 labels;
     la_u16 locations;
     la_u16 pools;
     la_u16 procedures;

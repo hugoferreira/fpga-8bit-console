@@ -11,23 +11,47 @@
 ; Sheet: 150 of 256 slots used (58%).
 ; ------------------------------------------------------------------------------
 
-    SHEET_BYTES = 1200
-    SPR_PLAYER_ATTR = $08
-    SPR_SMOKE_FIRST = 143
-    SPR_SMOKE_STRIDE = 1
-    SPR_SMOKE_ATTR = $60
-    SPR_HAIR_BIG = 146
-    SPR_HAIR_SMALL = 147
-    SPR_SOLID = 148
-    SPR_DOT = 149
-    PAL_ATTR_1 = $10
-    PAL_ATTR_6 = $D0
-    PAL_ATTR_7 = $60
-    PAL_ATTR_8 = $20
-    PAL_ATTR_11 = $40
-    PAL_ATTR_12 = $00
-    PAL_ATTR_14 = $70
-    PAL_ATTR_15 = $30
+namespace Gfx
+    export upload_bytes
+    export player_attr
+    export smoke_first
+    export smoke_attr
+    export hair_big
+    export hair_small
+    export solid
+    export dot
+    export palette_1
+    export palette_6
+    export palette_7
+    export palette_8
+    export palette_11
+    export palette_12
+    export palette_14
+    export palette_15
+    export draw_palette
+    export player_slots
+    export sheet
+    export tile_base
+    export tile_attr
+
+    sheet_bytes = 1200
+    upload_bytes = sheet_bytes
+    player_attr = $08
+    smoke_first = 143
+    smoke_stride = 1
+    smoke_attr = $60
+    hair_big = 146
+    hair_small = 147
+    solid = 148
+    dot = 149
+    palette_1 = $10
+    palette_6 = $D0
+    palette_7 = $60
+    palette_8 = $20
+    palette_11 = $40
+    palette_12 = $00
+    palette_14 = $70
+    palette_15 = $30
 
 ; The draw palette: post-base colour -> real PICO-8 colour. Uploaded to
 ; $4010 at reset. Patterns store palette-relative values, not colour
@@ -39,11 +63,11 @@ draw_palette:
 ; Sheet slot of each player frame, spr 1..7. The frames are not a fixed
 ; stride apart any more - bpp is chosen per pattern - so the draw code
 ; indexes this instead of multiplying.
-player_slot:
+player_slots:
     #d8 $7A, $7D, $80, $83, $86, $89, $8C
 
 ; The sheet image, in slot order.
-celeste_sheet:
+sheet:
     #d8 $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
     #d8 $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
     #d8 $FF, $FF, $C3, $C3, $C3, $C3, $FF, $FF, $00, $00, $00, $00, $00, $22, $BB, $FF
@@ -141,3 +165,4 @@ tile_attr:
     #d8 $00, $00, $C4, $00, $C4, $00, $64, $64, $F0, $B4, $B4, $B4, $B4, $B4, $B4, $B4
     #d8 $00, $00, $C4, $C4, $C4, $00, $00, $F0, $F0, $B0, $A4, $B0, $B0, $B0, $A4, $B0
     #d8 $00, $00, $00, $00, $00, $00, $00, $00, $00, $04, $00, $00, $00, $00, $04, $04
+end

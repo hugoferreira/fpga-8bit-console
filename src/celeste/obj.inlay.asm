@@ -230,17 +230,17 @@ obj_update_all:
 ; ------------------------------------------------------------------------------
 obj_move:
     mov y, offset CelesteObject.core.remainder_x                 ; rem.x += spd.x
-    jsr obj_ldw
+    jsr Fixed.load_object
     mov y, offset CelesteObject.core.speed_x
-    jsr obj_ldw1
-    jsr add16
+    jsr Fixed.load_object_target
+    jsr Fixed.add
     mov y, offset CelesteObject.core.remainder_x
-    jsr obj_stw
+    jsr Fixed.store_object
 
     lda #$80                    ; amount = flr(rem.x + 0.5)
     ldx #$00
-    jsr setw1
-    jsr add16
+    jsr Fixed.set_target
+    jsr Fixed.add
     lda w0+1
     sta t0
 
@@ -252,17 +252,17 @@ obj_move:
     jsr move_x
 
     mov y, offset CelesteObject.core.remainder_y                 ; and the same for y
-    jsr obj_ldw
+    jsr Fixed.load_object
     mov y, offset CelesteObject.core.speed_y
-    jsr obj_ldw1
-    jsr add16
+    jsr Fixed.load_object_target
+    jsr Fixed.add
     mov y, offset CelesteObject.core.remainder_y
-    jsr obj_stw
+    jsr Fixed.store_object
 
     lda #$80
     ldx #$00
-    jsr setw1
-    jsr add16
+    jsr Fixed.set_target
+    jsr Fixed.add
     lda w0+1
     sta t0
 

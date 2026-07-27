@@ -269,7 +269,7 @@ def encode(sheet, dpal, name, rows):
 
 def asm_bytes(f, data, per_line=16):
     for i in range(0, len(data), per_line):
-        f.write("    .byte " + ",".join(f"${b:02X}" for b in data[i:i + per_line]) + "\n")
+        f.write("    #d8 " + ", ".join(f"${b:02X}" for b in data[i:i + per_line]) + "\n")
 
 
 def main():
@@ -392,18 +392,42 @@ def main():
 ; Sheet: {used_slots} of {SHEET_SLOTS} slots used ({used_slots * 100 // SHEET_SLOTS}%).
 ; ------------------------------------------------------------------------------
 
-    .define SHEET_BYTES        {len(upload)}
+namespace Gfx
+    export upload_bytes
+    export player_attr
+    export smoke_first
+    export smoke_attr
+    export hair_big
+    export hair_small
+    export solid
+    export dot
+    export palette_1
+    export palette_6
+    export palette_7
+    export palette_8
+    export palette_11
+    export palette_12
+    export palette_14
+    export palette_15
+    export draw_palette
+    export player_slots
+    export sheet
+    export tile_base
+    export tile_attr
+
+    sheet_bytes = {len(upload)}
+    upload_bytes = sheet_bytes
 """)
-        f.write(f"    .define SPR_PLAYER_ATTR    ${player_attr:02X}\n")
-        f.write(f"    .define SPR_SMOKE_FIRST    {smoke_base[0]}\n")
-        f.write(f"    .define SPR_SMOKE_STRIDE   {smoke_base[1] - smoke_base[0]}\n")
-        f.write(f"    .define SPR_SMOKE_ATTR     ${smoke_attr:02X}\n")
-        f.write(f"    .define SPR_HAIR_BIG       {hair_base[0]}\n")
-        f.write(f"    .define SPR_HAIR_SMALL     {hair_base[1]}\n")
+        f.write(f"    player_attr = ${player_attr:02X}\n")
+        f.write(f"    smoke_first = {smoke_base[0]}\n")
+        f.write(f"    smoke_stride = {smoke_base[1] - smoke_base[0]}\n")
+        f.write(f"    smoke_attr = ${smoke_attr:02X}\n")
+        f.write(f"    hair_big = {hair_base[0]}\n")
+        f.write(f"    hair_small = {hair_base[1]}\n")
         for name, b in fx_base:
-            f.write(f"    .define {name:<18} {b}\n")
+            f.write(f"    {name.removeprefix('SPR_').lower()} = {b}\n")
         for c in sorted(flat_attr):
-            f.write(f"    .define PAL_ATTR_{c:<2}        ${flat_attr[c]:02X}\n")
+            f.write(f"    palette_{c} = ${flat_attr[c]:02X}\n")
         f.write("\n; The draw palette: post-base colour -> real PICO-8 colour. Uploaded to\n"
                 "; $4010 at reset. Patterns store palette-relative values, not colour\n"
                 "; indices, which is what lets a three-colour tile cost two slots\n"
@@ -411,9 +435,9 @@ def main():
         asm_bytes(f, dpal)
         f.write("\n; Sheet slot of each player frame, spr 1..7. The frames are not a fixed\n"
                 "; stride apart any more - bpp is chosen per pattern - so the draw code\n"
-                "; indexes this instead of multiplying.\nplayer_slot:\n")
+                "; indexes this instead of multiplying.\nplayer_slots:\n")
         asm_bytes(f, player_base)
-        f.write("\n; The sheet image, in slot order.\nceleste_sheet:\n")
+        f.write("\n; The sheet image, in slot order.\nsheet:\n")
         asm_bytes(f, upload)
         f.write("\n; tile id -> pattern slot base (0 = not drawn as terrain)\n"
                 "tile_base:\n")
@@ -421,6 +445,7 @@ def main():
         f.write("\n; tile id -> map attribute byte {pal[7:4], bpp-1[3:2], yflip, xflip}\n"
                 "tile_attr:\n")
         asm_bytes(f, tile_attr)
+        f.write("end\n")
 
     # --- rooms.inlay.asm --------------------------------------------------
     # The cart's flag bits, kept as the cart numbers them: bit 0 solid,
@@ -438,16 +463,21 @@ def main():
 ; Level index is the cart's: room.x % 8 + room.y * 8.
 ; ------------------------------------------------------------------------------
 
-    .define ROOM_COUNT         {len(levels)}
+    ROOM_COUNT = {len(levels)}
 """)
         for i, lvl in enumerate(levels):
-            f.write(f"    .define ROOM_LEVEL{i}        {lvl}\n")
+            f.write(f"    ROOM_LEVEL{i} = {lvl}\n")
         f.write("\n; level index of each resident room, in the order the port cycles them\n"
                 "room_levels:\n")
         asm_bytes(f, levels)
-        labels = ", ".join(f"room{i}_tiles" for i in range(len(levels)))
-        f.write(f"\nroom_ptr_lo:\n    .byte <{', <'.join(f'room{i}_tiles' for i in range(len(levels)))}\n")
-        f.write(f"room_ptr_hi:\n    .byte >{', >'.join(f'room{i}_tiles' for i in range(len(levels)))}\n")
+        low = ", ".join(
+            f"(room{i}_tiles)[7:0]" for i in range(len(levels))
+        )
+        high = ", ".join(
+            f"(room{i}_tiles)[15:8]" for i in range(len(levels))
+        )
+        f.write(f"\nroom_ptr_lo:\n    #d8 {low}\n")
+        f.write(f"room_ptr_hi:\n    #d8 {high}\n")
         for i, lvl in enumerate(levels):
             f.write(f"\n; level {lvl} - room ({lvl % 8},{lvl // 8})\nroom{i}_tiles:\n")
             asm_bytes(f, room_ids[lvl])

@@ -19,15 +19,21 @@ initialization or imply dynamic dispatch.
 
 ### Requirement: Nested Namespace Membership
 
-Namespaces SHALL contain constants, enums, structures, unions, overlays,
-locations, pools, procedures and nested namespaces supported by the selected
-language slice. A nested declaration's canonical name SHALL contain every
-enclosing component in source order.
+Namespaces SHALL contain constants, target data labels, enums, structures,
+unions, overlays, locations, pools, procedures and nested namespaces supported
+by the selected language slice. A nested declaration's canonical name SHALL
+contain every enclosing component in source order.
 
 #### Scenario: Procedure belongs to a subsystem
 
 - **WHEN** `proc update` is declared within `namespace Player`
 - **THEN** its canonical frontend name is `Player.update`
+
+#### Scenario: Generated data belongs to a subsystem
+
+- **WHEN** `draw_palette:` is declared within `namespace Gfx`
+- **THEN** the label and validated raw references use the canonical name
+  `Gfx.draw_palette`
 
 #### Scenario: Namespace is nested
 
@@ -119,6 +125,12 @@ one-past-capacity use SHALL fail deterministically before partial target output.
 
 - **WHEN** source declares one more export than the configured capacity
 - **THEN** translation reports an export-capacity diagnostic
+
+#### Scenario: Scoped-label capacity is exhausted
+
+- **WHEN** source declares one more namespace data label than the configured
+  capacity
+- **THEN** translation reports a label-capacity diagnostic
 
 ### Requirement: Namespace Syntax Remains Assembly-like
 

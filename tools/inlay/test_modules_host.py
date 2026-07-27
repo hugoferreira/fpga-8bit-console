@@ -107,13 +107,18 @@ def main():
             "namespace Player\n"
             "export update\n"
             "export speed\n"
+            "export palette\n"
             "speed = $0A\n"
+            "palette:\n"
+            "#d8 $01, $02\n"
             "proc update naked\n"
             "begin\n"
             ".done:\n"
             "ret\n"
             "end\n"
             "end\n"
+            "lda Player.palette,x ; Player.palette remains a comment\n"
+            '#str "Player.palette"\n'
             "proc caller naked\n"
             "begin\n"
             "invoke Player.update\n"
@@ -179,6 +184,10 @@ def main():
         assert "#d8 (__inlay_q6_Player6_update)[15:8]" in assembly
         assert "#d16 __inlay_q6_Player6_update" in assembly
         assert "__inlay_q6_Player5_speed = 10" in assembly
+        assert "__inlay_q6_Player7_palette:" in assembly
+        assert "lda __inlay_q6_Player7_palette,x" in assembly
+        assert "Player.palette remains a comment" not in assembly
+        assert '#str "Player.palette"' in assembly
         assert "lda #10" in assembly
         assert "mov spawn_type, #3" in assembly
         assert "ldy #3" in assembly

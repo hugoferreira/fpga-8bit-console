@@ -20,6 +20,8 @@ typedef struct {
     unsigned overlays;
     unsigned operations;
     unsigned raw;
+    unsigned labels;
+    unsigned scoped_raw;
     int saw_hitbox_w;
     int saw_hair;
     int saw_left_a;
@@ -268,6 +270,10 @@ static int test_event(void *context, const LaEvent *event)
               event->access_width == 0 &&
               event->explicit_offset == 0,
               "raw events do not retain fields from prior events");
+    } else if (event->kind == LA_EVENT_LABEL) {
+        ++events->labels;
+    } else if (event->kind == LA_EVENT_SCOPED_RAW) {
+        ++events->scoped_raw;
     }
     return 1;
 }
@@ -1333,8 +1339,11 @@ static void test_namespaces(void)
         "namespace Player\n"
         "export run\n"
         "export speed\n"
+        "export palette\n"
         "speed = $0A\n"
         "twice = speed * 2\n"
+        "palette:\n"
+        "#d8 1, 2, 3\n"
         "proc helper naked\n"
         "begin\n"
         "ret\n"
@@ -1354,6 +1363,7 @@ static void test_namespaces(void)
         "end\n"
         "end\n"
         "end\n"
+        "lda Player.palette,x\n"
         "data u8 low(Player.run), high(Player.run)\n"
         "data u16 addr(Player.run)\n";
     LaLimits limits;
@@ -1365,9 +1375,12 @@ static void test_namespaces(void)
     result = compile_source(source, 0, limits, &events, &diagnostic, &stats);
     check(result == LA_OK, "nested namespaces and lexical invokes compile");
     check(stats.namespaces == 2, "namespace records counted");
-    check(stats.exports == 2, "export records counted");
+    check(stats.exports == 3, "export records counted");
     check(stats.constants == 2, "namespace constants counted");
+    check(stats.labels == 1, "namespace labels counted");
     check(stats.procedures == 4, "namespaced procedures counted");
+    check(events.labels == 1, "namespace label event emitted");
+    check(events.scoped_raw == 1, "qualified raw operand event emitted");
 
     limits = la_default_limits();
     limits.max_constants = 1;
@@ -1383,6 +1396,33 @@ static void test_namespaces(void)
         "namespace A\none = 1\none = 2\nend\n",
         la_default_limits(), LA_ERR_DUPLICATE_CONSTANT,
         "duplicate namespace constant rejected");
+
+    limits = la_default_limits();
+    limits.max_labels = 1;
+    result = compile_source(
+        "namespace A\none:\n#d8 1\nend\n", 0, limits,
+        &events, &diagnostic, &stats);
+    check(result == LA_OK, "label capacity exact limit succeeds");
+    expect_error(
+        "namespace A\none:\ntwo:\nend\n",
+        limits, LA_ERR_LABEL_CAPACITY,
+        "label capacity plus one rejected");
+    expect_error(
+        "namespace A\none:\none:\nend\n",
+        la_default_limits(), LA_ERR_DUPLICATE_LABEL,
+        "duplicate namespace label rejected");
+    expect_error(
+        "namespace A\none = 1\none:\nend\n",
+        la_default_limits(), LA_ERR_DUPLICATE_LABEL,
+        "label and constant target-symbol collision rejected");
+    expect_error(
+        "namespace A\none:\nproc one naked\nbegin\nret\nend\nend\n",
+        la_default_limits(), LA_ERR_DUPLICATE_LABEL,
+        "label and procedure target-symbol collision rejected");
+    expect_error(
+        "namespace A\nend\nlda A.missing\n",
+        la_default_limits(), LA_ERR_UNKNOWN_SYMBOL,
+        "unknown namespace symbol rejected");
 
     limits = la_default_limits();
     limits.max_namespaces = 1;

@@ -31,14 +31,21 @@
 ; the list is not either.
 ; ------------------------------------------------------------------------------
 
-    CLOUD_N = 17
-    PART_N = 25
+namespace Fx
+    export init
+    export update
+    export draw_clouds
+    export draw_particles
+
+    cloud_count = 17
+    particle_count = 25
 
 ; ------------------------------------------------------------------------------
-; fx_init: seed both from the hardware LFSR. Clobbers A, X.
+; init: seed both from the hardware LFSR. Clobbers A, X.
 ; ------------------------------------------------------------------------------
-fx_init:
-    ldx #CLOUD_N-1
+proc init using console6502 naked
+begin
+    ldx #Fx.cloud_count-1
 .cloud:
     lda [video + VideoRegisters.random]                 ; x = rnd(128)
     and #$7F
@@ -61,7 +68,7 @@ fx_init:
     dex
     bpl .cloud
 
-    ldx #PART_N-1
+    ldx #Fx.particle_count-1
 .part:
     lda [video + VideoRegisters.random]
     and #$7F
@@ -82,24 +89,26 @@ fx_init:
     lda [video + VideoRegisters.random]                 ; the cart's c = 6 + flr(0.5 + rnd(1))
     and #1
     beq .grey
-    lda #PAL_ATTR_7
+    lda #Gfx.palette_7
     bne .setcol
 .grey:
-    lda #PAL_ATTR_6
+    lda #Gfx.palette_6
 .setcol:
     sta PA_ATTR, x
     lda [video + VideoRegisters.random]
     sta PA_OFF, x
     dex
     bpl .part
-    rts
+    ret
+end
 
 ; ------------------------------------------------------------------------------
-; fx_update: the cart moves both inside _draw; the port moves them here, which
+; update: the cart moves both inside _draw; the port moves them here, which
 ; is the same 30 Hz tick. Clobbers A, X, Y, t0.
 ; ------------------------------------------------------------------------------
-fx_update:
-    ldx #CLOUD_N-1
+proc update using console6502 naked
+begin
+    ldx #Fx.cloud_count-1
 .cloud:
     lda CL_XL, x                 ; x += spd
     clc
@@ -137,7 +146,7 @@ fx_update:
     dex
     bpl .cloud
 
-    ldx #PART_N-1
+    ldx #Fx.particle_count-1
 .part:
     lda PA_XL, x                 ; x += spd
     clc
@@ -157,10 +166,10 @@ fx_update:
     tay
     lda PA_YL, x
     clc
-    adc sin16_lo, y
+    adc Fx.sin_low, y
     sta PA_YL, x
     lda PA_YH, x
-    adc sin16_hi, y
+    adc Fx.sin_high, y
     sta PA_YH, x
 
     lda PA_XH, x                 ; if x > 132 then x = -4, y = rnd(128); same
@@ -176,44 +185,48 @@ fx_update:
 .nextpart:
     dex
     bpl .part
-    rts
+    ret
+end
 
 ; sin(off) over a full turn, 8.8 signed. The cart adds sin() straight to y, so
 ; a particle bobs one pixel either way as it drifts.
-sin16_lo:
+sin_low:
     #d8 $00, $62, $B5, $ED, $00, $ED, $B5, $62, $00, $9E, $4B, $13, $00, $13, $4B, $9E
-sin16_hi:
+sin_high:
     #d8 $00, $00, $00, $00, $01, $00, $00, $00, $00, $FF, $FF, $FF, $FF, $FF, $FF, $FF
 
 ; ------------------------------------------------------------------------------
-; fx_draw_clouds: staged FIRST, so that everything here lands below the
+; draw_clouds: staged FIRST, so that everything here lands below the
 ; behind-split and composites before the tile layer. Clobbers A, X, Y, t3..t6.
 ; ------------------------------------------------------------------------------
-fx_draw_clouds:
+proc draw_clouds using console6502 naked
+begin
     ldx #0
 .cloud:
     stx t6
     lda CL_Y, x                  ; clouds do not scroll with the camera: they
     sub camera_y
     sta t5
-    mov t3, #PAL_ATTR_1
+    mov t3, #Gfx.palette_1
     mov t4, CL_XH + x
     lda CL_W, x                  ; the whole cloud is ONE entry: the compositor
     sta [video + VideoRegisters.repeat]                 ; repeats the fetched row across its cells
-    lda #SPR_SOLID
+    lda #Gfx.solid
     jsr stage_sprite
     ldx t6
     inx
-    cpx #CLOUD_N
+    cpx #Fx.cloud_count
     bne .cloud
-    rts
+    ret
+end
 
 ; ------------------------------------------------------------------------------
-; fx_draw_particles: staged LAST, above the split, so they sit in front of the
+; draw_particles: staged LAST, above the split, so they sit in front of the
 ; terrain and the player - which is where the cart draws them, and is what
 ; puts the stars on the title screen. Clobbers A, X, Y, t3..t6.
 ; ------------------------------------------------------------------------------
-fx_draw_particles:
+proc draw_particles using console6502 naked
+begin
     mov SPR_REP, #1
     ldx #0
 .part:
@@ -223,10 +236,12 @@ fx_draw_particles:
     lda PA_YH, x
     sub camera_y
     sta t5
-    lda #SPR_DOT
+    lda #Gfx.dot
     jsr stage_sprite
     ldx t6
     inx
-    cpx #PART_N
+    cpx #Fx.particle_count
     bne .part
-    rts
+    ret
+end
+end

@@ -198,6 +198,24 @@ in frontend compile-time expressions and are emitted as stable generated
 constants. Inlay does not search or rewrite arbitrary raw instruction text
 containing an enum name.
 
+An ordinary target label declared directly inside a namespace is a bounded
+scoped declaration:
+
+```asm
+namespace Gfx
+    export draw_palette
+draw_palette:
+    #d8 $00, $01, $02, $03
+end
+
+lda Gfx.draw_palette, x
+```
+
+The frontend validates qualified procedure, constant and scoped-label tokens
+in otherwise raw target operands, applies module privacy, and emits the same
+collision-free target spelling at the declaration and use. Strings, comments,
+enum operands and target-local labels are not rewritten.
+
 Unions accept the same field types and arrays as structures. Every member is
 at offset zero; `packed` unions have alignment one and the largest member size,
 while `aligned(N)` rounds that extent to `N`. They track no active member and
@@ -489,6 +507,10 @@ The portable defaults are:
 | enums | 128 |
 | enum members | 512 |
 | overlays | 128 |
+| namespaces | 128 |
+| exports | 256 |
+| namespace constants | 512 |
+| scoped target labels | 512 |
 | typed locations | 128 |
 | fixed pools | 64 |
 | procedures | 256 |
@@ -499,7 +521,7 @@ The portable defaults are:
 | nesting/property traversal | 32 |
 | structured target operations | 2,048 |
 | line/path bytes | 512 |
-| host-profile reserved workspace | 131,352 bytes |
+| host-profile reserved workspace | 158,296 bytes |
 
 Every bounded resource has a stable diagnostic code. Core tests exercise exact
 limits and one-past-limit failures for the active tables. Diagnostics carry a
@@ -509,11 +531,12 @@ formatting belongs to the platform shell.
 The default module profile reserves up to 64 modules, 32,767 flattened bytes,
 4,096 flattened lines and include depth 32. The Celeste host profile raises
 the byte/line limits to 65,534 and 12,000. The module expander removes
-semicolon comments outside quoted strings and trims trailing whitespace before
-charging source capacity, while retaining one source-mapped newline per input
-line. Celeste can therefore keep its checked-in commentary without weakening
-the bounded model. Its current expanded input uses 54,903 bytes, 3,931 lines
-and depth 2; the module workspace reservation is 117,848 bytes.
+semicolon comments outside quoted strings and trims insignificant leading
+indentation and trailing whitespace before charging source capacity, while
+retaining one source-mapped newline per input line. Celeste can therefore keep
+its checked-in commentary without weakening the bounded model. Its current
+expanded input uses 60,819 bytes, 4,228 lines and depth 2; the module workspace
+reservation is 117,848 bytes.
 
 The installed cc65 compiler successfully compiles the same core and ca65
 assembles its output. This is a portability smoke test, not a claim that the
@@ -541,15 +564,16 @@ Enum constants use the same collision-free family:
 __la_10_ObjectKind__6_player__value
 ```
 
-Qualified procedure names remain qualified in frontend diagnostics and
-invocation resolution. The console6502/customasm host maps dots to underscores
-for target symbols, so `Player.update` deterministically emits
-`Player_update:` and establishes a fresh scope for following `.local` labels.
+Qualified procedure and data-label names remain qualified in frontend
+diagnostics and resolution. The console6502/customasm host uses
+length-prefixed components, so `Player.update` deterministically emits
+`__inlay_q6_Player6_update:` and establishes a fresh scope for following
+`.local` labels.
 
 The generated header records language format 1 and target format 1. Source-map
 format 2 is deterministic JSON containing a logical source table and a source
-id on every ordered header, enum member, property, overlay, raw and
-target-operation mapping.
+id on every ordered header, enum member, property, overlay, label, raw,
+scoped-raw and target-operation mapping.
 Absolute host paths are deliberately excluded. Frontend and mapped downstream
 diagnostics use the included module's logical name and original line.
 
@@ -634,11 +658,17 @@ allocations. Compile-time assertions pin all established offsets and absolute
 region boundaries.
 
 Every handwritten instruction module is expanded through Inlay `include`.
+Generated graphics is also semantic: `Gfx` publishes an explicit manifest of
+sprite constants and data labels while keeping generator-only values private.
 The portable core deliberately uses 16-bit source slices, while the complete
-game source is about 116 KiB, so four declaration/data-only modules are an
-explicit exception: `memmap`, `gfx`, `rooms` and `audio` are opaque target
-includes. They are still authoritative `.inlay.asm` production files and no
-legacy source is involved.
+game source is larger, so three data-only modules remain explicit exceptions:
+`memmap`, `rooms` and `audio` are opaque target includes. They are still
+authoritative `.inlay.asm` production files and no legacy source is involved.
+
+`Fx` exports only initialization, update and its two draw stages; effect
+capacities and sine tables remain private. `Fixed` declares the physical
+`w0`/`w1`/`w2` contracts for signed comparison, sign, absolute value and
+approach, and uses the custom CPU word operations for eligible arithmetic.
 
 The object, collision, player and draw modules use typed object operations,
 prefix layout queries and documented semantic exceptions rather than
@@ -690,7 +720,7 @@ machine. They describe algorithm/table pressure, not target-console speed:
 | Celeste fixture | 4.209 ms | 3.702 ms | 1,824 B | 4 | 36 | 1 | 9 | 320 B | 76 |
 | Synthetic mixed source | 8.217 ms | 7.820 ms | 25,850 B | 120 | 960 | 120 | 120 | 1,879 B | 2,040 |
 
-Both use the fixed 110,488-byte default workspace reservation. Re-run
+Both use the fixed 158,296-byte default workspace reservation. Re-run
 `python3 tools/inlay/measure_inlay.py` to refresh the host measurement.
 
 ## Deferred work

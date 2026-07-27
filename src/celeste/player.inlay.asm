@@ -218,33 +218,33 @@ begin
     pla
     jsr spawn_smoke
 
-    mov y, offset CelesteObject.core.speed_x                 ; spd.x = appr(spd.x, dash_target.x, dash_accel.x)
-    jsr obj_ldw
+    mov y, offset CelesteObject.core.speed_x                 ; spd.x = Fixed.approach(spd.x, dash_target.x, dash_accel.x)
+    jsr Fixed.load_object
     mov y, offset CelesteObject.payload.player.dash_target_x
-    jsr obj_ldw1
+    jsr Fixed.load_object_target
     mov y, offset CelesteObject.payload.player.dash_accel_x.fraction
     lda (pObj), y
     sta w2
     iny
     lda (pObj), y
     sta w2+1
-    jsr appr
+    jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_x
-    jsr obj_stw
+    jsr Fixed.store_object
 
     mov y, offset CelesteObject.core.speed_y
-    jsr obj_ldw
+    jsr Fixed.load_object
     mov y, offset CelesteObject.payload.player.dash_target_y
-    jsr obj_ldw1
+    jsr Fixed.load_object_target
     mov y, offset CelesteObject.payload.player.dash_accel_y.fraction
     lda (pObj), y
     sta w2
     iny
     lda (pObj), y
     sta w2+1
-    jsr appr
+    jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_y
-    jsr obj_stw
+    jsr Fixed.store_object
     jmp player_anim
 
 ; ------------------------------------------------------------------------------
@@ -273,65 +273,65 @@ player_move:
 .run:
     lda #<MAXRUN                ; if abs(spd.x) > maxrun then decelerate
     ldx #>MAXRUN
-    jsr setw0
+    jsr Fixed.set_value
     mov y, offset CelesteObject.core.speed_x
-    jsr obj_ldw1
+    jsr Fixed.load_object_target
     lda w1+1
     bpl .absdone
-    ldab #$0000  ; w1 = abs(spd.x), inline because neg16 works
+    ldab #$0000  ; w1 = abs(spd.x), inline because Fixed.negate works
     subw w1
     stab w1
 .absdone:
-    jsr cmp16                   ; N set: maxrun < abs(spd.x)
+    jsr Fixed.compare                   ; N set: maxrun < abs(spd.x)
     bpl .accelerate
 
-    mov y, offset CelesteObject.core.speed_x                 ; spd.x = appr(spd.x, sign(spd.x)*maxrun, deccel)
-    jsr obj_ldw
+    mov y, offset CelesteObject.core.speed_x                 ; spd.x = Fixed.approach(spd.x, sign(spd.x)*maxrun, deccel)
+    jsr Fixed.load_object
     lda w0+1
     bmi .decelneg
     lda #<MAXRUN
     ldx #>MAXRUN
-    jsr setw1
+    jsr Fixed.set_target
     jmp .decel
 .decelneg:
     lda #<(-MAXRUN & $FFFF)
     ldx #>(-MAXRUN & $FFFF)
-    jsr setw1
+    jsr Fixed.set_target
 .decel:
     lda p_deccel
     ldx p_deccel+1
-    jsr setw2
-    jsr appr
+    jsr Fixed.set_amount
+    jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_x
-    jsr obj_stw
+    jsr Fixed.store_object
     jmp .facing
 
-.accelerate:                    ; spd.x = appr(spd.x, input*maxrun, accel)
+.accelerate:                    ; spd.x = Fixed.approach(spd.x, input*maxrun, accel)
     mov y, offset CelesteObject.core.speed_x
-    jsr obj_ldw
+    jsr Fixed.load_object
     lda p_input
     beq .targetzero
     bmi .targetneg
     lda #<MAXRUN
     ldx #>MAXRUN
-    jsr setw1
+    jsr Fixed.set_target
     jmp .doaccel
 .targetneg:
     lda #<(-MAXRUN & $FFFF)
     ldx #>(-MAXRUN & $FFFF)
-    jsr setw1
+    jsr Fixed.set_target
     jmp .doaccel
 .targetzero:
     lda #0
     tax
-    jsr setw1
+    jsr Fixed.set_target
 .doaccel:
     lda p_accel
     ldx p_accel+1
-    jsr setw2
-    jsr appr
+    jsr Fixed.set_amount
+    jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_x
-    jsr obj_stw
+    jsr Fixed.store_object
 
 .facing:
     mov y, offset CelesteObject.core.speed_x.fraction
@@ -359,12 +359,12 @@ player_move:
     mov p_gravity+1, #>GRAVITY
 
     mov y, offset CelesteObject.core.speed_y                 ; if abs(spd.y) <= 0.15 then gravity *= 0.5
-    jsr obj_ldw
-    jsr abs16
+    jsr Fixed.load_object
+    jsr Fixed.absolute
     lda #<SPDY_EPSILON
     ldx #>SPDY_EPSILON
-    jsr setw1
-    jsr cmp16                   ; N set: abs(spd.y) < 0.15
+    jsr Fixed.set_target
+    jsr Fixed.compare                   ; N set: abs(spd.y) < 0.15
     bmi .halfgrav
     cbne w0, #<SPDY_EPSILON, .slide  ; the cart's test is <=, so catch equality too
     cbne w0+1, #>SPDY_EPSILON, .slide
@@ -408,17 +408,17 @@ player_move:
 .fall:
     lda p_onground
     bne .jump
-    mov y, offset CelesteObject.core.speed_y                 ; spd.y = appr(spd.y, maxfall, gravity)
-    jsr obj_ldw
+    mov y, offset CelesteObject.core.speed_y                 ; spd.y = Fixed.approach(spd.y, maxfall, gravity)
+    jsr Fixed.load_object
     lda p_maxfall
     ldx p_maxfall+1
-    jsr setw1
+    jsr Fixed.set_target
     lda p_gravity
     ldx p_gravity+1
-    jsr setw2
-    jsr appr
+    jsr Fixed.set_amount
+    jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_y
-    jsr obj_stw
+    jsr Fixed.store_object
 
 .jump:
     lda [pObj + CelesteObject.payload.player.jump_buffer]
@@ -623,22 +623,22 @@ player_move:
     mov shake, #6
 
     mov y, offset CelesteObject.core.speed_x                 ; dash_target = 2 * sign(spd), dash_accel = 1.5
-    jsr obj_ldw
-    jsr sign16
+    jsr Fixed.load_object
+    jsr Fixed.sign
     ldx #<DASH_TARGET
     ldy #>DASH_TARGET
     jsr signed_word
     mov y, offset CelesteObject.payload.player.dash_target_x
-    jsr obj_stw
+    jsr Fixed.store_object
 
     mov y, offset CelesteObject.core.speed_y
-    jsr obj_ldw
-    jsr sign16
+    jsr Fixed.load_object
+    jsr Fixed.sign
     ldx #<DASH_TARGET
     ldy #>DASH_TARGET
     jsr signed_word
     mov y, offset CelesteObject.payload.player.dash_target_y
-    jsr obj_stw
+    jsr Fixed.store_object
 
     mov y, offset CelesteObject.core.speed_y.fraction
 
@@ -760,12 +760,12 @@ player_anim:
 set_spdx_signed:
     jsr signed_word
     mov y, offset CelesteObject.core.speed_x
-    jmp obj_stw
+    jmp Fixed.store_object
 
 set_spdy_signed:
     jsr signed_word
     mov y, offset CelesteObject.core.speed_y
-    jmp obj_stw
+    jmp Fixed.store_object
 
 ; signed_word: w0 = A * {X,Y} for A in {-1, 0, 1}. Clobbers A.
 signed_word:
@@ -774,10 +774,10 @@ signed_word:
     cmp #0
     beq .zero
     bpl .done
-    jmp neg16
+    jmp Fixed.negate
 .zero:
-    sta w0
-    sta w0+1
+    ldab #$0000
+    stab w0
 .done:
     rts
 
@@ -889,13 +889,13 @@ begin
 
 .falling:
     mov y, offset CelesteObject.core.speed_y                 ; spd.y += 0.5
-    jsr obj_ldw
+    jsr Fixed.load_object
     lda #<SPAWN_GRAV
     ldx #>SPAWN_GRAV
-    jsr setw1
-    jsr add16
+    jsr Fixed.set_target
+    jsr Fixed.add
     mov y, offset CelesteObject.core.speed_y
-    jsr obj_stw
+    jsr Fixed.store_object
 
     lda w0+1                    ; the hover: while delay lasts, spd.y is held
     bmi .done2                  ; at zero each time it goes positive

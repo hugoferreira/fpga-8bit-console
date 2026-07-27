@@ -1,4 +1,3 @@
-
 ; ------------------------------------------------------------------------------
 ; Celeste Classic, ported to this console
 ; ------------------------------------------------------------------------------
@@ -60,7 +59,7 @@ reset:
     jsr room_init
     jsr ovl_init
     jsr sound_init
-    jsr fx_init
+    jsr Fx.init
     jsr obj_init
 
     lda #0
@@ -198,7 +197,7 @@ update_frame:
     rts
 
 .objects:
-    jsr fx_update
+    jsr Fx.update
     jsr obj_update_all
     ; fall through to the title screen's state machine
 
@@ -232,9 +231,9 @@ title_tick:
     rts
 
 ; ------------------------------------------------------------------------------
-; The generated files come first: their .defines (sheet slot numbers, room
-; count) are textual, so every user of them has to be assembled afterwards.
-    #include "../../src/celeste/gfx.inlay.asm"
+; Generated assets come first so their scoped constants and data labels are
+; available to every following module.
+include "gfx.inlay.asm"
     #include "../../src/celeste/rooms.inlay.asm"
     #include "../../src/celeste/audio.inlay.asm"
 
@@ -247,7 +246,6 @@ include "draw.inlay.asm"
 include "fx.inlay.asm"
 include "sound.inlay.asm"
 
-
 ; ------------------------------------------------------------------------------
 ; palette_upload: install the generated draw palette.
 ;
@@ -259,7 +257,7 @@ include "sound.inlay.asm"
 palette_upload:
     ldx #15
 .entry:
-    lda draw_palette, x
+    lda Gfx.draw_palette, x
     sta SPR_DPAL, x
     dex
     bpl .entry
@@ -273,10 +271,14 @@ sheet_upload:
     lda #0
     sta [video + VideoRegisters.sheet_address_low]
     sta [video + VideoRegisters.sheet_address_high]
-    mov pSrc, #<celeste_sheet
-    mov pSrc+1, #>celeste_sheet
-    mov t0, #<SHEET_BYTES
-    mov t1, #>SHEET_BYTES
+    lda #<Gfx.sheet
+    sta pSrc
+    lda #>Gfx.sheet
+    sta pSrc+1
+    lda #<Gfx.upload_bytes
+    sta t0
+    lda #>Gfx.upload_bytes
+    sta t1
     ldy #0
 .byte:
     lda (pSrc), y
