@@ -7106,6 +7106,30 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
                 line, active_procedure);
             if (typed < 0) return ctx->error;
         } else {
+            const char *save_cursor;
+            const char *save_content;
+            la_u16 resolved_length;
+            int resolved;
+            /* Resolve bare enclosing-namespace names once, up front, so every
+               typed parser (placements, mov/word operands, brackets) sees the
+               same qualified spelling the scoped-raw path already resolves. */
+            save_cursor = cursor;
+            save_content = content_end;
+            resolved_length = 0;
+            resolved = la_qualify_scoped_line(
+                ctx, cursor, content_end, line, &resolved_length);
+            if (resolved < 0) {
+                return la_fail(ctx, LA_ERR_NAME_CAPACITY, line, 1,
+                               (la_u16)(content_end - cursor),
+                               la_slice("resolved line", 13),
+                               la_slice("", 0),
+                               (la_i32)(content_end - cursor),
+                               ctx->limits->max_line_bytes);
+            }
+            if (resolved > 0) {
+                cursor = ctx->resolve_buffer;
+                content_end = ctx->resolve_buffer + resolved_length;
+            }
             typed = la_parse_procedure_data(
                 ctx, cursor, content_end, line, 1);
             if (typed > 0) data_emitted = 1;
@@ -7154,6 +7178,12 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
                                                  line, &event);
             }
             if (typed < 0) return ctx->error;
+            if (typed == 0) {
+                /* No typed parser matched; the raw path re-resolves from the
+                   original slice so the trailing comment is preserved. */
+                cursor = save_cursor;
+                content_end = save_content;
+            }
             if (typed > 0) {
                 if (!data_emitted &&
                     !la_write_event(ctx, &event)) return ctx->error;

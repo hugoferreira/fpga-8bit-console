@@ -1171,6 +1171,23 @@ static void test_indexed_pools_and_procedures(void)
         0, limits, &events, &diagnostic, &stats);
     check(result == LA_OK,
           "qualified mov destination resolves the immediate");
+    /* Enclosing-namespace resolution also reaches typed-operation operands: a
+       bare same-namespace destination/placement resolves like a qualified one,
+       while a bare register is never shadowed. */
+    result = compile_source(
+        "enum Kind : u8\n    idle = 0\n    busy = 2\nend\n"
+        "namespace Own\n"
+        "    location slot : u8 at $20\n"
+        "proc op naked\n"
+        "    value : u8 return in slot\n"
+        "begin\n"
+        "    mov slot, #Kind.busy\n"
+        "    ret\n"
+        "end\n"
+        "end\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK,
+          "bare same-namespace names resolve in typed operands and placements");
 }
 
 static void test_comments_and_pointer_fields(void)
