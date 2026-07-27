@@ -170,6 +170,34 @@ The inactive parameter bank provides a fixed commit boundary. Tick evaluation
 may take a different number of clocks for different effects without exposing a
 partially updated voice set.
 
+#### Staging constraints recorded at the serial-fold checkpoint
+
+- **Clock budget.** The combined worst deadline is 1,159/1,275, so tick
+  microcode may grow by at most ~116 clocks under today's tick-first
+  coincident ordering. The double-buffered bank already decouples evaluation
+  from publication: pre-running the tick walk one sample early (evaluate at
+  scnt == 181 into the inactive bank, flip at the boundary) frees the whole
+  preceding sample for tick microcode. A CPU write landing inside that
+  one-sample window is observed one tick evaluation later than today;
+  the oracle's launch strobes sit outside the window, but psg_tb's
+  register-timing cases must be re-baselined deliberately, not silently.
+- **Bulk-only.** Per 5c, standalone consolidations under ~50 cells are noise.
+  The microengine lands as whole families: states, their destination fields
+  and their operand selection together. The trigger/instrument load chains
+  (T_*/I_TR*, table-shaped, under ~80 cells of decode) fold in as part of
+  the engine, not as separate slices. The pinc prefetch registers
+  (base_r/prev_r/arp_r, 72 flops) retire only when the effect microprogram
+  re-reads pinc at its consumption points; e_pitch/e_prevp/e_arp are
+  consumed in disjoint states and time-share one clamp unit once their
+  operands come from the microprogram.
+- **Microcode storage.** No EBR is free at the 15-block ceiling. The
+  microcode ROM shares the constants block that the section-5.1 hybrid-wave
+  replacement recovers, together with pinc and nz_gain (one shared EBR
+  measured -77 LUT4s) and fstep as recip >> 4 with the n = 1 exception. The
+  dependency chain is 5.1 first, then the constants EBR, then the microcode
+  home; until then any control table is LUT-ROM and counts against its
+  stage.
+
 ### 4. Share sample arithmetic through one service
 
 The current RTL contains four separately registered shift/add engines for
@@ -381,6 +409,42 @@ remains the stage expected to close most of it, and it should be planned
 against the census as much as against mapped counts - pb, note_lo, base_r,
 last_addr, fade_step and the public sfx_id/row arrays are ~230 of the
 remaining unpackable flip-flops.
+
+### 5c. Re-priced families and two rejected micro-consolidations
+
+The REALTIME_PREVIEW ablation re-run against the `232353e9d469` build (both
+variants with REVERB=0) prices what the serial-fold stages left behind: the
+transition/fidelity renderer still maps 882 LUT4s, 49 carries and about 220
+flip-flops above the preview path, and reverb itself is 107/75/87. The
+transition family remains the largest identified block, ahead of the entire
+tick side.
+
+Two byte-identical micro-consolidations inside that family were then rejected
+at seed-1 placed cells, each attributed in isolation against the same HEAD:
+
+- Blend update as one 17-bit chain (xor-and-carry-in replacing the +/- mux):
+  -16 carries but +32 LUT4s, placed **+31 cells**.
+- wt_pf/wt_qf retirement (wavetable phase advances deferred to PWORK+16/+17
+  so both interpolation products read the phase slices directly): the
+  predicted -20 flip-flops appeared, but +99 LUT4s, placed **+70 cells**.
+  Routed Fmax rose 41.94 to 42.88 MHz, consistent with abc9 spending area to
+  re-buffer the lengthened cones under the timing constraint.
+
+The lesson generalizes the packing note in 5b: a register retirement pays
+only when the arithmetic or decode it feeds leaves with it, as in the
+serial-fold stage (132 flops, the divide network and the compare tree
+together). An isolated retirement that lengthens a combinational cone hands
+the cells straight back. **Consolidations below roughly 50 cells sit inside
+abc9's restructuring noise for this design and are not worth their
+verification cost; the remaining 871 must come from bulk stages.** The
+transition family's bulk candidate is a two-pass old-voice render: store the
+main oscillator words early in the visit, reload the old-continuation
+parameters into the same working registers, and run the old voice through
+the identical wave-read/product path - retiring s_old_phase/inc/vol/wave,
+old_smp and the duplicated schedule slots (~60-80 unpackable flops plus
+their muxes). The visit has the idle span (18..51) and the store port is
+free there; the byte-compare is the gate that makes the choreography safe
+to attempt.
 
 ### 6. Keep tables scheduled, not replicated
 

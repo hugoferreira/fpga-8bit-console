@@ -24,6 +24,10 @@
 
 ## 3. Tick microengine
 
+- [ ] 3.0 Decide the tick pre-run (evaluate at scnt == 181 into the inactive
+      bank, publish at the boundary) and re-baseline psg_tb's register-timing
+      cases; without it the microprogram has ~116 spare clocks, with it a
+      full sample (design 3, staging constraints)
 - [ ] 3.1 Implement the narrow micro-PC, flags, data register and single-site
       accumulator/store contract for tick-rate voice work
 - [ ] 3.2 Move record load/store, trigger metadata, row progression and pattern
@@ -55,6 +59,11 @@
       rejected shapes; see design 5b. Byte-identical, -124 placed cells)
 - [ ] 4.6 Remove superseded arithmetic registers and prove the worst-case
       sample microprogram remains below 1,275 derived PSG clocks
+- [ ] 4.7 Two-pass old-voice render: store main oscillator words early,
+      reload old-continuation parameters into the same working registers and
+      reuse the wave-read/product path, retiring s_old_*/old_smp and their
+      schedule slots (design 5c; the blend fuse and wt_pf/wt_qf retirement
+      inside this family were measured +31/+70 placed and rejected)
 
 ## 5. Waveforms and scheduled tables
 
