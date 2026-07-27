@@ -22,6 +22,8 @@ STRUCTURED_FIXTURE = ROOT / "tests/inlay/structured.inlay.asm"
 STRUCTURED_REFERENCE = ROOT / "tests/inlay/structured_reference.asm"
 VARIANT_FIXTURE = ROOT / "tests/inlay/variants.inlay.asm"
 VARIANT_REFERENCE = ROOT / "tests/inlay/variants_reference.asm"
+OVERLAY_ADDRESS_FIXTURE = ROOT / "tests/inlay/overlay_address.inlay.asm"
+OVERLAY_ADDRESS_REFERENCE = ROOT / "tests/inlay/overlay_address_reference.asm"
 CELESTE_DIR = ROOT / "src/celeste"
 CELESTE_INLAY = CELESTE_DIR / "main.inlay.asm"
 CELESTE_REFERENCE_DIR = (
@@ -73,6 +75,7 @@ EXPECTED_CELESTE_SEMANTIC_INCLUDES = {
     "layout.inlay.asm",
     "gfx.inlay.asm",
     "math.inlay.asm",
+    "memmap.inlay.asm",
     "obj.inlay.asm",
     "collide.inlay.asm",
     "player.inlay.asm",
@@ -84,7 +87,6 @@ EXPECTED_CELESTE_SEMANTIC_INCLUDES = {
     "sound.inlay.asm",
 }
 EXPECTED_CELESTE_OPAQUE_INCLUDES = {
-    "memmap.inlay.asm",
     "rooms.inlay.asm",
     "audio.inlay.asm",
 }
@@ -223,7 +225,7 @@ def check_cli(tmp: Path) -> None:
     assert run(INLAY, "-h").stdout == help_text
     assert (
         run(INLAY, "--version").stdout.strip()
-        == "inlay 0.2 language-format=1 target-format=1 map-format=2"
+        == "inlay 0.2 language-format=1 target-format=2 map-format=2"
     )
     assert "usage: inlay" in run(INLAY, expect=2).stderr
 
@@ -513,6 +515,40 @@ def check_variant_fixture(first: Path, second: Path) -> None:
         )
 
 
+def check_overlay_address_fixture(first: Path, second: Path) -> None:
+    outputs = []
+    maps = []
+    for directory in (first, second):
+        output = directory / "overlay_address.asm"
+        map_path = directory / "overlay_address.map.json"
+        translate(OVERLAY_ADDRESS_FIXTURE, output, map_path)
+        outputs.append(output)
+        maps.append(map_path)
+    if outputs[0].read_bytes() != outputs[1].read_bytes():
+        raise AssertionError("overlay-address output is not deterministic")
+    if maps[0].read_bytes() != maps[1].read_bytes():
+        raise AssertionError("overlay-address source map is not deterministic")
+    generated = outputs[0].read_text()
+    for required in (
+        "mov $1a, #<(TILE_RAM + 0)",
+        "mov $1a+1, #>(TILE_RAM + 0)",
+        "mov $1a, #<(TILE_RAM + 512)",
+        "mov $10, #<(OBJECT_RAM + 17)",
+    ):
+        if required not in generated:
+            raise AssertionError(
+                f"overlay-address lowering missing line: {required!r}"
+            )
+    frontend = first / "overlay_address.bin"
+    reference = first / "overlay_address-reference.bin"
+    run("customasm", outputs[0], "-f", "binary", "-o", frontend)
+    run("customasm", OVERLAY_ADDRESS_REFERENCE, "-f", "binary", "-o", reference)
+    if frontend.read_bytes() != reference.read_bytes():
+        raise AssertionError(
+            "overlay address materialization differs from reference bytes"
+        )
+
+
 def check_celeste_source_boundary(
     directory: Path = CELESTE_DIR,
 ) -> list[Path]:
@@ -798,9 +834,13 @@ def check_platform_game_design() -> None:
     if main.count("main_loop = Game.frame") != 1:
         raise AssertionError("main debug frame binding must name Game.frame")
     permitted = re.compile(
-        r"^(?:#include |include |#bank |#addr |#d8 |data u8 |"
+        r"^(?:#include |include |#bank |#addr |#d8 |data codeptr |"
         r"reset = |main_loop = )"
     )
+    if main.count("data codeptr Platform.reset") != 3:
+        raise AssertionError(
+            "main vector table must contain three semantic code pointers"
+        )
     for number, line in enumerate(main.splitlines(), 1):
         code = line.split(";", 1)[0].strip()
         if code and not permitted.match(code):
@@ -1347,6 +1387,7 @@ def main() -> int:
         stats = check_fixture(tmp_a, tmp_b)
         check_structured_fixture(tmp_a, tmp_b)
         check_variant_fixture(tmp_a, tmp_b)
+        check_overlay_address_fixture(tmp_a, tmp_b)
         check_negative_sources(tmp_a)
         check_downstream_diagnostics(tmp_a)
         check_celeste_boundary_failures(tmp_a)

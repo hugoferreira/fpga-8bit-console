@@ -32,7 +32,7 @@
 ## 4. Extend fixed-overlay semantics
 
 - [x] 4.1 Add semantic `address DESTINATION, OVERLAY.field` resolution and target events
-- [ ] 4.2 Add console6502 address-materialization lowering with exact relocation and clobber fixtures
+- [x] 4.2 Add console6502 address-materialization lowering with exact relocation and clobber fixtures
 - [ ] 4.3 Extend fixed-overlay byte load/store to every evidenced accumulator and physical-index form
 - [ ] 4.4 Add registered fixed-overlay `mov` forms and reject unsupported memory-to-memory combinations
 - [ ] 4.5 Add accumulator compare and the evidenced compare/test-and-branch overlay forms with exact flag contracts
