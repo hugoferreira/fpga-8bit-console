@@ -257,6 +257,18 @@ path). With the masks in place the complete matrix is 50/50
 diagnostic-clean and every WAV byte-identical to the 3.0 render at
 depth 2, making the pre-run depth a free constant for section 3.3.
 
+The first 3.3 family followed at once: prev_r had no consumer at all
+(a phase-increment-slide leftover), and base_r duplicated the pitch
+table's idle read - pinc_addr sits at e_pitch through every K_FX step
+and the earliest consumer runs tens of cycles after the port settles,
+including after the slide detour. Both registers and two of the three
+prefetch states are gone; base_inc is the live port. The arp capture
+deliberately keeps its one-cycle issue-to-capture shape: a walk freeze
+landing in that window lets pinc_q drift before the capture, a latent
+deterministic hazard the reference renders share - fixing it changes
+renders and is its own adjudicated stage. 50/50 byte-identical;
+seed-1 placed 6,317 (-27), routed 40.98 MHz.
+
 Mapped 5,476 LUT4s (-25), 936 carries (-66), 1,512 flip-flops, 15 EBRs;
 seed-1 placed **6,344 cells (-25)**, routed 39.64 MHz. psg_tb passes with
 the sample deadline unchanged at 558/1,275 and worst pre-run completion

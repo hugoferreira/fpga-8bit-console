@@ -447,7 +447,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     S_IDLE,
     T_FL, T_SP, T_LS, T_LE, T_NL, T_NH, T_LD,
     K_ADV, K_NL, K_NH, K_LD, K_ARP, K_ARPC,
-    K_PF0, K_PF1, K_PF2, K_FX,
+    K_PF0, K_FX,
     K_SLP0, K_SLP1, K_SLP2, K_SLPM,
     // The tick engine's advance sequence, one for both banks (abank picks
     // note words 0..2 or instrument words 6..8), and the effect staging
@@ -721,7 +721,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [5:0]  pinc_addr;
   logic [23:0] pinc_q;
   logic [15:0] recip_q;
-  logic [23:0] base_r, prev_r, arp_r;
+  logic [23:0] arp_r;
   logic [5:0] slide_addr;
   wire signed [8:0] arp_raw =
       e_insfx ? ($signed({3'b0, w_cur_pitch}) + $signed({3'b0, arp_p}) - 9'sd24)
@@ -731,8 +731,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
   always_comb begin
     case (sst)
-      K_PF1:   pinc_addr = e_prevp;
-      K_PF2:   pinc_addr = e_arp;
+      // K_PF0 issues the arpeggio row's increment; xs 0 captures it one
+      // cycle later. Deliberately the same one-cycle issue-to-capture shape
+      // as before (then at K_PF2): a walk freeze landing exactly in that
+      // window lets pinc_q drift to e_pitch before the capture - a latent,
+      // deterministic hazard the reference renders share. Fixing it changes
+      // renders and is its own adjudicated stage.
+      K_PF0:   pinc_addr = e_arp;
       K_SLP0:  pinc_addr = slide_addr;
       K_SLP1:  pinc_addr = (slide_addr == 6'd63)
                               ? 6'd63 : slide_addr + 1'b1;
@@ -744,8 +749,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     recip_q <= recip[eff_sp];
   end
 
-  wire [23:0] base_inc = base_r;
-  wire [23:0] prev_inc = prev_r;
+  // The base pitch increment is the LIVE table port: pinc_addr idles at
+  // e_pitch through every K_FX step, and the earliest consumer (the xs4
+  // product) runs tens of cycles after the port settles - including after
+  // the slide detour, whose K_SLP2/K_SLPM states already restore the
+  // default address. The base_r/prev_r prefetch registers this replaces
+  // were a leftover of the phase-increment slide: prev_r had no consumer
+  // at all.
+  wire [23:0] base_inc = pinc_q;
   wire [7:0]  vol_direct  = w_ins_done ? 8'd0
                           : {w_cur_vol, 5'b0} + {3'b0, w_cur_vol, 2'b0};
   wire [7:0]  pvol_direct = {w_prev_vol, 5'b0} + {3'b0, w_prev_vol, 2'b0};
@@ -1385,11 +1396,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           arp_p <= seq_q[5:0];
           sst <= K_PF0;
         end
-        // prefetch the three pitch increments: each state banks what the
-        // previous one addressed and issues the next
-        K_PF0: sst <= K_PF1;
-        K_PF1: begin base_r <= pinc_q; sst <= K_PF2; end
-        K_PF2: begin prev_r <= pinc_q; sst <= K_FX;  end
+        // Issue the arpeggio row's increment; the base increment needs no
+        // prefetch at all - it is the table port's idle read.
+        K_PF0: sst <= K_FX;
         // Effect evaluation, one microinstruction per completed product.
         K_FX: if (!m_busy) begin
           if (xs == 0) arp_r <= pinc_q;
