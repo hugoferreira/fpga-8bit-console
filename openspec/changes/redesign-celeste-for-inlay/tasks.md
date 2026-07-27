@@ -88,9 +88,9 @@
 
 ## 11. Final regression and measurements
 
-- [ ] 11.1 Run strict OpenSpec validation and the complete Inlay portability/conformance suite
-- [ ] 11.2 Run the complete Celeste functional, framebuffer and PSG trace suites against the redesigned image
-- [ ] 11.3 Force the production customasm build and verify deterministic binary, symbols, labels and readmemh outputs
-- [ ] 11.4 Confirm the image fits existing ROM/RAM maps and improves executable instruction count and manual offset setup over Phase A
-- [ ] 11.5 Publish pre/post footprint, instruction, pointer-plumbing and custom-operation adoption measurements
-- [ ] 11.6 Update Inlay/Celeste documentation with namespaces, module APIs, customasm-only output and the new regression contract
+- [x] 11.1 Run strict OpenSpec validation and the complete Inlay portability/conformance suite
+- [x] 11.2 Run the complete Celeste functional, framebuffer and PSG trace suites against the redesigned image
+- [x] 11.3 Force the production customasm build and verify deterministic binary, symbols, labels and readmemh outputs
+- [x] 11.4 Confirm the image fits existing ROM/RAM maps and improves executable instruction count and manual offset setup over Phase A
+- [x] 11.5 Publish pre/post footprint, instruction, pointer-plumbing and custom-operation adoption measurements
+- [x] 11.6 Update Inlay/Celeste documentation with namespaces, module APIs, customasm-only output and the new regression contract

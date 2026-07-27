@@ -757,6 +757,73 @@ The conformance gate independently:
 9. runs the reset-vector, framebuffer and PSG checks against the frontend
    image.
 
+### Phase-B final measurements
+
+The machine-readable snapshots are
+`tests/inlay/reference/celeste-phase-a-baseline.json` and
+`tests/inlay/reference/celeste-phase-b-final.json`. Both are produced by
+`tools/inlay/celeste_redesign_metrics.py` from source plus customasm annotated
+output.
+
+| Metric | Phase A | Phase B | Delta |
+| --- | ---: | ---: | ---: |
+| ROM image | 65,536 B | 65,536 B | 0 |
+| encoded instruction sites | 2,336 | 2,329 | -7 (-0.3%) |
+| executable instruction bytes | 5,142 | 5,161 | +19 (+0.4%) |
+| program span (`$0300` origin) | 12,794 B | 12,813 B | +19 |
+| manual `ldy #O_*` setups | 127 | 0 | -127 (-100%) |
+| raw `(pObj|pOth),y` accesses | 157 | 129 | -28 (-17.8%) |
+
+The instruction-count and manual-offset requirements improve. The small byte
+increase is the visible cost of explicit frame receiver preservation and
+structured boundaries; it is reported rather than treated as an optimization.
+The final program ends at `$350d`, before the object pool at `$5000`, and all
+layout assertions retain the established zero-page, pool, room, overlay and
+MMIO regions.
+
+| Custom/pseudo operation | Phase A | Phase B | Delta |
+| --- | ---: | ---: | ---: |
+| `mov` | 125 | 219 | +94 |
+| `add` | 60 | 57 | -3 |
+| `sub` | 35 | 28 | -7 |
+| `ldab` | 12 | 20 | +8 |
+| `stab` | 12 | 20 | +8 |
+| `addw` | 2 | 6 | +4 |
+| `subw` | 3 | 5 | +2 |
+| `cmpw` | 0 | 0 | 0 |
+| `cbeq` | 2 | 2 | 0 |
+| `cbne` | 5 | 5 | 0 |
+| `cblt` | 3 | 3 | 0 |
+| `cbge` | 3 | 3 | 0 |
+| `tbz` | 12 | 12 | 0 |
+| `tbnz` | 0 | 0 | 0 |
+| `bzero` | 0 | 0 | 0 |
+| `bnzero` | 0 | 0 | 0 |
+
+The final source also contains 89 typed object operations, 50 typed overlay
+operations and 97 explicit semantic offset queries. Those operations and the
+word/move families make the generated assembly intentionally customasm-only;
+cc65 remains a portability gate for the frontend implementation, not an
+encoder for the Phase-B game.
+
+Two forced production builds produced identical binary, symbol, converted
+label, readmemh, generated-assembly and source-map files:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `build/celeste.bin` | `e57a8ea4112c6f16086d6a618254214c453d464d4de9ce19bfa03ac608f53da6` |
+| `build/celeste.sym` | `d2f6ad71aa5740081afc15084ec08c4c6749e2dff9a7124611926e3da339c117` |
+| `build/celeste.lbl` | `29015032ee036fb4b83734c54470ae6c925622b492db45ef52585cdfa63dcec3` |
+| `rtl/ram.hex` | `042958a505c344fa6610f8cfc29702744b09843cf555e5fd9fee52cd5ed2a64a` |
+| `build/inlay/celeste.asm` | `c320cfbc8d6978db8e074991f8883af1bc462858f6c7d3655e9862a2d6141f1b` |
+| `build/inlay/celeste.map.json` | `d6bb4847ee6b7814ed31037a9af494de3af6eb5249c37015f353aa033ecade4c` |
+
+The converted label file contains 1,290 labels. Final acceptance requires the
+strict C89/C99/C++11, cc65 and undefined-behavior frontend gates; full Inlay
+unit/module/conformance tests; strict OpenSpec validation; forced customasm
+artifact determinism; and all boot, gameplay, framebuffer and PSG trace
+checkpoints.
+
 ## Measurements
 
 These host-only measurements use 20 warm runs on the current development

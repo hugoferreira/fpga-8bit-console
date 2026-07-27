@@ -21,6 +21,8 @@ HANDWRITTEN = (
     "draw.inlay.asm",
     "fx.inlay.asm",
     "sound.inlay.asm",
+    "platform.inlay.asm",
+    "game.inlay.asm",
 )
 CUSTOM_OPS = (
     "mov", "add", "sub", "ldab", "stab", "addw", "subw", "cmpw",
@@ -155,6 +157,10 @@ def main() -> int:
     parser.add_argument("--symbols", type=Path, required=True)
     parser.add_argument("--annotated", type=Path, required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--phase", default="celeste-inlay-phase-a",
+        choices=("celeste-inlay-phase-a", "celeste-inlay-phase-b"),
+    )
     args = parser.parse_args()
     args.source = args.source.resolve()
     args.binary = args.binary.resolve()
@@ -193,15 +199,20 @@ def main() -> int:
         for number, line in enumerate(text.splitlines(), 1)
         if (match := re.search(r"\((pObj|pOth)\),\s*y\b", line))
     ]
+    artifacts = {
+        "sourcePortChange": "openspec/changes/port-celeste-sources-to-inlay",
+        "bytePreservingChange":
+            "openspec/changes/refactor-celeste-around-inlay-semantics",
+        "directOracle": "tests/inlay/reference/celeste-customasm",
+    }
+    if args.phase == "celeste-inlay-phase-b":
+        artifacts["redesignChange"] = (
+            "openspec/changes/redesign-celeste-for-inlay"
+        )
     result = {
         "format": 1,
-        "phase": "celeste-inlay-phase-a",
-        "artifacts": {
-            "sourcePortChange": "openspec/changes/port-celeste-sources-to-inlay",
-            "bytePreservingChange":
-                "openspec/changes/refactor-celeste-around-inlay-semantics",
-            "directOracle": "tests/inlay/reference/celeste-customasm",
-        },
+        "phase": args.phase,
+        "artifacts": artifacts,
         "rom": {
             "path": str(args.binary.relative_to(ROOT)),
             "bytes": args.binary.stat().st_size,

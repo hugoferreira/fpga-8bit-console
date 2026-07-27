@@ -1,0 +1,2450 @@
+{
+  "artifacts": {
+    "bytePreservingChange": "openspec/changes/refactor-celeste-around-inlay-semantics",
+    "directOracle": "tests/inlay/reference/celeste-customasm",
+    "redesignChange": "openspec/changes/redesign-celeste-for-inlay",
+    "sourcePortChange": "openspec/changes/port-celeste-sources-to-inlay"
+  },
+  "assembly": {
+    "encodedInstructionSites": 2329,
+    "executableBytes": 5161,
+    "programSpanBytes": 12813,
+    "programSpanEndExclusive": 13581,
+    "programSpanStart": 768
+  },
+  "behavior": {
+    "psgCommandTraceSha256": "0f40c1e74d5de88e5fa973794285010fd20cfdd02e7317451e7ae3f3f0a74ca8",
+    "visualSha256": {
+      "first-room-play": "f6baa171ed5e6f3d4b9689316cc397b50d40436fedf16a9ce0096d71176ed993",
+      "hud": "654a80be192ffa148acc3a9924c4f9b7660671b2a7b017cc239fd0ce8a7c303f",
+      "room-transition": "7520f38e450645c502cfdecdf9668522ee4db7e6b2bac37af8137653a3f29091",
+      "title": "9f6d80ffa88c5b2833c95c6a9b36553133d5e0bd3ea9fc24f66cbcf91d43b53c"
+    }
+  },
+  "format": 1,
+  "legacyCandidates": [
+    {
+      "kind": "lda_sta",
+      "line": 165,
+      "nextLine": 166,
+      "operands": [
+        "(pObj), y",
+        "w0"
+      ],
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 168,
+      "nextLine": 169,
+      "operands": [
+        "(pObj), y",
+        "w0+1"
+      ],
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 176,
+      "nextLine": 177,
+      "operands": [
+        "w0",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 179,
+      "nextLine": 180,
+      "operands": [
+        "w0+1",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 191,
+      "nextLine": 192,
+      "operands": [
+        "(pObj), y",
+        "w1"
+      ],
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 194,
+      "nextLine": 195,
+      "operands": [
+        "(pObj), y",
+        "w1+1"
+      ],
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 87,
+      "nextLine": 88,
+      "operands": [
+        "#0",
+        "[pObj + CelesteObject.core.kind]"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 116,
+      "nextLine": 117,
+      "operands": [
+        "#$FF",
+        "spawn_slot"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 123,
+      "nextLine": 125,
+      "operands": [
+        "#0",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 129,
+      "nextLine": 130,
+      "operands": [
+        "spawn_type",
+        "[pObj + CelesteObject.core.kind]"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 132,
+      "nextLine": 133,
+      "operands": [
+        "Objects.type_tile-1, x",
+        "[pObj + CelesteObject.core.sprite]"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 134,
+      "nextLine": 135,
+      "operands": [
+        "spawn_x",
+        "[pObj + CelesteObject.core.x]"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 136,
+      "nextLine": 137,
+      "operands": [
+        "spawn_y",
+        "[pObj + CelesteObject.core.y]"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 139,
+      "nextLine": 140,
+      "operands": [
+        "#8",
+        "[pObj + CelesteObject.core.hitbox.w]"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 148,
+      "nextLine": 149,
+      "operands": [
+        "Objects.type_init_lo-1, x",
+        "pFn"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 150,
+      "nextLine": 151,
+      "operands": [
+        "Objects.type_init_hi-1, x",
+        "pFn+1"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 194,
+      "nextLine": 195,
+      "operands": [
+        "#0",
+        "[pObj + CelesteObject.core.kind]"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 223,
+      "nextLine": 224,
+      "operands": [
+        "Objects.type_update_lo-1, x",
+        "pFn"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 225,
+      "nextLine": 226,
+      "operands": [
+        "Objects.type_update_hi-1, x",
+        "pFn+1"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 249,
+      "nextLine": 250,
+      "operands": [
+        "Objects.type_draw_lo-1, x",
+        "pFn"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 251,
+      "nextLine": 252,
+      "operands": [
+        "Objects.type_draw_hi-1, x",
+        "pFn+1"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 291,
+      "nextLine": 292,
+      "operands": [
+        "w0+1",
+        "t0"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 312,
+      "nextLine": 313,
+      "operands": [
+        "w0+1",
+        "t0"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_and_branch",
+      "line": 362,
+      "nextLine": 364,
+      "operands": [
+        "[pObj + CelesteObject.core.flags]",
+        "#F_SOLIDS",
+        ".solid"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 376,
+      "nextLine": 377,
+      "operands": [
+        "t1",
+        "c_ox"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_and_branch",
+      "line": 411,
+      "nextLine": 413,
+      "operands": [
+        "[pObj + CelesteObject.core.flags]",
+        "#F_SOLIDS",
+        ".solid"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 426,
+      "nextLine": 427,
+      "operands": [
+        "t1",
+        "c_oy"
+      ],
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "kind": "clc_adc",
+      "line": 42,
+      "nextLine": 43,
+      "operands": [
+        "",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "clc_adc",
+      "line": 48,
+      "nextLine": 49,
+      "operands": [
+        "",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 52,
+      "nextLine": 53,
+      "operands": [
+        "[pObj + CelesteObject.core.hitbox.w]",
+        "c_w"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 54,
+      "nextLine": 55,
+      "operands": [
+        "[pObj + CelesteObject.core.hitbox.h]",
+        "c_h"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 64,
+      "nextLine": 65,
+      "operands": [
+        "c_j",
+        "t3"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 73,
+      "nextLine": 74,
+      "operands": [
+        "c_i",
+        "t5"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_and_branch",
+      "line": 81,
+      "nextLine": 83,
+      "operands": [
+        "tile_flags, y",
+        "c_mask",
+        ".hit"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 85,
+      "nextLine": 87,
+      "operands": [
+        "t5",
+        "c_i1",
+        ".col"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 90,
+      "nextLine": 92,
+      "operands": [
+        "t3",
+        "c_j1",
+        ".row"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 113,
+      "nextLine": 115,
+      "operands": [
+        "#0",
+        "c_i"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 125,
+      "nextLine": 127,
+      "operands": [
+        "#15",
+        "c_i1"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 133,
+      "nextLine": 135,
+      "operands": [
+        "#0",
+        "c_j"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 145,
+      "nextLine": 147,
+      "operands": [
+        "#15",
+        "c_j1"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 178,
+      "nextLine": 179,
+      "operands": [
+        "c_j",
+        "t3"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 187,
+      "nextLine": 188,
+      "operands": [
+        "c_i",
+        "t5"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 204,
+      "nextLine": 205,
+      "operands": [
+        "Collision.hi, x",
+        "pFn+1"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 210,
+      "nextLine": 212,
+      "operands": [
+        "t5",
+        "c_i1",
+        ".col"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 215,
+      "nextLine": 217,
+      "operands": [
+        "t3",
+        "c_j1",
+        ".row"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 49,
+      "nextLine": 50,
+      "operands": [
+        "#1",
+        "[pObj + CelesteObject.core.hitbox.x]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 51,
+      "nextLine": 52,
+      "operands": [
+        "#3",
+        "[pObj + CelesteObject.core.hitbox.y]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 53,
+      "nextLine": 54,
+      "operands": [
+        "#6",
+        "[pObj + CelesteObject.core.hitbox.w]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 55,
+      "nextLine": 56,
+      "operands": [
+        "#5",
+        "[pObj + CelesteObject.core.hitbox.h]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 57,
+      "nextLine": 58,
+      "operands": [
+        "max_djump",
+        "[pObj + CelesteObject.payload.player.dash_jumps]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 59,
+      "nextLine": 60,
+      "operands": [
+        "#1",
+        "[pObj + CelesteObject.core.sprite]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 85,
+      "nextLine": 87,
+      "operands": [
+        "#0",
+        "Player.input"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 95,
+      "nextLine": 96,
+      "operands": [
+        "#0",
+        "c_ox"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_and_branch",
+      "line": 120,
+      "nextLine": 122,
+      "operands": [
+        "(pObj), y",
+        "#Player.bit_ground",
+        ".nosmoke"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_and_branch",
+      "line": 133,
+      "nextLine": 135,
+      "operands": [
+        "(pObj), y",
+        "#Player.bit_jump",
+        ".jumpheld"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 159,
+      "nextLine": 160,
+      "operands": [
+        "#4",
+        "[pObj + CelesteObject.payload.player.jump_buffer]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_and_branch",
+      "line": 164,
+      "nextLine": 166,
+      "operands": [
+        "(pObj), y",
+        "#Player.bit_dash",
+        ".dashheld"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 185,
+      "nextLine": 186,
+      "operands": [
+        "#6",
+        "[pObj + CelesteObject.payload.player.grace]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 187,
+      "nextLine": 189,
+      "operands": [
+        "[pObj + CelesteObject.payload.player.dash_jumps]",
+        "max_djump",
+        ".gracedone"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 192,
+      "nextLine": 193,
+      "operands": [
+        "max_djump",
+        "[pObj + CelesteObject.payload.player.dash_jumps]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 230,
+      "nextLine": 231,
+      "operands": [
+        "(pObj), y",
+        "w2"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 233,
+      "nextLine": 234,
+      "operands": [
+        "(pObj), y",
+        "w2+1"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 243,
+      "nextLine": 244,
+      "operands": [
+        "(pObj), y",
+        "w2"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 246,
+      "nextLine": 247,
+      "operands": [
+        "(pObj), y",
+        "w2+1"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 382,
+      "nextLine": 383,
+      "operands": [
+        "Player.input",
+        "c_ox"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 389,
+      "nextLine": 391,
+      "operands": [
+        "[video + VideoRegisters.random]",
+        "#51",
+        ".fall"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 435,
+      "nextLine": 436,
+      "operands": [
+        "#0",
+        "[pObj + CelesteObject.payload.player.jump_buffer]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 469,
+      "nextLine": 470,
+      "operands": [
+        "#0",
+        "[pObj + CelesteObject.payload.player.jump_buffer]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 541,
+      "nextLine": 542,
+      "operands": [
+        "#4",
+        "[pObj + CelesteObject.payload.player.dash_time]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 544,
+      "nextLine": 545,
+      "operands": [
+        "#10",
+        "[pObj + CelesteObject.payload.player.dash_effect]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 554,
+      "nextLine": 556,
+      "operands": [
+        "#0",
+        "Player.vinput"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_and_branch",
+      "line": 593,
+      "nextLine": 595,
+      "operands": [
+        "[pObj + CelesteObject.core.flip]",
+        "#$01",
+        ".neutralright"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 685,
+      "nextLine": 686,
+      "operands": [
+        "Player.input",
+        "c_ox"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 716,
+      "nextLine": 718,
+      "operands": [
+        "#1",
+        "[pObj + CelesteObject.core.sprite]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 809,
+      "nextLine": 810,
+      "operands": [
+        "#15",
+        "delay_restart"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 826,
+      "nextLine": 828,
+      "operands": [
+        "#$FF",
+        "[pObj + CelesteObject.core.x]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 853,
+      "nextLine": 854,
+      "operands": [
+        "#3",
+        "[pObj + CelesteObject.core.sprite]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 855,
+      "nextLine": 856,
+      "operands": [
+        "[pObj + CelesteObject.core.x]",
+        "[pObj + CelesteObject.payload.spawn.target_x]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 858,
+      "nextLine": 859,
+      "operands": [
+        "(pObj), y",
+        "[pObj + CelesteObject.payload.spawn.target_y]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 860,
+      "nextLine": 861,
+      "operands": [
+        "#127",
+        "[pObj + CelesteObject.core.y]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 887,
+      "nextLine": 889,
+      "operands": [
+        "(pObj), y",
+        "t3",
+        ".done"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 890,
+      "nextLine": 891,
+      "operands": [
+        "#1",
+        "[pObj + CelesteObject.payload.spawn.phase]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 924,
+      "nextLine": 925,
+      "operands": [
+        "[pObj + CelesteObject.payload.spawn.target_y]",
+        "t3"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 927,
+      "nextLine": 929,
+      "operands": [
+        "(pObj), y",
+        "t3",
+        ".done2"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 931,
+      "nextLine": 932,
+      "operands": [
+        "t3",
+        "[pObj + CelesteObject.core.y]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 942,
+      "nextLine": 943,
+      "operands": [
+        "#2",
+        "[pObj + CelesteObject.payload.spawn.phase]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 944,
+      "nextLine": 945,
+      "operands": [
+        "#5",
+        "[pObj + CelesteObject.payload.spawn.delay]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 965,
+      "nextLine": 966,
+      "operands": [
+        "[pObj + CelesteObject.core.x]",
+        "spawn_x"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 968,
+      "nextLine": 969,
+      "operands": [
+        "(pObj), y",
+        "spawn_y"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 994,
+      "nextLine": 995,
+      "operands": [
+        "#29",
+        "[pObj + CelesteObject.core.sprite]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "clc_adc",
+      "line": 1014,
+      "nextLine": 1015,
+      "operands": [
+        "",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "clc_adc",
+      "line": 1021,
+      "nextLine": 1022,
+      "operands": [
+        "",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 1069,
+      "nextLine": 1070,
+      "operands": [
+        "#5",
+        "[pObj + CelesteObject.payload.player.delay]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 23,
+      "nextLine": 24,
+      "operands": [
+        "#0",
+        "[video + VideoRegisters.clip_x0]"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 30,
+      "nextLine": 31,
+      "operands": [
+        "#1",
+        "room_bank"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 57,
+      "nextLine": 58,
+      "operands": [
+        "(pSrc), y",
+        "[room_tiles + RoomTileBuffer.cells[y]]"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 77,
+      "nextLine": 78,
+      "operands": [
+        "Gfx.tile_base, x",
+        "(pDst), y"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 100,
+      "nextLine": 102,
+      "operands": [
+        "ROOMTILES, x",
+        "#TILE_SPAWN",
+        ".nextspawn"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 122,
+      "nextLine": 124,
+      "operands": [
+        "#PLAYFIELD_W",
+        "t3"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 135,
+      "nextLine": 136,
+      "operands": [
+        "t3",
+        "[video + VideoRegisters.camera_x]"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 137,
+      "nextLine": 138,
+      "operands": [
+        "#0",
+        "camera_y"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 143,
+      "nextLine": 144,
+      "operands": [
+        "#0",
+        "spawn_x"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 160,
+      "nextLine": 162,
+      "operands": [
+        "Room.cue_level, x",
+        "level",
+        ".play"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 203,
+      "nextLine": 205,
+      "operands": [
+        "[pObj + CelesteObject.core.kind]",
+        "#ObjectKind.player",
+        ".found"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 223,
+      "nextLine": 225,
+      "operands": [
+        "#0",
+        "camera_y"
+      ],
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 39,
+      "nextLine": 40,
+      "operands": [
+        "nspr",
+        "[video + VideoRegisters.split]"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 46,
+      "nextLine": 47,
+      "operands": [
+        "nspr",
+        "[video + VideoRegisters.sprite_count]"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 140,
+      "nextLine": 141,
+      "operands": [
+        "t4",
+        "[video + VideoRegisters.sprite_x]"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 143,
+      "nextLine": 144,
+      "operands": [
+        "t3",
+        "[video + VideoRegisters.sprite_flags]"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 215,
+      "nextLine": 216,
+      "operands": [
+        "[pObj + CelesteObject.core.x]",
+        "t3"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 217,
+      "nextLine": 218,
+      "operands": [
+        "[pObj + CelesteObject.core.y]",
+        "t4"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 222,
+      "nextLine": 223,
+      "operands": [
+        "#0",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 225,
+      "nextLine": 226,
+      "operands": [
+        "t3",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 228,
+      "nextLine": 229,
+      "operands": [
+        "#0",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 231,
+      "nextLine": 232,
+      "operands": [
+        "t4",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 256,
+      "nextLine": 258,
+      "operands": [
+        "Draw.hair_palette, x",
+        "hair_col"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_and_branch",
+      "line": 276,
+      "nextLine": 278,
+      "operands": [
+        "[pObj + CelesteObject.core.flip]",
+        "#1",
+        ".faceright"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "clc_adc",
+      "line": 285,
+      "nextLine": 286,
+      "operands": [
+        "",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "clc_adc",
+      "line": 297,
+      "nextLine": 298,
+      "operands": [
+        "",
+        "(pObj), y"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 334,
+      "nextLine": 335,
+      "operands": [
+        "hair_col",
+        "t3"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 420,
+      "nextLine": 421,
+      "operands": [
+        "pDst",
+        "OVLROW_LO, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 422,
+      "nextLine": 423,
+      "operands": [
+        "pDst+1",
+        "OVLROW_HI, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 437,
+      "nextLine": 438,
+      "operands": [
+        "#1",
+        "ovl_dirty"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 470,
+      "nextLine": 472,
+      "operands": [
+        "[pObj + CelesteObject.core.kind]",
+        "#ObjectKind.title",
+        ".yes"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 480,
+      "nextLine": 482,
+      "operands": [
+        "seconds",
+        "hud_secs",
+        ".nochange"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 505,
+      "nextLine": 506,
+      "operands": [
+        "OVLSHADOW+$000, x",
+        "OVL+$000, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 507,
+      "nextLine": 508,
+      "operands": [
+        "OVLSHADOW+$100, x",
+        "OVL+$100, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 509,
+      "nextLine": 510,
+      "operands": [
+        "OVLSHADOW+$200, x",
+        "OVL+$200, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 511,
+      "nextLine": 512,
+      "operands": [
+        "OVLSHADOW+$300, x",
+        "OVL+$300, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 513,
+      "nextLine": 514,
+      "operands": [
+        "OVLSHADOW+$400, x",
+        "OVL+$400, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 515,
+      "nextLine": 516,
+      "operands": [
+        "OVLSHADOW+$500, x",
+        "OVL+$500, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 517,
+      "nextLine": 518,
+      "operands": [
+        "OVLSHADOW+$600, x",
+        "OVL+$600, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 519,
+      "nextLine": 520,
+      "operands": [
+        "OVLSHADOW+$700, x",
+        "OVL+$700, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 521,
+      "nextLine": 522,
+      "operands": [
+        "OVLSHADOW+$800, x",
+        "OVL+$800, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 526,
+      "nextLine": 527,
+      "operands": [
+        "OVLSHADOW+$900, x",
+        "OVL+$900, x"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 568,
+      "nextLine": 569,
+      "operands": [
+        "[overlay_rows + OverlayRowPointers.low[y]]",
+        "pOvl"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 570,
+      "nextLine": 571,
+      "operands": [
+        "[overlay_rows + OverlayRowPointers.high[y]]",
+        "pOvl+1"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 596,
+      "nextLine": 598,
+      "operands": [
+        "(pSrc), y",
+        "#Draw.glyph_end",
+        ".done"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 53,
+      "nextLine": 54,
+      "operands": [
+        "#0",
+        "CL_XL, x"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 66,
+      "nextLine": 67,
+      "operands": [
+        "[video + VideoRegisters.random]",
+        "CL_SL, x"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 76,
+      "nextLine": 77,
+      "operands": [
+        "[video + VideoRegisters.random]",
+        "PA_XL, x"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 81,
+      "nextLine": 82,
+      "operands": [
+        "[video + VideoRegisters.random]",
+        "PA_YL, x"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_and_branch",
+      "line": 89,
+      "nextLine": 91,
+      "operands": [
+        "[video + VideoRegisters.random]",
+        "#1",
+        ".grey"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 95,
+      "nextLine": 97,
+      "operands": [
+        "#Gfx.palette_6",
+        "PA_ATTR, x"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 98,
+      "nextLine": 99,
+      "operands": [
+        "[video + VideoRegisters.random]",
+        "PA_OFF, x"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "clc_adc",
+      "line": 114,
+      "nextLine": 115,
+      "operands": [
+        "",
+        "CL_SL, x"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 136,
+      "nextLine": 137,
+      "operands": [
+        "#0",
+        "CL_XL, x"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 142,
+      "nextLine": 144,
+      "operands": [
+        "#119",
+        "CL_Y, x"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "clc_adc",
+      "line": 152,
+      "nextLine": 153,
+      "operands": [
+        "",
+        "PA_SL, x"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "clc_adc",
+      "line": 168,
+      "nextLine": 169,
+      "operands": [
+        "",
+        "Fx.sin_low, y"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 175,
+      "nextLine": 177,
+      "operands": [
+        "PA_XH, x",
+        "#133",
+        ".nextpart"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 180,
+      "nextLine": 181,
+      "operands": [
+        "#$FC",
+        "PA_XH, x"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 212,
+      "nextLine": 213,
+      "operands": [
+        "CL_W, x",
+        "[video + VideoRegisters.repeat]"
+      ],
+      "path": "src/celeste/fx.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 34,
+      "nextLine": 35,
+      "operands": [
+        "(pSrc), y",
+        "[psg + PsgRegisters.data]"
+      ],
+      "path": "src/celeste/sound.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 43,
+      "nextLine": 44,
+      "operands": [
+        "#0",
+        "nextch"
+      ],
+      "path": "src/celeste/sound.inlay.asm"
+    },
+    {
+      "kind": "lda_and_branch",
+      "line": 67,
+      "nextLine": 69,
+      "operands": [
+        "Audio.channel_bits, y",
+        "t0",
+        ".go"
+      ],
+      "path": "src/celeste/sound.inlay.asm"
+    },
+    {
+      "kind": "lda_and_branch",
+      "line": 79,
+      "nextLine": 81,
+      "operands": [
+        "Audio.channel_bits, y",
+        "PSG_MUSMASK",
+        ".steal"
+      ],
+      "path": "src/celeste/sound.inlay.asm"
+    },
+    {
+      "kind": "lda_cmp_branch",
+      "line": 31,
+      "nextLine": 34,
+      "operands": [
+        "[video + VideoRegisters.frame]",
+        "SPR_FRAME",
+        ".wait"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 42,
+      "nextLine": 43,
+      "operands": [
+        "btn",
+        "btnprev"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 44,
+      "nextLine": 45,
+      "operands": [
+        "[video + VideoRegisters.buttons]",
+        "btn"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 54,
+      "nextLine": 55,
+      "operands": [
+        "Gfx.draw_palette, x",
+        "SPR_DPAL, x"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 65,
+      "nextLine": 66,
+      "operands": [
+        "#0",
+        "[video + VideoRegisters.sheet_address_low]"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 68,
+      "nextLine": 69,
+      "operands": [
+        "#<Gfx.sheet",
+        "pSrc"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 70,
+      "nextLine": 71,
+      "operands": [
+        "#>Gfx.sheet",
+        "pSrc+1"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 72,
+      "nextLine": 73,
+      "operands": [
+        "#<Gfx.upload_bytes",
+        "t0"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 74,
+      "nextLine": 75,
+      "operands": [
+        "#>Gfx.upload_bytes",
+        "t1"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 78,
+      "nextLine": 79,
+      "operands": [
+        "(pSrc), y",
+        "[video + VideoRegisters.sheet_data]"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 23,
+      "nextLine": 24,
+      "operands": [
+        "#0",
+        "frames"
+      ],
+      "path": "src/celeste/game.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 63,
+      "nextLine": 64,
+      "operands": [
+        "#0",
+        "frames"
+      ],
+      "path": "src/celeste/game.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 78,
+      "nextLine": 79,
+      "operands": [
+        "#0",
+        "frames"
+      ],
+      "path": "src/celeste/game.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 139,
+      "nextLine": 140,
+      "operands": [
+        "#0",
+        "shake_x"
+      ],
+      "path": "src/celeste/game.inlay.asm"
+    }
+  ],
+  "objectOffsetSites": [],
+  "phase": "celeste-inlay-phase-b",
+  "rawObjectIndirectSites": [
+    {
+      "base": "pObj",
+      "line": 165,
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 168,
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 177,
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 180,
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 191,
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 194,
+      "path": "src/celeste/math.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 125,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 144,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 295,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 297,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 316,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 318,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 367,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 369,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 383,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 385,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 394,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 396,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 398,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 400,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 416,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 418,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 432,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 434,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 443,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 445,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 447,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 449,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 43,
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 49,
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 233,
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 260,
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 264,
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 282,
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 286,
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 304,
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 120,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 133,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 138,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 140,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 148,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 150,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 153,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 156,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 164,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 169,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 171,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 179,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 181,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 197,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 200,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 211,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 218,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 230,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 233,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 243,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 246,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 334,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 336,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 341,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 343,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 347,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 349,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 401,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 440,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 443,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 447,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 473,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 476,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 487,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 490,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 512,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 526,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 536,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 630,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 632,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 638,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 641,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 651,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 654,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 656,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 658,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 668,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 671,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 679,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 682,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 705,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 707,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 720,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 831,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 833,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 858,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 864,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 867,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 869,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 871,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 887,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 894,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 912,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 915,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 918,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 920,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 927,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 935,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 937,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 939,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 941,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 950,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 962,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 968,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 998,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 1001,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 1006,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 1009,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 1015,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 1016,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 1022,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 1023,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 1028,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 1030,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 214,
+      "path": "src/celeste/room.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 163,
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 179,
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 223,
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 226,
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 229,
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 232,
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 286,
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "base": "pObj",
+      "line": 298,
+      "path": "src/celeste/draw.inlay.asm"
+    }
+  ],
+  "rom": {
+    "bytes": 65536,
+    "path": "build/celeste.bin",
+    "sha256": "e57a8ea4112c6f16086d6a618254214c453d464d4de9ce19bfa03ac608f53da6"
+  },
+  "source": {
+    "customOperations": {
+      "add": 57,
+      "addw": 6,
+      "bnzero": 0,
+      "bzero": 0,
+      "cbeq": 2,
+      "cbge": 3,
+      "cblt": 3,
+      "cbne": 5,
+      "cmpw": 0,
+      "ldab": 20,
+      "mov": 219,
+      "stab": 20,
+      "sub": 28,
+      "subw": 5,
+      "tbnz": 0,
+      "tbz": 12
+    },
+    "legacyCandidateCounts": {
+      "clc_adc": 9,
+      "lda_and_branch": 11,
+      "lda_cmp_branch": 16,
+      "lda_sta": 135
+    },
+    "objectOffsetSetups": 0,
+    "rawObjectIndirects": 129
+  },
+  "symbols": {
+    "path": "build/celeste.sym",
+    "sha256": "d2f6ad71aa5740081afc15084ec08c4c6749e2dff9a7124611926e3da339c117"
+  }
+}

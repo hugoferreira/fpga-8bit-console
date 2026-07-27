@@ -1278,6 +1278,45 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
         raise AssertionError(
             f"Celeste ROM size changed: expected 65536, got {len(frontend_bytes)}"
         )
+    metrics_path = (
+        ROOT / "tests/inlay/reference/celeste-phase-b-final.json"
+    )
+    metrics = json.loads(metrics_path.read_text(encoding="ascii"))
+    expected_assembly = {
+        "encodedInstructionSites": 2329,
+        "executableBytes": 5161,
+        "programSpanBytes": 12813,
+        "programSpanEndExclusive": 13581,
+        "programSpanStart": 768,
+    }
+    if metrics.get("phase") != "celeste-inlay-phase-b":
+        raise AssertionError("Celeste final metrics phase changed")
+    if metrics.get("assembly") != expected_assembly:
+        raise AssertionError("Celeste final assembly measurements changed")
+    if metrics.get("rom", {}).get("bytes") != len(frontend_bytes):
+        raise AssertionError("Celeste final metric ROM size is stale")
+    if metrics.get("rom", {}).get("sha256") != digest:
+        raise AssertionError("Celeste final metric ROM digest is stale")
+    measured_source = metrics.get("source", {})
+    if measured_source.get("objectOffsetSetups") != offset_setups:
+        raise AssertionError("Celeste final offset measurement is stale")
+    if measured_source.get("rawObjectIndirects") != raw_indirects:
+        raise AssertionError("Celeste final indirect measurement is stale")
+    custom_operations = {
+        operation: sum(
+            len(re.findall(
+                rf"^\s*{operation}\b", text, re.MULTILINE
+            ))
+            for text in module_texts
+        )
+        for operation in (
+            "mov", "add", "sub", "ldab", "stab", "addw", "subw", "cmpw",
+            "cbeq", "cbne", "cblt", "cbge", "tbz", "tbnz", "bzero",
+            "bnzero",
+        )
+    }
+    if measured_source.get("customOperations") != custom_operations:
+        raise AssertionError("Celeste final custom-operation metrics are stale")
     return (
         len(frontend_bytes), digest, overlay_operations,
         offset_setups, raw_indirects,
