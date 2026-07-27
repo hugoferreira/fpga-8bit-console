@@ -120,6 +120,20 @@ def saw_alt(x: int) -> int:
     return tz(tz(x - 32768, 4) + tz((x // 2) - 32768, 4), 2)
 
 
+CUSTOM_SHIFT = 7
+
+
+def custom_wave(table: list[int], x: int) -> int:
+    """The 64-entry custom waveform: 10-fractional-bit lerp, arithmetic
+    final shift (floor). Table entries are the record's signed bytes at
+    the engine's load scale."""
+    i = (x >> 10) & 63
+    f = x & 1023
+    w0 = table[i] << CUSTOM_SHIFT
+    w1 = table[(i + 1) & 63] << CUSTOM_SHIFT
+    return (w0 * 1024 + (w1 - w0) * f) >> 10
+
+
 def wave_pair(w: int, p: int, q0: int, mode: int, alt: bool = False) -> int:
     """The pre-scale oscillator value: primary plus half-weight secondary.
     `alt` is the BUZZ/alternate flag at oscillator-state +0x54."""
@@ -154,6 +168,7 @@ def scale(g: int, z: int) -> int:
 
 class Sfx:
     def __init__(self, blob: bytes):
+        self.raw = blob[:64]          # the 64 note bytes, wavetable source
         self.notes = []
         for i in range(32):
             lo, hi = blob[2 * i], blob[2 * i + 1]
@@ -189,7 +204,8 @@ def load_sfx(bin_path: Path, index: int) -> Sfx:
 class OscState:
     """Everything _mix_osc_tick_new consumes for one tick's render."""
 
-    __slots__ = ("wave", "dp", "dq", "g", "p", "q0", "mode", "alt")
+    __slots__ = ("wave", "dp", "dq", "g", "p", "q0", "mode", "alt",
+                 "table", "bass")
 
     def __init__(self):
         self.wave = 0
@@ -200,6 +216,8 @@ class OscState:
         self.q0 = 0
         self.mode = 0
         self.alt = False
+        self.table = None
+        self.bass = False
 
     def copy(self) -> "OscState":
         o = OscState()
@@ -213,8 +231,14 @@ class OscState:
             if self.g == 0:
                 out.append(0)
             else:
-                out.append(scale(self.g, wave_pair(
-                    self.wave, self.p, self.q0, self.mode, self.alt)))
+                if self.wave == 8:
+                    q = u16(self.q0 << (1 if self.mode == 2 else 0))
+                    z = (custom_wave(self.table, self.p)
+                         + tz(custom_wave(self.table, q), 2))
+                else:
+                    z = wave_pair(self.wave, self.p, self.q0,
+                                  self.mode, self.alt)
+                out.append(scale(self.g, z))
                 self.p = u16(self.p + self.dp)
                 self.q0 = (self.q0 + self.dq) & 0x1FFFF
         return out
@@ -232,8 +256,43 @@ def dq_for(wave: int, mode: int, dp: int) -> int:
     return tz(dp * k, 256)
 
 
-def calc_tick_state(sfx: Sfx, pos: int, prev: OscState) -> OscState:
-    """_calculate_osc_state for basic instruments."""
+class InsState:
+    """The custom/meta-instrument playhead riding a note."""
+
+    def __init__(self):
+        self.on = False
+        self.ins_id = -1
+        self.pos = 0
+        self.prev_pitch = 24
+        self.prev_vol = 0
+        self.done = False
+        self.last_row = 0
+        self.last_row_pitch = 24
+        self.last_row_vol = 0
+
+
+def ins_row_of(ins: Sfx, pos: int) -> tuple[int, bool]:
+    """The instrument's row for playhead pos, honoring its loop rules.
+    Returns (row, done)."""
+    d = ins.speed
+    n = tz(pos, d)
+    if ins.loop_start < ins.loop_end:
+        span = ins.loop_end
+        if n >= span:
+            body = ins.loop_end - ins.loop_start
+            n = ins.loop_start + (n - ins.loop_start) % body
+        return n, False
+    length = (min(ins.loop_start, 32) if ins.loop_start > 0
+              and ins.loop_end == 0 else 32)
+    if n >= length:
+        return 0, True
+    return n, False
+
+
+def calc_tick_state(sfx: Sfx, pos: int, prev: OscState,
+                    ins: InsState = None, get_sfx=None) -> OscState:
+    """_calculate_osc_state: basic instruments, dispatching custom notes
+    to the meta-instrument path."""
     d = sfx.speed
     n = tz(pos, d)
     t = pos - n * d
@@ -242,6 +301,10 @@ def calc_tick_state(sfx: Sfx, pos: int, prev: OscState) -> OscState:
         st.g = 0
         return st
     note = sfx.notes[n]
+    if note["custom"] and get_sfx is not None:
+        return calc_tick_custom(sfx, get_sfx, pos, prev, ins, note, n, t)
+    if ins is not None:
+        ins.on = False
     p0 = note["pitch"] << 16
     a0 = note["vol"] << 8
     fx = note["fx"]
@@ -293,7 +356,146 @@ def calc_tick_state(sfx: Sfx, pos: int, prev: OscState) -> OscState:
     return st
 
 
-def render_voice(sfx: Sfx, ticks: int) -> list[int]:
+def pclamp(v: int) -> int:
+    return max(0, min(63, v))
+
+
+def effect_pitch_amp(notes, n: int, t: int, d: int, pos: int,
+                     prev_pitch: int, prev_vol: int) -> tuple[int, int, int]:
+    """The pitch/amplitude half of the effect dispatch for a note list in
+    its own timing context. Returns (p_1616, a, fx)."""
+    note = notes[n]
+    p0 = note["pitch"] << 16
+    a0 = note["vol"] << 8
+    fx = note["fx"]
+    p_1616, a = p0, a0
+    if fx == 1:
+        ps = (24 << 16) if n == 0 else (prev_pitch << 16)
+        a_s = a0 if n == 0 else (prev_vol << 8)
+        p_1616 = tz((d - t) * ps + t * p0, d)
+        a = tz((d - t) * a_s + t * a0, d)
+    elif fx == 4:
+        a = tz(a0 * t, d)
+    elif fx == 5:
+        a = tz(a0 * (d - t), d)
+    elif fx in (6, 7):
+        q_div = (2 if fx == 6 else 4) if d <= 8 else (4 if fx == 6 else 8)
+        sel = (n & 0x1C) + (tz(pos, q_div) % 4)
+        p_1616 = notes[sel]["pitch"] << 16
+    return p_1616, a, fx
+
+
+def calc_tick_custom(sfx: Sfx, get_sfx, pos: int, prev: OscState,
+                     ins: InsState, note, n: int, t: int) -> OscState:
+    """The meta-instrument path: the note plays through instrument SFX
+    note.wave, whose row supplies waveform/pitch-offset/volume-multiplier
+    and whose filter byte joins the note's."""
+    d = sfx.speed
+    iid = note["wave"] & 0x07
+    irec = get_sfx(iid)
+
+    # Retrigger at note-row boundaries: new instrument, pitch change,
+    # silent previous row, or effect 3 (which means retrigger, not drop).
+    if t == 0:
+        row_prev_pitch = 24 if n == 0 else sfx.notes[n - 1]["pitch"]
+        row_prev_vol = 0 if n == 0 else sfx.notes[n - 1]["vol"]
+        if (not ins.on or ins.ins_id != iid
+                or note["pitch"] != row_prev_pitch
+                or row_prev_vol == 0
+                or note["fx"] == 3):
+            ins.on = True
+            ins.ins_id = iid
+            ins.pos = 0
+            ins.prev_pitch = 24
+            ins.prev_vol = 0
+            ins.done = False
+        else:
+            ins.pos += 1
+    else:
+        ins.pos += 1
+
+    wavetable = bool(irec.loop_start & 0x80)
+    st = OscState()
+
+    if wavetable:
+        st.wave = 8
+        st.table = [b - 256 if b >= 128 else b for b in irec.raw]
+        # Octave-down when the speed byte's bit 0 is CLEAR: the
+        # waveform-instrument export (speed 1) runs at full rate, twice the
+        # halved guess - measured, not assumed.
+        st.bass = not (irec.speed & 1)
+        np_1616, a, _ = effect_pitch_amp(
+            sfx.notes, n, t, d, pos,
+            24 if n == 0 else sfx.notes[n - 1]["pitch"],
+            0 if n == 0 else sfx.notes[n - 1]["vol"])
+        dp = dx_clamped(np_1616)
+        if st.bass:
+            dp = tz(dp, 2)
+        st.dp = dp
+        st.dq = dp
+        st.mode = sfx.detune
+        st.alt = bool(sfx.buzz)
+        st.g = tz(3 * a, 2)
+    else:
+        irow, ins.done = ins_row_of(irec, ins.pos)
+        if irow != ins.last_row:
+            ins.prev_pitch = ins.last_row_pitch
+            ins.prev_vol = ins.last_row_vol
+            ins.last_row = irow
+        inote = irec.notes[irow]
+        ins.last_row_pitch = inote["pitch"]
+        ins.last_row_vol = inote["vol"]
+        d_ins = irec.speed
+        t_ins = ins.pos - tz(ins.pos, d_ins) * d_ins
+
+        nfx = 0 if note["fx"] == 3 else note["fx"]
+        use_ins_fx = (nfx == 0 and inote["fx"] != 0)
+
+        if use_ins_fx:
+            ip, ia, ifx = effect_pitch_amp(
+                irec.notes, irow, t_ins, d_ins, ins.pos,
+                ins.prev_pitch, ins.prev_vol)
+            comp_pitch = pclamp(note["pitch"] + (ip >> 16) - 24)
+            p_1616 = (comp_pitch << 16) | (ip & 0xFFFF)
+            a = tz((note["vol"] << 8) * (ia >> 8), 7)
+            fx_ctx = (ifx, d_ins, t_ins, ins.pos)
+        else:
+            np_1616, na, nfx2 = effect_pitch_amp(
+                sfx.notes, n, t, d, pos,
+                24 if n == 0 else sfx.notes[n - 1]["pitch"],
+                0 if n == 0 else sfx.notes[n - 1]["vol"])
+            comp_pitch = pclamp((np_1616 >> 16) + inote["pitch"] - 24)
+            p_1616 = (comp_pitch << 16) | (np_1616 & 0xFFFF)
+            a = tz(na * inote["vol"], 7)
+            fx_ctx = (nfx2, d, t, pos)
+
+        if ins.done:
+            a = 0
+
+        st.wave = inote["wave"]
+        dp = dx_clamped(p_1616)
+        fx, dd, tt, ppos = fx_ctx
+        if fx == 2:
+            m = [128, 129, 130, 129, 128, 127, 126, 127][(ppos >> 1) & 7]
+            dp = (dx_clamped((p_1616 >> 16) << 16) * m) >> 7
+        elif fx == 3:
+            dp = tz(dx_clamped(p_1616) * (dd - tt), dd)
+        st.dp = dp
+        st.mode = sfx.detune
+        st.alt = bool(sfx.buzz)
+        st.dq = dq_for(st.wave, st.mode, dp)
+        if st.mode > 0 and st.wave <= 5:
+            a = tz(5 * a, 4)
+        st.g = tz(3 * a, 2)
+
+    if st.g == 0:
+        st.p, st.q0 = 0, 0
+    else:
+        st.p, st.q0 = prev.p, prev.q0
+    return st
+
+
+def render_voice(sfx: Sfx, ticks: int, get_sfx=None) -> list[int]:
     """_mix_sfx_tick: per tick, render new state, blend 64 samples of old.
 
     The eight-slot history comb the RE notes describe for waveform 7 (and
@@ -306,9 +508,10 @@ def render_voice(sfx: Sfx, ticks: int) -> list[int]:
     its 254/256-detuned secondary."""
     out: list[int] = []
     cur = OscState()                          # silent pre-trigger state
+    ins = InsState()
     for pos in range(ticks):
         old = cur.copy()
-        cur = calc_tick_state(sfx, pos, cur)
+        cur = calc_tick_state(sfx, pos, cur, ins, get_sfx)
         new_samples = cur.render(TICK_SAMPLES)
         old_samples = old.render(BLEND_SAMPLES)
         for i in range(BLEND_SAMPLES):
@@ -333,9 +536,37 @@ def soft_add(a: int, b: int) -> int:
     return s
 
 
+def mix_tree(leaves: list[list[int]]) -> list[int]:
+    """The fixed 8-leaf pairwise reduction:
+    (0+1)(2+3)(4+5)(6+7) -> (01+23)(45+67) -> final."""
+    n = max(len(l) for l in leaves if l) if any(leaves) else 0
+    out = []
+    for i in range(n):
+        v = [l[i] if l and i < len(l) else 0 for l in leaves]
+        l1 = [soft_add(v[0], v[1]), soft_add(v[2], v[3]),
+              soft_add(v[4], v[5]), soft_add(v[6], v[7])]
+        l2 = [soft_add(l1[0], l1[1]), soft_add(l1[2], l1[3])]
+        out.append(soft_add(l2[0], l2[1]))
+    return out
+
+
 def mix_single(voice: list[int]) -> list[int]:
-    """The 8-leaf tree with seven zero leaves: three soft_adds."""
+    """A lone voice through the tree: three soft_adds against zeros."""
     return [soft_add(soft_add(soft_add(v, 0), 0), 0) for v in voice]
+
+
+def render_case(bin_path: Path, ticks: int) -> list[int]:
+    """Music-launch pattern 0: each enabled channel c plays its SFX on
+    music slot 4+c, i.e. tree leaves 4..7."""
+    blob = bin_path.read_bytes()
+    leaves: list[list[int]] = [[] for _ in range(8)]
+    for c in range(4):
+        b = blob[c]
+        if not (b & 0x40):
+            leaves[4 + c] = render_voice(
+                load_sfx(bin_path, b & 0x3F), ticks,
+                get_sfx=lambda i: load_sfx(bin_path, i))
+    return mix_tree(leaves)
 
 
 def write_wav(path: Path, samples: list[int]) -> None:

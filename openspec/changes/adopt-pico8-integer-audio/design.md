@@ -76,9 +76,31 @@ The additional decoded facts:
   boundary alongside the shared RNG; the phaser's export-visible
   identity is the triangle core with the 254/256 secondary.
 
-Remaining model scope: custom/meta-instrument voices, multi-voice
-mixes, transitions, music flow, dampen - then the reference
-re-capture.
+**Third milestone: 43/43 cases byte-exact** - the soft_add tree with
+real multi-voice content (mix-four crosses the compression threshold),
+all three transitions (free: the crossfade machinery already models
+them), the complete meta-instrument family, and the wavetable voice.
+Decoded and confirmed on the way:
+
+- Music-launched channels occupy tree leaves 4..7; the pairwise order
+  and 5:1 compression verified byte-exact under load.
+- The instrument volume composition is `a = tz(a * iv / 7)` with iv the
+  raw 0..7 row volume - exact sevenths, confirmed through
+  sfx-instrument-volume. The RTL's `(nv*iv*1317) >> 8` is the
+  approximation it replaces.
+- Retrigger rules, the per-tick playhead advance, per-instrument-row
+  prev tracking and the instrument-effect context (the instrument's own
+  speed/tick/pos timing when the note's effect is 0) all verified
+  through the eight sfx-instrument variants.
+- The wavetable voice: record bytes as signed samples at load shift 7,
+  the 10-fractional-bit lerp, full volume from the note path - and the
+  octave-down applies when the speed byte's bit 0 is CLEAR, the
+  opposite of the RTL comment's rule (convicted by the export's 2x
+  rate; the RTL list of adoption fixes grows: 109/110 -> 254/256,
+  bass-rule inversion, 1317-composition -> tz(a*iv/7)).
+
+Remaining model scope: pattern-chain (music flow), dampen, reverb -
+then the reference re-capture. Noise stays at the RNG boundary.
 
 Constraints inherited from `reduce-psg-ice40-area`, which pauses at its
 6,199-cell / 15-EBR checkpoint until this change lands: the 15-EBR
