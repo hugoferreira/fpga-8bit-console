@@ -32,6 +32,7 @@ static_assert HeaderView.flags.offset == 17
 
 #include "../../src/isa/nmos6502.asm"
 #include "../../src/isa/ext_core.asm"
+#include "../../src/isa/pseudo.asm"
 
 #bankdef overlay_address { #addr 0x0400, #size 0x0100, #outp 0 }
 #bank overlay_address
@@ -47,6 +48,21 @@ start:
     cmp [video + HeaderView.flags]
     lda [framebuffer + FramebufferPages.page0[y]]
     sta [framebuffer + FramebufferPages.page9[y]]
+    stx [game + GameState.frames]
+    sty [game + GameState.frames]
+    ldx [game + GameState.frames]
+    ldy [game + GameState.frames]
+    and [game + GameState.flags]
+    ora [game + GameState.flags]
+    add [game + GameState.flags]
+    sub [game + GameState.flags]
+    mov [game + GameState.frames], #7
+    sta [framebuffer + FramebufferPages.page0[x]]
+    adc [framebuffer + FramebufferPages.page0[x]]
+    sbc [framebuffer + FramebufferPages.page0[x]]
+spin:
+    cblt [game + GameState.frames], #5, spin
+    tbz [game + GameState.flags], #1, spin
     rts
 
 TILE_RAM = $f000
