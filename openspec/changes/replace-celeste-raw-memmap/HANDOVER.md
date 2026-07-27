@@ -71,6 +71,24 @@ Frontend operation matrix (the forms the migration needed):
   so scoped constants in the tail resolve.
 - 5.5 — every numeric region boundary pinned to the typed layout.
 
+**RESOLVED (commit `inlay: parse qualified return-placement locations`).** Only
+gap 1 below was real. The one-line return-branch change (`la_read_identifier` →
+`la_read_qualified_identifier`, ~line 2232) is landed. Gap 2 was a
+**misdiagnosis**: qualified placement *resolution* already works, because a
+`location left : u16 at $08` inside `namespace Fixed` is interned with its
+qualified name `Fixed.left`, and `la_find_location_text` matches on exactly that
+name — no namespace-aware split is needed. The earlier "multi-module failure"
+was the flawed repro referencing `Fixed.left` before declaring it (a placement
+to an *undeclared* qualified location correctly fails with `member-placement …
+(declared qualified location)`). Verified: declaring `Fixed.left/right/out` and
+placing both a parameter (`in Fixed.left`) and a return (`return in Fixed.left`)
+in the full Celeste build resolves and keeps the ROM at `e57a8ea4`. **6.7 is now
+mechanical**: declare each owner location, then place params/returns there
+(qualified across modules, or unqualified inside the owning namespace via the
+enclosing-namespace resolver). Do NOT add a `la_find_location_qualified` helper.
+
+Historical diagnosis (kept for context; gap 2 does not apply):
+
 **Blocker for the remaining scratch migration (6.7+) — qualified placement
 resolution.** Three 6.7 attempts were reverted diagnosing this; the migration is
 mechanical *except* for procedure placement clauses, which the frontend does not
