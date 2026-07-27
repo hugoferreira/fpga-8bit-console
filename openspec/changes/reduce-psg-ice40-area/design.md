@@ -458,20 +458,64 @@ evaluate the recovered integer triangle, tilted saw, saw, square, pulse, organ
 and phaser formulae without a second datapath. Noise and custom-wavetable
 behavior remain separate.
 
-The retained hybrid stores triangle, tilted saw, saw and organ in a compact
-1,024-byte synchronous ROM. Square and pulse are their exact phase-threshold
-functions (`0x80` and `0xb0`); noise and phaser continue through their existing
-synthesis paths. This reduces the waveform store from four EBRs to two and
-brings the standalone total from 17 to the 15-EBR ceiling. The isolated change
-costs 46 seed-1 placed cells (6,831 to 6,877), so it is retained specifically
-for the binding BRAM resource and not credited as an LC reduction. The
-complete 50-case matrix, including both threshold discontinuities, remains
-diagnostic-clean.
+The first retained hybrid stored triangle, tilted saw, saw and organ in a
+compact 1,024-byte synchronous ROM. Square and pulse became their exact
+phase-threshold functions (`0x80` and `0xb0`); noise and phaser continued
+through their existing synthesis paths. That reduced the waveform store from
+four EBRs to two and brought the standalone total from 17 to the 15-EBR
+ceiling. The isolated change cost 46 seed-1 placed cells (6,831 to 6,877), so
+it was retained specifically for the binding BRAM resource and not credited as
+an LC reduction. The complete 50-case matrix, including both threshold
+discontinuities, remained diagnostic-clean.
 
-A hybrid ROM/formula layout is preferred to calculating the four non-trivial
-shapes until a shared byte-serial waveform service demonstrates a routed LC
-win. The final combined checkpoint must still improve LC as well as satisfying
-the BRAM ceiling.
+#### Task 5.1 waveform-formula spike
+
+The second hybrid computes tilted saw and saw directly, leaving the
+fidelity-sensitive triangle and organ as the two 256-byte banks in one EBR.
+The 4.1 measurement law rules out adding these narrow chains as new phase-ALU
+operand arms: the direct shifts are smaller than that routing. Tilted saw uses
+the nearest one-add forms of its recovered `127/112` and `-127/16` slopes
+(maximum table error 3 sample units); saw uses a two-chain 5/8 ramp in place of
+the recovered 0.653 coefficient (maximum error 4). The generator asserts those
+bounds over all 256 phases. The complete unchanged 50-case oracle is
+diagnostic-clean: the dedicated tilted-saw probe reports fitted gain 1.0134,
+correlation 0.999641 and NRMSE 0.02680; saw reports 1.0661, 0.999937 and
+0.01127 respectively.
+
+This is the first stage in the change that alters shipped audio, and it
+does so under section 7's explicit exception: a measured trade required
+to meet the binding BRAM resource, adjudicated by the frozen per-case
+probe gates rather than byte identity, with the recovered block being
+the prerequisite for the constants-ROM move that repays it. Exactly
+three renders diverge from the pre-5.1 set - wave-1-tilted-saw,
+wave-2-saw and mix-four - and the other 47 remain byte-identical. The
+byte-compare baseline is therefore RE-FROZEN at this stage's renders
+(`build/psg_oracle/area-wave-formulae/rtl`); stage-over-stage byte
+comparison from here on uses that set, not any earlier one.
+
+At fingerprints `rtl/psg.sv d221d449ca2c`,
+`rtl/psg_waves_compact.hex d85b61ab614d` and
+`tools/gen_psg_tables.py 92c4a907ab6f`, Yosys maps 5,427 LUT4s, 939 carries,
+1,436 flip-flops and 14 EBRs. Seed-1 place-and-route packs to **6,258 logic
+cells** and routes at **40.72 MHz**. `psg_tb` passes with the sample deadline
+unchanged at 558/1,275 clocks and tick pre-run at 1,075/1,275 with zero late
+flips. Relative to the committed 6,214/15-EBR checkpoint the isolated resource
+trade is +44 cells and -1 EBR. It is retained because the recovered block is
+the prerequisite for the already measured constants-ROM move (-77 cells),
+making that immediate two-stage chain net-positive before microcode storage is
+counted.
+
+Three shapes were rejected on the same seed. Exact triangle plus exact saw
+reproduced every old table byte but placed at 6,407 (+193). Exact triangle by
+itself placed at 6,296 (+82) without freeing an EBR. Exact triangle plus the
+cheap saw placed at 6,339 (+125). The cheapest folded-triangle/cheap-saw pair
+placed at 6,268 (+54), but failed the unchanged `effect-3-drop` NRMSE gate
+(0.0869 against 0.08); that failure is why triangle remains in ROM. These
+measurements close the per-waveform choice: formulas are retained only for
+tilted saw and saw.
+
+The final combined checkpoint must still improve LC as well as satisfying the
+BRAM ceiling.
 
 ### 5a. Serialize transition and secondary phase arithmetic
 

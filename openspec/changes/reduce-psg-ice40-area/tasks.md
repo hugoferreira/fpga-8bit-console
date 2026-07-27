@@ -84,8 +84,12 @@
 
 ## 5. Waveforms and scheduled tables
 
-- [ ] 5.1 Implement recovered integer built-in waveform formulae through the
-      shared sample service, one waveform family at a time
+- [x] 5.1 Implement recovered integer built-in waveform formulae one waveform
+      family at a time, using the shared sample service only where its routing
+      is cheaper than a direct shift form (retained:
+      bounded tilted-saw and saw shift forms, triangle and organ remain in
+      one EBR; 6,258 placed / 14 EBR / 40.72 MHz, 50/50 diagnostic-clean;
+      exact and triangle-formula alternatives rejected in design 5.1)
 - [x] 5.2 Replace the square and pulse ROM banks with exact phase thresholds,
       retain four non-trivial ROM banks, and prove the combined checkpoint
       meets the 15-EBR ceiling with clean oracle probes

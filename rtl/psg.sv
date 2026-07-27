@@ -69,9 +69,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [7:0] aram[0:4607];
   logic [15:0] wraddr;
 
-  // Four non-trivial 256-sample shapes. Square and pulse are exact phase
-  // thresholds below; noise and phaser have their own synthesis paths.
-  logic signed [7:0] wrom[0:1023];
+  // The two non-trivial 256-sample shapes that remain table-shaped. Tilted saw
+  // and saw use bounded integer phase formulae below; square and pulse are
+  // exact thresholds; noise and phaser have their own synthesis paths.
+  logic signed [7:0] wrom[0:511];
   // Noise gain per key: PICO-8's noise amplitude rises with pitch and this
   // chip's sample-and-hold is flat, so the slope is restored from a table.
   // 1.0 = 256. See tools/gen_psg_tables.py.
@@ -1727,8 +1728,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [2:0] wsel_q;
   logic [7:0] wph;
   logic [7:0] wph_q;
-  logic [1:0] wbank;
-  logic [9:0] wrom_addr;
+  logic       wbank;
+  logic [8:0] wrom_addr;
   logic [NV-1:0] clr_ack;              // pairs with the sequencer's clr_tog
 
   // Record streaming for the synthesis walk. Reads are issued on the load
@@ -1946,12 +1947,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       wph = s_old_phase[23:16];     // old-state continuation
     end
 
-    case (wsel)
-      3'd1:   wbank = 2'd1;
-      3'd2:   wbank = 2'd2;
-      3'd5:   wbank = 2'd3;
-      default: wbank = 2'd0;        // triangle, including phaser wave 7
-    endcase
+    wbank = (wsel == 3'd5);
     wrom_addr = {wbank, wph};
   end
   always_ff @(posedge clk) begin
@@ -1959,8 +1955,27 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     wsel_q <= wsel;
     wph_q <= wph;
   end
+  // The recovered tilted-saw slopes are 127/112 and -127/16. Their nearest
+  // one-add shift forms stay within three sample units.
+  wire signed [9:0] tsaw_rise =
+      $signed({2'b0, wph_q}) + $signed({5'b0, wph_q[7:3]}) - 10'sd127;
+  wire [4:0] tsaw_tail = wph_q[4:0];
+  wire signed [9:0] tsaw_fall =
+      10'sd127 - $signed({2'b0, tsaw_tail, 3'b0});
+  wire signed [7:0] tsaw_formula =
+      wph_q < 8'd224 ? tsaw_rise[7:0] : tsaw_fall[7:0];
+  // A two-chain 5/8 ramp retains the recovered saw's shape to within four
+  // sample units. Its level is adjudicated by the oracle's fitted-gain gate.
+  wire signed [8:0] saw_phase =
+      $signed({1'b0, wph_q}) - 9'sd128;
+  wire signed [9:0] saw_phase_wide = {saw_phase[8], saw_phase};
+  wire signed [9:0] saw_formula_wide =
+      saw_phase_wide - (saw_phase_wide >>> 2) - (saw_phase_wide >>> 3);
+  wire signed [7:0] saw_formula = saw_formula_wide[7:0];
   always_comb begin
     case (wsel_q)
+      3'd1:   wq = tsaw_formula;
+      3'd2:   wq = saw_formula;
       3'd3:   wq = (wph_q < 8'h80) ? -8'sd64 : 8'sd64;
       3'd4:   wq = (wph_q < 8'hb0) ? -8'sd64 : 8'sd64;
       3'd6:   wq = 8'sd0;

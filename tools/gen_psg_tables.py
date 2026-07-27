@@ -5,8 +5,9 @@ virtual sample rate, so they are independent of the system clock):
   rtl/psg_pitch.hex  64 x 24-bit phase increments, 2^24 * f(p) / 22050
   rtl/psg_waves.hex  8 waves x 256 x signed 8-bit, exact PICO-8 shapes
   rtl/psg_waves_compact.hex
-                     triangle, tilted saw, saw and organ only; square and
-                     pulse are exact threshold functions in RTL
+                     triangle and organ only; tilted saw and saw use bounded
+                     integer phase formulae in RTL, and square and pulse are
+                     exact threshold functions
   rtl/psg_noise.hex  64 x unsigned 8-bit, noise gain per key (1.0 = 256)
                      (slots 6/7 zero: noise is an LFSR, phaser is summed
                      from two triangle reads)
@@ -53,6 +54,44 @@ def wave(w, t):
     return 0.0  # 6 noise (LFSR), 7 phaser (dual triangle) - not from ROM
 
 
+def quantized_wave(w, phase):
+    return max(-127, min(127, round(wave(w, phase / 256.0) * 254.0)))
+
+
+def triangle_formula(phase):
+    # NOT WIRED UP: the exact form, measured and rejected (design 5.1 - it
+    # placed +82 to +193 across three variants, and the cheaper folded
+    # approximation failed the effect-3-drop gate, so triangle stays in
+    # ROM). Kept, with its assert, as documentation of the exactness result.
+    # Fold to 0..128..1. The recovered 127/64 ramp then reduces to two phase
+    # thresholds: subtract one from 2*u-127 at u=32, and another at u=97.
+    folded = 256 - phase if phase & 0x80 else phase
+    return (2 * folded - 127
+            - (folded >= 32) - (folded >= 97))
+
+
+def tilted_saw_formula(phase):
+    # The recovered slopes are 127/112 and -127/16. The nearest one-add
+    # shift forms stay within three sample units.
+    if phase < 224:
+        return phase + (phase >> 3) - 127
+    return 127 - ((phase - 224) << 3)
+
+
+def saw_formula(phase):
+    # A two-chain 5/8 ramp retains the recovered saw's shape and stays within
+    # four sample units; the oracle's fitted-gain gate adjudicates its level.
+    signed_phase = phase - 128
+    return signed_phase - (signed_phase >> 2) - (signed_phase >> 3)
+
+
+assert all(triangle_formula(p) == quantized_wave(0, p) for p in range(256))
+assert max(abs(tilted_saw_formula(p) - quantized_wave(1, p))
+           for p in range(256)) <= 3
+assert max(abs(saw_formula(p) - quantized_wave(2, p))
+           for p in range(256)) <= 4
+
+
 with open("rtl/psg_pitch.hex", "w") as f:
     for p in range(64):
         f.write(f"{pico8_phase_increment(p):06x}\n")
@@ -60,13 +99,13 @@ with open("rtl/psg_pitch.hex", "w") as f:
 with open("rtl/psg_waves.hex", "w") as f:
     for w in range(8):
         for i in range(256):
-            s = max(-127, min(127, round(wave(w, i / 256.0) * 254.0)))
+            s = quantized_wave(w, i)
             f.write(f"{s & 0xFF:02x}\n")
 
 with open("rtl/psg_waves_compact.hex", "w") as f:
-    for w in (0, 1, 2, 5):
+    for w in (0, 5):
         for i in range(256):
-            s = max(-127, min(127, round(wave(w, i / 256.0) * 254.0)))
+            s = quantized_wave(w, i)
             f.write(f"{s & 0xFF:02x}\n")
 
 # Noise gain per key.
