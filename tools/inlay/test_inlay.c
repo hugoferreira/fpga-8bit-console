@@ -1916,6 +1916,61 @@ static void test_workspace_error(void)
     check(diagnostic.seen, "workspace error emits diagnostic");
 }
 
+/* The [base.field] shorthand must be exactly equivalent to the explicit
+   [base + Type.field] form across every field-operand parser: the base's own
+   declared type supplies the field's struct type, so restating it is optional. */
+static void test_field_operand_shorthand(void)
+{
+    static const char explicit_src[] =
+        "struct S packed\n    a : u8\n    b : u8\n    r : u8[4]\nend\n"
+        "overlay o : S at $4000 volatile\n"
+        "lda [o + S.a]\n"
+        "sta [o + S.b]\n"
+        "inc [o + S.a]\n"
+        "and [o + S.b], #$fe\n"
+        "mov [o + S.a], #1\n"
+        "cblt [o + S.a], #3, done\n"
+        "lda [o + S.r[x]]\n"
+        "done:\n";
+    static const char shorthand_src[] =
+        "struct S packed\n    a : u8\n    b : u8\n    r : u8[4]\nend\n"
+        "overlay o : S at $4000 volatile\n"
+        "lda [o.a]\n"
+        "sta [o.b]\n"
+        "inc [o.a]\n"
+        "and [o.b], #$fe\n"
+        "mov [o.a], #1\n"
+        "cblt [o.a], #3, done\n"
+        "lda [o.r[x]]\n"
+        "done:\n";
+    LaLimits limits;
+    TestEvents explicit_events;
+    TestEvents shorthand_events;
+    TestDiagnostic explicit_diag;
+    TestDiagnostic shorthand_diag;
+    LaStats explicit_stats;
+    LaStats shorthand_stats;
+    limits = la_default_limits();
+    compile_source(explicit_src, 0, limits, &explicit_events,
+                   &explicit_diag, &explicit_stats);
+    compile_source(shorthand_src, 0, limits, &shorthand_events,
+                   &shorthand_diag, &shorthand_stats);
+    check(!explicit_diag.seen, "explicit field operands compile");
+    check(!shorthand_diag.seen, "shorthand field operands compile");
+    check(explicit_events.hash == shorthand_events.hash,
+          "[base.field] emits identical events to [base + Type.field]");
+    check(explicit_stats.operations == shorthand_stats.operations,
+          "field shorthand counts identical operations");
+    /* A restated type that does not match the base is still rejected. */
+    expect_error(
+        "struct S packed\n    a : u8\nend\n"
+        "struct T packed\n    a : u8\nend\n"
+        "overlay o : S at $0030\n"
+        "lda [o + T.a]\n",
+        limits, LA_ERR_LOCATION_TYPE,
+        "explicit type that mismatches the base is rejected");
+}
+
 int main(void)
 {
     test_valid_layout();
@@ -1927,6 +1982,7 @@ int main(void)
     test_capacities();
     test_namespaces();
     test_typed_word_transfers();
+    test_field_operand_shorthand();
     test_workspace_error();
     if (failures != 0) {
         fprintf(stderr, "%d Inlay test(s) failed\n", failures);

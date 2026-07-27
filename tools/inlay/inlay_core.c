@@ -4185,6 +4185,7 @@ static int la_parse_typed_operation(LaContext *ctx,
     la_u16 count;
     la_u16 leaf_size;
     LaSlice index;
+    LaSlice base_type;
     int indexed;
     int is_overlay;
     LaTargetOperationKind operation;
@@ -4236,14 +4237,7 @@ static int la_parse_typed_operation(LaContext *ctx,
     while (base_end < close && la_is_ident(*base_end)) ++base_end;
     if (base_end == base_start) return 0;
     cursor = la_trim_left(base_end, close);
-    if (cursor >= close || *cursor != '+') return 0;
-    ++cursor;
-    root_start = la_trim_left(cursor, close);
-    first_dot = root_start;
-    while (first_dot < close && *first_dot != '.') ++first_dot;
-    if (first_dot == close) return 0;
-    root_length = (la_u16)(first_dot - root_start);
-    path_start = first_dot + 1;
+    if (cursor >= close || (*cursor != '+' && *cursor != '.')) return 0;
     procedure = la_procedure_at_line(ctx, line);
     location_index = la_find_location_text_at(
         ctx, base_start, (la_u16)(base_end - base_start), procedure);
@@ -4262,20 +4256,32 @@ static int la_parse_typed_operation(LaContext *ctx,
         }
         is_overlay = 1;
     }
-    {
-        LaSlice declared;
-        if (is_overlay) {
-            declared =
-                la_name_slice(ctx, ctx->overlays[overlay_index].type_name);
-        } else {
-            declared =
-                la_name_slice(ctx, ctx->locations[location_index].type_name);
-        }
-        if (declared.length != root_length ||
-            memcmp(declared.data, root_start, root_length) != 0) {
+    if (is_overlay) {
+        base_type = la_name_slice(ctx, ctx->overlays[overlay_index].type_name);
+    } else {
+        base_type = la_name_slice(ctx, ctx->locations[location_index].type_name);
+    }
+    if (*cursor == '.') {
+        /* Shorthand [base.field]: the field's struct type is the base's own
+           declared type, so it need not be restated. */
+        root_start = base_type.data;
+        root_length = base_type.length;
+        path_start = cursor + 1;
+    } else {
+        /* Explicit [base + Type.field]: the restated type is cross-checked
+           against the base's declared type. */
+        ++cursor;
+        root_start = la_trim_left(cursor, close);
+        first_dot = root_start;
+        while (first_dot < close && *first_dot != '.') ++first_dot;
+        if (first_dot == close) return 0;
+        root_length = (la_u16)(first_dot - root_start);
+        path_start = first_dot + 1;
+        if (base_type.length != root_length ||
+            memcmp(base_type.data, root_start, root_length) != 0) {
             la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
                     (la_u16)(root_start - start + 1), root_length,
-                    declared, la_slice(root_start, root_length), 0, 0);
+                    base_type, la_slice(root_start, root_length), 0, 0);
             return -1;
         }
     }
@@ -4462,6 +4468,13 @@ static int la_parse_typed_operation(LaContext *ctx,
     return 1;
 }
 
+static int la_resolve_field_tail(LaContext *ctx, const char *start,
+                                 const char *cursor, const char *close,
+                                 la_u16 line, LaSlice base_type,
+                                 const char **root_start,
+                                 la_u16 *root_length,
+                                 const char **path_start);
+
 static int la_parse_typed_word_operation(LaContext *ctx,
                                          const char *start,
                                          const char *end,
@@ -4475,7 +4488,6 @@ static int la_parse_typed_word_operation(LaContext *ctx,
     const char *base_start;
     const char *base_end;
     const char *root_start;
-    const char *first_dot;
     const char *path_start;
     la_u16 word_location;
     la_u16 pointer_location;
@@ -4535,23 +4547,33 @@ static int la_parse_typed_word_operation(LaContext *ctx,
     base_end = base_start;
     while (base_end < close && la_is_ident(*base_end)) ++base_end;
     cursor = la_trim_left(base_end, close);
-    if (base_end == base_start || cursor >= close || *cursor++ != '+') {
+    if (base_end == base_start || cursor >= close ||
+        (*cursor != '.' && *cursor != '+')) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("[pointer + Type.field]", 22),
+                la_slice("[pointer.field]", 15),
                 la_slice("", 0), 0, 0);
         return -1;
     }
-    root_start = la_trim_left(cursor, close);
-    first_dot = root_start;
-    while (first_dot < close && *first_dot != '.') ++first_dot;
-    if (first_dot == close) {
-        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("qualified field path", 20),
-                la_slice("", 0), 0, 0);
+    procedure = la_procedure_at_line(ctx, line);
+    pointer_location = la_find_location_text_at(
+        ctx, base_start, (la_u16)(base_end - base_start), procedure);
+    if (pointer_location == LA_INVALID_HANDLE ||
+        !ctx->locations[pointer_location].is_pointer) {
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
+                (la_u16)(base_end - base_start),
+                la_slice(base_start, (la_u16)(base_end - base_start)),
+                la_slice("typed pointer", 13), 0, 0);
         return -1;
     }
-    root_length = (la_u16)(first_dot - root_start);
-    path_start = first_dot + 1;
+    {
+        int tail;
+        tail = la_resolve_field_tail(
+            ctx, start, cursor, close, line,
+            la_name_slice(ctx, ctx->locations[pointer_location].type_name),
+            &root_start, &root_length, &path_start);
+        if (tail == 0) return 0;
+        if (tail < 0) return -1;
+    }
     cursor = la_trim_left(close + 1, end);
     if (store) {
         if (cursor >= end || *cursor++ != ',') {
@@ -4572,27 +4594,6 @@ static int la_parse_typed_word_operation(LaContext *ctx,
                          34),
                 la_slice("", 0), 0, 0);
         return -1;
-    }
-    procedure = la_procedure_at_line(ctx, line);
-    pointer_location = la_find_location_text_at(
-        ctx, base_start, (la_u16)(base_end - base_start), procedure);
-    if (pointer_location == LA_INVALID_HANDLE ||
-        !ctx->locations[pointer_location].is_pointer) {
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                (la_u16)(base_end - base_start),
-                la_slice(base_start, (la_u16)(base_end - base_start)),
-                la_slice("typed pointer", 13), 0, 0);
-        return -1;
-    }
-    {
-        LaSlice declared;
-        declared = la_name_slice(ctx, ctx->locations[pointer_location].type_name);
-        if (declared.length != root_length ||
-            memcmp(declared.data, root_start, root_length) != 0) {
-            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, root_length,
-                    declared, la_slice(root_start, root_length), 0, 0);
-            return -1;
-        }
     }
     word_location = la_find_location_text_at(
         ctx, word_start, (la_u16)(word_end - word_start), procedure);
@@ -4760,6 +4761,46 @@ static int la_parse_physical_word_arithmetic(LaContext *ctx,
     return 1;
 }
 
+/* Resolve the field tail of a bracketed operand after the base identifier:
+   either `.field` (shorthand: the field's struct type is the base's own
+   declared type, `base_type`, so it need not be restated) or `+ Type.field`
+   (explicit: the restated type is cross-checked against `base_type`).
+   Returns 1 on success, 0 to decline (not a field tail), -1 on a
+   type-mismatch error. The root_start and root_length outputs give the
+   struct-type text; path_start gives the field path. `cursor` points at the
+   character after the base identifier; `close` is the ']'. */
+static int la_resolve_field_tail(LaContext *ctx, const char *start,
+                                 const char *cursor, const char *close,
+                                 la_u16 line, LaSlice base_type,
+                                 const char **root_start, la_u16 *root_length,
+                                 const char **path_start)
+{
+    const char *first_dot;
+    if (cursor >= close) return 0;
+    if (*cursor == '.') {
+        *root_start = base_type.data;
+        *root_length = base_type.length;
+        *path_start = cursor + 1;
+        return 1;
+    }
+    if (*cursor != '+') return 0;
+    cursor = la_trim_left(cursor + 1, close);
+    first_dot = cursor;
+    while (first_dot < close && *first_dot != '.') ++first_dot;
+    if (first_dot == close) return 0;
+    *root_start = cursor;
+    *root_length = (la_u16)(first_dot - cursor);
+    *path_start = first_dot + 1;
+    if (base_type.length != *root_length ||
+        memcmp(base_type.data, *root_start, *root_length) != 0) {
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
+                (la_u16)(*root_start - start + 1), *root_length,
+                base_type, la_slice(*root_start, *root_length), 0, 0);
+        return -1;
+    }
+    return 1;
+}
+
 static int la_parse_typed_byte_rmw(LaContext *ctx,
                                    const char *start, const char *end,
                                    la_u16 line, LaEvent *event)
@@ -4770,7 +4811,6 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
     const char *base_start;
     const char *base_end;
     const char *root_start;
-    const char *first_dot;
     const char *path_start;
     const char *immediate_start;
     la_u16 pointer_location;
@@ -4826,30 +4866,53 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
     base_end = base_start;
     while (base_end < close && la_is_ident(*base_end)) ++base_end;
     cursor = la_trim_left(base_end, close);
-    if (base_end == base_start || cursor >= close || *cursor++ != '+') {
+    if (base_end == base_start || cursor >= close ||
+        (*cursor != '.' && *cursor != '+')) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("[pointer + Type.field]", 22),
+                la_slice("[base.field]", 12),
                 la_slice("", 0), 0, 0);
         return -1;
     }
-    root_start = la_trim_left(cursor, close);
-    first_dot = root_start;
-    while (first_dot < close && *first_dot != '.') ++first_dot;
-    if (first_dot == close) {
-        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("qualified field path", 20),
-                la_slice("", 0), 0, 0);
-        return -1;
+    procedure = la_procedure_at_line(ctx, line);
+    pointer_location = la_find_location_text_at(
+        ctx, base_start, (la_u16)(base_end - base_start), procedure);
+    overlay_base = LA_INVALID_HANDLE;
+    rmw_is_overlay = 0;
+    if (pointer_location == LA_INVALID_HANDLE) {
+        /* A fixed overlay base updates an absolute address in place. */
+        overlay_base = la_find_overlay_text(
+            ctx, base_start, (la_u16)(base_end - base_start));
+        if (overlay_base == LA_INVALID_HANDLE) {
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
+                    (la_u16)(base_end - base_start),
+                    la_slice(base_start, (la_u16)(base_end - base_start)),
+                    la_slice("typed pointer or overlay", 24), 0, 0);
+            return -1;
+        }
+        rmw_is_overlay = 1;
     }
-    root_length = (la_u16)(first_dot - root_start);
-    path_start = first_dot + 1;
+    {
+        LaSlice base_type;
+        int tail;
+        if (rmw_is_overlay) {
+            base_type =
+                la_name_slice(ctx, ctx->overlays[overlay_base].type_name);
+        } else {
+            base_type =
+                la_name_slice(ctx, ctx->locations[pointer_location].type_name);
+        }
+        tail = la_resolve_field_tail(ctx, start, cursor, close, line, base_type,
+                                     &root_start, &root_length, &path_start);
+        if (tail == 0) return 0;
+        if (tail < 0) return -1;
+    }
     cursor = la_trim_left(close + 1, end);
     immediate = 0;
     if (needs_immediate) {
         if (cursor >= end || *cursor != ',') {
             /* No immediate operand: this is an accumulator logic read
-               (and/ora [overlay + field]), not a mask read-modify-write.
-               Let the byte operand parser handle it. */
+               (and/ora [base.field]), not a mask read-modify-write. Let the
+               byte operand parser handle it. */
             return 0;
         }
         ++cursor;
@@ -4876,39 +4939,6 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
                 la_slice("end of byte update", 18),
                 la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
         return -1;
-    }
-    procedure = la_procedure_at_line(ctx, line);
-    pointer_location = la_find_location_text_at(
-        ctx, base_start, (la_u16)(base_end - base_start), procedure);
-    overlay_base = LA_INVALID_HANDLE;
-    rmw_is_overlay = 0;
-    if (pointer_location == LA_INVALID_HANDLE) {
-        /* A fixed overlay base updates an absolute address in place. */
-        overlay_base = la_find_overlay_text(
-            ctx, base_start, (la_u16)(base_end - base_start));
-        if (overlay_base == LA_INVALID_HANDLE) {
-            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                    (la_u16)(base_end - base_start),
-                    la_slice(base_start, (la_u16)(base_end - base_start)),
-                    la_slice("typed pointer or overlay", 24), 0, 0);
-            return -1;
-        }
-        rmw_is_overlay = 1;
-    }
-    {
-        LaSlice declared;
-        if (rmw_is_overlay) {
-            declared = la_name_slice(ctx, ctx->overlays[overlay_base].type_name);
-        } else {
-            declared =
-                la_name_slice(ctx, ctx->locations[pointer_location].type_name);
-        }
-        if (declared.length != root_length ||
-            memcmp(declared.data, root_start, root_length) != 0) {
-            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, root_length,
-                    declared, la_slice(root_start, root_length), 0, 0);
-            return -1;
-        }
     }
     if (la_resolve_path(ctx, root_start, root_length, path_start,
                         (la_u16)(close - path_start), line,
@@ -5014,9 +5044,9 @@ static int la_count_operation(LaContext *ctx, la_u16 line)
 }
 
 /* Compare/test-and-branch pseudo-ops against a fixed overlay field:
-   `MNEM [overlay + Type.field], REST`. The tail (immediate and target label) is
-   passed through verbatim; the pseudo-op still expands to the same bytes as the
-   legacy raw zero-page form. */
+   `MNEM [overlay + Type.field], REST` or `MNEM [overlay.field], REST`. The tail
+   (immediate and target label) is passed through verbatim; the pseudo-op still
+   expands to the same bytes as the legacy raw zero-page form. */
 static int la_parse_overlay_branch(LaContext *ctx,
                                    const char *start, const char *end,
                                    la_u16 line, LaEvent *event)
@@ -5032,7 +5062,6 @@ static int la_parse_overlay_branch(LaContext *ctx,
     const char *base_start;
     const char *base_end;
     const char *root_start;
-    const char *first_dot;
     const char *path_start;
     const char *rest_start;
     la_u16 mnem_length;
@@ -5065,19 +5094,14 @@ static int la_parse_overlay_branch(LaContext *ctx,
     base_end = base_start;
     while (base_end < close && la_is_ident(*base_end)) ++base_end;
     cursor = la_trim_left(base_end, close);
-    if (base_end == base_start || cursor >= close || *cursor++ != '+') return 0;
-    root_start = la_trim_left(cursor, close);
-    first_dot = root_start;
-    while (first_dot < close && *first_dot != '.') ++first_dot;
-    if (first_dot == close) return 0;
-    root_length = (la_u16)(first_dot - root_start);
-    path_start = first_dot + 1;
-    cursor = la_trim_left(close + 1, end);
-    if (cursor >= end || *cursor++ != ',') return 0;
-    rest_start = la_trim_left(cursor, end);
+    if (base_end == base_start || cursor >= close ||
+        (*cursor != '.' && *cursor != '+')) return 0;
+    rest_start = la_trim_left(close + 1, end);
+    if (rest_start >= end || *rest_start != ',') return 0;
+    rest_start = la_trim_left(rest_start + 1, end);
     if (rest_start == end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("MNEM [overlay + field], #VALUE, TARGET", 38),
+                la_slice("MNEM [overlay.field], #VALUE, TARGET", 36),
                 la_slice("", 0), 0, 0);
         return -1;
     }
@@ -5091,14 +5115,13 @@ static int la_parse_overlay_branch(LaContext *ctx,
         return -1;
     }
     {
-        LaSlice declared;
-        declared = la_name_slice(ctx, ctx->overlays[overlay_index].type_name);
-        if (declared.length != root_length ||
-            memcmp(declared.data, root_start, root_length) != 0) {
-            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, root_length,
-                    declared, la_slice(root_start, root_length), 0, 0);
-            return -1;
-        }
+        int tail;
+        tail = la_resolve_field_tail(
+            ctx, start, cursor, close, line,
+            la_name_slice(ctx, ctx->overlays[overlay_index].type_name),
+            &root_start, &root_length, &path_start);
+        if (tail == 0) return 0;
+        if (tail < 0) return -1;
     }
     if (la_resolve_path(ctx, root_start, root_length, path_start,
                         (la_u16)(close - path_start), line,
@@ -5143,7 +5166,6 @@ static int la_parse_overlay_store_immediate(LaContext *ctx,
     const char *base_start;
     const char *base_end;
     const char *root_start;
-    const char *first_dot;
     const char *path_start;
     const char *imm_start;
     la_u16 overlay_index;
@@ -5151,6 +5173,7 @@ static int la_parse_overlay_store_immediate(LaContext *ctx,
     la_u16 field_index;
     la_u16 field_offset;
     la_u16 field_size;
+    int tail;
     cursor = la_trim_left(start, end);
     if ((la_u16)(end - cursor) < 4 || memcmp(cursor, "mov ", 4) != 0) return 0;
     bracket = la_trim_left(cursor + 3, end);
@@ -5162,16 +5185,13 @@ static int la_parse_overlay_store_immediate(LaContext *ctx,
     base_end = base_start;
     while (base_end < close && la_is_ident(*base_end)) ++base_end;
     cursor = la_trim_left(base_end, close);
-    if (base_end == base_start || cursor >= close || *cursor++ != '+') return 0;
-    root_start = la_trim_left(cursor, close);
-    first_dot = root_start;
-    while (first_dot < close && *first_dot != '.') ++first_dot;
-    if (first_dot == close) return 0;
-    root_length = (la_u16)(first_dot - root_start);
-    path_start = first_dot + 1;
-    cursor = la_trim_left(close + 1, end);
-    if (cursor >= end || *cursor++ != ',') return 0;
-    imm_start = la_trim_left(cursor, end);
+    if (base_end == base_start) return 0;
+    /* Only a field operand [base.field] / [base + Type.field] is a store to a
+       fixed overlay; a bare [base] is a frame-pointer move handled elsewhere. */
+    if (cursor >= close || (*cursor != '.' && *cursor != '+')) return 0;
+    imm_start = la_trim_left(close + 1, end);
+    if (imm_start >= end || *imm_start != ',') return 0;
+    imm_start = la_trim_left(imm_start + 1, end);
     if (imm_start < end && *imm_start == '[') {
         /* A second typed memory operand would be a memory-to-memory move the
            target does not define; keep it explicit and rejected. */
@@ -5183,7 +5203,7 @@ static int la_parse_overlay_store_immediate(LaContext *ctx,
     }
     if (imm_start == end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("mov [overlay + field], SOURCE", 29),
+                la_slice("mov [overlay.field], SOURCE", 27),
                 la_slice("", 0), 0, 0);
         return -1;
     }
@@ -5196,16 +5216,12 @@ static int la_parse_overlay_store_immediate(LaContext *ctx,
                 la_slice("overlay", 7), 0, 0);
         return -1;
     }
-    {
-        LaSlice declared;
-        declared = la_name_slice(ctx, ctx->overlays[overlay_index].type_name);
-        if (declared.length != root_length ||
-            memcmp(declared.data, root_start, root_length) != 0) {
-            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, root_length,
-                    declared, la_slice(root_start, root_length), 0, 0);
-            return -1;
-        }
-    }
+    tail = la_resolve_field_tail(
+        ctx, start, cursor, close, line,
+        la_name_slice(ctx, ctx->overlays[overlay_index].type_name),
+        &root_start, &root_length, &path_start);
+    if (tail == 0) return 0;
+    if (tail < 0) return -1;
     if (la_resolve_path(ctx, root_start, root_length, path_start,
                         (la_u16)(close - path_start), line,
                         &field_index, &field_offset) != LA_OK) return -1;
@@ -5472,6 +5488,9 @@ static int la_parse_local_operation(LaContext *ctx,
         cursor = close;
     }
     cursor = la_trim_left(cursor, end);
+    /* A dotted field path is the typed-operand shorthand [base.field], handled
+       by la_parse_typed_operation, not a frame-local form. */
+    if (cursor < end && *cursor == '.') return 0;
     if (cursor >= end || *cursor++ != ']' ||
         la_trim_left(cursor, end) != end) {
         la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, 1,
