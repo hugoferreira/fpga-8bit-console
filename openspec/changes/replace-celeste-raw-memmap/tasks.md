@@ -1,6 +1,6 @@
 ## 1. Freeze prerequisites and baseline
 
-- [ ] 1.1 Verify `redesign-celeste-for-inlay` has integrated declaration-site exports, target-default conventions, namespaces and `codeptr`
+- [x] 1.1 Verify `redesign-celeste-for-inlay` has integrated declaration-site exports, target-default conventions, namespaces and `codeptr`
 - [x] 1.2 Record the accepted pre-change Celeste ROM, symbol and source-map digests
 - [x] 1.3 Record per-module bytes, total physical bytes, flattened high-water and semantic-table high-waters
 - [x] 1.4 Generate a checked alias inventory from `memmap.inlay.asm`, grouped by MMIO, shared locations, subsystem scratch, state, constants and fixed storage

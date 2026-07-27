@@ -38,14 +38,16 @@ framebuffer / PSG-trace / resource suites (8.5) all pass.
 - **Namespace-qualified operand bases** — `[Machine.object.core.x]` and
   qualified procedure return placements (`return in Fixed.left`).
 
-### Remaining (not blocking archive of the memory-map work)
+### Predecessor integration (1.1)
 
-- **1.1** verifies the predecessor `redesign-celeste-for-inlay` integration
-  (target-default calling conventions in particular); the migration itself uses
-  its exports/namespaces/`codeptr`.
-- **4.8** is the exhaustive per-operation fixture sweep; the operations added
-  here carry core unit tests and byte-exact conformance fixtures for the
-  address, RMW, compare, page-view and indexed-arithmetic forms.
+Verified against the current frontend: **namespaces**, **`codeptr`** and
+**target-default calling conventions** (a `proc` with no `using` clause
+compiles) are integrated, and namespace **exports** resolve — the migration
+uses all of them. The only unintegrated item is the predecessor's
+*declaration-attached* `export` spelling (10.8); the detached `export NAME` form
+was sufficient here and is used throughout. Bounded shift pseudo-ops (10.9) were
+not needed by this corpus. The memory-map migration is therefore complete and
+does not depend on the predecessor's two remaining open tasks.
 
 ---
 
