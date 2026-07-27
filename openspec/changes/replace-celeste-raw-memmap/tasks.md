@@ -55,7 +55,7 @@
 - [x] 6.2 Migrate video and PSG operands to `VideoRegisters` and `PsgRegisters` overlays
 - [x] 6.3 Migrate persistent clock, room, input, restart, audio and HUD state to the `GameState` overlay
 - [x] 6.4 Move input masks to `Platform.Input` and music/fade values to `Audio`
-- [ ] 6.5 Move room geometry, camera limits and tile identifiers to `Room`
+- [x] 6.5 Move room geometry, camera limits and tile identifiers to `Room`
 - [ ] 6.6 Move object capacity and flags to `Objects` and derive pool/hair counts through layout queries
 - [ ] 6.7 Move fixed-point word locations and shared receiver/dispatch locations to their declared physical owners
 - [ ] 6.8 Move collision, drawing, hair and loader scratch to their owning namespaces

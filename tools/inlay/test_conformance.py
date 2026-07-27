@@ -1038,7 +1038,9 @@ def check_remaining_subsystem_design() -> None:
         ),
         "room.inlay.asm": (
             "Room",
-            {"init", "title", "load", "next", "restart", "camera"},
+            {"init", "title", "load", "next", "restart", "camera",
+             "tile_spawn", "tile_spike_down", "tile_spike_up",
+             "tile_spike_right", "tile_spike_left", "flag_solid", "flag_ice"},
             {
                 "init", "title", "load", "next", "cue_level", "cue_music",
                 "restart", "camera",

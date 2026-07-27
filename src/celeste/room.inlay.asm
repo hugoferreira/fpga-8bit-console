@@ -16,6 +16,13 @@ namespace Room
     export next
     export restart
     export camera
+    export tile_spawn
+    export tile_spike_down
+    export tile_spike_up
+    export tile_spike_right
+    export tile_spike_left
+    export flag_solid
+    export flag_ice
     location load_index : u8 at $4b
     width = 16
     height = 16
@@ -36,7 +43,7 @@ init:
     lda #0
     sta [video + VideoRegisters.clip_x0]
     sta [video + VideoRegisters.clip_y0]
-    mov [video + VideoRegisters.clip_x1], #PLAYFIELD_W-1
+    mov [video + VideoRegisters.clip_x1], #Room.playfield_width-1
     mov [video + VideoRegisters.clip_y1], #119
     mov [video + VideoRegisters.control], #$03
     mov [video + VideoRegisters.overlay_color], #7  ; colour 7 everywhere it matters
@@ -49,7 +56,7 @@ init:
 ; ------------------------------------------------------------------------------
 title:
     lda [game + GameState.level]
-    cmp #TITLE_LEVEL
+    cmp #Room.title_level
     rts
 ; ------------------------------------------------------------------------------
 ; load_room: A = index into the resident room table. Clobbers everything.
@@ -80,7 +87,7 @@ load:
     sta pDst
 .bank0:
     ldx #0                      ; X walks the 256 tile ids in order
-    mov t6, #ROOM_H
+    mov t6, #Room.height
 .row:
     ldy #0
 .col:
@@ -98,7 +105,7 @@ load:
     ldx t5
     inx
     iny
-    cpy #ROOM_W
+    cpy #Room.width
     bne .col
     lda pDst                    ; next cell row
     add #MAP_STRIDE
@@ -111,7 +118,7 @@ load:
     ldx #0                      ; spawn the objects the marker tiles ask for
 .spawn:
     lda ROOMTILES, x
-    cmp #TILE_SPAWN
+    cmp #Room.tile_spawn
     bne .nextspawn
     txa
     and #15
@@ -132,7 +139,7 @@ load:
     bne .spawn
     lda [game + GameState.room_bank]               ; show the bank we just filled
     beq .cam0
-    lda #PLAYFIELD_W
+    lda #Room.playfield_width
 .cam0:
     sta t3
     jsr Room.title              ; the cart draws the title room at x = -4:
@@ -140,10 +147,10 @@ load:
     lda t3                      ; with off = -4. Scrolling the camera 4 to the
     add #4
     sta t3
-    mov [video + VideoRegisters.clip_x1], #PLAYFIELD_W-5  ; does not appear in the gap that opens up
+    mov [video + VideoRegisters.clip_x1], #Room.playfield_width-5  ; does not appear in the gap that opens up
     jmp .cam
 .notitle:
-    mov [video + VideoRegisters.clip_x1], #PLAYFIELD_W-1
+    mov [video + VideoRegisters.clip_x1], #Room.playfield_width-1
 .cam:
     lda t3
     sta [video + VideoRegisters.camera_x]
@@ -228,9 +235,9 @@ camera:
     bmi .top                    ; above the room: show the top
     sub #56
     bcc .top
-    cmp #CAM_Y_MAX
+    cmp #Room.camera_y_max
     bcc .set
-    lda #CAM_Y_MAX
+    lda #Room.camera_y_max
     jmp .set
 .top:
     lda #0

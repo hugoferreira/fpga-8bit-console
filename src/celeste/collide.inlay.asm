@@ -10,6 +10,19 @@
 ; touch t0, t1 or t2 - those hold the step and the loop counter of the caller.
 ; ------------------------------------------------------------------------------
 namespace Collision
+    location x : u8 at $22
+    location y : u8 at $23
+    location width : u8 at $24
+    location height : u8 at $25
+    location mask : u8 at $26
+    location offset_x : i8 at $27
+    location offset_y : i8 at $28
+    location type : u8 at $29
+    location hit : u8 at $2a
+    location column : u8 at $2b
+    location row : u8 at $2c
+    location last_column : u8 at $2d
+    location last_row : u8 at $2e
     export solid
     export ice
     export box
@@ -24,11 +37,11 @@ namespace Collision
 ; real. They come back with the types, in stage 2.
 ; ------------------------------------------------------------------------------
 solid:
-    mov c_mask, #FLAG_SOLID
+    mov c_mask, #Room.flag_solid
     jsr Collision.box
     jmp Collision.flags
 ice:
-    mov c_mask, #FLAG_ICE
+    mov c_mask, #Room.flag_ice
     jsr Collision.box
     jmp Collision.flags
 ; ------------------------------------------------------------------------------
@@ -221,7 +234,7 @@ spikes:
 .hit:
     rts
 ids:
-    #d8 TILE_SPIKE_D, TILE_SPIKE_U, TILE_SPIKE_R, TILE_SPIKE_L
+    #d8 Room.tile_spike_down, Room.tile_spike_up, Room.tile_spike_right, Room.tile_spike_left
 lo:
     data u8 low(down), low(up), low(right), low(left)
 hi:

@@ -42,6 +42,15 @@ namespace Objects
     export destroy
     export update_all
     export draw_all
+    slot_count = objects.count
+    flag_collideable = $01
+    flag_solids = $02
+    location slot : u8 at $1c
+    location free_slot : u8 at $1d
+    location spawn_type : u8 at $1e
+    location spawn_x : u8 at $1f
+    location spawn_y : u8 at $20
+    location spawn_slot : u8 at $21
 
 ; ------------------------------------------------------------------------------
 ; pointer: pObj = the record for slot A. Clobbers A, X.
@@ -59,7 +68,7 @@ end
 ; does not define that method, which is the cart's `if type.update ~= nil`.
 ; ------------------------------------------------------------------------------
 type_tile:
-    #d8 0, TILE_SPAWN, 0, 0
+    #d8 0, Room.tile_spawn, 0, 0
 type_init_lo:
     data u8 low(Player.init), low(Spawn.init), low(Smoke.init), low(Title.init)
 type_init_hi:
