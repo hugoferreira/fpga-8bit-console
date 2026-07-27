@@ -136,11 +136,11 @@
 
 ; the object list
     obj_slot = $1C     ; slot index being dispatched
-    obj_free = $1D     ; scratch: slot found by init_object
-    spawn_type = $1E     ; init_object arguments
+    obj_free = $1D     ; scratch: slot found by Objects.allocate
+    spawn_type = $1E     ; Objects.allocate arguments
     spawn_x = $1F
     spawn_y = $20
-    spawn_slot = $21     ; slot init_object used, for the caller
+    spawn_slot = $21     ; slot Objects.allocate used, for the caller
 
 ; collision arguments and results
     c_x = $22     ; box being tested

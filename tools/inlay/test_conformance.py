@@ -28,11 +28,11 @@ CELESTE_REFERENCE_DIR = (
     ROOT / "tests/inlay/reference/celeste-customasm"
 )
 CELESTE_MEMMAP = CELESTE_REFERENCE_DIR / "memmap.asm"
-EXPECTED_CELESTE_TYPED_OPERATIONS = 82
+EXPECTED_CELESTE_TYPED_OPERATIONS = 89
 EXPECTED_CELESTE_OVERLAY_OPERATIONS = 50
 EXPECTED_CELESTE_OFFSET_SETUPS = 0
-EXPECTED_CELESTE_SEMANTIC_OFFSETS = 110
-EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 136
+EXPECTED_CELESTE_SEMANTIC_OFFSETS = 97
+EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 129
 READABLE_CELESTE_MODULES = {
     "audio.inlay.asm",
     "collide.inlay.asm",
@@ -810,9 +810,93 @@ def check_platform_game_design() -> None:
             )
 
 
+def check_objects_design() -> None:
+    text = (CELESTE_DIR / "obj.inlay.asm").read_text(encoding="ascii")
+    if text.count("namespace Objects\n") != 1:
+        raise AssertionError("obj.inlay.asm must own one Objects namespace")
+    expected_exports = {
+        "pointer", "clear", "allocate", "dispatch", "spawn_smoke",
+        "destroy", "update_all", "draw_all",
+    }
+    exports = set(re.findall(
+        r"^\s*export ([a-z_]+)$", text, re.MULTILINE
+    ))
+    if exports != expected_exports:
+        raise AssertionError(
+            "Objects export manifest changed: "
+            f"expected {sorted(expected_exports)}, got {sorted(exports)}"
+        )
+    expected_procedures = {
+        "pointer": "proc pointer using console6502",
+        "clear": "proc clear using console6502",
+        "allocate": "proc allocate using console6502",
+        "dispatch": "proc dispatch using console6502 naked",
+        "spawn_smoke": "proc spawn_smoke using console6502",
+        "destroy": "proc destroy using console6502",
+        "update_all": "proc update_all using console6502",
+        "draw_all": "proc draw_all using console6502",
+        "move": "proc move using console6502",
+        "prepare_step": "proc prepare_step using console6502 naked",
+        "step_x": "proc step_x using console6502",
+        "step_y": "proc step_y using console6502",
+    }
+    declarations = {
+        match.group(1): match.group(0)
+        for match in re.finditer(
+            r"^proc ([a-z_]+) using console6502(?: naked)?$",
+            text,
+            re.MULTILINE,
+        )
+    }
+    if declarations != expected_procedures:
+        raise AssertionError(
+            "Objects procedure manifest changed: "
+            f"expected {sorted(expected_procedures)}, "
+            f"got {sorted(declarations)}"
+        )
+    required = {
+        "address result, objects[a]",
+        "saved_self : ptr CelesteObject in frame",
+        "mov [saved_self], self",
+        "mov self, [saved_self]",
+        "data u8 low(Player.init), low(Spawn.init), "
+        "low(Smoke.init), low(Title.init)",
+        "ldw value, [self + CelesteObject.core.remainder_x]",
+        "ldw operand, [self + CelesteObject.core.speed_x]",
+        "addw ab, operand",
+        "stw [self + CelesteObject.core.remainder_y], value",
+        "jsr Objects.prepare_step",
+    }
+    missing = sorted(item for item in required if item not in text)
+    if missing:
+        raise AssertionError(f"Objects semantic design changed: {missing}")
+    manual_receiver_save = re.compile(
+        r"lda pObj\s+pha\s+lda pObj\\+1\s+pha", re.MULTILINE
+    )
+    if manual_receiver_save.search(text):
+        raise AssertionError(
+            "Objects spawn path restored manual receiver stack plumbing"
+        )
+    legacy_names = {
+        "obj_ptr", "obj_init", "init_object", "spawn_at", "destroy_object",
+        "obj_update_all", "obj_move", "move_x", "move_y", "call_fn",
+    }
+    production = "\n".join(
+        path.read_text(encoding="ascii")
+        for path in sorted(CELESTE_DIR.glob("*.inlay.asm"))
+    )
+    found = sorted(
+        name for name in legacy_names
+        if re.search(rf"\b{name}\b", production)
+    )
+    if found:
+        raise AssertionError(f"legacy object API names remain: {found}")
+
+
 def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
     production_files = check_celeste_source_boundary()
     check_platform_game_design()
+    check_objects_design()
     module_texts = [
         path.read_text(encoding="ascii")
         for path in production_files
@@ -950,22 +1034,6 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
             "Celeste lifecycle procedure manifest changed: "
             f"expected {sorted(lifecycle_names)}, "
             f"got {sorted(declared_lifecycle)}"
-        )
-    obj_module = (
-        CELESTE_DIR / "obj.inlay.asm"
-    ).read_text(encoding="ascii")
-    expected_signature = (
-        "proc obj_ptr using console6502\n"
-        "    result : ptr CelesteObject return in pObj\n"
-        "    slot : u8\n"
-        "begin\n"
-        "    address result, objects[a]\n"
-        "    ret\n"
-        "end"
-    )
-    if obj_module.count(expected_signature) != 1:
-        raise AssertionError(
-            "checked-in obj_ptr did not use the exact unified signature"
         )
     generated = tmp / "celeste.asm"
     translate(

@@ -14,9 +14,9 @@ sha256  d85795e3daa7f1fbea0cef869efd554871f316c6196586dac3938e6340ae011a
 ```
 
 Phase B intentionally changes the executable while retaining behavioral,
-framebuffer, audio and resource gates. After the Platform/Game redesign, the
+framebuffer, audio and resource gates. After the Objects redesign, the
 deterministic production image remains 65,536 bytes with SHA-256
-`c60714d0ff1bf8680027a8f1ba59ef328468071a1113ca0fa648397ab1c45769`.
+`8b5b04b0606b4c44e7bc6f0164336779ac4d3ee9500508838f6beb91bbd4ee3b`.
 
 customasm v0.14.1 remains the host instruction encoder. The frontend owns
 packed and aligned layouts, enums, unions, sparse views, overlays, compile-time
@@ -540,7 +540,7 @@ semicolon comments outside quoted strings and trims insignificant leading
 indentation and trailing whitespace before charging source capacity, while
 retaining one source-mapped newline per input line. Celeste can therefore keep
 its checked-in commentary without weakening the bounded model. Its current
-expanded input uses 61,444 bytes, 4,247 lines and depth 2; the module workspace
+expanded input uses 62,525 bytes, 4,281 lines and depth 2; the module workspace
 reservation is 117,848 bytes.
 
 The installed cc65 compiler successfully compiles the same core and ca65
@@ -685,12 +685,15 @@ procedure records inputs, returns, frame locals and physical clobbers.
 `main.inlay.asm` is consequently only the target/bank composition root, module
 include list, stable debug aliases and vector table.
 
-The object, collision, player and draw modules use typed object operations,
-prefix layout queries and documented semantic exceptions rather than
-compatibility offsets. `obj_ptr` is expressed as a
-`using console6502` procedure whose scalar input is convention-assigned and
-whose pointer result uses `return in pObj`, plus the typed pool `address`
-operation.
+`Objects` exports typed pool addressing, clearing/allocation, lifecycle
+dispatch, receiver-preserving smoke construction and update/draw traversal.
+Its method tables derive from qualified lifecycle procedure identities, while
+movement uses typed word field transfers and the custom word adder directly.
+The shared signed-step helper makes the `t0`/`t1`/`t2` collision contract
+explicit. Smoke construction preserves `pObj` through an Inlay pointer frame
+local rather than handwritten stack pushes. The two global pool address-table
+labels remain a documented target-boundary exception because the current pool
+declaration accepts target identifiers rather than qualified semantic labels.
 
 The old direct customasm corpus lives only at
 `tests/inlay/reference/celeste-customasm/` as the immutable Phase-A baseline.
@@ -720,8 +723,8 @@ The conformance gate independently:
 6. assembles the complete production entry with customasm;
 7. checks the semantic manifest, Platform/Game public APIs, procedure
    contracts, minimal composition root and readable-source rules;
-8. inventories 50 overlay operations, 82 typed operations, 110 semantic
-   offset queries, zero legacy `offset y` setups and 136 residual raw
+8. inventories 50 overlay operations, 89 typed operations, 97 semantic
+   offset queries, zero legacy `offset y` setups and 129 residual raw
    `(pObj|pOth),y` accesses;
 9. runs the reset-vector, framebuffer and PSG checks against the frontend
    image.

@@ -30,24 +30,7 @@ draw_frame:
     sta [video + VideoRegisters.split]
     mov SPR_REP, #1  ; player, hair and smoke are single cells
 
-    mov obj_slot, #0
-.loop:
-    lda obj_slot
-    jsr obj_ptr
-    mov y, offset CelesteObject.core.kind
-    lda (pObj), y
-    beq .next
-    tax
-    lda type_draw_lo-1, x
-    sta pFn
-    lda type_draw_hi-1, x
-    sta pFn+1
-    ora pFn
-    beq .next
-    jsr call_fn
-.next:
-    inc obj_slot
-    cbne obj_slot, #OBJ_MAX, .loop
+    jsr Objects.draw_all
 
     jsr Fx.draw_particles       ; in front of everything, title screen included
     lda nspr
@@ -473,9 +456,8 @@ ovl_begin:
     ldx #0                      ; a live room title redraws every frame
 .find:
     txa
-    jsr obj_ptr
-    mov y, offset CelesteObject.core.kind
-    lda (pObj), y
+    jsr Objects.pointer
+    lda [pObj + CelesteObject.core.kind]
     cmp #ObjectKind.title
     beq .yes
     inx

@@ -18,7 +18,7 @@ begin
     jsr ovl_init
     jsr sound_init
     jsr Fx.init
-    jsr obj_init
+    jsr Objects.clear
 
     lda #0
     sta frames
@@ -153,7 +153,7 @@ begin
 
 .objects:
     jsr Fx.update
-    jsr obj_update_all
+    jsr Objects.update_all
     jmp Game.title_tick
 end
 

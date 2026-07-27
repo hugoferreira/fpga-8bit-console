@@ -6,7 +6,7 @@
 ; and `mget` is an indexed load out of a page-aligned array: the row is y<<4 and
 ; the column is x, so the index is one byte and never needs a pointer.
 ;
-; Everything here is called from move_x/move_y, so nothing in this file may
+; Everything here is called from Objects.step_x/step_y, so nothing here may
 ; touch t0, t1 or t2 - those hold the step and the loop counter of the caller.
 ; ------------------------------------------------------------------------------
 
@@ -213,7 +213,7 @@ spikes_at:
     mov pFn, spike_test_lo + x
     lda spike_test_hi, x
     sta pFn+1
-    jsr call_fn
+    jsr Objects.dispatch
     bne .hit
 .next:
     inc t5

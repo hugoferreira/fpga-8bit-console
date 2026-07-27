@@ -45,7 +45,7 @@ load_room:
     mov pSrc, room_ptr_lo + x
     mov pSrc+1, room_ptr_hi + x
 
-    jsr obj_init                ; the cart's foreach(objects, destroy_object)
+    jsr Objects.clear           ; the cart's foreach(objects, destroy)
 
     lda room_bank               ; load into the bank that is not on screen
     eor #1
@@ -114,7 +114,7 @@ load_room:
     sta spawn_y
     stx ld_i
     mov spawn_type, #ObjectKind.spawn
-    jsr init_object
+    jsr Objects.allocate
     ldx ld_i
 .nextspawn:
     inx
@@ -147,7 +147,7 @@ load_room:
     lda #0
     sta spawn_x
     sta spawn_y
-    jsr init_object
+    jsr Objects.allocate
 .done:
     jmp ovl_mark_dirty
 
@@ -208,9 +208,8 @@ camera_update:
     ldx #0
 .find:
     txa
-    jsr obj_ptr
-    mov y, offset CelesteObject.core.kind
-    lda (pObj), y
+    jsr Objects.pointer
+    lda [pObj + CelesteObject.core.kind]
     cmp #ObjectKind.player
     beq .found
     cmp #ObjectKind.spawn

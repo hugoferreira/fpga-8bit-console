@@ -121,7 +121,7 @@ begin
     add #4
     tax
     pla
-    jsr spawn_smoke
+    jsr Objects.spawn_smoke
 .nosmoke:
 
     tbz btn, #BTN_JUMP, .nojumpheld  ; jump = btn(jump) and not p_jump
@@ -216,7 +216,7 @@ begin
     lda [pObj + CelesteObject.core.y]
     tax
     pla
-    jsr spawn_smoke
+    jsr Objects.spawn_smoke
 
     mov y, offset CelesteObject.core.speed_x                 ; spd.x = Fixed.approach(spd.x, dash_target.x, dash_accel.x)
     jsr Fixed.load_object
@@ -403,7 +403,7 @@ player_move:
     lda (pObj), y
     tax
     pla
-    jsr spawn_smoke
+    jsr Objects.spawn_smoke
 
 .fall:
     lda p_onground
@@ -446,7 +446,7 @@ player_move:
     add #4
     tax
     pla
-    jsr spawn_smoke
+    jsr Objects.spawn_smoke
     jmp .dash
 
 .walljump:                      ; wall_dir = is_solid(-3,0) and -1 or is_solid(3,0) and 1 or 0
@@ -513,7 +513,7 @@ player_move:
     lda (pObj), y
     tax
     pla
-    jsr spawn_smoke
+    jsr Objects.spawn_smoke
 
 .dash:
     lda p_dash
@@ -528,7 +528,7 @@ player_move:
     lda (pObj), y
     tax
     pla
-    jsr spawn_smoke
+    jsr Objects.spawn_smoke
 .nodash:
     jmp player_anim
 
@@ -539,7 +539,7 @@ player_move:
     lda (pObj), y
     tax
     pla
-    jsr spawn_smoke
+    jsr Objects.spawn_smoke
 
     dec [pObj + CelesteObject.payload.player.dash_jumps]
     lda #4
@@ -793,7 +793,7 @@ kill_player:
     jsr sfx_play
     inc deaths
     mov shake, #10
-    jsr destroy_object
+    jsr Objects.destroy
     mov will_restart, #1
     lda #15
     sta delay_restart
@@ -946,7 +946,7 @@ begin
     add #4
     tax
     pla
-    jsr spawn_smoke
+    jsr Objects.spawn_smoke
     lda #5
     jmp sfx_play
 
@@ -964,9 +964,9 @@ begin
     mov y, offset CelesteObject.core.y
     lda (pObj), y
     sta spawn_y
-    jsr destroy_object
+    jsr Objects.destroy
     mov spawn_type, #ObjectKind.player
-    jmp init_object
+    jmp Objects.allocate
 .stillhere:
     rts
 
@@ -1051,7 +1051,7 @@ begin
     sta [pObj + CelesteObject.core.sprite]
     rts
 .gone:
-    jmp destroy_object
+    jmp Objects.destroy
 
 end
 
@@ -1096,5 +1096,5 @@ begin
 .done:
     rts
 .gone:
-    jmp destroy_object
+    jmp Objects.destroy
 end

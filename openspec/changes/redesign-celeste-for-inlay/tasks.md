@@ -60,13 +60,13 @@
 
 ## 8. Redesign the object subsystem
 
-- [ ] 8.1 Move pool addressing, clearing, allocation and destruction under `Objects`
+- [x] 8.1 Move pool addressing, clearing, allocation and destruction under `Objects`
 - [x] 8.2 Emit lifecycle dispatch metadata from qualified procedure addresses without backend symbol spellings
-- [ ] 8.3 Replace manual receiver save/restore in spawn paths with explicit frame or physical procedure contracts
-- [ ] 8.4 Rewrite object traversal and dispatch around typed pool and object-kind operations
-- [ ] 8.5 Rewrite fixed-point object movement with typed word transfers and custom word arithmetic
-- [ ] 8.6 Split collision-stepping helpers into scoped procedures with explicit physical state
-- [ ] 8.7 Pass object allocation, movement, collision, dispatch and resource checkpoints
+- [x] 8.3 Replace manual receiver save/restore in spawn paths with explicit frame or physical procedure contracts
+- [x] 8.4 Rewrite object traversal and dispatch around typed pool and object-kind operations
+- [x] 8.5 Rewrite fixed-point object movement with typed word transfers and custom word arithmetic
+- [x] 8.6 Split collision-stepping helpers into scoped procedures with explicit physical state
+- [x] 8.7 Pass object allocation, movement, collision, dispatch and resource checkpoints
 
 ## 9. Restructure object-kind behavior
 

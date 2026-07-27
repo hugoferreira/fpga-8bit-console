@@ -9,7 +9,7 @@
 ; NOTE for the corpus. These routines are the 16-bit add chains that
 ; add-isa-word-ops says exist in real programs and could not find in breakout.
 ; They are not written to make the case: approach() is the cart's own helper,
-; obj_move's rounding is the cart's own move(). No general multiply appears in
+; Objects.move's rounding is the cart's own move(). No general multiply appears
 ; stage 1 at all - the two irrational dash constants (5*sqrt(2)/2 and 1.5*
 ; sqrt(2)/2) are selected from a table rather than computed, which is what a
 ; 6502 programmer would do and is worth contrasting with nemo's single mul8.
