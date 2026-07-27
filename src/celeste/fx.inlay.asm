@@ -63,22 +63,22 @@ begin
 .cloud:
     lda [video.random]                 ; x = rnd(128)
     and #$7F
-    sta CL_XH, x
+    sta [effects.cloud_x_high[x]]
     lda #0
-    sta CL_XL, x
+    sta [effects.cloud_x_low[x]]
     lda [video.random]                 ; y = rnd(128)
     and #$7F
-    sta CL_Y, x
+    sta [effects.cloud_y[x]]
     lda [video.random]                 ; w = 4..7 cells, the cart's 32..64 pixels
     and #3
     add #4
-    sta CL_W, x
+    sta [effects.cloud_width[x]]
     lda [video.random]                 ; spd = 1 + rnd(4), in 8.8
     and #3
     add #1
-    sta CL_SH, x
+    sta [effects.cloud_speed_high[x]]
     lda [video.random]
-    sta CL_SL, x
+    sta [effects.cloud_speed_low[x]]
     dex
     bpl .cloud
 
@@ -86,20 +86,20 @@ begin
 .part:
     lda [video.random]
     and #$7F
-    sta PA_XH, x
+    sta [effects.particle_x_high[x]]
     lda [video.random]
-    sta PA_XL, x
+    sta [effects.particle_x_low[x]]
     lda [video.random]
     and #$7F
-    sta PA_YH, x
+    sta [effects.particle_y_high[x]]
     lda [video.random]
-    sta PA_YL, x
+    sta [effects.particle_y_low[x]]
     lda [video.random]                 ; spd = 0.25 + rnd(3), in 8.8
     and #3
-    sta PA_SH, x
+    sta [effects.particle_speed_high[x]]
     lda [video.random]
     ora #$40
-    sta PA_SL, x
+    sta [effects.particle_speed_low[x]]
     lda [video.random]                 ; the cart's c = 6 + flr(0.5 + rnd(1))
     and #1
     beq .grey
@@ -108,9 +108,9 @@ begin
 .grey:
     lda #Gfx.palette_6
 .setcol:
-    sta PA_ATTR, x
+    sta [effects.particle_attribute[x]]
     lda [video.random]
-    sta PA_OFF, x
+    sta [effects.particle_offset[x]]
     dex
     bpl .part
     ret
@@ -124,13 +124,13 @@ proc update using console6502 naked
 begin
     ldx #Fx.cloud_count-1
 .cloud:
-    lda CL_XL, x                 ; x += spd
+    lda [effects.cloud_x_low[x]]                 ; x += spd
     clc
-    adc CL_SL, x
-    sta CL_XL, x
-    lda CL_XH, x
-    adc CL_SH, x
-    sta CL_XH, x
+    adc [effects.cloud_speed_low[x]]
+    sta [effects.cloud_x_low[x]]
+    lda [effects.cloud_x_high[x]]
+    adc [effects.cloud_speed_high[x]]
+    sta [effects.cloud_x_high[x]]
 
     ; The cart's `if c.x > 128 then c.x = -c.w`. x is one byte here, so "past
     ; the right edge" and "off the left, drifting back on" are BOTH negative-
@@ -140,62 +140,62 @@ begin
     bcc .nextcloud
     cmp #192
     bcs .nextcloud
-    lda CL_W, x                  ; -w cells, in pixels
+    lda [effects.cloud_width[x]]                  ; -w cells, in pixels
     asl
     asl
     asl
     eor #$FF
     add #1
-    sta CL_XH, x
+    sta [effects.cloud_x_high[x]]
     lda #0
-    sta CL_XL, x
+    sta [effects.cloud_x_low[x]]
     lda [video.random]
     and #$7F
     cmp #120
     bcc .keepy
     lda #119
 .keepy:
-    sta CL_Y, x
+    sta [effects.cloud_y[x]]
 .nextcloud:
     dex
     bpl .cloud
 
     ldx #Fx.particle_count-1
 .part:
-    lda PA_XL, x                 ; x += spd
+    lda [effects.particle_x_low[x]]                 ; x += spd
     clc
-    adc PA_SL, x
-    sta PA_XL, x
-    lda PA_XH, x
-    adc PA_SH, x
-    sta PA_XH, x
+    adc [effects.particle_speed_low[x]]
+    sta [effects.particle_x_low[x]]
+    lda [effects.particle_x_high[x]]
+    adc [effects.particle_speed_high[x]]
+    sta [effects.particle_x_high[x]]
 
-    lda PA_OFF, x                ; off += spd/32, capped at the cart's 0.05
+    lda [effects.particle_offset[x]]                ; off += spd/32, capped at the cart's 0.05
     add #13
-    sta PA_OFF, x
+    sta [effects.particle_offset[x]]
     lsr                         ; y += sin(off), from a 16-step table
     lsr
     lsr
     lsr
     tay
-    lda PA_YL, x
+    lda [effects.particle_y_low[x]]
     clc
     adc Fx.sin_low, y
-    sta PA_YL, x
-    lda PA_YH, x
+    sta [effects.particle_y_low[x]]
+    lda [effects.particle_y_high[x]]
     adc Fx.sin_high, y
-    sta PA_YH, x
+    sta [effects.particle_y_high[x]]
 
-    lda PA_XH, x                 ; if x > 132 then x = -4, y = rnd(128); same
+    lda [effects.particle_x_high[x]]                 ; if x > 132 then x = -4, y = rnd(128); same
     cmp #133                    ; two-sided test as the clouds above
     bcc .nextpart
     cmp #192
     bcs .nextpart
     lda #$FC
-    sta PA_XH, x
+    sta [effects.particle_x_high[x]]
     lda [video.random]
     and #$7F
-    sta PA_YH, x
+    sta [effects.particle_y_high[x]]
 .nextpart:
     dex
     bpl .part
@@ -218,12 +218,12 @@ begin
     ldx #0
 .cloud:
     stx t6
-    lda CL_Y, x                  ; clouds do not scroll with the camera: they
+    lda [effects.cloud_y[x]]                  ; clouds do not scroll with the camera: they
     sub [game.camera_y]
     sta t5
     mov t3, #Gfx.palette_1
-    mov t4, CL_XH + x
-    lda CL_W, x                  ; the whole cloud is ONE entry: the compositor
+    mov t4, cloud_x_high + x
+    lda [effects.cloud_width[x]]                  ; the whole cloud is ONE entry: the compositor
     sta [video.repeat]                 ; repeats the fetched row across its cells
     lda #Gfx.solid
     jsr Draw.sprite
@@ -245,9 +245,9 @@ begin
     ldx #0
 .part:
     stx t6
-    mov t3, PA_ATTR + x
-    mov t4, PA_XH + x
-    lda PA_YH, x
+    mov t3, particle_attribute + x
+    mov t4, particle_x_high + x
+    lda [effects.particle_y_high[x]]
     sub [game.camera_y]
     sta t5
     lda #Gfx.dot

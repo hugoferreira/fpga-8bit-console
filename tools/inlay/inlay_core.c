@@ -4249,6 +4249,12 @@ static int la_parse_typed_operation(LaContext *ctx,
     } else if ((la_u16)(end - cursor) >= 4 &&
                memcmp(cursor, "sub ", 4) == 0) {
         operation = LA_TARGET_OP_SUB8A_OVERLAY_DISP;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "adc ", 4) == 0) {
+        operation = LA_TARGET_OP_ADC8_OVERLAY_INDEXED;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "sbc ", 4) == 0) {
+        operation = LA_TARGET_OP_SBC8_OVERLAY_INDEXED;
     } else {
         return 0;
     }
@@ -4431,7 +4437,32 @@ static int la_parse_typed_operation(LaContext *ctx,
     event->aux = la_slice("", 0);
     event->aux2 = la_slice("", 0);
     event->property = (LaPropertyKind)0;
-    if (operation == LA_TARGET_OP_CMP8_OVERLAY_DISP ||
+    if (operation == LA_TARGET_OP_ADC8_OVERLAY_INDEXED ||
+        operation == LA_TARGET_OP_SBC8_OVERLAY_INDEXED) {
+        /* Carry-chain arithmetic through an indexed fixed-overlay array (the
+           effects structure-of-arrays); the accumulator and carry are live. */
+        if (!is_overlay || !indexed) {
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
+                    (la_u16)(end - start),
+                    la_slice(start, (la_u16)(end - start)),
+                    la_slice("indexed fixed-overlay carry arithmetic", 38),
+                    0, 0);
+            return -1;
+        }
+        if (!ctx->target->overlay_byte_operations ||
+            !ctx->target->indexed_overlay_byte_operations) {
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
+                    (la_u16)(end - start),
+                    la_slice(start, (la_u16)(end - start)),
+                    la_slice("indexed overlay byte access", 27), 0, 0);
+            return -1;
+        }
+        event->operation = operation;
+        event->access_width = 1;
+        event->clobbers = la_slice("a,flags", 7);
+        event->volatility = ctx->overlays[overlay_index].volatile_access ?
+            LA_ACCESS_VOLATILE : LA_ACCESS_NONVOLATILE;
+    } else if (operation == LA_TARGET_OP_CMP8_OVERLAY_DISP ||
         operation == LA_TARGET_OP_STOREX_OVERLAY_DISP ||
         operation == LA_TARGET_OP_STOREY_OVERLAY_DISP ||
         operation == LA_TARGET_OP_AND8A_OVERLAY_DISP ||

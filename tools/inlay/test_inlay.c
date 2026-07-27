@@ -507,6 +507,23 @@ static void test_typed_word_transfers(void)
     check(events.saw_overlay_indexed_store,
           "page-view indexed store event emitted");
     result = compile_source(
+        "struct Fx packed\n"
+        "    lo : u8[32] at 0\n"
+        "    speed : u8[32] at 32\n"
+        "end\n"
+        "overlay effects : Fx at $5600\n"
+        "adc [effects.speed[x]]\n"
+        "sbc [effects.speed[x]]\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK,
+          "indexed carry arithmetic through a fixed-overlay array compiles");
+    expect_error(
+        "struct Fx packed\n    v : u8 at 0\nend\n"
+        "overlay effects : Fx at $5600\n"
+        "adc [effects.v]\n",
+        limits, LA_ERR_UNSUPPORTED_OPERATION,
+        "non-indexed overlay carry arithmetic rejected");
+    result = compile_source(
         "struct V\n"
         "    control : u8 at 5\n"
         "end\n"

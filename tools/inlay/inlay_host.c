@@ -808,6 +808,21 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
     case LA_TARGET_OP_LOAD8_OVERLAY_INDEXED:
     case LA_TARGET_OP_STORE8_OVERLAY_INDEXED:
         return emit_overlay_indexed(output, event);
+    case LA_TARGET_OP_ADC8_OVERLAY_INDEXED:
+    case LA_TARGET_OP_SBC8_OVERLAY_INDEXED:
+        if (!begin_line(output, event->span, "overlay-indexed-operation")) {
+            return 0;
+        }
+        fprintf(output->assembly, "    %s %.*s + %u, %.*s",
+                event->operation == LA_TARGET_OP_ADC8_OVERLAY_INDEXED ?
+                    "adc" : "sbc",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value,
+                (int)event->index.length, event->index.data);
+        fprintf(output->assembly, " ; inlay overlay %.*s.%.*s\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
+        return 1;
     case LA_TARGET_OP_DATA_PROC_LOW:
     case LA_TARGET_OP_DATA_PROC_HIGH:
     case LA_TARGET_OP_DATA_PROC_FULL:

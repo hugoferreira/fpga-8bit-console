@@ -59,7 +59,7 @@
 - [x] 6.6 Move object capacity and flags to `Objects` and derive pool/hair counts through layout queries
 - [x] 6.7 Move fixed-point word locations and shared receiver/dispatch locations to their declared physical owners
 - [x] 6.8 Move collision, drawing, hair and loader scratch to their owning namespaces
-- [ ] 6.9 Migrate cloud and particle operations to the indexed `FxStorage` overlay
+- [x] 6.9 Migrate cloud and particle operations to the indexed `FxStorage` overlay
 - [ ] 6.10 Migrate room tiles, row pointers, overlay shadow and framebuffer copies to typed linear/page views
 - [ ] 6.11 Run complete 65,536-byte ROM equivalence after each ownership group
 
