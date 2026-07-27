@@ -22,10 +22,19 @@ namespace Audio
     export music
     export fade
     export stop
+    location address_low : u8 at $4100
+    location address_high : u8 at $4101
+    location music_mask : u8 at $4121
+    location fade_units : u8 at $4122
+    music_title = 40
+    music_climb = 0
+    music_orb = 10
+    music_stop = $80
+    fade_500ms = 31
 
 init:
-    mov PSG_ADDR_LO, #$00
-    mov PSG_ADDR_HI, #$31
+    mov [psg + PsgRegisters.address_low], #$00
+    mov [psg + PsgRegisters.address_high], #$31
     mov pSrc, #<audio_data
     mov pSrc+1, #>audio_data
     ldx #18                     ; 18 pages = 4608 bytes
@@ -39,7 +48,7 @@ init:
     dex
     bne .up
 
-    mov PSG_MUSMASK, #$07
+    mov [psg + PsgRegisters.music_mask], #$07
     lda #0
     sta nextch
     rts

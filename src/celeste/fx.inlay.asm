@@ -36,6 +36,20 @@ namespace Fx
     export update
     export draw_clouds
     export draw_particles
+    location cloud_x_low : u8 at $5600
+    location cloud_x_high : u8 at $5620
+    location cloud_y : u8 at $5640
+    location cloud_width : u8 at $5660
+    location cloud_speed_low : u8 at $5680
+    location cloud_speed_high : u8 at $56a0
+    location particle_x_low : u8 at $56c0
+    location particle_x_high : u8 at $56e0
+    location particle_y_low : u8 at $5700
+    location particle_y_high : u8 at $5720
+    location particle_speed_low : u8 at $5740
+    location particle_speed_high : u8 at $5760
+    location particle_attribute : u8 at $5780
+    location particle_offset : u8 at $57a0
 
     cloud_count = 17
     particle_count = 25
@@ -227,7 +241,7 @@ end
 ; ------------------------------------------------------------------------------
 proc draw_particles using console6502 naked
 begin
-    mov SPR_REP, #1
+    mov [video + VideoRegisters.repeat], #1
     ldx #0
 .part:
     stx t6

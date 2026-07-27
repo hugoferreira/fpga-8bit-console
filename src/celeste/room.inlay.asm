@@ -16,6 +16,19 @@ namespace Room
     export next
     export restart
     export camera
+    location load_index : u8 at $4b
+    width = 16
+    height = 16
+    playfield_width = 128
+    camera_y_max = 8
+    title_level = 31
+    tile_spawn = 1
+    tile_spike_down = 17
+    tile_spike_up = 27
+    tile_spike_right = 43
+    tile_spike_left = 59
+    flag_solid = $01
+    flag_ice = $10
 ; ------------------------------------------------------------------------------
 ; room_init: the parts of the tile layer that never change.
 ; ------------------------------------------------------------------------------
@@ -23,10 +36,10 @@ init:
     lda #0
     sta [video + VideoRegisters.clip_x0]
     sta [video + VideoRegisters.clip_y0]
-    mov SPR_CLIPX1, #PLAYFIELD_W-1
-    mov SPR_CLIPY1, #119
-    mov SPR_CTRL, #$03
-    mov SPR_OVLCOL, #7  ; colour 7 everywhere it matters
+    mov [video + VideoRegisters.clip_x1], #PLAYFIELD_W-1
+    mov [video + VideoRegisters.clip_y1], #119
+    mov [video + VideoRegisters.control], #$03
+    mov [video + VideoRegisters.overlay_color], #7  ; colour 7 everywhere it matters
     lda #1
     sta room_bank               ; load_room flips it, so the first room is 0
     rts
@@ -127,10 +140,10 @@ load:
     lda t3                      ; with off = -4. Scrolling the camera 4 to the
     add #4
     sta t3
-    mov SPR_CLIPX1, #PLAYFIELD_W-5  ; does not appear in the gap that opens up
+    mov [video + VideoRegisters.clip_x1], #PLAYFIELD_W-5  ; does not appear in the gap that opens up
     jmp .cam
 .notitle:
-    mov SPR_CLIPX1, #PLAYFIELD_W-1
+    mov [video + VideoRegisters.clip_x1], #PLAYFIELD_W-1
 .cam:
     lda t3
     sta [video + VideoRegisters.camera_x]

@@ -22,6 +22,21 @@ namespace Draw
     export overlay_init
     export overlay_dirty
     export room_title
+    location overlay_pointer : u16 at $16
+    location pen_x : u8 at $60
+    location pen_y : u8 at $61
+    location character : u8 at $62
+    location bits : u8 at $63
+    location row : u8 at $64
+    location count : u8 at $65
+    location index : u8 at $66
+    location hair_index : u8 at $67
+    location hair_color_value : u8 at $68
+    location hair_last_x : u16 at $6a
+    location hair_last_y : u16 at $6c
+    location hair_head_x : u16 at $6e
+    location hair_head_y : u16 at $70
+    overlay_stride = OverlayFramebuffer.size / 120
 
 ; ------------------------------------------------------------------------------
 ; frame: the cart's _draw, minus the effects it has no primitives for.
@@ -38,7 +53,7 @@ frame:
 .nosky:
     lda nspr                    ; everything staged so far is background
     sta [video + VideoRegisters.split]
-    mov SPR_REP, #1  ; player, hair and smoke are single cells
+    mov [video + VideoRegisters.repeat], #1  ; player, hair and smoke are single cells
 
     jsr Objects.draw_all
 

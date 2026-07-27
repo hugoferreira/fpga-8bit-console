@@ -4965,6 +4965,104 @@ static int la_count_operation(LaContext *ctx, la_u16 line)
     return 1;
 }
 
+/* mov [overlay + Type.field], #EXPR — store an immediate into a fixed overlay
+   field. The immediate is passed through verbatim so target-side constants stay
+   resolvable and the emitted bytes match the legacy raw form exactly. */
+static int la_parse_overlay_store_immediate(LaContext *ctx,
+                                            const char *start, const char *end,
+                                            la_u16 line, LaEvent *event)
+{
+    const char *cursor;
+    const char *bracket;
+    const char *close;
+    const char *base_start;
+    const char *base_end;
+    const char *root_start;
+    const char *first_dot;
+    const char *path_start;
+    const char *imm_start;
+    la_u16 overlay_index;
+    la_u16 root_length;
+    la_u16 field_index;
+    la_u16 field_offset;
+    la_u16 field_size;
+    cursor = la_trim_left(start, end);
+    if ((la_u16)(end - cursor) < 4 || memcmp(cursor, "mov ", 4) != 0) return 0;
+    bracket = la_trim_left(cursor + 3, end);
+    if (bracket >= end || *bracket != '[') return 0;
+    close = bracket + 1;
+    while (close < end && *close != ']') ++close;
+    if (close == end) return 0;
+    base_start = la_trim_left(bracket + 1, close);
+    base_end = base_start;
+    while (base_end < close && la_is_ident(*base_end)) ++base_end;
+    cursor = la_trim_left(base_end, close);
+    if (base_end == base_start || cursor >= close || *cursor++ != '+') return 0;
+    root_start = la_trim_left(cursor, close);
+    first_dot = root_start;
+    while (first_dot < close && *first_dot != '.') ++first_dot;
+    if (first_dot == close) return 0;
+    root_length = (la_u16)(first_dot - root_start);
+    path_start = first_dot + 1;
+    cursor = la_trim_left(close + 1, end);
+    if (cursor >= end || *cursor++ != ',') return 0;
+    cursor = la_trim_left(cursor, end);
+    if (cursor >= end || *cursor++ != '#') return 0;
+    imm_start = la_trim_left(cursor, end);
+    if (imm_start == end) {
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                la_slice("mov [overlay + field], #VALUE", 29),
+                la_slice("", 0), 0, 0);
+        return -1;
+    }
+    overlay_index = la_find_overlay_text(
+        ctx, base_start, (la_u16)(base_end - base_start));
+    if (overlay_index == LA_INVALID_HANDLE) {
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
+                (la_u16)(base_end - base_start),
+                la_slice(base_start, (la_u16)(base_end - base_start)),
+                la_slice("overlay", 7), 0, 0);
+        return -1;
+    }
+    {
+        LaSlice declared;
+        declared = la_name_slice(ctx, ctx->overlays[overlay_index].type_name);
+        if (declared.length != root_length ||
+            memcmp(declared.data, root_start, root_length) != 0) {
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, root_length,
+                    declared, la_slice(root_start, root_length), 0, 0);
+            return -1;
+        }
+    }
+    if (la_resolve_path(ctx, root_start, root_length, path_start,
+                        (la_u16)(close - path_start), line,
+                        &field_index, &field_offset) != LA_OK) return -1;
+    field_size = ctx->fields[field_index].count == 1 ?
+        ctx->fields[field_index].size :
+        (la_u16)(ctx->fields[field_index].size /
+                 ctx->fields[field_index].count);
+    if (ctx->fields[field_index].count != 1 || field_size != 1) {
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
+                (la_u16)(close - path_start),
+                la_name_slice(ctx, ctx->fields[field_index].name),
+                la_slice("byte", 4), field_size, 1);
+        return -1;
+    }
+    if (!la_count_operation(ctx, line)) return -1;
+    la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
+                  (la_u16)(end - start));
+    event->operation = LA_TARGET_OP_STORE_IMM_OVERLAY_ABS;
+    event->owner = la_slice(root_start, root_length);
+    event->path = la_slice(path_start, (la_u16)(close - path_start));
+    event->base = la_name_slice(ctx, ctx->overlays[overlay_index].base);
+    event->text = la_slice(imm_start, (la_u16)(end - imm_start));
+    event->value = field_offset;
+    event->access_width = 1;
+    event->volatility = ctx->overlays[overlay_index].volatile_access ?
+        LA_ACCESS_VOLATILE : LA_ACCESS_NONVOLATILE;
+    return 1;
+}
+
 static int la_parse_overlay_address(LaContext *ctx,
                                     const char *start, const char *end,
                                     la_u16 line, LaEvent *event,
@@ -6545,6 +6643,10 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
             }
             if (typed == 0) {
                 typed = la_parse_qualified_immediate(
+                    ctx, cursor, content_end, line, &event);
+            }
+            if (typed == 0) {
+                typed = la_parse_overlay_store_immediate(
                     ctx, cursor, content_end, line, &event);
             }
             if (typed == 0) {

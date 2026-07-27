@@ -48,6 +48,7 @@ typedef struct {
     int saw_overlay_or;
     int saw_overlay_volatile_increment;
     int saw_overlay_compare;
+    int saw_overlay_store_immediate;
 } TestEvents;
 
 typedef struct {
@@ -296,6 +297,18 @@ static int test_event(void *context, const LaEvent *event)
             } else {
                 events->saw_overlay_or = 1;
             }
+        } else if (event->operation ==
+                   LA_TARGET_OP_STORE_IMM_OVERLAY_ABS) {
+            check(event->access_width == 1,
+                  "overlay store-immediate reports one-unit width");
+            check(event->volatility == LA_ACCESS_VOLATILE,
+                  "MMIO overlay store-immediate reports volatile access");
+            if (event->text.length == 13 &&
+                memcmp(event->text.data, "PLAYFIELD_W-1", 13) == 0) {
+                check(event->value == 5,
+                      "overlay store-immediate reports field displacement");
+                events->saw_overlay_store_immediate = 1;
+            }
         } else if (event->operation == LA_TARGET_OP_CMP8_OVERLAY_DISP) {
             check(event->access_width == 1,
                   "overlay compare reports one-unit width");
@@ -481,6 +494,21 @@ static void test_typed_word_transfers(void)
           "page-view indexed load event emitted");
     check(events.saw_overlay_indexed_store,
           "page-view indexed store event emitted");
+    result = compile_source(
+        "struct V\n"
+        "    control : u8 at 5\n"
+        "end\n"
+        "overlay video : V at $4000 volatile\n"
+        "mov [video + V.control], #PLAYFIELD_W-1\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, "overlay store-immediate compiles");
+    check(events.saw_overlay_store_immediate,
+          "overlay store-immediate event emitted with verbatim expression");
+    expect_error(
+        "struct V\ncontrol : u8 at 5\nend\n"
+        "mov [missing + V.control], #1\n",
+        limits, LA_ERR_LOCATION_TYPE,
+        "overlay store-immediate with unknown base rejected");
     expect_error(
         "struct Big packed\ncells : u8[300] at 0\nend\n"
         "overlay b : Big at $e000\n"
