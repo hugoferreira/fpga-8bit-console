@@ -330,18 +330,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // ------------------------------------------------------------------
   // Per-slot synthesis state: working copies of the scheduled store
   // ------------------------------------------------------------------
-  logic [15:0] spar_wd, sosc_wd;
+  logic [15:0] sosc_wd;
 
   // The sequencer's working copy of the parameters: what it is building for the
   // slot it is visiting, published to the inactive bank when the visit ends.
-  logic [23:0] w_eff_inc;
-  logic [2:0]  w_snd_wave;
-  logic        w_snd_wt;
-  logic [2:0]  w_snd_id;              // was a 13-bit base address; see s_snd_wtb
-  logic [5:0]  w_snd_pitch;
+  // The former w_eff_inc/w_snd_*/w_eff_vol publication staging is gone:
+  // arp_r, vol_r and the final product hold the results until the P_W
+  // steps write the bank words directly.
   logic        w_ch_noiz, w_ch_buzz;
   logic [1:0]  w_ch_det, w_ch_rev, w_ch_damp;
-  logic [7:0]  w_eff_vol;
 
   // The synthesis walk's working copy: parameters and oscillator state loaded
   // serially from state_m, with the oscillator words written back in place.
@@ -454,6 +451,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     // steps that replace the e_sp/e_tcnt/e_fcnt bank muxes.
     EA0, EA1, EA2, EA3, EA4, EA5,
     ES0, ES1, ES2,
+    P_W0, P_W1, P_W2, P_W3,
+    PC0, PC1, PC2, PC3,
     I_TR0, I_TR1, I_TR2, I_TR3, I_TR4, I_TW, I_NL, I_NH, I_LD,
     W_MUS,
     K_ROT, V_LD, V_ST,
@@ -483,50 +482,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   end
   wire ta_ge = ({1'b0, ta_a} + 9'd1) >= {1'b0, ta_b};
 
-  // V_ST stores the four register-resident tick words, then the four
-  // sounding words into the inactive bank. The active bank does not move
-  // until every slot has completed that sequence. Flow-owned words are
-  // written in place by the engine and never appear in this store.
-  always_comb begin
-    case (vcnt - 4'd4)
-      4'd0:    spar_wd = w_eff_inc[15:0];
-      4'd1:    spar_wd = {1'b0, w_snd_id, w_snd_wt, w_snd_wave,
-                          w_eff_inc[23:16]};
-      4'd2:    spar_wd = {2'b0, w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz,
-                          w_ch_noiz, w_snd_pitch};
-      default: spar_wd = {3'b0,
-                          (w_cur_fx == 3'd1
-                           || (w_ins_on && !w_ins_wt
-                               && (w_cur_fx == 3'd0
-                                   || w_cur_fx == 3'd3)
-                               && w_ins_fx == 3'd1)),
-                          (w_ins_on && !w_ins_wt
-                           && (w_cur_fx == 3'd0 || w_cur_fx == 3'd3)
-                           && (w_ins_fx == 3'd0
-                               || w_ins_fx == 3'd4
-                               || w_ins_fx == 3'd5)),
-                          ((!w_ins_on && w_cur_fx == 3'd3)
-                           || (w_ins_on && !w_ins_wt
-                               && (w_cur_fx == 3'd0
-                                   || w_cur_fx == 3'd3)
-                               && w_ins_fx == 3'd3)),
-                          clr_tog[c],
-                          ((!w_ins_on
-                            && (w_cur_fx == 3'd0
-                                || w_cur_fx == 3'd4
-                                || w_cur_fx == 3'd5))
-                           || (w_ins_on && !w_ins_wt
-                               && (w_cur_fx == 3'd0
-                                   || w_cur_fx == 3'd3)
-                               && (w_ins_fx == 3'd0
-                                   || w_ins_fx == 3'd4
-                                   || w_ins_fx == 3'd5))
-                           || (w_ins_on && !w_ins_wt
-                               && (w_cur_fx == 3'd4
-                                   || w_cur_fx == 3'd5))),
-                          w_eff_vol};
-    endcase
-  end
+  // Publication is direct-to-bank now: the P_W steps write the four
+  // inactive sounding words straight through the engine's store site, and
+  // a skipped slot's K_ROT/PC steps copy them verbatim from the active
+  // bank (its cone inputs are unchanged, so the copy equals the old
+  // register re-publication; a stop path zeroes the volume byte via cpz).
+  // V_ST stores only the four register-resident tick words.
+  logic        cpz;                  // this copy publishes a stopped slot
   logic        walk_tick;            // this pass was started by a tick
   logic        tickpend;
   // Pre-run publication handshake: a completed tick pass stages its bank
@@ -903,6 +865,57 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     endcase
   end
 
+  // The publication pack, one inactive sounding word per P_W step. The
+  // operands hold across all four cycles: arp_r and vol_r are the effect
+  // program's result slots, p8 is the xs 6 product (the m service is idle
+  // until the next slot's first launch), and everything else is a
+  // register or a cone over registers.
+  wire [23:0] pub_inc = (w_ins_on && w_ins_wt && w_ins_bass)
+                          ? {1'b0, arp_r[23:1]} : arp_r;
+  logic [15:0] pub_wd;
+  always_comb begin
+    case (sst)
+      P_W0:    pub_wd = pub_inc[15:0];
+      P_W1:    pub_wd = {1'b0, w_ins_id, (w_ins_on & w_ins_wt),
+                         (ins_use ? w_ins_wave
+                          : (w_ins_on && w_ins_wt) ? 3'd0 : w_cur_wave),
+                         pub_inc[23:16]};
+      P_W2:    pub_wd = {2'b0, w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz,
+                         w_ch_noiz, e_pitch};
+      default: pub_wd = {3'b0,
+                         (w_cur_fx == 3'd1
+                          || (w_ins_on && !w_ins_wt
+                              && (w_cur_fx == 3'd0
+                                  || w_cur_fx == 3'd3)
+                              && w_ins_fx == 3'd1)),
+                         (w_ins_on && !w_ins_wt
+                          && (w_cur_fx == 3'd0 || w_cur_fx == 3'd3)
+                          && (w_ins_fx == 3'd0
+                              || w_ins_fx == 3'd4
+                              || w_ins_fx == 3'd5)),
+                         ((!w_ins_on && w_cur_fx == 3'd3)
+                          || (w_ins_on && !w_ins_wt
+                              && (w_cur_fx == 3'd0
+                                  || w_cur_fx == 3'd3)
+                              && w_ins_fx == 3'd3)),
+                         clr_tog[c],
+                         ((!w_ins_on
+                           && (w_cur_fx == 3'd0
+                               || w_cur_fx == 3'd4
+                               || w_cur_fx == 3'd5))
+                          || (w_ins_on && !w_ins_wt
+                              && (w_cur_fx == 3'd0
+                                  || w_cur_fx == 3'd3)
+                              && (w_ins_fx == 3'd0
+                                  || w_ins_fx == 3'd4
+                                  || w_ins_fx == 3'd5))
+                          || (w_ins_on && !w_ins_wt
+                              && (w_cur_fx == 3'd4
+                                  || w_cur_fx == 3'd5))),
+                         is_mus(c) ? p8 : vol_r};
+    endcase
+  end
+
   always_ff @(posedge clk) begin
     if (reset) begin
       sst <= S_IDLE;
@@ -1039,15 +1052,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             4'd4: w_ins_pitch <= state_q[13:8];   // word 8 read-copy refresh
             4'd5: {w_ins_wt, w_ins_on, w_ins_prev_vol, w_ins_fx,
                    w_ins_prev_pitch} <= state_q[13:0];
-            4'd6: w_eff_inc[15:0] <= state_q;
-            4'd7: {w_snd_id, w_snd_wt, w_snd_wave, w_eff_inc[23:16]}
-                     <= state_q[14:0];
-            4'd8: {w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz, w_ch_noiz,
-                     w_snd_pitch} <= state_q[13:0];
-            4'd9: w_eff_vol <= state_q[7:0];
+            // The carried channel filters: an instrument that continues
+            // without a retrigger passes no filter-writing state, so the
+            // active bank's word refreshes the w_ch_* registers the P_W2
+            // publication reads.
+            4'd6: {w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz, w_ch_noiz}
+                    <= state_q[13:6];
             default: ;
           endcase
-          if (vcnt == 4'd9) begin
+          if (vcnt == 4'd6) begin
             vcnt <= 0;
             sst <= K_ADV;
           end else
@@ -1056,7 +1069,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
         // ---- record store: one word per cycle, then on to the next slot ---
         V_ST: begin
-          if (vcnt == 4'd7) begin
+          if (vcnt == 4'd3) begin
             vcnt <= 0;
             if (c == VW'(NV-1)) begin
               c <= 0;
@@ -1091,7 +1104,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           // play_len stages in wrd's high byte until T_NH writes word 2;
           // speed joins it in the low byte at T_LS.
           wrd[15:8] <= is_mus(c) ? 8'd0 : {2'b0, trg_len[c[1:0]]};
-          w_eff_vol <= 0;                   // do not carry the old note's level
           if (!is_mus(c)) begin
             trg_row[c[1:0]] <= 0;           // parameters are one-shot
             trg_len[c[1:0]] <= 0;
@@ -1185,7 +1197,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           if (trig_req[c]) begin
             sst <= T_FL;                    // this channel wants a new SFX
           end else if (!walk_tick || !playing[c]) begin
-            if (!playing[c]) w_eff_vol <= 0;
+            // Not evaluated this pass: publish by copy. A stopped slot's
+            // volume byte is forced to zero - a CPU stop clears playing
+            // without a publishing pass, so the active byte may still hold
+            // the sounding level. The cone bits copy verbatim: no trigger
+            // has run since the last evaluation, so their inputs and
+            // clr_tog are unchanged.
+            cpz <= !playing[c];
             sst <= K_ROT;
           end else begin
             abank <= 0;
@@ -1238,7 +1256,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             // an explicit length overrides the record's loop points
             if (wrd[13:8] == 6'd1 || row[c] == 5'd31) begin
               pend_stop[c] <= 1;             // visible from the boundary
-              w_eff_vol <= 0;
+              cpz <= 1;                      // publish a zero volume
               sst <= K_ROT;
             end else begin
               // the engine write this cycle decrements the length in place
@@ -1257,7 +1275,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           end else if (ta_ge) begin
             if (!abank) begin
               pend_stop[c] <= 1;           // visible from the boundary
-              w_eff_vol <= 0;
+              cpz <= 1;                    // publish a zero volume
               sst <= K_ROT;
             end else begin
               w_ins_done <= 1;             // instrument over: note silent
@@ -1420,16 +1438,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             slide_addr <= slp_int;
             sst <= K_SLP0;
           end else if (xs == 4'd7) begin
+              // Publication runs P_W0..P_W3, writing the four inactive
+              // sounding words directly; arp_r, vol_r, the final product
+              // and the identity registers hold every operand.
               xs <= 0;
-              w_eff_inc <= (w_ins_on && w_ins_wt && w_ins_bass)
-                              ? {1'b0, arp_r[23:1]} : arp_r;
-              w_eff_vol <= is_mus(c) ? p8 : vol_r;
-              w_snd_wave <= ins_use ? w_ins_wave
-                           : (w_ins_on && w_ins_wt) ? 3'd0 : w_cur_wave;
-              w_snd_wt   <= w_ins_on & w_ins_wt;
-              w_snd_id    <= w_ins_id;
-              w_snd_pitch <= e_pitch;
-              sst <= K_ROT;
+              sst <= P_W0;
           end else begin
             xs    <= xs + 1;
           end
@@ -1456,15 +1469,25 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           sst   <= K_FX;
         end
 
-        // Rotate the ring so the next channel's state is at the head.
-        // Four rotations per pass leave it where it started, so channel k
-        // is always at index k while the sequencer is idle.
-        K_ROT: begin
-          // Nothing rotates any more: every slot is named by its index, and the
-          // working copy IS the slot being visited. The old ring made a
-          // cross-walk read look innocent - the synthesis pipeline reading the
-          // sequencer's index 0 got channel 0 whatever voice it was on, which
-          // is how the noise gain bug (test 20c) hid.
+        // Direct publication for an evaluated slot: one inactive sounding
+        // word per step through the engine's store site.
+        P_W0: sst <= P_W1;
+        P_W1: sst <= P_W2;
+        P_W2: sst <= P_W3;
+        P_W3: begin
+          vcnt <= 0;
+          sst <= V_ST;
+        end
+
+        // A skipped slot's publication is a verbatim copy of its active
+        // sounding words (its cone inputs are unchanged, so this equals
+        // the old register re-publication); cpz zeroes the volume byte
+        // when the slot stopped this pass. K_ROT issues the first read.
+        K_ROT: sst <= PC0;
+        PC0: sst <= PC1;               // write inactive+0, issue active+1
+        PC1: sst <= PC2;
+        PC2: sst <= PC3;
+        PC3: begin
           vcnt <= 0;
           sst <= V_ST;
         end
@@ -1748,7 +1771,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       4'd2: tick_load_word = 5'd5;
       4'd3: tick_load_word = 5'd8;         // ins_pitch read-copy refresh
       4'd4: tick_load_word = 5'd9;
-      default: tick_load_word = (bank ? V_PAR1 : V_PAR0) + 5'(n - 4'd5);
+      // Active filter word for the carried w_ch_* refresh.
+      default: tick_load_word = (bank ? V_PAR1 : V_PAR0) + 5'd2;
     endcase
   endfunction
   function automatic logic [4:0] tick_store_word(
@@ -1757,8 +1781,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       4'd0: tick_store_word = 5'd3;
       4'd1: tick_store_word = 5'd4;
       4'd2: tick_store_word = 5'd5;
-      4'd3: tick_store_word = 5'd9;
-      default: tick_store_word = (bank ? V_PAR0 : V_PAR1) + 5'(n - 4'd4);
+      default: tick_store_word = 5'd9;
     endcase
   endfunction
 
@@ -1766,6 +1789,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // so a read displaced by a sample walk re-issues itself, and a consume
   // state re-issues the displaced word during the replay cycle (the V_LD
   // pattern, generalized).
+  wire [4:0] par_act = spar_bank ? V_PAR1 : V_PAR0;   // active bank base
+  wire [4:0] par_ina = spar_bank ? V_PAR0 : V_PAR1;   // inactive (publish)
   logic       eng_rd;
   logic [4:0] eng_word;
   always_comb begin
@@ -1788,6 +1813,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               eng_word = e_insfx ? 5'd8 : 5'd2;
               eng_rd = state_replay;
             end
+      // The skipped-slot copy reads the ACTIVE sounding words.
+      K_ROT: eng_word = par_act;
+      PC0:   eng_word = state_replay ? par_act : par_act + 5'd1;
+      PC1:   eng_word = state_replay ? par_act + 5'd1 : par_act + 5'd2;
+      PC2:   eng_word = state_replay ? par_act + 5'd2 : par_act + 5'd3;
+      PC3:   begin
+               eng_word = par_act + 5'd3;
+               eng_rd = state_replay;
+             end
       default: eng_rd = 1'b0;
     endcase
   end
@@ -1825,6 +1859,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                eng_wd = {2'b0, wrd[13:8] - 6'd1, wrd[7:0]};
                eng_we = !abank && wrd[13:8] != 0
                         && !(wrd[13:8] == 6'd1 || row[c] == 5'd31);
+             end
+      // Direct publication and the skipped-slot copy.
+      P_W0:  begin eng_wa = par_ina;         eng_wd = pub_wd; end
+      P_W1:  begin eng_wa = par_ina + 5'd1;  eng_wd = pub_wd; end
+      P_W2:  begin eng_wa = par_ina + 5'd2;  eng_wd = pub_wd; end
+      P_W3:  begin eng_wa = par_ina + 5'd3;  eng_wd = pub_wd; end
+      PC0:   begin eng_wa = par_ina;         eng_wd = state_q; end
+      PC1:   begin eng_wa = par_ina + 5'd1;  eng_wd = state_q; end
+      PC2:   begin eng_wa = par_ina + 5'd2;  eng_wd = state_q; end
+      PC3:   begin eng_wa = par_ina + 5'd3;
+               eng_wd = cpz ? {state_q[15:8], 8'd0} : state_q;
              end
       default: eng_we = 1'b0;
     endcase
@@ -1866,7 +1911,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       state_wd = eng_wd;
     end else begin
       state_wa = {c, tick_store_word(vcnt, spar_bank)};
-      state_wd = (vcnt < 4'd4) ? vwdata : spar_wd;
+      state_wd = vwdata;
     end
   end
 

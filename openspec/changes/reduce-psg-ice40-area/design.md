@@ -269,6 +269,23 @@ deterministic hazard the reference renders share - fixing it changes
 renders and is its own adjudicated stage. 50/50 byte-identical;
 seed-1 placed 6,317 (-27), routed 40.98 MHz.
 
+The second 3.3 family made publication direct-to-bank: P_W0..P_W3 write
+the four inactive sounding words straight through the engine's store
+site from the effect program's own result slots (arp_r, vol_r, the xs 6
+product held in m_res) and the identity/filter registers, deleting the
+w_eff_inc/w_snd_*/w_eff_vol staging (45 bits) and V_ST's four sounding
+stores. A skipped slot publishes by verbatim copy (K_ROT/PC0..PC3, five
+cycles) - its cone inputs are unchanged since its last evaluation, so
+the copy equals the old register re-publication - and cpz zeroes the
+volume byte for any not-playing slot, which covers both this-pass stops
+and CPU stops that never ran a publishing pass, with identical cone
+bits either way. The one dependency restored deliberately: a continuing
+instrument passes no filter-writing state, so V_LD reads the active
+filter word to refresh the carried w_ch_* registers. 50/50
+byte-identical on the first run; seed-1 placed **6,220 (-97)**, routed
+40.50 MHz - the largest single-family engine win, the amortization the
+3.1 stage bought.
+
 Mapped 5,476 LUT4s (-25), 936 carries (-66), 1,512 flip-flops, 15 EBRs;
 seed-1 placed **6,344 cells (-25)**, routed 39.64 MHz. psg_tb passes with
 the sample deadline unchanged at 558/1,275 and worst pre-run completion
