@@ -321,11 +321,11 @@ hair_draw:
     ldy d_n                     ; h.x += (last.x - h.x) * 0.625
     jsr Fixed.load_object
     ldab hair_lx
-    stab w1
+    stab Fixed.word1
     jsr Draw.hair_chase
     ldy d_n
     jsr Fixed.store_object
-    ldab w0
+    ldab Fixed.word0
     stab hair_hx
 
     lda d_n
@@ -333,13 +333,13 @@ hair_draw:
     tay
     jsr Fixed.load_object
     ldab hair_ly
-    stab w1
+    stab Fixed.word1
     jsr Draw.hair_chase
     lda d_n
     add #2
     tay
     jsr Fixed.store_object
-    ldab w0
+    ldab Fixed.word0
     stab hair_hy
 
     ldab hair_hx  ; this node becomes the next one's target
@@ -389,38 +389,38 @@ hair_draw:
 
 ; hair_chase: w0 += (w1 - w0) * 0.625, as two shifts and an add.
 hair_chase:
-    ldab w1  ; d = target - h
-    subw w0
-    stab w2
+    ldab Fixed.word1  ; d = target - h
+    subw Fixed.word0
+    stab Fixed.word2
 
-    ldab w2  ; w1 = d >> 1
-    stab w1
+    ldab Fixed.word2  ; w1 = d >> 1
+    stab Fixed.word1
     jsr Draw.asr_w1
 
     jsr Draw.asr_w2                  ; w2 = d >> 3
     jsr Draw.asr_w2
     jsr Draw.asr_w2
 
-    ldab w0
-    addw w1
-    stab w0
-    ldab w0
-    addw w2
-    stab w0
+    ldab Fixed.word0
+    addw Fixed.word1
+    stab Fixed.word0
+    ldab Fixed.word0
+    addw Fixed.word2
+    stab Fixed.word0
     rts
 
 asr_w1:
-    lda w1+1
+    lda Fixed.word1+1
     cmp #$80                    ; carry = the sign bit, so the shift is signed
-    ror w1+1
-    ror w1
+    ror Fixed.word1+1
+    ror Fixed.word1
     rts
 
 asr_w2:
-    lda w2+1
+    lda Fixed.word2+1
     cmp #$80
-    ror w2+1
-    ror w2
+    ror Fixed.word2+1
+    ror Fixed.word2
     rts
 
 ; ------------------------------------------------------------------------------

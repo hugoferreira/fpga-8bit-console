@@ -228,10 +228,10 @@ begin
     jsr Fixed.load_object_target
     mov y, offset CelesteObject.payload.player.dash_accel_x.fraction
     lda (pObj), y
-    sta w2
+    sta Fixed.word2
     iny
     lda (pObj), y
-    sta w2+1
+    sta Fixed.word2+1
     jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_x
     jsr Fixed.store_object
@@ -241,10 +241,10 @@ begin
     jsr Fixed.load_object_target
     mov y, offset CelesteObject.payload.player.dash_accel_y.fraction
     lda (pObj), y
-    sta w2
+    sta Fixed.word2
     iny
     lda (pObj), y
-    sta w2+1
+    sta Fixed.word2+1
     jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_y
     jsr Fixed.store_object
@@ -275,17 +275,17 @@ begin
     jsr Fixed.set_value
     mov y, offset CelesteObject.core.speed_x
     jsr Fixed.load_object_target
-    lda w1+1
+    lda Fixed.word1+1
     bpl .absdone
     ldab #$0000  ; w1 = abs(spd.x), inline because Fixed.negate works
-    subw w1
-    stab w1
+    subw Fixed.word1
+    stab Fixed.word1
 .absdone:
     jsr Fixed.compare                   ; N set: maxrun < abs(spd.x)
     bpl .accelerate
     mov y, offset CelesteObject.core.speed_x                 ; spd.x = Fixed.approach(spd.x, sign(spd.x)*maxrun, deccel)
     jsr Fixed.load_object
-    lda w0+1
+    lda Fixed.word0+1
     bmi .decelneg
     lda #<Player.max_run
     ldx #>Player.max_run
@@ -367,8 +367,8 @@ begin
     jsr Fixed.set_target
     jsr Fixed.compare                   ; N set: abs(spd.y) < 0.15
     bmi .halfgrav
-    cbne w0, #<Player.y_epsilon, .slide  ; the cart's test is <=, so catch equality too
-    cbne w0+1, #>Player.y_epsilon, .slide
+    cbne Fixed.word0, #<Player.y_epsilon, .slide  ; the cart's test is <=, so catch equality too
+    cbne Fixed.word0+1, #>Player.y_epsilon, .slide
 .halfgrav:
     mov Player.grav, #<Player.gravity_half
     mov Player.grav+1, #>Player.gravity_half
@@ -761,17 +761,17 @@ proc signed_word using console6502 naked
     sign : i8 in a
     low : u8 in x
     high : u8 in y
-    value : u16 return in w0
+    value : u16 return in Fixed.word0
 begin
-    stx w0
-    sty w0+1
+    stx Fixed.word0
+    sty Fixed.word0+1
     cmp #0
     beq .zero
     bpl .done
     jmp Fixed.negate
 .zero:
     ldab #$0000
-    stab w0
+    stab Fixed.word0
 .done:
     ret
 end
@@ -903,10 +903,10 @@ begin
     jsr Fixed.add
     mov y, offset CelesteObject.core.speed_y
     jsr Fixed.store_object
-    lda w0+1                    ; the hover: while delay lasts, spd.y is held
+    lda Fixed.word0+1                    ; the hover: while delay lasts, spd.y is held
     bmi .done2                  ; at zero each time it goes positive
-    lda w0
-    ora w0+1
+    lda Fixed.word0
+    ora Fixed.word0+1
     beq .done2
     mov y, offset CelesteObject.payload.player.delay ; inlay-exception: branch observes pre-decrement value
     lda (pObj), y

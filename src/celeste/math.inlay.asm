@@ -29,19 +29,25 @@ namespace Fixed
     export set_value
     export set_target
     export set_amount
+    export word0
+    export word1
+    export word2
+    location word0 : u16 at $08
+    location word1 : u16 at $0a
+    location word2 : u16 at $0c
 
 ; ------------------------------------------------------------------------------
 ; compare: signed compare w0 against w1. Returns N=1 iff w0 < w1, N=0 otherwise
 ; (including equal). Clobbers A only.
 ; ------------------------------------------------------------------------------
 proc compare using console6502 naked
-    left : u16 in w0
-    right : u16 in w1
+    left : u16 in Fixed.word0
+    right : u16 in Fixed.word1
 begin
-    lda w0
-    cmp w1
-    lda w0+1
-    sbc w1+1
+    lda Fixed.word0
+    cmp Fixed.word1
+    lda Fixed.word0+1
+    sbc Fixed.word1+1
     bvc .done
     eor #$80                    ; overflow: the sign bit lies, flip it back
 .done:
@@ -52,22 +58,22 @@ end
 ; add / subtract: w0 += w1 / w0 -= w1. Clobbers A.
 ; ------------------------------------------------------------------------------
 proc add using console6502 naked
-    value : u16 in w0
-    amount : u16 in w1
+    value : u16 in Fixed.word0
+    amount : u16 in Fixed.word1
 begin
-    ldab w0
-    addw w1
-    stab w0
+    ldab Fixed.word0
+    addw Fixed.word1
+    stab Fixed.word0
     ret
 end
 
 proc subtract using console6502 naked
-    value : u16 in w0
-    amount : u16 in w1
+    value : u16 in Fixed.word0
+    amount : u16 in Fixed.word1
 begin
-    ldab w0
-    subw w1
-    stab w0
+    ldab Fixed.word0
+    subw Fixed.word1
+    stab Fixed.word0
     ret
 end
 
@@ -75,11 +81,11 @@ end
 ; negate: w0 = -w0. Clobbers A.
 ; ------------------------------------------------------------------------------
 proc negate using console6502 naked
-    value : u16 in w0
+    value : u16 in Fixed.word0
 begin
     ldab #$0000
-    subw w0
-    stab w0
+    subw Fixed.word0
+    stab Fixed.word0
     ret
 end
 
@@ -87,9 +93,9 @@ end
 ; absolute: w0 = |w0|. Clobbers A.
 ; ------------------------------------------------------------------------------
 proc absolute using console6502 naked
-    value : u16 in w0
+    value : u16 in Fixed.word0
 begin
-    lda w0+1
+    lda Fixed.word0+1
     bmi Fixed.negate
     ret
 end
@@ -98,12 +104,12 @@ end
 ; sign: A = 1, $FF or 0 for the sign of w0. Clobbers A.
 ; ------------------------------------------------------------------------------
 proc sign using console6502 naked
-    value : u16 in w0
+    value : u16 in Fixed.word0
     result : u8 return in a
 begin
-    lda w0+1
+    lda Fixed.word0+1
     bmi .neg
-    ora w0
+    ora Fixed.word0
     beq .zero
     lda #1
     ret
@@ -124,28 +130,28 @@ end
 ; Clobbers A.
 ; ------------------------------------------------------------------------------
 proc approach using console6502 naked
-    value : u16 in w0
-    target : u16 in w1
-    amount : u16 in w2
+    value : u16 in Fixed.word0
+    target : u16 in Fixed.word1
+    amount : u16 in Fixed.word2
 begin
     jsr Fixed.compare
     bmi .up                     ; val < target: approach from below
 .down:
-    ldab w0  ; val -= amount
-    subw w2
-    stab w0
+    ldab Fixed.word0  ; val -= amount
+    subw Fixed.word2
+    stab Fixed.word0
     jsr Fixed.compare
     bpl .done                   ; still >= target, keep it
     jmp .clamp
 .up:
-    ldab w0  ; val += amount
-    addw w2
-    stab w0
+    ldab Fixed.word0  ; val += amount
+    addw Fixed.word2
+    stab Fixed.word0
     jsr Fixed.compare
     bmi .done                   ; still < target, keep it
 .clamp:
-    ldab w1
-    stab w0
+    ldab Fixed.word1
+    stab Fixed.word0
 .done:
     ret
 end
@@ -160,23 +166,23 @@ end
 ; Both clobber A and Y.
 ; ------------------------------------------------------------------------------
 proc load_object using console6502 naked
-    value : u16 return in w0
+    value : u16 return in Fixed.word0
 begin
     lda (pObj), y
-    sta w0
+    sta Fixed.word0
     iny
     lda (pObj), y
-    sta w0+1
+    sta Fixed.word0+1
     ret
 end
 
 proc store_object using console6502 naked
-    value : u16 in w0
+    value : u16 in Fixed.word0
 begin
-    lda w0
+    lda Fixed.word0
     sta (pObj), y
     iny
-    lda w0+1
+    lda Fixed.word0+1
     sta (pObj), y
     ret
 end
@@ -186,13 +192,13 @@ end
 ; pointer-to-a-pointer, because the caller always knows which register it means.
 ; ------------------------------------------------------------------------------
 proc load_object_target using console6502 naked
-    target : u16 return in w1
+    target : u16 return in Fixed.word1
 begin
     lda (pObj), y
-    sta w1
+    sta Fixed.word1
     iny
     lda (pObj), y
-    sta w1+1
+    sta Fixed.word1+1
     ret
 end
 
@@ -203,30 +209,30 @@ end
 proc set_value using console6502 naked
     low : u8 in a
     high : u8 in x
-    value : u16 return in w0
+    value : u16 return in Fixed.word0
 begin
-    sta w0
-    stx w0+1
+    sta Fixed.word0
+    stx Fixed.word0+1
     ret
 end
 
 proc set_target using console6502 naked
     low : u8 in a
     high : u8 in x
-    target : u16 return in w1
+    target : u16 return in Fixed.word1
 begin
-    sta w1
-    stx w1+1
+    sta Fixed.word1
+    stx Fixed.word1+1
     ret
 end
 
 proc set_amount using console6502 naked
     low : u8 in a
     high : u8 in x
-    amount : u16 return in w2
+    amount : u16 return in Fixed.word2
 begin
-    sta w2
-    stx w2+1
+    sta Fixed.word2
+    stx Fixed.word2+1
     ret
 end
 end

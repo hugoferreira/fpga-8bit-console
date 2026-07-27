@@ -286,21 +286,21 @@ end
 ; ------------------------------------------------------------------------------
 proc move using console6502
     self : ptr CelesteObject in pObj
-    value : u16 in w0
-    operand : u16 in w1
+    value : u16 in Fixed.word0
+    operand : u16 in Fixed.word1
 begin
     ldw value, [self.core.remainder_x] ; rem.x += spd.x
     ldw operand, [self.core.speed_x]
-    ldab w0
+    ldab Fixed.word0
     addw ab, operand
-    stab w0
+    stab Fixed.word0
     stw [self.core.remainder_x], value
 
     lda #$80                    ; amount = flr(rem.x + 0.5)
     ldx #$00
     jsr Fixed.set_target
     jsr Fixed.add
-    lda w0+1
+    lda Fixed.word0+1
     sta t0
 
     mov y, offset CelesteObject.core.remainder_x.integer ; inlay-exception: variable update operand t0
@@ -312,16 +312,16 @@ begin
 
     ldw value, [self.core.remainder_y] ; and the same for y
     ldw operand, [self.core.speed_y]
-    ldab w0
+    ldab Fixed.word0
     addw ab, operand
-    stab w0
+    stab Fixed.word0
     stw [self.core.remainder_y], value
 
     lda #$80
     ldx #$00
     jsr Fixed.set_target
     jsr Fixed.add
-    lda w0+1
+    lda Fixed.word0+1
     sta t0
 
     mov y, offset CelesteObject.core.remainder_y.integer ; inlay-exception: variable update operand t0
