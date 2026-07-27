@@ -131,8 +131,36 @@ tap), and none combines dampen with reverb, so their relative order
 should add filter-dampen-2 (filt 144), filter-reverb-2 (filt 48) and a
 combined probe (filt 96) to pin all three.
 
-Noise stays at the RNG boundary; the model's remaining work is the
-reference re-capture and gate flip (section 5), then the RTL phases.
+**Fifth milestone: 51/51 against the re-captured references - task 5.1
+closed, no open guesses remain.** The capture (53 cases into
+`build/psg_oracle/adopt-exact/`, PICO-8 export run from a
+accessibility-granted terminal) re-adjudicated everything:
+
+- All 48 prior cases match the fresh exports byte-for-byte. The new
+  capture carries different per-case lead-ins than the old one, so the
+  model matching both captures exactly is the export-pipeline
+  stability evidence, stronger than file identity.
+- filter-reverb-2 and filter-dampen-2 confirmed the generalized
+  level-2 forms on the first run: reverb tap four slots back (732
+  samples), dampen `tz((x + 3y)/4)`.
+- filter-dampen-reverb convicted the guessed order. The chain is
+  **comb first, dampen second, and the ring stores the tick's FINAL
+  post-dampen samples** - the echo train re-enters the comb already
+  smoothed. Hand-verified before the code change: the reference's
+  -15/-46/-89 fall out of that structure exactly, while both
+  dampen-first and a pre-dampen write-back give -31/-78/-133.
+- The flipped gates now define the finish line: against the fresh
+  references the current RTL is red on all 51 deterministic cases
+  (it renders the superseded approximations; results.json records
+  per-case mismatch counts) and clean on the two statistical noise
+  cases. Sections 2-4 drive the deterministic set to zero mismatches.
+
+The `area-final` reference/render set stays frozen untouched for
+`reduce-psg-ice40-area`'s stage-over-stage byte comparison until task
+5.2 re-freezes it at this change's final renders.
+
+Noise stays at the RNG boundary; the model's remaining work is done -
+the RTL phases follow, sized by the width report.
 
 Constraints inherited from `reduce-psg-ice40-area`, which pauses at its
 6,199-cell / 15-EBR checkpoint until this change lands: the 15-EBR

@@ -59,9 +59,14 @@
 
 ## 5. Gates, references, and closure
 
-- [ ] 5.1 Re-capture the oracle references once; flip every deterministic
+- [x] 5.1 Re-capture the oracle references once; flip every deterministic
       case to exact comparison; keep statistical gates only for
-      noise-consuming cases
+      noise-consuming cases (53 references at
+      build/psg_oracle/adopt-exact; model 51/51 byte-exact including the
+      three new level-2/order probes; matrix gates are mismatches_max=0
+      for deterministic cases, statistical for the noise pair;
+      results.json records the all-red RTL starting line the RTL
+      sections must close)
 - [ ] 5.2 Re-freeze the reduce-psg-ice40-area byte-compare baseline at
       this change's final renders and note it in that change's design
 - [ ] 5.3 Celeste and NEMO headless runs with active audio; verify by

@@ -603,12 +603,6 @@ class ChannelVoice:
                    + (BLEND_SAMPLES - i) * old_samples[i])
             probe("blend.acc", acc)
             new_samples[i] = tz(acc, BLEND_SAMPLES)
-        if self.sfx.dampen:
-            y = self.damp_y
-            for i in range(TICK_SAMPLES):
-                y = damp_step(y, new_samples[i], self.sfx.dampen)
-                new_samples[i] = y
-            self.damp_y = y
         # REVERB: the per-voice history-ring comb, enabled by the reverb
         # digit: tap two slots back (366 samples) at level 1, four (732)
         # at level 2; y = tz((4y + 2h)/4) with the post-comb tick written
@@ -617,13 +611,25 @@ class ChannelVoice:
         # wave-7-phaser export matching the comb-free stream on all 5,696
         # samples (its case has reverb 0) with the RE notes' description
         # of the comb. The phaser's export identity stays the triangle
-        # core with its 254/256 secondary.
+        # core with its 254/256 secondary. The comb runs BEFORE dampen
+        # (filter-dampen-reverb: the echo arrives one-pole-smoothed, at
+        # half the dampen-first amplitude).
         if self.sfx.reverb:
             tap = (self.rpos + 4 + 2 * (self.sfx.reverb == 1)) & 7
             for i in range(TICK_SAMPLES):
                 acc = 4 * new_samples[i] + 2 * self.ring[tap][i]
                 probe("reverb.acc", acc)
                 new_samples[i] = tz(acc, 4)
+        if self.sfx.dampen:
+            y = self.damp_y
+            for i in range(TICK_SAMPLES):
+                y = damp_step(y, new_samples[i], self.sfx.dampen)
+                new_samples[i] = y
+            self.damp_y = y
+        # The ring stores the tick's FINAL samples - post-comb AND
+        # post-dampen - so a combined filter's echo train re-enters the
+        # comb already smoothed (filter-dampen-reverb, hand-verified at
+        # -15/-46/-89 against both single-filter orderings).
         self.ring[self.rpos] = list(new_samples)
         self.rpos = (self.rpos + 1) & 7
         return new_samples
