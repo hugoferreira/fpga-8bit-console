@@ -98,8 +98,26 @@ load/store procs place params/returns at `pObj`/`w0`/`spawn_*` (raw physical
 aliases). Everything else in 6.7 — operands, and the `sta w0` / `(pObj), y` /
 `+1` forms — migrates cleanly (unqualified inside the owning namespace via
 scoped-raw mangling, qualified elsewhere; skip struct-field and
-`location`/`namespace` lines). Close both frontend gaps with unit tests, then
-re-run the namespace-aware migration script and the placements will resolve.
+`location`/`namespace` lines).
+
+Both frontend fixes were prototyped and then reverted: (1) the one-line
+return-branch `la_read_qualified_identifier` change, and (2) a
+`la_find_location_qualified` helper that splits `Fixed.left` into namespace
+`Fixed` + leaf `left` and matches the leaf against each global location's simple
+name (`locations[i].name`) with the prefix against that location's reconstructed
+`namespace_handle` path, wired into the placement resolver (`la_resolve_layouts`,
+the `la_find_location_text` call near the `member-placement` failure). Both pass
+in **isolation** — a faithful standalone repro of the failing `Objects.move`
+proc (`self : ptr … in Machine.object` + `value : u16 in Fixed.left` under
+`using console6502`) resolves and keeps the ROM at e57a8ea4. But the **full
+multi-module Celeste build still fails** on `Fixed.left` with `member-placement:
+… (declared qualified location)`, so the resolver returns INVALID only in that
+context. The remaining bug is therefore multi-module-specific (a location or
+namespace-handle state difference between the single-file case and the module
+replay), not the resolver algorithm itself — start the next 6.7 attempt by
+instrumenting `la_find_location_qualified` in the module-replay path (note the
+portable core has no `<stdio.h>`; surface diagnostics through the event/error
+channel instead of `fprintf`).
 
 ### Deliberately unfinished
 
