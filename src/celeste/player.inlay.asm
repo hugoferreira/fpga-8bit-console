@@ -47,24 +47,24 @@ proc init using console6502
     self : ptr CelesteObject in pObj
 begin
     lda #1                      ; hitbox = {1,3,6,5}
-    sta [pObj + CelesteObject.core.hitbox.x]
+    sta [pObj.core.hitbox.x]
     lda #3
-    sta [pObj + CelesteObject.core.hitbox.y]
+    sta [pObj.core.hitbox.y]
     lda #6
-    sta [pObj + CelesteObject.core.hitbox.w]
+    sta [pObj.core.hitbox.w]
     lda #5
-    sta [pObj + CelesteObject.core.hitbox.h]
-    lda [game + GameState.max_dash_jumps]
-    sta [pObj + CelesteObject.payload.player.dash_jumps]
+    sta [pObj.core.hitbox.h]
+    lda [game.max_dash_jumps]
+    sta [pObj.payload.player.dash_jumps]
     lda #1
-    sta [pObj + CelesteObject.core.sprite]
+    sta [pObj.core.sprite]
     jmp Player.create_hair
 ; Player.update
 end
 proc update using console6502
     self : ptr CelesteObject in pObj
 begin
-    lda [game + GameState.pause_player]
+    lda [game.pause_player]
     beq .go
     ret
 .go:
@@ -74,11 +74,11 @@ end
 proc sample_input using console6502
     self : ptr CelesteObject in pObj
 begin
-    tbz [game + GameState.buttons], #Platform.Input.right, .noright  ; input = right and 1 or (left and -1 or 0)
+    tbz [game.buttons], #Platform.Input.right, .noright  ; input = right and 1 or (left and -1 or 0)
     lda #1
     bne .haveinput
 .noright:
-    tbz [game + GameState.buttons], #Platform.Input.left, .noinput
+    tbz [game.buttons], #Platform.Input.left, .noinput
     lda #$FF
     bne .haveinput
 .noinput:
@@ -100,7 +100,7 @@ begin
     beq .nospike
     jmp Player.kill
 .nospike:
-    lda [pObj + CelesteObject.core.y]  ; port's positions are signed bytes, so the
+    lda [pObj.core.y]  ; port's positions are signed bytes, so the
     bmi .notbottom              ; test moves 8 pixels up rather than wrapping
     cmp #121                    ; into "above the room", which is next_room -
     bcc .notbottom              ; and the sign has to be tested BEFORE the
@@ -120,15 +120,15 @@ begin
     lda (pObj), y
     and #Player.bit_ground
     bne .nosmoke
-    lda [pObj + CelesteObject.core.x]
+    lda [pObj.core.x]
     pha
-    lda [pObj + CelesteObject.core.y]
+    lda [pObj.core.y]
     add #4
     tax
     pla
     jsr Objects.spawn_smoke
 .nosmoke:
-    tbz [game + GameState.buttons], #Platform.Input.jump, .nojumpheld  ; jump = btn(jump) and not Player.jump_edge
+    tbz [game.buttons], #Platform.Input.jump, .nojumpheld  ; jump = btn(jump) and not Player.jump_edge
     mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
     lda (pObj), y
     and #Player.bit_jump
@@ -157,9 +157,9 @@ begin
     jmp .dashedge
 .jbuf:
     lda #4
-    sta [pObj + CelesteObject.payload.player.jump_buffer]
+    sta [pObj.payload.player.jump_buffer]
 .dashedge:
-    tbz [game + GameState.buttons], #Platform.Input.dash, .nodashheld  ; dash = btn(dash) and not Player.dash_edge
+    tbz [game.buttons], #Platform.Input.dash, .nodashheld  ; dash = btn(dash) and not Player.dash_edge
     mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: mask constant remains target-owned
     lda (pObj), y
     and #Player.bit_dash
@@ -183,14 +183,14 @@ begin
     lda Player.ground
     beq .airborne
     lda #6
-    sta [pObj + CelesteObject.payload.player.grace]
-    lda [pObj + CelesteObject.payload.player.dash_jumps]
-    cmp [game + GameState.max_dash_jumps]
+    sta [pObj.payload.player.grace]
+    lda [pObj.payload.player.dash_jumps]
+    cmp [game.max_dash_jumps]
     bcs .gracedone
     lda #54
     jsr Audio.guarded_sfx
-    lda [game + GameState.max_dash_jumps]
-    sta [pObj + CelesteObject.payload.player.dash_jumps]
+    lda [game.max_dash_jumps]
+    sta [pObj.payload.player.dash_jumps]
     jmp .gracedone
 .airborne:
     mov y, offset CelesteObject.payload.player.grace ; inlay-exception: branch observes pre-decrement value
@@ -206,7 +206,7 @@ end
 proc active_dash using console6502
     self : ptr CelesteObject in pObj
 begin
-    dec [pObj + CelesteObject.payload.player.dash_effect] ; dash_effect_time -= 1
+    dec [pObj.payload.player.dash_effect] ; dash_effect_time -= 1
     mov y, offset CelesteObject.payload.player.dash_time
     lda (pObj), y                ; if dash_time > 0 then ... else move
     beq .move
@@ -216,9 +216,9 @@ begin
 .dashing:
     sub #1
     sta (pObj), y
-    lda [pObj + CelesteObject.core.x]                    ; a smoke puff per dash frame
+    lda [pObj.core.x]                    ; a smoke puff per dash frame
     pha
-    lda [pObj + CelesteObject.core.y]
+    lda [pObj.core.y]
     tax
     pla
     jsr Objects.spawn_smoke
@@ -335,7 +335,7 @@ begin
     iny
     ora (pObj), y
     beq .done
-    lda [pObj + CelesteObject.core.speed_x.integer]
+    lda [pObj.core.speed_x.integer]
     bmi .faceleft
     mov y, offset CelesteObject.core.flip ; inlay-exception: following flags feed control flow
     lda (pObj), y
@@ -386,10 +386,10 @@ begin
     bne .fall
     mov Player.maxfall, #<Player.fall_slide
     mov Player.maxfall+1, #>Player.fall_slide
-    lda [video + VideoRegisters.random]                 ; if rnd(10) < 2 then a puff off the wall
+    lda [video.random]                 ; if rnd(10) < 2 then a puff off the wall
     cmp #51
     bcs .fall
-    lda [pObj + CelesteObject.core.x]
+    lda [pObj.core.x]
     add Player.input  ; x + input*6, by adding input six times rather
     add Player.input
     add Player.input
@@ -424,24 +424,24 @@ end
 proc jump_dash using console6502
     self : ptr CelesteObject in pObj
 begin
-    lda [pObj + CelesteObject.payload.player.jump_buffer]
+    lda [pObj.payload.player.jump_buffer]
     bne .wantjump
     jmp .dash
 .wantjump:
-    lda [pObj + CelesteObject.payload.player.grace]
+    lda [pObj.payload.player.grace]
     beq .walljump
     lda #1                      ; normal jump
     jsr Audio.guarded_sfx
     lda #0
-    sta [pObj + CelesteObject.payload.player.jump_buffer]
-    sta [pObj + CelesteObject.payload.player.grace]
+    sta [pObj.payload.player.jump_buffer]
+    sta [pObj.payload.player.grace]
     lda #<Player.jump_speed
     mov y, offset CelesteObject.core.speed_y.fraction
     sta (pObj), y
     lda #>Player.jump_speed
     iny
     sta (pObj), y
-    lda [pObj + CelesteObject.core.x]
+    lda [pObj.core.x]
     pha
     mov y, offset CelesteObject.core.y
     lda (pObj), y
@@ -467,7 +467,7 @@ begin
     lda #2
     jsr Audio.guarded_sfx
     lda #0
-    sta [pObj + CelesteObject.payload.player.jump_buffer]
+    sta [pObj.payload.player.jump_buffer]
     lda #<Player.jump_speed
     mov y, offset CelesteObject.core.speed_y.fraction
     sta (pObj), y
@@ -500,7 +500,7 @@ begin
     mov c_oy, #0
     jsr Collision.ice
     bne .dash
-    lda [pObj + CelesteObject.core.x]
+    lda [pObj.core.x]
     add Player.wall
     add Player.wall
     add Player.wall
@@ -516,11 +516,11 @@ begin
 .dash:
     lda Player.dash_edge
     beq .nodash
-    lda [pObj + CelesteObject.payload.player.dash_jumps]
+    lda [pObj.payload.player.dash_jumps]
     bne .dodash
     lda #9                      ; out of dashes: a puff and a raspberry
     jsr Audio.guarded_sfx
-    lda [pObj + CelesteObject.core.x]
+    lda [pObj.core.x]
     pha
     mov y, offset CelesteObject.core.y
     lda (pObj), y
@@ -530,24 +530,24 @@ begin
 .nodash:
     jmp Player.animation
 .dodash:
-    lda [pObj + CelesteObject.core.x]
+    lda [pObj.core.x]
     pha
     mov y, offset CelesteObject.core.y
     lda (pObj), y
     tax
     pla
     jsr Objects.spawn_smoke
-    dec [pObj + CelesteObject.payload.player.dash_jumps]
+    dec [pObj.payload.player.dash_jumps]
     lda #4
-    sta [pObj + CelesteObject.payload.player.dash_time]
-    mov [game + GameState.has_dashed], #1
+    sta [pObj.payload.player.dash_time]
+    mov [game.has_dashed], #1
     lda #10
-    sta [pObj + CelesteObject.payload.player.dash_effect]
-    tbz [game + GameState.buttons], #Platform.Input.up, .notup  ; v_input
+    sta [pObj.payload.player.dash_effect]
+    tbz [game.buttons], #Platform.Input.up, .notup  ; v_input
     lda #$FF
     bne .havev
 .notup:
-    tbz [game + GameState.buttons], #Platform.Input.down, .nov
+    tbz [game.buttons], #Platform.Input.down, .nov
     lda #1
     bne .havev
 .nov:
@@ -590,7 +590,7 @@ begin
     jsr Player.set_speed_y_signed
     jmp .dashdone
 .neutral:                       ; no direction held: the cart dashes at 1 px/frame
-    lda [pObj + CelesteObject.core.flip]
+    lda [pObj.core.flip]
     and #$01
     beq .neutralright
     lda #$FF
@@ -608,8 +608,8 @@ begin
 .dashdone:
     lda #3
     jsr Audio.guarded_sfx
-    mov [game + GameState.freeze], #2
-    mov [game + GameState.shake], #6
+    mov [game.freeze], #2
+    mov [game.shake], #6
     mov y, offset CelesteObject.core.speed_x                 ; dash_target = 2 * sign(spd), dash_accel = 1.5
     jsr Fixed.load_object
     jsr Fixed.sign
@@ -631,7 +631,7 @@ begin
     iny
     ora (pObj), y
     beq .yzero
-    lda [pObj + CelesteObject.core.speed_y.integer]
+    lda [pObj.core.speed_y.integer]
     bpl .ynonzero
     lda #<(-Player.dash_target_up & $FFFF)
     mov y, offset CelesteObject.payload.player.dash_target_y.fraction
@@ -693,11 +693,11 @@ begin
     lda #3
     jmp .setspr
 .onground:
-    tbz [game + GameState.buttons], #Platform.Input.down, .notdown
+    tbz [game.buttons], #Platform.Input.down, .notdown
     lda #6
     jmp .setspr
 .notdown:
-    tbz [game + GameState.buttons], #Platform.Input.up, .notup
+    tbz [game.buttons], #Platform.Input.up, .notup
     lda #7
     jmp .setspr
 .notup:
@@ -706,8 +706,8 @@ begin
     iny
     ora (pObj), y
     beq .still
-    tbz [game + GameState.buttons], #Platform.Input.left|Platform.Input.right, .still
-    lda [pObj + CelesteObject.payload.player.sprite_offset]
+    tbz [game.buttons], #Platform.Input.left|Platform.Input.right, .still
+    lda [pObj.payload.player.sprite_offset]
     lsr
     lsr
     add #1
@@ -715,7 +715,7 @@ begin
 .still:
     lda #1
 .setspr:
-    sta [pObj + CelesteObject.core.sprite]
+    sta [pObj.core.sprite]
     mov y, offset CelesteObject.core.y
     lda (pObj), y                    ; if y < -4 then next_room()
     bpl .stay
@@ -724,13 +724,13 @@ begin
     jsr Room.next
     rts
 .stay:
-    lda [pObj + CelesteObject.payload.player.player_bits]
+    lda [pObj.payload.player.player_bits]
     and #<!Player.bit_ground
     ldy Player.ground
     beq .nolatch
     ora #Player.bit_ground
 .nolatch:
-    sta [pObj + CelesteObject.payload.player.player_bits]
+    sta [pObj.payload.player.player_bits]
     ret
 end
 ; Player.set_speed_x_signed / Player.set_speed_y_signed: spd = A * {X,Y}, where A is -1, 0 or 1.
@@ -799,22 +799,22 @@ end
 proc kill using console6502
     self : ptr CelesteObject in pObj
 begin
-    mov [game + GameState.sfx_timer], #12
+    mov [game.sfx_timer], #12
     lda #0
     jsr Audio.sfx
-    inc [game + GameState.deaths]
-    mov [game + GameState.shake], #10
+    inc [game.deaths]
+    mov [game.shake], #10
     jsr Objects.destroy
-    mov [game + GameState.will_restart], #1
+    mov [game.will_restart], #1
     lda #15
-    sta [game + GameState.restart_delay]
+    sta [game.restart_delay]
     ret
 end
 ; Player.draw: clamp into the room, then hair, then the player.
 proc draw using console6502
     self : ptr CelesteObject in pObj
 begin
-    lda [pObj + CelesteObject.core.x]
+    lda [pObj.core.x]
     bmi .low
     cmp #122
     bcc .inside
@@ -825,14 +825,14 @@ begin
     bcs .inside
     lda #$FF
 .clamped:
-    sta [pObj + CelesteObject.core.x]
+    sta [pObj.core.x]
     lda #0                      ; and stop, as the cart does
     mov y, offset CelesteObject.core.speed_x.fraction
     sta (pObj), y
     iny
     sta (pObj), y
 .inside:
-    lda [pObj + CelesteObject.payload.player.dash_jumps]
+    lda [pObj.payload.player.dash_jumps]
     jsr Player.set_hair_color
     jsr Player.draw_hair
     jmp Draw.object
@@ -851,14 +851,14 @@ begin
     lda #4
     jsr Audio.sfx
     lda #3
-    sta [pObj + CelesteObject.core.sprite]
-    lda [pObj + CelesteObject.core.x]
-    sta [pObj + CelesteObject.payload.spawn.target_x]
+    sta [pObj.core.sprite]
+    lda [pObj.core.x]
+    sta [pObj.payload.spawn.target_x]
     mov y, offset CelesteObject.core.y
     lda (pObj), y
-    sta [pObj + CelesteObject.payload.spawn.target_y]
+    sta [pObj.payload.spawn.target_y]
     lda #127                    ; the cart starts at y = 128, one past what a
-    sta [pObj + CelesteObject.core.y]  ; screen either way
+    sta [pObj.core.y]  ; screen either way
     lda #<Spawn.speed
     mov y, offset CelesteObject.core.speed_y.fraction
     sta (pObj), y
@@ -874,13 +874,13 @@ end
 proc update using console6502
     self : ptr CelesteObject in pObj
 begin
-    lda [pObj + CelesteObject.payload.spawn.phase]
+    lda [pObj.payload.spawn.phase]
     beq .rising
     cmp #1
     beq .falling
     jmp .landing
 .rising:                        ; if y < target.y + 16 then state = 1
-    lda [pObj + CelesteObject.payload.spawn.target_y]
+    lda [pObj.payload.spawn.target_y]
     add #16
     sta t3
     mov y, offset CelesteObject.core.y
@@ -888,7 +888,7 @@ begin
     cmp t3
     bcs .done
     lda #1
-    sta [pObj + CelesteObject.payload.spawn.phase]
+    sta [pObj.payload.spawn.phase]
     lda #3
     mov y, offset CelesteObject.payload.player.delay
     sta (pObj), y
@@ -921,7 +921,7 @@ begin
 .done2:
     rts
 .land:
-    lda [pObj + CelesteObject.payload.spawn.target_y]
+    lda [pObj.payload.spawn.target_y]
     sta t3
     mov y, offset CelesteObject.core.y
     lda (pObj), y
@@ -929,7 +929,7 @@ begin
     bcc .done2
     beq .done2
     lda t3
-    sta [pObj + CelesteObject.core.y]
+    sta [pObj.core.y]
     lda #0
     mov y, offset CelesteObject.core.speed_x.fraction
     sta (pObj), y
@@ -940,11 +940,11 @@ begin
     iny
     sta (pObj), y
     lda #2
-    sta [pObj + CelesteObject.payload.spawn.phase]
+    sta [pObj.payload.spawn.phase]
     lda #5
-    sta [pObj + CelesteObject.payload.spawn.delay]
-    mov [game + GameState.shake], #5
-    lda [pObj + CelesteObject.core.x]
+    sta [pObj.payload.spawn.delay]
+    mov [game.shake], #5
+    lda [pObj.core.x]
     pha
     mov y, offset CelesteObject.core.y
     lda (pObj), y
@@ -955,14 +955,14 @@ begin
     lda #5
     jmp Audio.sfx
 .landing:
-    dec [pObj + CelesteObject.payload.player.delay]
+    dec [pObj.payload.player.delay]
     pha
     lda #6
     mov y, offset CelesteObject.core.sprite
     sta (pObj), y
     pla
     bpl .stillhere
-    lda [pObj + CelesteObject.core.x]
+    lda [pObj.core.x]
     sta spawn_x
     mov y, offset CelesteObject.core.y
     lda (pObj), y
@@ -976,7 +976,7 @@ end
 proc draw using console6502
     self : ptr CelesteObject in pObj
 begin
-    lda [game + GameState.max_dash_jumps]
+    lda [game.max_dash_jumps]
     jsr Player.set_hair_color
     jsr Player.draw_hair
     jmp Draw.object
@@ -992,14 +992,14 @@ proc init using console6502
     self : ptr CelesteObject in pObj
 begin
     lda #29
-    sta [pObj + CelesteObject.core.sprite]
+    sta [pObj.core.sprite]
     lda #<Smoke.speed_y
     mov y, offset CelesteObject.core.speed_y.fraction
     sta (pObj), y
     lda #>Smoke.speed_y
     iny
     sta (pObj), y
-    lda [video + VideoRegisters.random]                 ; spd.x = 0.3 + rnd(0.2)
+    lda [video.random]                 ; spd.x = 0.3 + rnd(0.2)
     and #$33
     add #$4D
     mov y, offset CelesteObject.core.speed_x.fraction
@@ -1007,23 +1007,23 @@ begin
     lda #0
     iny
     sta (pObj), y
-    lda [video + VideoRegisters.random]                 ; x += -1 + rnd(2), y likewise
+    lda [video.random]                 ; x += -1 + rnd(2), y likewise
     and #1
     sub #1
     mov y, offset CelesteObject.core.x
     clc
     adc (pObj), y
     sta (pObj), y
-    lda [video + VideoRegisters.random]
+    lda [video.random]
     and #1
     sub #1
     mov y, offset CelesteObject.core.y
     clc
     adc (pObj), y
     sta (pObj), y
-    lda [video + VideoRegisters.random]                 ; flip.x = maybe(), flip.y = maybe()
+    lda [video.random]                 ; flip.x = maybe(), flip.y = maybe()
     and #3
-    sta [pObj + CelesteObject.core.flip]
+    sta [pObj.core.flip]
     mov y, offset CelesteObject.core.flags ; inlay-exception: complemented target constant
     lda (pObj), y
     and #<!Objects.flag_solids
@@ -1033,10 +1033,10 @@ end
 proc update using console6502
     self : ptr CelesteObject in pObj
 begin
-    inc [pObj + CelesteObject.payload.player.sprite_offset] ; spr += 0.2 -> destroy after 15 frames
+    inc [pObj.payload.player.sprite_offset] ; spr += 0.2 -> destroy after 15 frames
     cmp #15
     bcs .gone
-    lda [pObj + CelesteObject.payload.smoke.sprite_offset]
+    lda [pObj.payload.smoke.sprite_offset]
     ldx #29
     cmp #5
     bcc .have
@@ -1046,7 +1046,7 @@ begin
     inx
 .have:
     txa
-    sta [pObj + CelesteObject.core.sprite]
+    sta [pObj.core.sprite]
     rts
 .gone:
     jmp Objects.destroy
@@ -1067,7 +1067,7 @@ proc init using console6502
     self : ptr CelesteObject in pObj
 begin
     lda #5
-    sta [pObj + CelesteObject.payload.player.delay]
+    sta [pObj.payload.player.delay]
     rts
 end
 proc update using console6502
@@ -1078,7 +1078,7 @@ end
 proc draw using console6502
     self : ptr CelesteObject in pObj
 begin
-    dec [pObj + CelesteObject.payload.player.delay]
+    dec [pObj.payload.player.delay]
     cmp #<(-30)
     beq .gone
     bpl .done

@@ -16,7 +16,7 @@ include "layout.inlay.asm"
 #bank ram
 #addr 0x0300
 
-    #include "../../src/celeste/memmap.inlay.asm"
+include "memmap.inlay.asm"
 
 include "gfx.inlay.asm"
     #include "../../src/celeste/rooms.inlay.asm"
@@ -38,6 +38,6 @@ reset = Platform.reset
 main_loop = Game.frame
 
 #bank vec
-    data u8 low(Platform.reset), high(Platform.reset) ; NMI
-    data u8 low(Platform.reset), high(Platform.reset) ; RESET
-    data u8 low(Platform.reset), high(Platform.reset) ; IRQ
+    data codeptr Platform.reset ; NMI
+    data codeptr Platform.reset ; RESET
+    data codeptr Platform.reset ; IRQ

@@ -97,7 +97,7 @@ begin
     pha
     jsr Objects.pointer
     lda #0
-    sta [pObj + CelesteObject.core.kind]
+    sta [pObj.core.kind]
     pla
     tax
     dex
@@ -120,7 +120,7 @@ begin
 .find:
     txa
     jsr Objects.pointer
-    lda [pObj + CelesteObject.core.kind]
+    lda [pObj.core.kind]
     beq .found
     inx
     cpx #Objects.slot_count
@@ -139,18 +139,18 @@ begin
     bpl .clear
 
     lda spawn_type
-    sta [pObj + CelesteObject.core.kind]
+    sta [pObj.core.kind]
     tax
     lda Objects.type_tile-1, x   ; obj.spr = type.tile
-    sta [pObj + CelesteObject.core.sprite]
+    sta [pObj.core.sprite]
     lda spawn_x
-    sta [pObj + CelesteObject.core.x]
+    sta [pObj.core.x]
     lda spawn_y
-    sta [pObj + CelesteObject.core.y]
+    sta [pObj.core.y]
 
     lda #8                      ; the cart's default hitbox {0,0,8,8}
-    sta [pObj + CelesteObject.core.hitbox.w]
-    sta [pObj + CelesteObject.core.hitbox.h]
+    sta [pObj.core.hitbox.w]
+    sta [pObj.core.hitbox.h]
     lda #Objects.flag_collideable|Objects.flag_solids
     mov y, offset CelesteObject.core.flags
     sta (pObj), y
@@ -204,7 +204,7 @@ proc destroy using console6502
     self : ptr CelesteObject in pObj
 begin
     lda #0
-    sta [pObj + CelesteObject.core.kind]
+    sta [pObj.core.kind]
     ret
 end
 
@@ -222,14 +222,14 @@ begin
 .loop:
     lda obj_slot
     jsr Objects.pointer
-    lda [pObj + CelesteObject.core.kind]
+    lda [pObj.core.kind]
     beq .next
 
     jsr Objects.move            ; obj.move(obj.spd.x, obj.spd.y)
 
     lda obj_slot                ; the object may have been destroyed by its own
     jsr Objects.pointer         ; move (nothing in stage 1 does, but reloading
-    lda [pObj + CelesteObject.core.kind] ; cheaper than proving it cannot)
+    lda [pObj.core.kind] ; cheaper than proving it cannot)
     beq .next
     tax
     lda Objects.type_update_lo-1, x
@@ -255,7 +255,7 @@ begin
 .loop:
     lda obj_slot
     jsr Objects.pointer
-    lda [pObj + CelesteObject.core.kind]
+    lda [pObj.core.kind]
     beq .next
     tax
     lda Objects.type_draw_lo-1, x
@@ -289,12 +289,12 @@ proc move using console6502
     value : u16 in w0
     operand : u16 in w1
 begin
-    ldw value, [self + CelesteObject.core.remainder_x] ; rem.x += spd.x
-    ldw operand, [self + CelesteObject.core.speed_x]
+    ldw value, [self.core.remainder_x] ; rem.x += spd.x
+    ldw operand, [self.core.speed_x]
     ldab w0
     addw ab, operand
     stab w0
-    stw [self + CelesteObject.core.remainder_x], value
+    stw [self.core.remainder_x], value
 
     lda #$80                    ; amount = flr(rem.x + 0.5)
     ldx #$00
@@ -310,12 +310,12 @@ begin
 
     jsr Objects.step_x
 
-    ldw value, [self + CelesteObject.core.remainder_y] ; and the same for y
-    ldw operand, [self + CelesteObject.core.speed_y]
+    ldw value, [self.core.remainder_y] ; and the same for y
+    ldw operand, [self.core.speed_y]
     ldab w0
     addw ab, operand
     stab w0
-    stw [self + CelesteObject.core.remainder_y], value
+    stw [self.core.remainder_y], value
 
     lda #$80
     ldx #$00
@@ -371,7 +371,7 @@ proc step_x using console6502
     self : ptr CelesteObject in pObj
     amount : i8 in t0
 begin
-    lda [pObj + CelesteObject.core.flags]
+    lda [pObj.core.flags]
     and #Objects.flag_solids
     bne .solid
 
@@ -420,7 +420,7 @@ proc step_y using console6502
     self : ptr CelesteObject in pObj
     amount : i8 in t0
 begin
-    lda [pObj + CelesteObject.core.flags]
+    lda [pObj.core.flags]
     and #Objects.flag_solids
     bne .solid
 

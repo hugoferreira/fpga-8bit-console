@@ -47,20 +47,20 @@ frame:
     jsr Room.camera
     jsr Draw.overlay_begin
 
-    mov [game + GameState.sprite_count], #0
+    mov [game.sprite_count], #0
     jsr Room.title              ; the cart draws no clouds on the title screen
     beq .nosky
     jsr Fx.draw_clouds
 .nosky:
-    lda [game + GameState.sprite_count]                    ; everything staged so far is background
-    sta [video + VideoRegisters.split]
-    mov [video + VideoRegisters.repeat], #1  ; player, hair and smoke are single cells
+    lda [game.sprite_count]                    ; everything staged so far is background
+    sta [video.split]
+    mov [video.repeat], #1  ; player, hair and smoke are single cells
 
     jsr Objects.draw_all
 
     jsr Fx.draw_particles       ; in front of everything, title screen included
-    lda [game + GameState.sprite_count]
-    sta [video + VideoRegisters.sprite_count]
+    lda [game.sprite_count]
+    sta [video.sprite_count]
     jmp Draw.overlay_end
 
 ; ------------------------------------------------------------------------------
@@ -75,15 +75,15 @@ frame:
 ; one. Clobbers A, X.
 ; ------------------------------------------------------------------------------
 palette:
-    lda [game + GameState.start_game]
+    lda [game.start_game]
     beq .ident                  ; not flashing at all
 
-    lda [game + GameState.start_game_flash]        ; c = 10, 7, 2, 1 or 0 as the flash decays
+    lda [game.start_game_flash]        ; c = 10, 7, 2, 1 or 0 as the flash decays
     bmi .black                  ; past zero: c = 0
     cmp #11
     bcc .mid
                                 ; > 10: white for five frames in every ten.
-    cblt [game + GameState.frames], #20, .lt20  ; frames is 0..29, so one subtract of 20 and one of 10 is the whole of `frames % 10`
+    cblt [game.frames], #20, .lt20  ; frames is 0..29, so one subtract of 20 and one of 10 is the whole of `frames % 10`
     sub #20
     jmp .lt10
 .lt20:
@@ -102,7 +102,7 @@ palette:
 .identloop:
     ldy Draw.palette_slots, x
     tya
-    sta [video + VideoRegisters.screen_palette[y]] ; entry n holds n
+    sta [video.screen_palette[y]] ; entry n holds n
     dex
     bpl .identloop
     rts
@@ -111,7 +111,7 @@ palette:
     lda #7
     bne .apply
 .mid:
-    cbge [game + GameState.start_game_flash], #6, .two
+    cbge [game.start_game_flash], #6, .two
     cmp #1
     bcs .one
 .black:
@@ -126,7 +126,7 @@ palette:
     ldx #5
 .set:
     ldy Draw.palette_slots, x
-    sta [video + VideoRegisters.screen_palette[y]]
+    sta [video.screen_palette[y]]
     dex
     bpl .set
     rts
@@ -144,21 +144,21 @@ palette_slots:
 ; Clobbers A, X, Y.
 ; ------------------------------------------------------------------------------
 sprite:
-    ldx [game + GameState.sprite_count]
+    ldx [game.sprite_count]
     cpx #128
     bcs .drop
     ldy t5
     bmi .drop
     cpy #120
     bcs .drop
-    stx [video + VideoRegisters.sprite_index]
-    sta [video + VideoRegisters.sprite_base]
+    stx [video.sprite_index]
+    sta [video.sprite_base]
     lda t4
-    sta [video + VideoRegisters.sprite_x]
-    sty [video + VideoRegisters.sprite_y]
+    sta [video.sprite_x]
+    sty [video.sprite_y]
     lda t3
-    sta [video + VideoRegisters.sprite_flags]               ; the write commits the staged entry
-    inc [game + GameState.sprite_count]
+    sta [video.sprite_flags]               ; the write commits the staged entry
+    inc [game.sprite_count]
 .drop:
     rts
 
@@ -205,12 +205,12 @@ object:
 ; Clobbers A, Y.
 ; ------------------------------------------------------------------------------
 position:
-    lda [pObj + CelesteObject.core.x]
-    add [game + GameState.shake_x]
+    lda [pObj.core.x]
+    add [game.shake_x]
     sta t4
-    lda [pObj + CelesteObject.core.y]
-    sub [game + GameState.camera_y]
-    add [game + GameState.shake_y]
+    lda [pObj.core.y]
+    sub [game.camera_y]
+    add [game.shake_y]
     sta t5
     rts
 
@@ -228,9 +228,9 @@ position:
 ; 0.667d, which is two shifts and an add. The trail is imperceptibly tighter.
 ; ------------------------------------------------------------------------------
 hair_create:
-    lda [pObj + CelesteObject.core.x]
+    lda [pObj.core.x]
     sta t3
-    lda [pObj + CelesteObject.core.y]
+    lda [pObj.core.y]
     sta t4
     mov y, offset CelesteObject.payload.hair.hair
     ldx #Draw.hair_nodes
@@ -268,7 +268,7 @@ hair_color:
     lda #Gfx.palette_8
     jmp .done
 .flash:
-    ldx [game + GameState.frames]                  ; 7 + flr((frames/3)%2)*4, without a divide
+    ldx [game.frames]                  ; 7 + flr((frames/3)%2)*4, without a divide
     lda Draw.hair_palette, x
 .done:
     sta hair_col
@@ -289,7 +289,7 @@ hair_palette:
     #d8 Gfx.palette_11, Gfx.palette_11, Gfx.palette_11
 
 hair_draw:
-    lda [pObj + CelesteObject.core.flip]
+    lda [pObj.core.flip]
     and #1
     beq .faceright
     lda #6
@@ -303,7 +303,7 @@ hair_draw:
     sta hair_lx+1
     mov hair_lx, #0
 
-    tbz [game + GameState.buttons], #Platform.Input.down, .lastup  ; last.y = y + (btn(down) and 4 or 3)
+    tbz [game.buttons], #Platform.Input.down, .lastup  ; last.y = y + (btn(down) and 4 or 3)
     lda #4
     bne .lasty
 .lastup:
@@ -369,11 +369,11 @@ hair_draw:
 .plot:
     pha
     lda t4                      ; the hair is in world space like the Draw.object
-    add [game + GameState.shake_x]
+    add [game.shake_x]
     sta t4
     lda t5
-    sub [game + GameState.camera_y]
-    add [game + GameState.shake_y]
+    sub [game.camera_y]
+    add [game.shake_y]
     sta t5
     pla
     jsr Draw.sprite
@@ -451,7 +451,7 @@ overlay_init:
 
 overlay_dirty:
     lda #1
-    sta [game + GameState.overlay_dirty]
+    sta [game.overlay_dirty]
     rts
 
 overlay_clear:
@@ -483,7 +483,7 @@ overlay_begin:
 .find:
     txa
     jsr Objects.pointer
-    lda [pObj + CelesteObject.core.kind]
+    lda [pObj.core.kind]
     cmp #ObjectKind.title
     beq .yes
     inx
@@ -493,13 +493,13 @@ overlay_begin:
 .yes:
     jsr Draw.overlay_dirty
 .check:
-    lda [game + GameState.seconds]                 ; and so does the clock, once a second
-    cmp [game + GameState.hud_seconds]
+    lda [game.seconds]                 ; and so does the clock, once a second
+    cmp [game.hud_seconds]
     beq .nochange
-    sta [game + GameState.hud_seconds]
+    sta [game.hud_seconds]
     jsr Draw.overlay_dirty
 .nochange:
-    lda [game + GameState.overlay_dirty]
+    lda [game.overlay_dirty]
     beq .done
     jsr Draw.overlay_clear
     jsr Room.title              ; the title screen carries credits, not a HUD
@@ -511,11 +511,11 @@ overlay_begin:
     rts
 
 overlay_end:
-    lda [game + GameState.overlay_dirty]
+    lda [game.overlay_dirty]
     bne .blit
     rts
 .blit:
-    mov [game + GameState.overlay_dirty], #0
+    mov [game.overlay_dirty], #0
     ldx #0
 .page:
     lda OVLSHADOW+$000, x
@@ -581,9 +581,9 @@ char:
     lda d_y
     add d_row
     tay
-    lda [overlay_rows + OverlayRowPointers.low[y]]
+    lda [overlay_rows.low[y]]
     sta pOvl
-    lda [overlay_rows + OverlayRowPointers.high[y]]
+    lda [overlay_rows.high[y]]
     sta pOvl+1
     lda d_x
     lsr
@@ -661,11 +661,11 @@ hud:
 
     mov d_x, #130
     mov d_y, #11
-    lda [game + GameState.minutes]
+    lda [game.minutes]
     jsr Draw.byte
     lda #Draw.glyph_colon
     jsr Draw.char
-    lda [game + GameState.seconds]
+    lda [game.seconds]
     jsr Draw.byte
 
     mov d_x, #132
@@ -676,7 +676,7 @@ hud:
 
     mov d_x, #138
     mov d_y, #29
-    lda [game + GameState.deaths]
+    lda [game.deaths]
     jmp Draw.byte
 
 ; ------------------------------------------------------------------------------
@@ -716,13 +716,13 @@ title_credits:
 ; one colour and cannot, so the text sits directly over the room.
 ; ------------------------------------------------------------------------------
 room_title:
-    cbeq [game + GameState.level], #11, .oldsite
+    cbeq [game.level], #11, .oldsite
     cmp #30
     beq .summit
 
     mov d_x, #52
     mov d_y, #62
-    lda [game + GameState.level]
+    lda [game.level]
     add #1
     jsr Draw.byte
     lda #0

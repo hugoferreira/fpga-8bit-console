@@ -49,23 +49,23 @@ begin
     jsr Objects.clear
 
     lda #0
-    sta [game + GameState.frames]
-    sta [game + GameState.seconds]
-    sta [game + GameState.minutes]
-    sta [game + GameState.deaths]
-    sta [game + GameState.freeze]
-    sta [game + GameState.shake]
-    sta [game + GameState.shake_x]
-    sta [game + GameState.shake_y]
-    sta [game + GameState.will_restart]
-    sta [game + GameState.restart_delay]
-    sta [game + GameState.sfx_timer]
-    sta [game + GameState.music_timer]
-    sta [game + GameState.has_dashed]
-    sta [game + GameState.pause_player]
-    sta [game + GameState.buttons]
-    sta [game + GameState.previous_buttons]
-    mov [game + GameState.max_dash_jumps], #1
+    sta [game.frames]
+    sta [game.seconds]
+    sta [game.minutes]
+    sta [game.deaths]
+    sta [game.freeze]
+    sta [game.shake]
+    sta [game.shake_x]
+    sta [game.shake_y]
+    sta [game.will_restart]
+    sta [game.restart_delay]
+    sta [game.sfx_timer]
+    sta [game.music_timer]
+    sta [game.has_dashed]
+    sta [game.pause_player]
+    sta [game.buttons]
+    sta [game.previous_buttons]
+    mov [game.max_dash_jumps], #1
 
     jsr Game.show_title
 .loop:
@@ -89,11 +89,11 @@ end
 proc show_title using console6502
 begin
     lda #0
-    sta [game + GameState.frames]
-    sta [game + GameState.deaths]
-    sta [game + GameState.start_game]
-    sta [game + GameState.start_game_flash]
-    mov [game + GameState.max_dash_jumps], #1
+    sta [game.frames]
+    sta [game.deaths]
+    sta [game.start_game]
+    sta [game.start_game_flash]
+    mov [game.max_dash_jumps], #1
     lda #Audio.music_title
     jsr Audio.music
     lda #0                      ; slot 0 is the title room, level 31
@@ -104,11 +104,11 @@ end
 proc begin_play using console6502
 begin
     lda #0
-    sta [game + GameState.frames]
-    sta [game + GameState.seconds]
-    sta [game + GameState.minutes]
-    sta [game + GameState.music_timer]
-    sta [game + GameState.start_game]
+    sta [game.frames]
+    sta [game.seconds]
+    sta [game.minutes]
+    sta [game.music_timer]
+    sta [game.start_game]
     lda #Audio.music_climb
     jsr Audio.music
     lda #1                      ; slot 1 is the first playing room
@@ -119,63 +119,63 @@ end
 ; subsystem-declared volatile scratch.
 proc update using console6502
 begin
-    inc [game + GameState.frames]                  ; frames = (frames + 1) % 30
-    cblt [game + GameState.frames], #30, .clock
-    mov [game + GameState.frames], #0
+    inc [game.frames]                  ; frames = (frames + 1) % 30
+    cblt [game.frames], #30, .clock
+    mov [game.frames], #0
 
-    cbge [game + GameState.level], #30, .clock     ; the clock stops in the last room
-    inc [game + GameState.seconds]
-    cblt [game + GameState.seconds], #60, .clock
-    mov [game + GameState.seconds], #0
-    inc [game + GameState.minutes]
+    cbge [game.level], #30, .clock     ; the clock stops in the last room
+    inc [game.seconds]
+    cblt [game.seconds], #60, .clock
+    mov [game.seconds], #0
+    inc [game.minutes]
 .clock:
 
-    lda [game + GameState.music_timer]
+    lda [game.music_timer]
     beq .nomusictimer
-    dec [game + GameState.music_timer]
+    dec [game.music_timer]
     bne .nomusictimer
     lda #Audio.music_orb
     jsr Audio.music
 .nomusictimer:
 
-    lda [game + GameState.sfx_timer]
+    lda [game.sfx_timer]
     beq .nosfxtimer
-    dec [game + GameState.sfx_timer]
+    dec [game.sfx_timer]
 .nosfxtimer:
 
-    lda [game + GameState.freeze]                  ; dash freeze skips the whole update
+    lda [game.freeze]                  ; dash freeze skips the whole update
     beq .nofreeze
-    dec [game + GameState.freeze]
+    dec [game.freeze]
     ret
 .nofreeze:
 
-    lda [game + GameState.shake]
+    lda [game.shake]
     beq .noshake
-    dec [game + GameState.shake]
-    lda [game + GameState.shake]
+    dec [game.shake]
+    lda [game.shake]
     beq .noshake
-    lda [video + VideoRegisters.random]
+    lda [video.random]
     and #3
     sub #2
-    sta [game + GameState.shake_x]
-    lda [video + VideoRegisters.random]
+    sta [game.shake_x]
+    lda [video.random]
     and #3
     sub #2
-    sta [game + GameState.shake_y]
+    sta [game.shake_y]
     jmp .restart
 .noshake:
     lda #0
-    sta [game + GameState.shake_x]
-    sta [game + GameState.shake_y]
+    sta [game.shake_x]
+    sta [game.shake_y]
 
 .restart:
-    lda [game + GameState.will_restart]
+    lda [game.will_restart]
     beq .objects
-    lda [game + GameState.restart_delay]
+    lda [game.restart_delay]
     beq .objects
-    dec [game + GameState.restart_delay]
+    dec [game.restart_delay]
     bne .objects
-    mov [game + GameState.will_restart], #0
+    mov [game.will_restart], #0
     jsr Room.restart
     ret
 
@@ -192,19 +192,19 @@ begin
     beq .title
     ret
 .title:
-    lda [game + GameState.start_game]
+    lda [game.start_game]
     bne .flashing
 
-    tbz [game + GameState.buttons], #Platform.Input.jump|Platform.Input.dash, .done
+    tbz [game.buttons], #Platform.Input.jump|Platform.Input.dash, .done
     jsr Audio.stop
-    mov [game + GameState.start_game_flash], #50
-    mov [game + GameState.start_game], #1
+    mov [game.start_game_flash], #50
+    mov [game.start_game], #1
     lda #38
     jmp Audio.sfx
 
 .flashing:
-    dec [game + GameState.start_game_flash]
-    lda [game + GameState.start_game_flash]
+    dec [game.start_game_flash]
+    lda [game.start_game_flash]
     bpl .done
     cmp #<(-29)
     bcs .done

@@ -61,46 +61,46 @@ proc init using console6502 naked
 begin
     ldx #Fx.cloud_count-1
 .cloud:
-    lda [video + VideoRegisters.random]                 ; x = rnd(128)
+    lda [video.random]                 ; x = rnd(128)
     and #$7F
     sta CL_XH, x
     lda #0
     sta CL_XL, x
-    lda [video + VideoRegisters.random]                 ; y = rnd(128)
+    lda [video.random]                 ; y = rnd(128)
     and #$7F
     sta CL_Y, x
-    lda [video + VideoRegisters.random]                 ; w = 4..7 cells, the cart's 32..64 pixels
+    lda [video.random]                 ; w = 4..7 cells, the cart's 32..64 pixels
     and #3
     add #4
     sta CL_W, x
-    lda [video + VideoRegisters.random]                 ; spd = 1 + rnd(4), in 8.8
+    lda [video.random]                 ; spd = 1 + rnd(4), in 8.8
     and #3
     add #1
     sta CL_SH, x
-    lda [video + VideoRegisters.random]
+    lda [video.random]
     sta CL_SL, x
     dex
     bpl .cloud
 
     ldx #Fx.particle_count-1
 .part:
-    lda [video + VideoRegisters.random]
+    lda [video.random]
     and #$7F
     sta PA_XH, x
-    lda [video + VideoRegisters.random]
+    lda [video.random]
     sta PA_XL, x
-    lda [video + VideoRegisters.random]
+    lda [video.random]
     and #$7F
     sta PA_YH, x
-    lda [video + VideoRegisters.random]
+    lda [video.random]
     sta PA_YL, x
-    lda [video + VideoRegisters.random]                 ; spd = 0.25 + rnd(3), in 8.8
+    lda [video.random]                 ; spd = 0.25 + rnd(3), in 8.8
     and #3
     sta PA_SH, x
-    lda [video + VideoRegisters.random]
+    lda [video.random]
     ora #$40
     sta PA_SL, x
-    lda [video + VideoRegisters.random]                 ; the cart's c = 6 + flr(0.5 + rnd(1))
+    lda [video.random]                 ; the cart's c = 6 + flr(0.5 + rnd(1))
     and #1
     beq .grey
     lda #Gfx.palette_7
@@ -109,7 +109,7 @@ begin
     lda #Gfx.palette_6
 .setcol:
     sta PA_ATTR, x
-    lda [video + VideoRegisters.random]
+    lda [video.random]
     sta PA_OFF, x
     dex
     bpl .part
@@ -149,7 +149,7 @@ begin
     sta CL_XH, x
     lda #0
     sta CL_XL, x
-    lda [video + VideoRegisters.random]
+    lda [video.random]
     and #$7F
     cmp #120
     bcc .keepy
@@ -193,7 +193,7 @@ begin
     bcs .nextpart
     lda #$FC
     sta PA_XH, x
-    lda [video + VideoRegisters.random]
+    lda [video.random]
     and #$7F
     sta PA_YH, x
 .nextpart:
@@ -219,12 +219,12 @@ begin
 .cloud:
     stx t6
     lda CL_Y, x                  ; clouds do not scroll with the camera: they
-    sub [game + GameState.camera_y]
+    sub [game.camera_y]
     sta t5
     mov t3, #Gfx.palette_1
     mov t4, CL_XH + x
     lda CL_W, x                  ; the whole cloud is ONE entry: the compositor
-    sta [video + VideoRegisters.repeat]                 ; repeats the fetched row across its cells
+    sta [video.repeat]                 ; repeats the fetched row across its cells
     lda #Gfx.solid
     jsr Draw.sprite
     ldx t6
@@ -241,14 +241,14 @@ end
 ; ------------------------------------------------------------------------------
 proc draw_particles using console6502 naked
 begin
-    mov [video + VideoRegisters.repeat], #1
+    mov [video.repeat], #1
     ldx #0
 .part:
     stx t6
     mov t3, PA_ATTR + x
     mov t4, PA_XH + x
     lda PA_YH, x
-    sub [game + GameState.camera_y]
+    sub [game.camera_y]
     sta t5
     lda #Gfx.dot
     jsr Draw.sprite

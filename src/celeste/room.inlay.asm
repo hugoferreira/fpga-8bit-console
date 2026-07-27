@@ -41,46 +41,46 @@ namespace Room
 ; ------------------------------------------------------------------------------
 init:
     lda #0
-    sta [video + VideoRegisters.clip_x0]
-    sta [video + VideoRegisters.clip_y0]
-    mov [video + VideoRegisters.clip_x1], #Room.playfield_width-1
-    mov [video + VideoRegisters.clip_y1], #119
-    mov [video + VideoRegisters.control], #$03
-    mov [video + VideoRegisters.overlay_color], #7  ; colour 7 everywhere it matters
+    sta [video.clip_x0]
+    sta [video.clip_y0]
+    mov [video.clip_x1], #Room.playfield_width-1
+    mov [video.clip_y1], #119
+    mov [video.control], #$03
+    mov [video.overlay_color], #7  ; colour 7 everywhere it matters
     lda #1
-    sta [game + GameState.room_bank]               ; load_room flips it, so the first room is 0
+    sta [game.room_bank]               ; load_room flips it, so the first room is 0
     rts
 ; ------------------------------------------------------------------------------
 ; is_title: Z set if the room on screen is the title screen, which is the
 ; cart's is_title() - level_index() == 31. Clobbers A.
 ; ------------------------------------------------------------------------------
 title:
-    lda [game + GameState.level]
+    lda [game.level]
     cmp #Room.title_level
     rts
 ; ------------------------------------------------------------------------------
 ; load_room: A = index into the resident room table. Clobbers everything.
 ; ------------------------------------------------------------------------------
 load:
-    sta [game + GameState.room_slot]
+    sta [game.room_slot]
     tax
-    mov [game + GameState.level], room_levels + x
-    mov [game + GameState.has_dashed], #0
+    mov [game.level], room_levels + x
+    mov [game.has_dashed], #0
     mov pSrc, room_ptr_lo + x
     mov pSrc+1, room_ptr_hi + x
     jsr Objects.clear           ; the cart's foreach(objects, destroy)
-    lda [game + GameState.room_bank]               ; load into the bank that is not on screen
+    lda [game.room_bank]               ; load into the bank that is not on screen
     eor #1
-    sta [game + GameState.room_bank]
+    sta [game.room_bank]
     ldy #0                      ; the room's tile ids become this port's mget
 .copy:
     lda (pSrc), y
-    sta [room_tiles + RoomTileBuffer.cells[y]]
+    sta [room_tiles.cells[y]]
     iny
     bne .copy
     mov pDst, #<MAP_LO
     mov pDst+1, #>MAP_LO
-    lda [game + GameState.room_bank]
+    lda [game.room_bank]
     beq .bank0
     lda pDst
     add #16
@@ -130,14 +130,14 @@ load:
     and #$F0
     lsr
     sta spawn_y
-    stx [game + GameState.room_load_index]
+    stx [game.room_load_index]
     mov spawn_type, #ObjectKind.spawn
     jsr Objects.allocate
-    ldx [game + GameState.room_load_index]
+    ldx [game.room_load_index]
 .nextspawn:
     inx
     bne .spawn
-    lda [game + GameState.room_bank]               ; show the bank we just filled
+    lda [game.room_bank]               ; show the bank we just filled
     beq .cam0
     lda #Room.playfield_width
 .cam0:
@@ -147,16 +147,16 @@ load:
     lda t3                      ; with off = -4. Scrolling the camera 4 to the
     add #4
     sta t3
-    mov [video + VideoRegisters.clip_x1], #Room.playfield_width-5  ; does not appear in the gap that opens up
+    mov [video.clip_x1], #Room.playfield_width-5  ; does not appear in the gap that opens up
     jmp .cam
 .notitle:
-    mov [video + VideoRegisters.clip_x1], #Room.playfield_width-1
+    mov [video.clip_x1], #Room.playfield_width-1
 .cam:
     lda t3
-    sta [video + VideoRegisters.camera_x]
+    sta [video.camera_x]
     lda #0
-    sta [game + GameState.camera_y]
-    sta [video + VideoRegisters.camera_y]
+    sta [game.camera_y]
+    sta [video.camera_y]
     jsr Room.title              ; the cart shows no room title on the title
     beq .done                   ; screen: `if not is_title() then ... end`
     mov spawn_type, #ObjectKind.title
@@ -178,7 +178,7 @@ next:
     ldx #0                      ; the cart's four music cues, keyed on the room
 .cue:                           ; being LEFT - see the table below
     lda Room.cue_level, x
-    cmp [game + GameState.level]
+    cmp [game.level]
     beq .play
     inx
     cpx #4
@@ -189,7 +189,7 @@ next:
     ldx #Audio.fade_500ms
     jsr Audio.fade
 .advance:
-    lda [game + GameState.room_slot]
+    lda [game.room_slot]
     add #1
     cmp #ROOM_COUNT
     bcc .go
@@ -207,7 +207,7 @@ cue_level:
 cue_music:
     #d8 30, 20, 30, 30
 restart:
-    lda [game + GameState.room_slot]
+    lda [game.room_slot]
     jmp Room.load
 ; ------------------------------------------------------------------------------
 ; camera_update: the vertical follow that covers a 128-line room in a 120-line
@@ -220,7 +220,7 @@ camera:
 .find:
     txa
     jsr Objects.pointer
-    lda [pObj + CelesteObject.core.kind]
+    lda [pObj.core.kind]
     cmp #ObjectKind.player
     beq .found
     cmp #ObjectKind.spawn
@@ -242,7 +242,7 @@ camera:
 .top:
     lda #0
 .set:
-    sta [game + GameState.camera_y]
-    sta [video + VideoRegisters.camera_y]
+    sta [game.camera_y]
+    sta [video.camera_y]
     rts
 end

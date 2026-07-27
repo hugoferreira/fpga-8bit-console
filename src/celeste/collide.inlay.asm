@@ -50,21 +50,21 @@ ice:
 ; Clobbers A, Y.
 ; ------------------------------------------------------------------------------
 box:
-    lda [pObj + CelesteObject.core.x]
+    lda [pObj.core.x]
     mov y, offset CelesteObject.core.hitbox.x
     clc
     adc (pObj), y
     add c_ox
     sta c_x
-    lda [pObj + CelesteObject.core.y]
+    lda [pObj.core.y]
     mov y, offset CelesteObject.core.hitbox.y
     clc
     adc (pObj), y
     add c_oy
     sta c_y
-    lda [pObj + CelesteObject.core.hitbox.w]
+    lda [pObj.core.hitbox.w]
     sta c_w
-    lda [pObj + CelesteObject.core.hitbox.h]
+    lda [pObj.core.hitbox.h]
     sta c_h
     rts
 ; ------------------------------------------------------------------------------
@@ -89,7 +89,7 @@ flags:
     lda t4
     add t5
     tay
-    lda [room_tiles + RoomTileBuffer.cells[y]] ; mget
+    lda [room_tiles.cells[y]] ; mget
     tay
     lda tile_flags, y
     and c_mask
@@ -203,7 +203,7 @@ spikes:
     lda t4
     add t5
     tay
-    lda [room_tiles + RoomTileBuffer.cells[y]]
+    lda [room_tiles.cells[y]]
     ldx #0
 .which:
     cmp Collision.ids, x
@@ -272,7 +272,7 @@ begin
     mov y, offset CelesteObject.core.speed_y.integer
     lda (pObj), y
     bmi .maybe
-    lda [pObj + CelesteObject.core.speed_y.fraction]  ; high byte: +0.004 is still moving down
+    lda [pObj.core.speed_y.fraction]  ; high byte: +0.004 is still moving down
     mov y, offset CelesteObject.core.speed_y.integer
     ora (pObj), y
     bne .no
@@ -294,7 +294,7 @@ begin
     mov y, offset CelesteObject.core.speed_x.integer
     lda (pObj), y
     bmi .maybe
-    lda [pObj + CelesteObject.core.speed_x.fraction]
+    lda [pObj.core.speed_x.fraction]
     mov y, offset CelesteObject.core.speed_x.integer
     ora (pObj), y
     bne .no

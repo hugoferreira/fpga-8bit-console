@@ -910,10 +910,10 @@ def check_objects_design() -> None:
         "mov self, [saved_self]",
         "data u8 low(Player.init), low(Spawn.init), "
         "low(Smoke.init), low(Title.init)",
-        "ldw value, [self + CelesteObject.core.remainder_x]",
-        "ldw operand, [self + CelesteObject.core.speed_x]",
+        "ldw value, [self.core.remainder_x]",
+        "ldw operand, [self.core.speed_x]",
         "addw ab, operand",
-        "stw [self + CelesteObject.core.remainder_y], value",
+        "stw [self.core.remainder_y], value",
         "jsr Objects.prepare_step",
     }
     missing = sorted(item for item in required if item not in text)
@@ -1202,7 +1202,8 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
             + "\n".join(missed_field_loads)
         )
     typed_operations = sum(
-        len(re.findall(r"\[(?:pObj|pOth) \+ CelesteObject\.", text))
+        len(re.findall(
+            r"\[(?:pObj|pOth)(?: \+ CelesteObject)?\.", text))
         for text in module_texts
     )
     if typed_operations != EXPECTED_CELESTE_TYPED_OPERATIONS:
@@ -1214,10 +1215,10 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
     overlay_operations = sum(
         len(re.findall(
             r"\[(?:video|psg|framebuffer|tile_map|zero_page|game|"
-            r"room_tiles|overlay_rows|overlay_shadow) \+ "
-            r"(?:VideoRegisters|PsgRegisters|OverlayFramebuffer|TileMap|"
+            r"room_tiles|overlay_rows|overlay_shadow)"
+            r"(?: \+ (?:VideoRegisters|PsgRegisters|OverlayFramebuffer|TileMap|"
             r"ZeroPageWorking|GameState|RoomTileBuffer|"
-            r"OverlayRowPointers)\.",
+            r"OverlayRowPointers))?\.",
             text,
         ))
         for text in module_texts

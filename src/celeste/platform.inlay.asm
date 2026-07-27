@@ -42,9 +42,9 @@ end
 ; Inputs: none. Returns: none. Frame locals: none. Clobbers: flags.
 proc wait_frame using console6502
 begin
-    lda [video + VideoRegisters.frame]
+    lda [video.frame]
 .wait:
-    cmp [video + VideoRegisters.frame]
+    cmp [video.frame]
     beq .wait
     ret
 end
@@ -53,10 +53,10 @@ end
 proc sample_input using console6502
     buttons : u8 return in a
 begin
-    lda [game + GameState.buttons]
-    sta [game + GameState.previous_buttons]
-    lda [video + VideoRegisters.buttons]
-    sta [game + GameState.buttons]
+    lda [game.buttons]
+    sta [game.previous_buttons]
+    lda [video.buttons]
+    sta [game.buttons]
     ret
 end
 
@@ -66,7 +66,7 @@ begin
     ldx #15
 .entry:
     lda Gfx.draw_palette, x
-    sta [video + VideoRegisters.draw_palette[x]]
+    sta [video.draw_palette[x]]
     dex
     bpl .entry
     ret
@@ -77,8 +77,8 @@ end
 proc upload_sheet using console6502
 begin
     lda #0
-    sta [video + VideoRegisters.sheet_address_low]
-    sta [video + VideoRegisters.sheet_address_high]
+    sta [video.sheet_address_low]
+    sta [video.sheet_address_high]
     lda #<Gfx.sheet
     sta pSrc
     lda #>Gfx.sheet
@@ -90,7 +90,7 @@ begin
     ldy #0
 .byte:
     lda (pSrc), y
-    sta [video + VideoRegisters.sheet_data]
+    sta [video.sheet_data]
     inc pSrc
     bne .nohi
     inc pSrc+1

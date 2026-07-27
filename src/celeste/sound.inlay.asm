@@ -38,24 +38,24 @@ namespace Audio
     fade_500ms = 31
 
 init:
-    mov [psg + PsgRegisters.address_low], #$00
-    mov [psg + PsgRegisters.address_high], #$31
+    mov [psg.address_low], #$00
+    mov [psg.address_high], #$31
     mov pSrc, #<audio_data
     mov pSrc+1, #>audio_data
     ldx #18                     ; 18 pages = 4608 bytes
     ldy #0
 .up:
     lda (pSrc), y
-    sta [psg + PsgRegisters.data]
+    sta [psg.data]
     iny
     bne .up
     inc pSrc+1
     dex
     bne .up
 
-    mov [psg + PsgRegisters.music_mask], #$07
+    mov [psg.music_mask], #$07
     lda #0
-    sta [game + GameState.next_channel]
+    sta [game.next_channel]
     rts
 
 ; ------------------------------------------------------------------------------
@@ -68,13 +68,13 @@ init:
 ; ------------------------------------------------------------------------------
 sfx:
     tax
-    lda [psg + PsgRegisters.music_mask]
+    lda [psg.music_mask]
     and #$0F
     cmp #$0F
     beq .none                   ; music owns every channel: drop the sound
 
-    lda [psg + PsgRegisters.status]
-    ora [psg + PsgRegisters.music_mask]
+    lda [psg.status]
+    ora [psg.music_mask]
     sta t0
     ldy #0
 .find:
@@ -85,17 +85,17 @@ sfx:
     cpy #4
     bne .find
 .steal:
-    lda [game + GameState.next_channel]                  ; all busy: round-robin, skipping the music's
+    lda [game.next_channel]                  ; all busy: round-robin, skipping the music's
     add #1
     and #3
-    sta [game + GameState.next_channel]
+    sta [game.next_channel]
     tay
     lda Audio.channel_bits, y
-    and [psg + PsgRegisters.music_mask]
+    and [psg.music_mask]
     bne .steal
 .go:
     txa
-    sta [psg + PsgRegisters.channels[y]]
+    sta [psg.channels[y]]
 .none:
     rts
 
@@ -107,7 +107,7 @@ channel_bits:
 ; channel budget. Clobbers A, X, Y, t0.
 ; ------------------------------------------------------------------------------
 guarded_sfx:
-    ldx [game + GameState.sfx_timer]
+    ldx [game.sfx_timer]
     bne .skip
     jmp Audio.sfx
 .skip:
@@ -128,8 +128,8 @@ music:
 ; music_fade: A = pattern (or MUS_STOP), X = fade length in 16 ms units.
 ; Clobbers A.
 fade:
-    stx [psg + PsgRegisters.fade]
-    sta [psg + PsgRegisters.music]
+    stx [psg.fade]
+    sta [psg.music]
     rts
 
 stop:
