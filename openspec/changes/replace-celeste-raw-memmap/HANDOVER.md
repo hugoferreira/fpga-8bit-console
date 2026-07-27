@@ -71,13 +71,20 @@ Frontend operation matrix (the forms the migration needed):
   so scoped constants in the tail resolve.
 - 5.5 — every numeric region boundary pinned to the typed layout.
 
-**Caveat for the remaining scratch migration (6.7+):** a procedure `in`
-placement to a location in its *own* namespace must be written unqualified
-(`in left`, not `in Fixed.left`); the qualified self-reference is rejected with
-`member-role`. Cross-namespace placements (`in Machine.object`) are qualified as
-usual. A migration of `w0`/`pObj`/`spawn_*`/etc. must therefore emit unqualified
-names inside the owning namespace (math=Fixed, obj=Objects, draw=Draw) and
-qualified names elsewhere. The 6.7 attempt was reverted for lacking this split.
+**Caveat for the remaining scratch migration (6.7+) — proc return placement.**
+Two 6.7 attempts were reverted after hitting this. A procedure **parameter**
+accepts a qualified typed-location placement (`self : ptr O in Machine.object`
+compiles); a procedure **return** placement does not — `result : … return in
+Machine.object` is rejected with `error[member-role]: return [in PHYSICAL]`, and
+the same happens for a same-namespace qualified name. Celeste's receiver procs
+in `obj.inlay.asm` (`pointer`, `allocate`) and the `Fixed` load/store procs use
+`return in pObj` / `return in w0`, i.e. the raw physical alias as the return
+slot. Those return placements therefore cannot move to a typed location without
+either (a) a frontend change letting `return in` name a typed location, or
+(b) leaving those specific return slots as reviewed physical names. Resolve this
+before mass-migrating `w0`/`pObj`/`spawn_*`: operands and parameter placements
+migrate cleanly (unqualified inside the owning namespace, qualified elsewhere),
+but the handful of `return in <alias>` clauses need a decision first.
 
 ### Deliberately unfinished
 
