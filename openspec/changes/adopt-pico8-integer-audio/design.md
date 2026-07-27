@@ -51,9 +51,34 @@ now part of the verified record:
 
 Indirectly verified byte-exact through those 24 cases: tri_raw, saw,
 tilt_57344, the fades, vibrato's multiplier sequence, the slide
-recurrences, and the 64-sample crossfade. Remaining model scope:
-detune/phaser/custom voices, multi-voice mixes, transitions, and music
-flow - then the reference re-capture.
+recurrences, and the 64-sample crossfade.
+
+**Second milestone: 29/29 deterministic single-voice cases**, adding
+the detune modes, the buzz/alternate waveform family and the phaser.
+The additional decoded facts:
+
+- The per-wave/per-mode dq map from `_calculate_osc_state`'s tails:
+  triangle detunes at 193/256 (mode 1) and 384/256 - a fifth up -
+  (mode 2); the phaser's secondary runs at exactly 254/256 by default,
+  250/256 and 508/256 in its modes (the RTL's 109/110 serial chain is
+  a mis-approximation to replace); waves 1..5 use the general 255/256.
+- Detuned voices of waves 0..5 get an amplitude boost `a = tz(5a/4)`
+  before G (the +0x1c rewrite at `0x1000f1bbb`) - this is the
+  detune-probe level the old fitted-gain gates absorbed.
+- The buzz flag selects the alternate family: tri_alt with the /57344
+  skew, tilt at 61440, square/pulse thresholds 0x9800/0xC800, saw_alt,
+  and organ's half-amplitude-square secondary - all byte-verified
+  through filter-buzz.
+- **The history comb is live-playback only.** The wave-7-phaser export
+  matches the comb-free stream on all 5,696 samples: the eight-slot
+  ring stays empty in the export path that produced every reference.
+  The comb (and with it the reverb question) is a documented model
+  boundary alongside the shared RNG; the phaser's export-visible
+  identity is the triangle core with the 254/256 secondary.
+
+Remaining model scope: custom/meta-instrument voices, multi-voice
+mixes, transitions, music flow, dampen - then the reference
+re-capture.
 
 Constraints inherited from `reduce-psg-ice40-area`, which pauses at its
 6,199-cell / 15-EBR checkpoint until this change lands: the 15-EBR

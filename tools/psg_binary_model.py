@@ -82,6 +82,16 @@ def tri_raw(x: int) -> int:
     return 3 * x - 49152 if x < 32768 else 147456 - 3 * x
 
 
+def skew0(x: int) -> int:
+    if x < 57344:
+        return (24572 * x) // 57344 - 12286
+    return (24572 * (65535 - x)) // 8192 - 12286
+
+
+def tri_alt(x: int) -> int:
+    return skew0(x) + 3 * tz(tri_raw(x), 4)
+
+
 def tilt(x: int, t_break: int = 57344) -> int:
     if x < t_break:
         return (24572 * x) // t_break - 12286
@@ -106,20 +116,32 @@ def organ(x: int) -> int:
     return tz(2 * (65536 - x), 3) - 8192
 
 
-def wave_pair(w: int, p: int, q0: int, mode: int) -> int:
-    """The pre-scale oscillator value: primary plus half-weight secondary."""
+def saw_alt(x: int) -> int:
+    return tz(tz(x - 32768, 4) + tz((x // 2) - 32768, 4), 2)
+
+
+def wave_pair(w: int, p: int, q0: int, mode: int, alt: bool = False) -> int:
+    """The pre-scale oscillator value: primary plus half-weight secondary.
+    `alt` is the BUZZ/alternate flag at oscillator-state +0x54."""
     q = u16(q0 << (1 if mode == 2 else 0))
-    if w == 0:
-        return tz(tri_raw(p), 4) + tz(tri_raw(u16(q0)), 8)
+    if w == 0 or w == 7:                      # phaser shares the triangle core
+        f = tri_alt if alt and w == 0 else tri_raw
+        return tz(f(p), 4) + tz(f(u16(q0)), 8)
     if w == 1:
-        return tilt(p) + tz(tilt(q), 2)
+        t_break = 61440 if alt else 57344
+        return tilt(p, t_break) + tz(tilt(q, t_break), 2)
     if w == 2:
-        return saw(p) + tz(saw(q), 2)
+        f = saw_alt if alt else saw
+        return f(p) + tz(f(q), 2)
     if w == 3:
-        return square_at(p, 0x8000) + tz(square_at(q, 0x8000), 2)
+        th = 0x9800 if alt else 0x8000
+        return square_at(p, th) + tz(square_at(q, th), 2)
     if w == 4:
-        return square_at(p, 0xB000) + tz(square_at(q, 0xB000), 2)
+        th = 0xC800 if alt else 0xB000
+        return square_at(p, th) + tz(square_at(q, th), 2)
     if w == 5:
+        if alt:
+            return organ(p) + (-3071 if q < 32768 else 3071)
         return organ(p) + tz(organ(q), 2)
     raise ValueError(f"wave {w} not in the deterministic model")
 
@@ -146,6 +168,15 @@ class Sfx:
         self.speed = max(1, blob[65])
         self.loop_start = blob[66]
         self.loop_end = blob[67]
+        # Filter byte: noiz = bit 1, buzz = bit 2, and the top five bits are
+        # base-3 digits detune / reverb / dampen (the RTL's fdec convention,
+        # matching the +0x50/+0x54 stores in _calculate_osc_state).
+        self.noiz = (self.filters >> 1) & 1
+        self.buzz = (self.filters >> 2) & 1
+        f3 = self.filters >> 3
+        self.detune = f3 % 3
+        self.reverb = (f3 // 3) % 3
+        self.dampen = (f3 // 9) % 3
 
 
 def load_sfx(bin_path: Path, index: int) -> Sfx:
@@ -158,7 +189,7 @@ def load_sfx(bin_path: Path, index: int) -> Sfx:
 class OscState:
     """Everything _mix_osc_tick_new consumes for one tick's render."""
 
-    __slots__ = ("wave", "dp", "dq", "g", "p", "q0", "mode")
+    __slots__ = ("wave", "dp", "dq", "g", "p", "q0", "mode", "alt")
 
     def __init__(self):
         self.wave = 0
@@ -168,6 +199,7 @@ class OscState:
         self.p = 0
         self.q0 = 0
         self.mode = 0
+        self.alt = False
 
     def copy(self) -> "OscState":
         o = OscState()
@@ -182,10 +214,22 @@ class OscState:
                 out.append(0)
             else:
                 out.append(scale(self.g, wave_pair(
-                    self.wave, self.p, self.q0, self.mode)))
+                    self.wave, self.p, self.q0, self.mode, self.alt)))
                 self.p = u16(self.p + self.dp)
                 self.q0 = (self.q0 + self.dq) & 0x1FFFF
         return out
+
+
+def dq_for(wave: int, mode: int, dp: int) -> int:
+    """The per-wave/per-mode secondary increment map, decoded from
+    _calculate_osc_state's +0x10 stores and its wave/mode tails."""
+    if wave == 0:
+        k = {0: 256, 1: 193, 2: 384}[mode]
+    elif wave == 7:
+        k = {0: 254, 1: 250, 2: 508}[mode]
+    else:
+        k = 256 if mode == 0 else 255
+    return tz(dp * k, 256)
 
 
 def calc_tick_state(sfx: Sfx, pos: int, prev: OscState) -> OscState:
@@ -230,9 +274,14 @@ def calc_tick_state(sfx: Sfx, pos: int, prev: OscState) -> OscState:
     st = OscState()
     st.wave = note["wave"]
     st.dp = dp
-    st.dq = tz(dp * 256, 256)                 # mode 0: dq = dp exactly
+    st.mode = sfx.detune
+    st.alt = bool(sfx.buzz)
+    st.dq = dq_for(st.wave, st.mode, dp)
+    # Detuned voices of waves 0..5 get the binary's amplitude boost
+    # a = tz(5a/4) before G (the +0x1c rewrite at 0x1000f1bbb).
+    if st.mode > 0 and st.wave <= 5:
+        a = tz(5 * a, 4)
     st.g = tz(3 * a, 2)
-    st.mode = 0
     if st.g == 0:
         # A zero-amplitude tick is not an inaudible running oscillator:
         # the next nonzero tick starts from the canonical phase again
@@ -245,7 +294,16 @@ def calc_tick_state(sfx: Sfx, pos: int, prev: OscState) -> OscState:
 
 
 def render_voice(sfx: Sfx, ticks: int) -> list[int]:
-    """_mix_sfx_tick: per tick, render new state, blend 64 samples of old."""
+    """_mix_sfx_tick: per tick, render new state, blend 64 samples of old.
+
+    The eight-slot history comb the RE notes describe for waveform 7 (and
+    reverb) is deliberately ABSENT: the wave-7-phaser export matches the
+    comb-free stream byte-for-byte across all 5,696 samples, so the ring is
+    empty throughout the export path - the comb belongs to live playback,
+    a stage the export renderer (and therefore every oracle reference)
+    never runs. This is a documented model boundary alongside the shared
+    RNG; the phaser's export-visible identity is the triangle core with
+    its 254/256-detuned secondary."""
     out: list[int] = []
     cur = OscState()                          # silent pre-trigger state
     for pos in range(ticks):
