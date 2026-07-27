@@ -50,7 +50,7 @@ init:
 
     mov [psg + PsgRegisters.music_mask], #$07
     lda #0
-    sta nextch
+    sta [game + GameState.next_channel]
     rts
 
 ; ------------------------------------------------------------------------------
@@ -80,10 +80,10 @@ sfx:
     cpy #4
     bne .find
 .steal:
-    lda nextch                  ; all busy: round-robin, skipping the music's
+    lda [game + GameState.next_channel]                  ; all busy: round-robin, skipping the music's
     add #1
     and #3
-    sta nextch
+    sta [game + GameState.next_channel]
     tay
     lda Audio.channel_bits, y
     and [psg + PsgRegisters.music_mask]
@@ -102,7 +102,7 @@ channel_bits:
 ; channel budget. Clobbers A, X, Y, t0.
 ; ------------------------------------------------------------------------------
 guarded_sfx:
-    ldx sfx_timer
+    ldx [game + GameState.sfx_timer]
     bne .skip
     jmp Audio.sfx
 .skip:

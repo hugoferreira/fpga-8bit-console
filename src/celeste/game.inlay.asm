@@ -9,6 +9,34 @@
 namespace Game
     export run
     export frame
+    location frames : u8 at $30
+    location seconds : u8 at $31
+    location minutes : u8 at $32
+    location deaths : u8 at $33
+    location max_dash_jumps : u8 at $34
+    location freeze : u8 at $35
+    location shake : u8 at $36
+    location shake_x : i8 at $37
+    location shake_y : i8 at $38
+    location will_restart : u8 at $39
+    location restart_delay : u8 at $3a
+    location room_slot : u8 at $3b
+    location room_bank : u8 at $3c
+    location level : u8 at $3d
+    location camera_y : u8 at $3e
+    location buttons : u8 at $40
+    location previous_buttons : u8 at $41
+    location pressed_buttons : u8 at $42
+    location sfx_timer : u8 at $43
+    location music_timer : u8 at $44
+    location has_dashed : u8 at $45
+    location pause_player : u8 at $46
+    location sprite_count : u8 at $47
+    location overlay_dirty : u8 at $48
+    location hud_seconds : u8 at $49
+    location next_channel : u8 at $4a
+    location start_game : u8 at $4c
+    location start_game_flash : i8 at $4d
 
 ; Inputs: none. Returns: never. Frame locals: none. Clobbers: all game-visible
 ; volatile state.
@@ -21,23 +49,23 @@ begin
     jsr Objects.clear
 
     lda #0
-    sta frames
-    sta seconds
-    sta minutes
-    sta deaths
-    sta freeze
-    sta shake
-    sta shake_x
-    sta shake_y
-    sta will_restart
-    sta delay_restart
-    sta sfx_timer
-    sta music_timer
-    sta has_dashed
-    sta pause_player
-    sta btn
-    sta btnprev
-    mov max_djump, #1
+    sta [game + GameState.frames]
+    sta [game + GameState.seconds]
+    sta [game + GameState.minutes]
+    sta [game + GameState.deaths]
+    sta [game + GameState.freeze]
+    sta [game + GameState.shake]
+    sta [game + GameState.shake_x]
+    sta [game + GameState.shake_y]
+    sta [game + GameState.will_restart]
+    sta [game + GameState.restart_delay]
+    sta [game + GameState.sfx_timer]
+    sta [game + GameState.music_timer]
+    sta [game + GameState.has_dashed]
+    sta [game + GameState.pause_player]
+    sta [game + GameState.buttons]
+    sta [game + GameState.previous_buttons]
+    mov [game + GameState.max_dash_jumps], #1
 
     jsr Game.show_title
 .loop:
@@ -61,11 +89,11 @@ end
 proc show_title using console6502
 begin
     lda #0
-    sta frames
-    sta deaths
-    sta start_game
-    sta start_game_flash
-    mov max_djump, #1
+    sta [game + GameState.frames]
+    sta [game + GameState.deaths]
+    sta [game + GameState.start_game]
+    sta [game + GameState.start_game_flash]
+    mov [game + GameState.max_dash_jumps], #1
     lda #MUS_TITLE
     jsr Audio.music
     lda #0                      ; slot 0 is the title room, level 31
@@ -76,11 +104,11 @@ end
 proc begin_play using console6502
 begin
     lda #0
-    sta frames
-    sta seconds
-    sta minutes
-    sta music_timer
-    sta start_game
+    sta [game + GameState.frames]
+    sta [game + GameState.seconds]
+    sta [game + GameState.minutes]
+    sta [game + GameState.music_timer]
+    sta [game + GameState.start_game]
     lda #MUS_CLIMB
     jsr Audio.music
     lda #1                      ; slot 1 is the first playing room
@@ -91,63 +119,63 @@ end
 ; subsystem-declared volatile scratch.
 proc update using console6502
 begin
-    inc frames                  ; frames = (frames + 1) % 30
-    cblt frames, #30, .clock
-    mov frames, #0
+    inc [game + GameState.frames]                  ; frames = (frames + 1) % 30
+    cblt [game + GameState.frames], #30, .clock
+    mov [game + GameState.frames], #0
 
-    cbge level, #30, .clock     ; the clock stops in the last room
-    inc seconds
-    cblt seconds, #60, .clock
-    mov seconds, #0
-    inc minutes
+    cbge [game + GameState.level], #30, .clock     ; the clock stops in the last room
+    inc [game + GameState.seconds]
+    cblt [game + GameState.seconds], #60, .clock
+    mov [game + GameState.seconds], #0
+    inc [game + GameState.minutes]
 .clock:
 
-    lda music_timer
+    lda [game + GameState.music_timer]
     beq .nomusictimer
-    dec music_timer
+    dec [game + GameState.music_timer]
     bne .nomusictimer
     lda #MUS_ORB
     jsr Audio.music
 .nomusictimer:
 
-    lda sfx_timer
+    lda [game + GameState.sfx_timer]
     beq .nosfxtimer
-    dec sfx_timer
+    dec [game + GameState.sfx_timer]
 .nosfxtimer:
 
-    lda freeze                  ; dash freeze skips the whole update
+    lda [game + GameState.freeze]                  ; dash freeze skips the whole update
     beq .nofreeze
-    dec freeze
+    dec [game + GameState.freeze]
     ret
 .nofreeze:
 
-    lda shake
+    lda [game + GameState.shake]
     beq .noshake
-    dec shake
-    lda shake
+    dec [game + GameState.shake]
+    lda [game + GameState.shake]
     beq .noshake
     lda [video + VideoRegisters.random]
     and #3
     sub #2
-    sta shake_x
+    sta [game + GameState.shake_x]
     lda [video + VideoRegisters.random]
     and #3
     sub #2
-    sta shake_y
+    sta [game + GameState.shake_y]
     jmp .restart
 .noshake:
     lda #0
-    sta shake_x
-    sta shake_y
+    sta [game + GameState.shake_x]
+    sta [game + GameState.shake_y]
 
 .restart:
-    lda will_restart
+    lda [game + GameState.will_restart]
     beq .objects
-    lda delay_restart
+    lda [game + GameState.restart_delay]
     beq .objects
-    dec delay_restart
+    dec [game + GameState.restart_delay]
     bne .objects
-    mov will_restart, #0
+    mov [game + GameState.will_restart], #0
     jsr Room.restart
     ret
 
@@ -164,19 +192,19 @@ begin
     beq .title
     ret
 .title:
-    lda start_game
+    lda [game + GameState.start_game]
     bne .flashing
 
-    tbz btn, #BTN_JUMP|BTN_DASH, .done
+    tbz [game + GameState.buttons], #BTN_JUMP|BTN_DASH, .done
     jsr Audio.stop
-    mov start_game_flash, #50
-    mov start_game, #1
+    mov [game + GameState.start_game_flash], #50
+    mov [game + GameState.start_game], #1
     lda #38
     jmp Audio.sfx
 
 .flashing:
-    dec start_game_flash
-    lda start_game_flash
+    dec [game + GameState.start_game_flash]
+    lda [game + GameState.start_game_flash]
     bpl .done
     cmp #<(-29)
     bcs .done

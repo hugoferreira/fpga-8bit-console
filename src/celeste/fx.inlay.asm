@@ -219,7 +219,7 @@ begin
 .cloud:
     stx t6
     lda CL_Y, x                  ; clouds do not scroll with the camera: they
-    sub camera_y
+    sub [game + GameState.camera_y]
     sta t5
     mov t3, #Gfx.palette_1
     mov t4, CL_XH + x
@@ -248,7 +248,7 @@ begin
     mov t3, PA_ATTR + x
     mov t4, PA_XH + x
     lda PA_YH, x
-    sub camera_y
+    sub [game + GameState.camera_y]
     sta t5
     lda #Gfx.dot
     jsr Draw.sprite

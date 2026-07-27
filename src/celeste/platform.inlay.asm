@@ -47,10 +47,10 @@ end
 proc sample_input using console6502
     buttons : u8 return in a
 begin
-    lda btn
-    sta btnprev
+    lda [game + GameState.buttons]
+    sta [game + GameState.previous_buttons]
     lda [video + VideoRegisters.buttons]
-    sta btn
+    sta [game + GameState.buttons]
     ret
 end
 

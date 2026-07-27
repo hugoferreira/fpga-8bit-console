@@ -867,9 +867,20 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
         fprintf(output->assembly, "    cmp #%ld\n",
                 (long)event->signed_value);
         return 1;
+    case LA_TARGET_OP_BRANCH_OVERLAY_DISP:
+        if (!begin_line(output, event->span, "overlay-branch")) return 0;
+        fprintf(output->assembly, "    %.*s %.*s + %u, %.*s",
+                (int)event->scratch.length, event->scratch.data,
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value,
+                (int)event->text.length, event->text.data);
+        fprintf(output->assembly, " ; inlay branch %.*s.%.*s\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
+        return 1;
     case LA_TARGET_OP_STORE_IMM_OVERLAY_ABS:
-        if (!begin_line(output, event->span, "overlay-store-immediate")) return 0;
-        fprintf(output->assembly, "    mov %.*s + %u, #%.*s",
+        if (!begin_line(output, event->span, "overlay-store-source")) return 0;
+        fprintf(output->assembly, "    mov %.*s + %u, %.*s",
                 (int)event->base.length, event->base.data,
                 (unsigned)event->value,
                 (int)event->text.length, event->text.data);
@@ -890,12 +901,20 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
     case LA_TARGET_OP_STOREY_OVERLAY_DISP:
     case LA_TARGET_OP_AND8A_OVERLAY_DISP:
     case LA_TARGET_OP_ORA8A_OVERLAY_DISP:
+    case LA_TARGET_OP_LOADX_OVERLAY_DISP:
+    case LA_TARGET_OP_LOADY_OVERLAY_DISP:
+    case LA_TARGET_OP_ADD8A_OVERLAY_DISP:
+    case LA_TARGET_OP_SUB8A_OVERLAY_DISP:
         if (!begin_line(output, event->span, "overlay-operation")) return 0;
         fprintf(output->assembly, "    %s %.*s + %u",
                 event->operation == LA_TARGET_OP_STOREX_OVERLAY_DISP ? "stx" :
                 event->operation == LA_TARGET_OP_STOREY_OVERLAY_DISP ? "sty" :
                 event->operation == LA_TARGET_OP_AND8A_OVERLAY_DISP ? "and" :
-                    "ora",
+                event->operation == LA_TARGET_OP_ORA8A_OVERLAY_DISP ? "ora" :
+                event->operation == LA_TARGET_OP_LOADX_OVERLAY_DISP ? "ldx" :
+                event->operation == LA_TARGET_OP_LOADY_OVERLAY_DISP ? "ldy" :
+                event->operation == LA_TARGET_OP_ADD8A_OVERLAY_DISP ? "add" :
+                    "sub",
                 (int)event->base.length, event->base.data,
                 (unsigned)event->value);
         fprintf(output->assembly, " ; inlay overlay %.*s.%.*s\n",

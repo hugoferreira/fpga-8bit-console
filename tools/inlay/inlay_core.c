@@ -4209,6 +4209,18 @@ static int la_parse_typed_operation(LaContext *ctx,
     } else if ((la_u16)(end - cursor) >= 4 &&
                memcmp(cursor, "ora ", 4) == 0) {
         operation = LA_TARGET_OP_ORA8A_OVERLAY_DISP;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "ldx ", 4) == 0) {
+        operation = LA_TARGET_OP_LOADX_OVERLAY_DISP;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "ldy ", 4) == 0) {
+        operation = LA_TARGET_OP_LOADY_OVERLAY_DISP;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "add ", 4) == 0) {
+        operation = LA_TARGET_OP_ADD8A_OVERLAY_DISP;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "sub ", 4) == 0) {
+        operation = LA_TARGET_OP_SUB8A_OVERLAY_DISP;
     } else {
         return 0;
     }
@@ -4376,8 +4388,12 @@ static int la_parse_typed_operation(LaContext *ctx,
         operation == LA_TARGET_OP_STOREX_OVERLAY_DISP ||
         operation == LA_TARGET_OP_STOREY_OVERLAY_DISP ||
         operation == LA_TARGET_OP_AND8A_OVERLAY_DISP ||
-        operation == LA_TARGET_OP_ORA8A_OVERLAY_DISP) {
-        /* Accumulator compare/logic and physical-register stores are
+        operation == LA_TARGET_OP_ORA8A_OVERLAY_DISP ||
+        operation == LA_TARGET_OP_LOADX_OVERLAY_DISP ||
+        operation == LA_TARGET_OP_LOADY_OVERLAY_DISP ||
+        operation == LA_TARGET_OP_ADD8A_OVERLAY_DISP ||
+        operation == LA_TARGET_OP_SUB8A_OVERLAY_DISP) {
+        /* Accumulator compare/logic and physical-register loads/stores are
            registered only against a non-indexed fixed overlay field; the
            pointer-indirect and indexed variants stay raw and reviewed. */
         int sets_flags;
@@ -4396,7 +4412,7 @@ static int la_parse_typed_operation(LaContext *ctx,
                     la_slice("static overlay byte access", 26), 0, 0);
             return -1;
         }
-        /* stx/sty leave the flags untouched; cmp/and/ora update N and Z. */
+        /* stx/sty leave the flags untouched; the rest update N and Z. */
         sets_flags = operation != LA_TARGET_OP_STOREX_OVERLAY_DISP &&
                      operation != LA_TARGET_OP_STOREY_OVERLAY_DISP;
         event->operation = operation;
@@ -4997,6 +5013,123 @@ static int la_count_operation(LaContext *ctx, la_u16 line)
     return 1;
 }
 
+/* Compare/test-and-branch pseudo-ops against a fixed overlay field:
+   `MNEM [overlay + Type.field], REST`. The tail (immediate and target label) is
+   passed through verbatim; the pseudo-op still expands to the same bytes as the
+   legacy raw zero-page form. */
+static int la_parse_overlay_branch(LaContext *ctx,
+                                   const char *start, const char *end,
+                                   la_u16 line, LaEvent *event)
+{
+    static const char *const mnemonics[] = {
+        "cbeq", "cbne", "cblt", "cble", "cbgt", "cbge", "tbz", "tbnz"
+    };
+    const char *cursor;
+    const char *mnem_start;
+    const char *mnem_end;
+    const char *bracket;
+    const char *close;
+    const char *base_start;
+    const char *base_end;
+    const char *root_start;
+    const char *first_dot;
+    const char *path_start;
+    const char *rest_start;
+    la_u16 mnem_length;
+    la_u16 overlay_index;
+    la_u16 root_length;
+    la_u16 field_index;
+    la_u16 field_offset;
+    la_u16 field_size;
+    int matched;
+    unsigned i;
+    cursor = la_trim_left(start, end);
+    mnem_start = cursor;
+    while (cursor < end && la_is_ident(*cursor)) ++cursor;
+    mnem_end = cursor;
+    mnem_length = (la_u16)(mnem_end - mnem_start);
+    matched = 0;
+    for (i = 0; i < sizeof(mnemonics) / sizeof(mnemonics[0]); ++i) {
+        if (la_equal_text(mnem_start, mnem_length, mnemonics[i])) {
+            matched = 1;
+            break;
+        }
+    }
+    if (!matched) return 0;
+    bracket = la_trim_left(mnem_end, end);
+    if (bracket >= end || *bracket != '[') return 0;
+    close = bracket + 1;
+    while (close < end && *close != ']') ++close;
+    if (close == end) return 0;
+    base_start = la_trim_left(bracket + 1, close);
+    base_end = base_start;
+    while (base_end < close && la_is_ident(*base_end)) ++base_end;
+    cursor = la_trim_left(base_end, close);
+    if (base_end == base_start || cursor >= close || *cursor++ != '+') return 0;
+    root_start = la_trim_left(cursor, close);
+    first_dot = root_start;
+    while (first_dot < close && *first_dot != '.') ++first_dot;
+    if (first_dot == close) return 0;
+    root_length = (la_u16)(first_dot - root_start);
+    path_start = first_dot + 1;
+    cursor = la_trim_left(close + 1, end);
+    if (cursor >= end || *cursor++ != ',') return 0;
+    rest_start = la_trim_left(cursor, end);
+    if (rest_start == end) {
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                la_slice("MNEM [overlay + field], #VALUE, TARGET", 38),
+                la_slice("", 0), 0, 0);
+        return -1;
+    }
+    overlay_index = la_find_overlay_text(
+        ctx, base_start, (la_u16)(base_end - base_start));
+    if (overlay_index == LA_INVALID_HANDLE) {
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
+                (la_u16)(base_end - base_start),
+                la_slice(base_start, (la_u16)(base_end - base_start)),
+                la_slice("overlay", 7), 0, 0);
+        return -1;
+    }
+    {
+        LaSlice declared;
+        declared = la_name_slice(ctx, ctx->overlays[overlay_index].type_name);
+        if (declared.length != root_length ||
+            memcmp(declared.data, root_start, root_length) != 0) {
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, root_length,
+                    declared, la_slice(root_start, root_length), 0, 0);
+            return -1;
+        }
+    }
+    if (la_resolve_path(ctx, root_start, root_length, path_start,
+                        (la_u16)(close - path_start), line,
+                        &field_index, &field_offset) != LA_OK) return -1;
+    field_size = ctx->fields[field_index].count == 1 ?
+        ctx->fields[field_index].size :
+        (la_u16)(ctx->fields[field_index].size /
+                 ctx->fields[field_index].count);
+    if (ctx->fields[field_index].count != 1 || field_size != 1) {
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
+                (la_u16)(close - path_start),
+                la_name_slice(ctx, ctx->fields[field_index].name),
+                la_slice("byte", 4), field_size, 1);
+        return -1;
+    }
+    if (!la_count_operation(ctx, line)) return -1;
+    la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
+                  (la_u16)(end - start));
+    event->operation = LA_TARGET_OP_BRANCH_OVERLAY_DISP;
+    event->owner = la_slice(root_start, root_length);
+    event->path = la_slice(path_start, (la_u16)(close - path_start));
+    event->base = la_name_slice(ctx, ctx->overlays[overlay_index].base);
+    event->scratch = la_slice(mnem_start, mnem_length);
+    event->text = la_slice(rest_start, (la_u16)(end - rest_start));
+    event->value = field_offset;
+    event->access_width = 1;
+    event->volatility = ctx->overlays[overlay_index].volatile_access ?
+        LA_ACCESS_VOLATILE : LA_ACCESS_NONVOLATILE;
+    return 1;
+}
+
 /* mov [overlay + Type.field], #EXPR — store an immediate into a fixed overlay
    field. The immediate is passed through verbatim so target-side constants stay
    resolvable and the emitted bytes match the legacy raw form exactly. */
@@ -5038,12 +5171,19 @@ static int la_parse_overlay_store_immediate(LaContext *ctx,
     path_start = first_dot + 1;
     cursor = la_trim_left(close + 1, end);
     if (cursor >= end || *cursor++ != ',') return 0;
-    cursor = la_trim_left(cursor, end);
-    if (cursor >= end || *cursor++ != '#') return 0;
     imm_start = la_trim_left(cursor, end);
+    if (imm_start < end && *imm_start == '[') {
+        /* A second typed memory operand would be a memory-to-memory move the
+           target does not define; keep it explicit and rejected. */
+        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
+                (la_u16)(end - start),
+                la_slice(start, (la_u16)(end - start)),
+                la_slice("fixed-overlay memory-to-memory mov", 34), 0, 0);
+        return -1;
+    }
     if (imm_start == end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("mov [overlay + field], #VALUE", 29),
+                la_slice("mov [overlay + field], SOURCE", 29),
                 la_slice("", 0), 0, 0);
         return -1;
     }
@@ -6679,6 +6819,10 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
             }
             if (typed == 0) {
                 typed = la_parse_overlay_store_immediate(
+                    ctx, cursor, content_end, line, &event);
+            }
+            if (typed == 0) {
+                typed = la_parse_overlay_branch(
                     ctx, cursor, content_end, line, &event);
             }
             if (typed == 0) {

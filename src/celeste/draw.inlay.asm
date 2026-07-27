@@ -46,19 +46,19 @@ frame:
     jsr Room.camera
     jsr Draw.overlay_begin
 
-    mov nspr, #0
+    mov [game + GameState.sprite_count], #0
     jsr Room.title              ; the cart draws no clouds on the title screen
     beq .nosky
     jsr Fx.draw_clouds
 .nosky:
-    lda nspr                    ; everything staged so far is background
+    lda [game + GameState.sprite_count]                    ; everything staged so far is background
     sta [video + VideoRegisters.split]
     mov [video + VideoRegisters.repeat], #1  ; player, hair and smoke are single cells
 
     jsr Objects.draw_all
 
     jsr Fx.draw_particles       ; in front of everything, title screen included
-    lda nspr
+    lda [game + GameState.sprite_count]
     sta [video + VideoRegisters.sprite_count]
     jmp Draw.overlay_end
 
@@ -74,15 +74,15 @@ frame:
 ; one. Clobbers A, X.
 ; ------------------------------------------------------------------------------
 palette:
-    lda start_game
+    lda [game + GameState.start_game]
     beq .ident                  ; not flashing at all
 
-    lda start_game_flash        ; c = 10, 7, 2, 1 or 0 as the flash decays
+    lda [game + GameState.start_game_flash]        ; c = 10, 7, 2, 1 or 0 as the flash decays
     bmi .black                  ; past zero: c = 0
     cmp #11
     bcc .mid
                                 ; > 10: white for five frames in every ten.
-    cblt frames, #20, .lt20  ; frames is 0..29, so one subtract of 20 and one of 10 is the whole of `frames % 10`
+    cblt [game + GameState.frames], #20, .lt20  ; frames is 0..29, so one subtract of 20 and one of 10 is the whole of `frames % 10`
     sub #20
     jmp .lt10
 .lt20:
@@ -110,7 +110,7 @@ palette:
     lda #7
     bne .apply
 .mid:
-    cbge start_game_flash, #6, .two
+    cbge [game + GameState.start_game_flash], #6, .two
     cmp #1
     bcs .one
 .black:
@@ -143,7 +143,7 @@ palette_slots:
 ; Clobbers A, X, Y.
 ; ------------------------------------------------------------------------------
 sprite:
-    ldx nspr
+    ldx [game + GameState.sprite_count]
     cpx #128
     bcs .drop
     ldy t5
@@ -157,7 +157,7 @@ sprite:
     sty [video + VideoRegisters.sprite_y]
     lda t3
     sta [video + VideoRegisters.sprite_flags]               ; the write commits the staged entry
-    inc nspr
+    inc [game + GameState.sprite_count]
 .drop:
     rts
 
@@ -205,11 +205,11 @@ object:
 ; ------------------------------------------------------------------------------
 position:
     lda [pObj + CelesteObject.core.x]
-    add shake_x
+    add [game + GameState.shake_x]
     sta t4
     lda [pObj + CelesteObject.core.y]
-    sub camera_y
-    add shake_y
+    sub [game + GameState.camera_y]
+    add [game + GameState.shake_y]
     sta t5
     rts
 
@@ -267,7 +267,7 @@ hair_color:
     lda #Gfx.palette_8
     jmp .done
 .flash:
-    ldx frames                  ; 7 + flr((frames/3)%2)*4, without a divide
+    ldx [game + GameState.frames]                  ; 7 + flr((frames/3)%2)*4, without a divide
     lda Draw.hair_palette, x
 .done:
     sta hair_col
@@ -302,7 +302,7 @@ hair_draw:
     sta hair_lx+1
     mov hair_lx, #0
 
-    tbz btn, #BTN_D, .lastup  ; last.y = y + (btn(down) and 4 or 3)
+    tbz [game + GameState.buttons], #BTN_D, .lastup  ; last.y = y + (btn(down) and 4 or 3)
     lda #4
     bne .lasty
 .lastup:
@@ -368,11 +368,11 @@ hair_draw:
 .plot:
     pha
     lda t4                      ; the hair is in world space like the Draw.object
-    add shake_x
+    add [game + GameState.shake_x]
     sta t4
     lda t5
-    sub camera_y
-    add shake_y
+    sub [game + GameState.camera_y]
+    add [game + GameState.shake_y]
     sta t5
     pla
     jsr Draw.sprite
@@ -450,7 +450,7 @@ overlay_init:
 
 overlay_dirty:
     lda #1
-    sta ovl_dirty
+    sta [game + GameState.overlay_dirty]
     rts
 
 overlay_clear:
@@ -492,13 +492,13 @@ overlay_begin:
 .yes:
     jsr Draw.overlay_dirty
 .check:
-    lda seconds                 ; and so does the clock, once a second
-    cmp hud_secs
+    lda [game + GameState.seconds]                 ; and so does the clock, once a second
+    cmp [game + GameState.hud_seconds]
     beq .nochange
-    sta hud_secs
+    sta [game + GameState.hud_seconds]
     jsr Draw.overlay_dirty
 .nochange:
-    lda ovl_dirty
+    lda [game + GameState.overlay_dirty]
     beq .done
     jsr Draw.overlay_clear
     jsr Room.title              ; the title screen carries credits, not a HUD
@@ -510,11 +510,11 @@ overlay_begin:
     rts
 
 overlay_end:
-    lda ovl_dirty
+    lda [game + GameState.overlay_dirty]
     bne .blit
     rts
 .blit:
-    mov ovl_dirty, #0
+    mov [game + GameState.overlay_dirty], #0
     ldx #0
 .page:
     lda OVLSHADOW+$000, x
@@ -660,11 +660,11 @@ hud:
 
     mov d_x, #130
     mov d_y, #11
-    lda minutes
+    lda [game + GameState.minutes]
     jsr Draw.byte
     lda #Draw.glyph_colon
     jsr Draw.char
-    lda seconds
+    lda [game + GameState.seconds]
     jsr Draw.byte
 
     mov d_x, #132
@@ -675,7 +675,7 @@ hud:
 
     mov d_x, #138
     mov d_y, #29
-    lda deaths
+    lda [game + GameState.deaths]
     jmp Draw.byte
 
 ; ------------------------------------------------------------------------------
@@ -715,13 +715,13 @@ title_credits:
 ; one colour and cannot, so the text sits directly over the room.
 ; ------------------------------------------------------------------------------
 room_title:
-    cbeq level, #11, .oldsite
+    cbeq [game + GameState.level], #11, .oldsite
     cmp #30
     beq .summit
 
     mov d_x, #52
     mov d_y, #62
-    lda level
+    lda [game + GameState.level]
     add #1
     jsr Draw.byte
     lda #0

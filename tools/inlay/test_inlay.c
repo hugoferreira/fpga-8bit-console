@@ -302,10 +302,10 @@ static int test_event(void *context, const LaEvent *event)
                    LA_TARGET_OP_STORE_IMM_OVERLAY_ABS) {
             check(event->access_width == 1,
                   "overlay store-immediate reports one-unit width");
-            check(event->volatility == LA_ACCESS_VOLATILE,
-                  "MMIO overlay store-immediate reports volatile access");
-            if (event->text.length == 13 &&
-                memcmp(event->text.data, "PLAYFIELD_W-1", 13) == 0) {
+            if (event->text.length == 14 &&
+                memcmp(event->text.data, "#PLAYFIELD_W-1", 14) == 0) {
+                check(event->volatility == LA_ACCESS_VOLATILE,
+                      "MMIO overlay store-immediate reports volatile access");
                 check(event->value == 5,
                       "overlay store-immediate reports field displacement");
                 events->saw_overlay_store_immediate = 1;
@@ -510,6 +510,38 @@ static void test_typed_word_transfers(void)
         "mov [missing + V.control], #1\n",
         limits, LA_ERR_LOCATION_TYPE,
         "overlay store-immediate with unknown base rejected");
+    result = compile_source(
+        "struct GameState\n"
+        "    frames : u8 at 0\n"
+        "    shake_x : i8 at 7\n"
+        "    level : u8 at 13\n"
+        "    buttons : u8 at 16\n"
+        "end\n"
+        "overlay game : GameState at $0030\n"
+        "table = $9000\n"
+        "ldx [game + GameState.frames]\n"
+        "ldy [game + GameState.frames]\n"
+        "add [game + GameState.shake_x]\n"
+        "sub [game + GameState.shake_x]\n"
+        "mov [game + GameState.level], table + x\n"
+        "cblt [game + GameState.frames], #30, target\n"
+        "tbz [game + GameState.buttons], #16, target\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK,
+          "game-state register, arithmetic, move and branch forms compile");
+    check(stats.operations == 7,
+          "game-state overlay operations are all counted");
+    expect_error(
+        "struct GameState\nlevel : u8 at 13\nother : u8 at 14\nend\n"
+        "overlay game : GameState at $0030\n"
+        "mov [game + GameState.level], [game + GameState.other]\n",
+        limits, LA_ERR_UNSUPPORTED_OPERATION,
+        "fixed-overlay memory-to-memory move rejected");
+    expect_error(
+        "struct GameState\nframes : u8 at 0\nend\n"
+        "cblt [missing + GameState.frames], #1, target\n",
+        limits, LA_ERR_LOCATION_TYPE,
+        "overlay branch with unknown base rejected");
     expect_error(
         "struct Big packed\ncells : u8[300] at 0\nend\n"
         "overlay b : Big at $e000\n"
