@@ -71,20 +71,35 @@ Frontend operation matrix (the forms the migration needed):
   so scoped constants in the tail resolve.
 - 5.5 — every numeric region boundary pinned to the typed layout.
 
-**Caveat for the remaining scratch migration (6.7+) — proc return placement.**
-Two 6.7 attempts were reverted after hitting this. A procedure **parameter**
-accepts a qualified typed-location placement (`self : ptr O in Machine.object`
-compiles); a procedure **return** placement does not — `result : … return in
-Machine.object` is rejected with `error[member-role]: return [in PHYSICAL]`, and
-the same happens for a same-namespace qualified name. Celeste's receiver procs
-in `obj.inlay.asm` (`pointer`, `allocate`) and the `Fixed` load/store procs use
-`return in pObj` / `return in w0`, i.e. the raw physical alias as the return
-slot. Those return placements therefore cannot move to a typed location without
-either (a) a frontend change letting `return in` name a typed location, or
-(b) leaving those specific return slots as reviewed physical names. Resolve this
-before mass-migrating `w0`/`pObj`/`spawn_*`: operands and parameter placements
-migrate cleanly (unqualified inside the owning namespace, qualified elsewhere),
-but the handful of `return in <alias>` clauses need a decision first.
+**Blocker for the remaining scratch migration (6.7+) — qualified placement
+resolution.** Three 6.7 attempts were reverted diagnosing this; the migration is
+mechanical *except* for procedure placement clauses, which the frontend does not
+yet fully resolve to a typed location. Two frontend gaps, both in
+`tools/inlay/inlay_core.c`, must be closed first:
+
+1. **Return-placement parse** (~line 2229): the `return in …` branch reads the
+   placement with `la_read_identifier` (unqualified), so `result : … return in
+   Machine.object` is rejected with `member-role: return [in PHYSICAL]`. The
+   parameter branch already uses `la_read_qualified_identifier`; making the
+   return branch symmetric is a one-line change (verified: it parses and keeps
+   the ROM at e57a8ea4, but is inert without gap 2).
+2. **Placement resolution** (~line 2942): `la_find_location_text` matches a
+   location by its *simple* name, so a qualified placement `in Fixed.left`
+   never resolves (it searches for a location literally named "Fixed.left")
+   and fails with `member-placement: … (declared qualified location)`. This
+   needs a namespace-aware lookup that splits `Fixed.left` into namespace
+   `Fixed` + name `left` and matches on the location's `namespace_handle`. It
+   applies to *both* parameter and return placements — the parameter case only
+   appeared to work earlier because a return-parse error aborted the run before
+   resolution.
+
+Celeste's receiver procs (`obj.inlay.asm` `pointer`/`allocate`) and the `Fixed`
+load/store procs place params/returns at `pObj`/`w0`/`spawn_*` (raw physical
+aliases). Everything else in 6.7 — operands, and the `sta w0` / `(pObj), y` /
+`+1` forms — migrates cleanly (unqualified inside the owning namespace via
+scoped-raw mangling, qualified elsewhere; skip struct-field and
+`location`/`namespace` lines). Close both frontend gaps with unit tests, then
+re-run the namespace-aware migration script and the placements will resolve.
 
 ### Deliberately unfinished
 
