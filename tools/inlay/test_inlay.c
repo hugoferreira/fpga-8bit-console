@@ -1124,6 +1124,25 @@ static void test_indexed_pools_and_procedures(void)
         0, limits, &events, &diagnostic, &stats);
     check(result == LA_OK,
           "qualified parameter and return placement resolve");
+    /* The [base.field] shorthand accepts a namespace-qualified base by
+       swallowing dotted components until the name resolves to a location. */
+    result = compile_source(
+        "struct Core packed\n    x : i8\n    y : i8\nend\n"
+        "struct Obj packed\n    core : Core\nend\n"
+        "namespace Mac\n"
+        "    export object\n"
+        "    location object : ptr Obj at $10\n"
+        "end\n"
+        "lda [Mac.object.core.y]\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK,
+          "qualified base resolves in the [base.field] shorthand");
+    expect_error(
+        "struct Obj packed\n    core : u8\nend\n"
+        "namespace Mac\n    location object : ptr Obj at $10\nend\n"
+        "lda [Mac.missing.core]\n",
+        limits, LA_ERR_LOCATION_TYPE,
+        "unknown qualified base rejected in shorthand");
 }
 
 static void test_comments_and_pointer_fields(void)

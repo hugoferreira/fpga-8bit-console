@@ -4241,23 +4241,37 @@ static int la_parse_typed_operation(LaContext *ctx,
     cursor = la_trim_left(base_end, close);
     if (cursor >= close || (*cursor != '+' && *cursor != '.')) return 0;
     procedure = la_procedure_at_line(ctx, line);
-    location_index = la_find_location_text_at(
-        ctx, base_start, (la_u16)(base_end - base_start), procedure);
     overlay_index = LA_INVALID_HANDLE;
     is_overlay = 0;
-    if (location_index == LA_INVALID_HANDLE) {
+    /* The base may be namespace-qualified (e.g. Machine.object): swallow
+       dotted components until the accumulated name resolves to a location or
+       overlay, so the remaining .field path belongs to that base's type. */
+    for (;;) {
+        location_index = la_find_location_text_at(
+            ctx, base_start, (la_u16)(base_end - base_start), procedure);
+        if (location_index != LA_INVALID_HANDLE) break;
         overlay_index = la_find_overlay_text(
             ctx, base_start, (la_u16)(base_end - base_start));
-        if (overlay_index == LA_INVALID_HANDLE) {
-            la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
-                    (la_u16)(base_start - start + 1),
-                    (la_u16)(base_end - base_start),
-                    la_slice(base_start, (la_u16)(base_end - base_start)),
-                    la_slice("typed location or overlay", 25), 0, 0);
-            return -1;
+        if (overlay_index != LA_INVALID_HANDLE) {
+            is_overlay = 1;
+            break;
         }
-        is_overlay = 1;
+        if (base_end < close && *base_end == '.' &&
+            base_end + 1 < close && la_is_ident_start(base_end[1])) {
+            const char *scan;
+            scan = base_end + 1;
+            while (scan < close && la_is_ident(*scan)) ++scan;
+            base_end = scan;
+            continue;
+        }
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
+                (la_u16)(base_start - start + 1),
+                (la_u16)(base_end - base_start),
+                la_slice(base_start, (la_u16)(base_end - base_start)),
+                la_slice("typed location or overlay", 25), 0, 0);
+        return -1;
     }
+    cursor = la_trim_left(base_end, close);
     if (is_overlay) {
         base_type = la_name_slice(ctx, ctx->overlays[overlay_index].type_name);
     } else {
