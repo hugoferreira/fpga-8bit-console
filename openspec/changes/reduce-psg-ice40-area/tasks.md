@@ -36,12 +36,21 @@
       word registers, the ta compare, engine read/write requests through
       the two existing port sites, generalized displaced-read replay;
       design 3, stage 3.1/3.2)
-- [ ] 3.2 Move record load/store, trigger metadata, row progression and pattern
+- [x] 3.2 Move record load/store, trigger metadata, row progression and pattern
       control onto the tick microprogram (row progression, trigger loads
-      and the load/store shrink landed with the bookkeeping family,
-      -25 placed at 6,344; pattern control W_MUS/ML/MS remains)
-- [ ] 3.3 Move pitch, volume, slide, vibrato, arpeggio, fade and instrument
-      evaluation onto byte/word-serial micro-operations
+      and the load/store shrink landed with the bookkeeping family at
+      6,344; the ML chain's per-byte launch completed pattern control at
+      6,214, pb staging gone; W_MUS/MS_CK keep their two compare states -
+      they hold no migratable staging)
+- [x] 3.3 Move pitch, volume, slide, vibrato, arpeggio, fade and instrument
+      evaluation onto byte/word-serial micro-operations (landed as three
+      families: the pinc prefetch retirement at 6,317, publication
+      direct-to-bank at 6,220 - the largest single engine win - and the
+      per-byte pattern launch at 6,214; the effect microprogram itself
+      already ran on xs and the m service, so its migration was the
+      register layer around it. The slide/combine cone dedup priced
+      below the 5c noise floor and is recorded as an accompaniment
+      candidate, not a standalone stage)
 - [ ] 3.4 Remove superseded `sst` decode, named tick working-register muxes and
       standalone effect arithmetic
 - [ ] 3.5 Measure mapped/routed area after each migration and retain only

@@ -286,6 +286,21 @@ byte-identical on the first run; seed-1 placed **6,220 (-97)**, routed
 40.50 MHz - the largest single-family engine win, the amortization the
 3.1 stage bought.
 
+The third 3.3 family completed the pattern-control migration: the ML
+chain launches each channel from its byte as it lands, deleting the
+pb[0:2] staging (23 unpackable flip-flops) at unchanged state count.
+The four trig_req bits now set over four cycles, which nothing
+observes - the walk cannot dispatch mid-chain and $03 reads only the
+foreground bits. Measured honestly against the 5c noise floor: placed
+**6,214 (-6)** - the per-byte launch decode ate most of the register
+saving, exactly the sub-50-cell band the rule warns about - retained
+as a verified improvement with flip-flop headroom. The slide/combine
+cone dedup was priced at net -15..30 (e_arp depends on arp_p, which
+lands mid-sequence and forces extra staging) and skipped as a
+standalone per the same rule; it remains an accompaniment candidate
+for a future family. 50/50 byte-identical; psg_tb passes, pre-run
+completion 1,075/1,275, zero late flips.
+
 Mapped 5,476 LUT4s (-25), 936 carries (-66), 1,512 flip-flops, 15 EBRs;
 seed-1 placed **6,344 cells (-25)**, routed 39.64 MHz. psg_tb passes with
 the sample deadline unchanged at 558/1,275 and worst pre-run completion

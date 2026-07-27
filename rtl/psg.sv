@@ -397,7 +397,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic        mus_playing, mus_launch;
   logic [5:0]  mus_pat;
   logic [3:0]  mus_mask;
-  logic [7:0]  pb[0:2];
   logic [NV-1:0] launched;
   logic        tch_seen, ptick_seen, f_lb, f_stop;
   // A pattern's length in ticks, fixed when the pattern launches, and the
@@ -456,7 +455,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     I_TR0, I_TR1, I_TR2, I_TR3, I_TR4, I_TW, I_NL, I_NH, I_LD,
     W_MUS,
     K_ROT, V_LD, V_ST,
-    ML_STOP, ML_RD0, ML_RD1, ML_RD2, ML_RD3, ML_LD,
+    ML_STOP, ML_RD0, ML_L0, ML_L1, ML_L2, ML_L3,
     MS_RD, MS_CK
   } sst_t;
   sst_t sst;
@@ -606,9 +605,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     sa_pataddr = 13'd0;
     case (sst)
       ML_RD0: sa_pataddr = {5'b0, mus_pat, 2'd0};
-      ML_RD1: sa_pataddr = {5'b0, mus_pat, 2'd1};
-      ML_RD2: sa_pataddr = {5'b0, mus_pat, 2'd2};
-      ML_RD3: sa_pataddr = {5'b0, mus_pat, 2'd3};
+      ML_L0:  sa_pataddr = {5'b0, mus_pat, 2'd1};
+      ML_L1:  sa_pataddr = {5'b0, mus_pat, 2'd2};
+      ML_L2:  sa_pataddr = {5'b0, mus_pat, 2'd3};
       MS_RD:  sa_pataddr = {5'b0, scan_p, 2'd0};
       default: ;
     endcase
@@ -964,8 +963,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // fields until T_/K_FX has produced them.
       vcnt <= 0;
       spar_bank <= 0;
-      for (int i = 0; i < 3; i++)
-        pb[i] <= 0;
       xs <= 0;
     end else begin
       // Deferred pattern-length capture: T_NL launched w_sp * pat_rows on the
@@ -1554,25 +1551,41 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           launched <= 0;
           sst <= ML_RD0;
         end
-        ML_RD0: sst <= ML_RD1;
-        ML_RD1: begin pb[0] <= seq_q; sst <= ML_RD2; end
-        ML_RD2: begin pb[1] <= seq_q; sst <= ML_RD3; end
-        ML_RD3: begin pb[2] <= seq_q; sst <= ML_LD; end
-        ML_LD: begin
-          f_lb   <= pb[1][7];
-          f_stop <= pb[2][7];
-          // Every enabled pattern channel launches, on its MUSIC slot (NCH+c),
-          // never on the foreground slot. A sound effect playing on channel c
-          // therefore cannot be disturbed by the song, and vice versa: the two
-          // states are independent and only the audible selection is shared.
-          // $21 stays readable but is now advisory only - with a music slot per
-          // channel there is nothing left for software to reserve.
-          for (int i = 0; i < 3; i++)
-            if (!pb[i][6]) begin
-              trig_req[NCH+i] <= 1;
-              sfx_id[NCH+i] <= pb[i][5:0];
-              launched[NCH+i] <= 1;
-            end
+        // Each channel launches from its byte as it lands - the pattern
+        // staging registers are gone. Every enabled channel launches on its
+        // MUSIC slot (NCH+c), never the foreground slot: a sound effect on
+        // channel c cannot be disturbed by the song, and vice versa. The
+        // four trig_req bits now set over four cycles, which nothing
+        // observes: the walk cannot dispatch mid-chain and $03 reads only
+        // the foreground bits. $21 stays readable but advisory.
+        ML_RD0: sst <= ML_L0;
+        ML_L0: begin
+          if (!seq_q[6]) begin
+            trig_req[NCH+0] <= 1;
+            sfx_id[NCH+0] <= seq_q[5:0];
+            launched[NCH+0] <= 1;
+          end
+          sst <= ML_L1;
+        end
+        ML_L1: begin
+          f_lb <= seq_q[7];
+          if (!seq_q[6]) begin
+            trig_req[NCH+1] <= 1;
+            sfx_id[NCH+1] <= seq_q[5:0];
+            launched[NCH+1] <= 1;
+          end
+          sst <= ML_L2;
+        end
+        ML_L2: begin
+          f_stop <= seq_q[7];
+          if (!seq_q[6]) begin
+            trig_req[NCH+2] <= 1;
+            sfx_id[NCH+2] <= seq_q[5:0];
+            launched[NCH+2] <= 1;
+          end
+          sst <= ML_L3;
+        end
+        ML_L3: begin
           if (!seq_q[6]) begin
             trig_req[NCH+3] <= 1;
             sfx_id[NCH+3] <= seq_q[5:0];
