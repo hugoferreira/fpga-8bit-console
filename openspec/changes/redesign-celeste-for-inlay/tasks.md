@@ -52,11 +52,11 @@
 
 ## 7. Redesign platform, game and main
 
-- [ ] 7.1 Move reset-time hardware initialization, frame waiting and input sampling into `Platform`
-- [ ] 7.2 Move title/play state, clock, freeze, restart and frame orchestration into `Game`
-- [ ] 7.3 Give platform and game routines explicit procedure parameters, returns, locals and clobber contracts
-- [ ] 7.4 Reduce `main.inlay.asm` to target/bank composition, module inclusion, reset/vector binding and entry into `Game.run`
-- [ ] 7.5 Pass boot, title transition, framebuffer and audio checkpoints after the main redesign
+- [x] 7.1 Move reset-time hardware initialization, frame waiting and input sampling into `Platform`
+- [x] 7.2 Move title/play state, clock, freeze, restart and frame orchestration into `Game`
+- [x] 7.3 Give platform and game routines explicit procedure parameters, returns, locals and clobber contracts
+- [x] 7.4 Reduce `main.inlay.asm` to target/bank composition, module inclusion, reset/vector binding and entry into `Game.run`
+- [x] 7.5 Pass boot, title transition, framebuffer and audio checkpoints after the main redesign
 
 ## 8. Redesign the object subsystem
 

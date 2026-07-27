@@ -38,6 +38,7 @@ READABLE_CELESTE_MODULES = {
     "collide.inlay.asm",
     "draw.inlay.asm",
     "fx.inlay.asm",
+    "game.inlay.asm",
     "gfx.inlay.asm",
     "layout.inlay.asm",
     "main.inlay.asm",
@@ -45,6 +46,7 @@ READABLE_CELESTE_MODULES = {
     "memmap.inlay.asm",
     "obj.inlay.asm",
     "player.inlay.asm",
+    "platform.inlay.asm",
     "room.inlay.asm",
     "rooms.inlay.asm",
     "sound.inlay.asm",
@@ -54,6 +56,7 @@ EXPECTED_CELESTE_MODULES = {
     "collide.inlay.asm",
     "draw.inlay.asm",
     "fx.inlay.asm",
+    "game.inlay.asm",
     "gfx.inlay.asm",
     "layout.inlay.asm",
     "main.inlay.asm",
@@ -61,6 +64,7 @@ EXPECTED_CELESTE_MODULES = {
     "memmap.inlay.asm",
     "obj.inlay.asm",
     "player.inlay.asm",
+    "platform.inlay.asm",
     "room.inlay.asm",
     "rooms.inlay.asm",
     "sound.inlay.asm",
@@ -75,6 +79,8 @@ EXPECTED_CELESTE_SEMANTIC_INCLUDES = {
     "room.inlay.asm",
     "draw.inlay.asm",
     "fx.inlay.asm",
+    "platform.inlay.asm",
+    "game.inlay.asm",
     "sound.inlay.asm",
 }
 EXPECTED_CELESTE_OPAQUE_INCLUDES = {
@@ -691,8 +697,122 @@ def check_legacy_exception_contract() -> None:
     assert not eligible_legacy_field_loads(path, documented)
 
 
+def check_platform_game_design() -> None:
+    def check_namespace(
+        filename: str,
+        namespace: str,
+        expected_exports: set[str],
+        expected_procedures: dict[str, str],
+    ) -> str:
+        path = CELESTE_DIR / filename
+        text = path.read_text(encoding="ascii")
+        if text.count(f"namespace {namespace}\n") != 1:
+            raise AssertionError(
+                f"{filename}: expected one {namespace} namespace"
+            )
+        exports = set(re.findall(
+            r"^\s*export ([a-z_]+)$", text, re.MULTILINE
+        ))
+        if exports != expected_exports:
+            raise AssertionError(
+                f"{namespace} export manifest changed: "
+                f"expected {sorted(expected_exports)}, got {sorted(exports)}"
+            )
+        declarations = {
+            match.group(1): match.group(0)
+            for match in re.finditer(
+                r"^proc ([a-z_]+) using console6502(?: naked)?$",
+                text,
+                re.MULTILINE,
+            )
+        }
+        if declarations != expected_procedures:
+            raise AssertionError(
+                f"{namespace} procedure manifest changed: "
+                f"expected {sorted(expected_procedures)}, "
+                f"got {sorted(declarations)}"
+            )
+        lines = text.splitlines()
+        for number, line in enumerate(lines):
+            if not line.startswith("proc "):
+                continue
+            comments = []
+            cursor = number - 1
+            while cursor >= 0 and lines[cursor].startswith(";"):
+                comments.append(lines[cursor][1:].strip())
+                cursor -= 1
+            contract = " ".join(reversed(comments))
+            missing = [
+                heading for heading in
+                ("Inputs:", "Returns:", "Frame locals:", "Clobbers:")
+                if heading not in contract
+            ]
+            if missing:
+                raise AssertionError(
+                    f"{filename}:{number + 1}: incomplete physical contract; "
+                    f"missing {missing}"
+                )
+        return text
+
+    platform = check_namespace(
+        "platform.inlay.asm",
+        "Platform",
+        {"reset", "wait_frame", "sample_input"},
+        {
+            "reset": "proc reset using console6502 naked",
+            "wait_frame": "proc wait_frame using console6502",
+            "sample_input": "proc sample_input using console6502",
+            "upload_palette": "proc upload_palette using console6502",
+            "upload_sheet": "proc upload_sheet using console6502",
+        },
+    )
+    if platform.count("jmp Game.run") != 1:
+        raise AssertionError(
+            "Platform.reset must transfer exactly once to Game.run"
+        )
+    game = check_namespace(
+        "game.inlay.asm",
+        "Game",
+        {"run", "frame"},
+        {
+            "run": "proc run using console6502",
+            "frame": "proc frame using console6502",
+            "show_title": "proc show_title using console6502",
+            "begin_play": "proc begin_play using console6502",
+            "update": "proc update using console6502",
+            "title_tick": "proc title_tick using console6502",
+        },
+    )
+    for service in (
+        "jsr Platform.wait_frame",
+        "jsr Platform.sample_input",
+        "jsr Game.update",
+        "jsr draw_frame",
+    ):
+        if service not in game:
+            raise AssertionError(f"Game.frame lost required service: {service}")
+
+    main = (CELESTE_DIR / "main.inlay.asm").read_text(encoding="ascii")
+    if main.count("reset = Platform.reset") != 1:
+        raise AssertionError("main reset binding must name Platform.reset")
+    if main.count("main_loop = Game.frame") != 1:
+        raise AssertionError("main debug frame binding must name Game.frame")
+    permitted = re.compile(
+        r"^(?:#include |include |#bank |#addr |#d8 |"
+        r"reset = |main_loop = )"
+    )
+    for number, line in enumerate(main.splitlines(), 1):
+        code = line.split(";", 1)[0].strip()
+        if code and not permitted.match(code):
+            raise AssertionError(
+                f"main.inlay.asm:{number}: composition root owns runtime "
+                f"source: {code!r}"
+            )
+
+
 def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
     production_files = check_celeste_source_boundary()
+    check_platform_game_design()
     module_texts = [
         path.read_text(encoding="ascii")
         for path in production_files

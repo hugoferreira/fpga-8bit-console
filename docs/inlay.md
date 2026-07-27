@@ -4,14 +4,19 @@ Structured assembly, close to the metal.
 
 ## Status
 
-The first bounded frontend slice is implemented, and Celeste's normal build
-passes through it. The complete frontend-built Celeste ROM is byte-for-byte
-identical to the prior direct-customasm ROM:
+The bounded frontend is implemented, and Celeste's normal build passes through
+it. The immutable Phase-A frontend image was byte-for-byte identical to the
+prior direct-customasm ROM:
 
 ```text
 size    65536 bytes
 sha256  d85795e3daa7f1fbea0cef869efd554871f316c6196586dac3938e6340ae011a
 ```
+
+Phase B intentionally changes the executable while retaining behavioral,
+framebuffer, audio and resource gates. After the Platform/Game redesign, the
+deterministic production image remains 65,536 bytes with SHA-256
+`c60714d0ff1bf8680027a8f1ba59ef328468071a1113ca0fa648397ab1c45769`.
 
 customasm v0.14.1 remains the host instruction encoder. The frontend owns
 packed and aligned layouts, enums, unions, sparse views, overlays, compile-time
@@ -535,7 +540,7 @@ semicolon comments outside quoted strings and trims insignificant leading
 indentation and trailing whitespace before charging source capacity, while
 retaining one source-mapped newline per input line. Celeste can therefore keep
 its checked-in commentary without weakening the bounded model. Its current
-expanded input uses 60,819 bytes, 4,228 lines and depth 2; the module workspace
+expanded input uses 61,444 bytes, 4,247 lines and depth 2; the module workspace
 reservation is 117,848 bytes.
 
 The installed cc65 compiler successfully compiles the same core and ca65
@@ -591,7 +596,8 @@ Build Celeste through it:
 make GAME=celeste hex
 ```
 
-Run full ROM equivalence followed by Celeste's functional suite:
+Run Inlay conformance followed by Celeste's functional, framebuffer and PSG
+suite:
 
 ```sh
 make test-celeste
@@ -670,6 +676,15 @@ capacities and sine tables remain private. `Fixed` declares the physical
 `w0`/`w1`/`w2` contracts for signed comparison, sign, absolute value and
 approach, and uses the custom CPU word operations for eligible arithmetic.
 
+`Platform` owns the naked reset entry, hardware initialization, frame wait and
+input sample services. Reset establishes the physical stack before its first
+call and then transfers to `Game.run`; ordinary services retain the default
+frame mode. `Game` owns initialization after hardware startup, title/play
+transitions, clocks, freeze/restart sequencing and frame orchestration. Every
+procedure records inputs, returns, frame locals and physical clobbers.
+`main.inlay.asm` is consequently only the target/bank composition root, module
+include list, stable debug aliases and vector table.
+
 The object, collision, player and draw modules use typed object operations,
 prefix layout queries and documented semantic exceptions rather than
 compatibility offsets. `obj_ptr` is expressed as a
@@ -703,7 +718,8 @@ The conformance gate independently:
 5. compares pool address, conventions, returns, scalar,
    pointer and aggregate frames, and marshalled calls with handwritten bytes;
 6. assembles the complete production entry with customasm;
-7. checks the semantic manifest and readable-source rules;
+7. checks the semantic manifest, Platform/Game public APIs, procedure
+   contracts, minimal composition root and readable-source rules;
 8. inventories 50 overlay operations, 82 typed operations, 110 semantic
    offset queries, zero legacy `offset y` setups and 136 residual raw
    `(pObj|pOth),y` accesses;
