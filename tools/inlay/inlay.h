@@ -10,7 +10,7 @@ typedef signed long la_i32;
 
 #define LA_INVALID_HANDLE ((la_u16)0xffff)
 #define LA_FORMAT_VERSION 1
-#define LA_TARGET_VERSION 1
+#define LA_TARGET_VERSION 2
 
 typedef struct {
     const char *data;
@@ -169,6 +169,7 @@ typedef enum {
     LA_TARGET_OP_DATA_PROC_LOW,
     LA_TARGET_OP_DATA_PROC_HIGH,
     LA_TARGET_OP_DATA_PROC_FULL,
+    LA_TARGET_OP_DATA_CODEPTR,
     LA_TARGET_OP_MATERIALIZE_FIELD_OFFSET,
     LA_TARGET_OP_VALUE_MOV,
     LA_TARGET_OP_VALUE_CMP,
@@ -182,7 +183,8 @@ typedef enum {
     LA_TARGET_OP_AND8_PTR_DISP,
     LA_TARGET_OP_OR8_PTR_DISP,
     LA_TARGET_OP_LOAD8_OVERLAY_INDEXED,
-    LA_TARGET_OP_STORE8_OVERLAY_INDEXED
+    LA_TARGET_OP_STORE8_OVERLAY_INDEXED,
+    LA_TARGET_OP_ADDRESS_OVERLAY_FIELD
 } LaTargetOperationKind;
 
 typedef enum {
@@ -205,7 +207,8 @@ typedef enum {
     LA_EVENT_OVERLAY,
     LA_EVENT_CONSTANT,
     LA_EVENT_LABEL,
-    LA_EVENT_SCOPED_RAW
+    LA_EVENT_SCOPED_RAW,
+    LA_EVENT_LOCATION
 } LaEventKind;
 
 typedef enum {
@@ -294,6 +297,14 @@ typedef struct {
 typedef int (*LaInputRead)(void *context, char *destination, la_u16 capacity);
 typedef void (*LaInputOrigin)(void *context, la_u16 expanded_line,
                               LaSpan *origin);
+typedef struct {
+    const char *data;
+    la_u16 length;
+    la_u16 source_id;
+    la_u16 line;
+} LaSourceLine;
+typedef void (*LaInputReset)(void *context);
+typedef int (*LaInputNextLine)(void *context, LaSourceLine *line);
 typedef int (*LaEventWrite)(void *context, const LaEvent *event);
 typedef void (*LaDiagnosticWrite)(void *context, const LaDiagnostic *diagnostic);
 
@@ -302,6 +313,8 @@ typedef struct {
     void *context;
     la_u16 source_id;
     LaInputOrigin origin;
+    LaInputReset reset;
+    LaInputNextLine next_line;
 } LaInput;
 
 typedef struct {
@@ -399,6 +412,8 @@ typedef struct {
     la_u8 physical_word_arithmetic;
     la_u8 pointer_byte_rmw_operations;
     la_u8 indexed_overlay_byte_operations;
+    la_u8 code_pointer_units;
+    LaByteOrder code_pointer_byte_order;
 } LaTarget;
 
 typedef struct {
@@ -418,6 +433,7 @@ typedef struct {
 
 typedef struct {
     la_u16 max_modules;
+    la_u16 max_edges;
     la_u16 max_source_bytes;
     la_u16 max_source_lines;
     la_u16 max_include_depth;
@@ -432,8 +448,8 @@ typedef struct {
     LaInput input;
     const LaModuleSource *sources;
     la_u16 source_count;
-    la_u16 expanded_bytes;
-    la_u16 expanded_lines;
+    la_u32 total_source_bytes;
+    la_u32 total_source_lines;
     la_u16 max_depth;
 } LaExpandedInput;
 

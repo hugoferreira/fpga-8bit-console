@@ -812,8 +812,12 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
     case LA_TARGET_OP_DATA_PROC_HIGH:
     case LA_TARGET_OP_DATA_PROC_FULL:
         if (!begin_line(output, event->span, "procedure-address")) return 0;
-        fputs(event->operation == LA_TARGET_OP_DATA_PROC_FULL ?
-              "    #d16 " : "    #d8 ", output->assembly);
+        if (event->operation == LA_TARGET_OP_DATA_PROC_FULL) {
+            fprintf(output->assembly, "    #d%u ",
+                    (unsigned)(event->access_width * 8));
+        } else {
+            fputs("    #d8 ", output->assembly);
+        }
         if (event->operation != LA_TARGET_OP_DATA_PROC_FULL) fputc('(', output->assembly);
         emit_target_symbol(output->assembly, event->owner);
         if (event->operation == LA_TARGET_OP_DATA_PROC_LOW) {
@@ -822,6 +826,17 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
             fputs(")[15:8]", output->assembly);
         }
         fputc('\n', output->assembly);
+        return 1;
+    case LA_TARGET_OP_DATA_CODEPTR:
+        if (!begin_line(output, event->span, "procedure-address")) return 0;
+        if (event->access_width != 2) return 0;
+        fputs("    #d8 (", output->assembly);
+        emit_target_symbol(output->assembly, event->owner);
+        fputs(event->byte_order == LA_BYTE_ORDER_LITTLE ?
+              ")[7:0], (" : ")[15:8], (", output->assembly);
+        emit_target_symbol(output->assembly, event->owner);
+        fputs(event->byte_order == LA_BYTE_ORDER_LITTLE ?
+              ")[15:8]\n" : ")[7:0]\n", output->assembly);
         return 1;
     case LA_TARGET_OP_MATERIALIZE_FIELD_OFFSET:
         if (!begin_line(output, event->span, "field-offset")) return 0;
@@ -851,6 +866,22 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
         if (!begin_line(output, event->span, "qualified-immediate")) return 0;
         fprintf(output->assembly, "    cmp #%ld\n",
                 (long)event->signed_value);
+        return 1;
+    case LA_TARGET_OP_ADDRESS_OVERLAY_FIELD:
+        if (!begin_line(output, event->span, "overlay-address")) return 0;
+        fprintf(output->assembly, "    mov %.*s, #<(%.*s + %u)\n",
+                (int)event->base.length, event->base.data,
+                (int)event->aux.length, event->aux.data,
+                (unsigned)event->value);
+        if (!begin_line(output, event->span, "overlay-address")) return 0;
+        fprintf(output->assembly,
+                "    mov %.*s+1, #>(%.*s + %u)"
+                " ; inlay address %.*s.%.*s\n",
+                (int)event->base.length, event->base.data,
+                (int)event->aux.length, event->aux.data,
+                (unsigned)event->value,
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
         return 1;
     default:
         return 0;
@@ -913,6 +944,18 @@ static int host_event(void *context, const LaEvent *event)
         if (emitted) {
             emit_target_symbol(output->assembly, event->owner);
             fputs(":\n", output->assembly);
+        }
+        break;
+    case LA_EVENT_LOCATION:
+        emitted = begin_line(output, event->span, "location");
+        if (emitted) {
+            emit_target_symbol(output->assembly, event->owner);
+            fprintf(output->assembly,
+                    " = $%04lx ; inlay location %.*s, %u byte%s\n",
+                    (unsigned long)event->signed_value,
+                    (int)event->aux.length, event->aux.data,
+                    (unsigned)event->access_width,
+                    event->access_width == 1 ? "" : "s");
         }
         break;
     case LA_EVENT_PROCEDURE_MEMBER:
@@ -1470,7 +1513,7 @@ int main(int argc, char **argv)
                "\"locals\":%u,\"invokeBindings\":%u,"
                "\"expressionNodes\":%u,\"nesting\":%u,"
                "\"operations\":%u,\"workspaceBytes\":%lu,"
-               "\"moduleBytes\":%u,\"moduleLines\":%u,"
+               "\"moduleSourceBytes\":%lu,\"moduleSourceLines\":%lu,"
                "\"moduleDepth\":%u,\"moduleWorkspaceBytes\":%lu}\n",
                stats.source_bytes, stats.name_bytes, stats.tokens,
                stats.structures, stats.unions, stats.fields,
@@ -1482,7 +1525,8 @@ int main(int argc, char **argv)
                stats.invoke_bindings,
                stats.expression_nodes, stats.nesting, stats.operations,
                (unsigned long)stats.workspace_used,
-               expanded.expanded_bytes, expanded.expanded_lines,
+               (unsigned long)expanded.total_source_bytes,
+               (unsigned long)expanded.total_source_lines,
                expanded.max_depth,
                (unsigned long)module_workspace.size);
     }

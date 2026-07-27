@@ -40,6 +40,8 @@ typedef struct {
     int saw_byte_or;
     int saw_overlay_indexed_load;
     int saw_overlay_indexed_store;
+    int saw_code_pointer_data;
+    int saw_overlay_address;
 } TestEvents;
 
 typedef struct {
@@ -175,7 +177,13 @@ static int test_event(void *context, const LaEvent *event)
         }
     } else if (event->kind == LA_EVENT_TARGET_OPERATION) {
         ++events->operations;
-        if (event->operation == LA_TARGET_OP_LOAD16_PTR_DISP ||
+        if (event->operation == LA_TARGET_OP_DATA_CODEPTR) {
+            check(event->access_width == 2,
+                  "code pointer reports target storage width");
+            check(event->byte_order == LA_BYTE_ORDER_LITTLE,
+                  "code pointer reports target byte order");
+            events->saw_code_pointer_data = 1;
+        } else if (event->operation == LA_TARGET_OP_LOAD16_PTR_DISP ||
             event->operation == LA_TARGET_OP_STORE16_PTR_DISP) {
             check(event->access_width == 2,
                   "word transfer reports two-unit width");
@@ -249,6 +257,27 @@ static int test_event(void *context, const LaEvent *event)
             } else {
                 events->saw_overlay_indexed_store = 1;
             }
+        } else if (event->operation ==
+                   LA_TARGET_OP_ADDRESS_OVERLAY_FIELD) {
+            check(event->access_width == 2,
+                  "overlay address reports pointer width");
+            check(event->byte_order == LA_BYTE_ORDER_LITTLE,
+                  "overlay address reports target byte order");
+            check(event->base.length == 3 &&
+                  memcmp(event->base.data, "$1a", 3) == 0,
+                  "overlay address reports physical destination");
+            check(event->aux.length == 5 &&
+                  memcmp(event->aux.data, "$f000", 5) == 0,
+                  "overlay address reports overlay base");
+            check(event->owner.length == 8 &&
+                  memcmp(event->owner.data, "tile_map", 8) == 0,
+                  "overlay address reports overlay name");
+            if (event->path.length == 10 &&
+                memcmp(event->path.data, "attributes", 10) == 0) {
+                check(event->value == 512,
+                      "overlay address reports field displacement");
+                events->saw_overlay_address = 1;
+            }
         }
     } else if (event->kind == LA_EVENT_ENUM_MEMBER) {
         ++events->enum_members;
@@ -312,6 +341,15 @@ static void test_typed_word_transfers(void)
         "overlay regs : Registers at REGS volatile\n"
         "lda [regs + Registers.channels[y]]\n"
         "sta [regs + Registers.channels[y]]\n";
+    static const char address_source[] =
+        "struct TileMap packed\n"
+        "    patterns : u8[512]\n"
+        "    attributes : u8[512]\n"
+        "end\n"
+        "location dest : u16 at $1a\n"
+        "overlay tile_map : TileMap at $f000\n"
+        "address dest, tile_map.patterns\n"
+        "address dest, tile_map.attributes\n";
     LaLimits limits;
     TestEvents events;
     TestDiagnostic diagnostic;
@@ -341,6 +379,38 @@ static void test_typed_word_transfers(void)
           "indexed overlay load event emitted");
     check(events.saw_overlay_indexed_store,
           "indexed overlay store event emitted");
+    result = compile_source(
+        address_source, 0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, "overlay field address materialization compiles");
+    check(stats.operations == 2, "overlay address operations are counted");
+    check(events.saw_overlay_address, "overlay field address event emitted");
+    expect_error(
+        "struct TileMap packed\npatterns : u8[512]\nend\n"
+        "location byte_dest : u8 at $10\n"
+        "overlay tile_map : TileMap at $f000\n"
+        "address byte_dest, tile_map.patterns\n",
+        limits, LA_ERR_LOCATION_TYPE,
+        "byte overlay-address destination rejected");
+    expect_error(
+        "struct TileMap packed\npatterns : u8[512]\nend\n"
+        "location code_dest : codeptr at $14\n"
+        "overlay tile_map : TileMap at $f000\n"
+        "address code_dest, tile_map.patterns\n",
+        limits, LA_ERR_LOCATION_TYPE,
+        "code-pointer overlay-address destination rejected");
+    expect_error(
+        "struct TileMap packed\npatterns : u8[512]\nend\n"
+        "location dest : u16 at $1a\n"
+        "address dest, tile_map.patterns\n",
+        limits, LA_ERR_LOCATION_TYPE,
+        "unknown overlay in address rejected");
+    expect_error(
+        "struct TileMap packed\npatterns : u8[512]\nend\n"
+        "location dest : u16 at $1a\n"
+        "overlay tile_map : TileMap at $f000\n"
+        "address dest, tile_map.missing\n",
+        limits, LA_ERR_UNKNOWN_FIELD,
+        "unknown overlay field in address rejected");
     expect_error(
         "struct Object\nbyte : u8\nend\n"
         "proc bad naked\n"
@@ -459,6 +529,7 @@ static LaDiagnosticCode compile_source_target(
     memory.length = (la_u16)strlen(source);
     memory.offset = 0;
     memory.chunk = chunk;
+    memset(&input, 0, sizeof(input));
     input.read = memory_read;
     input.context = &memory;
     input.source_id = 7;
@@ -1371,6 +1442,7 @@ static void test_namespaces(void)
     TestDiagnostic diagnostic;
     LaStats stats;
     LaDiagnosticCode result;
+    LaTarget target;
     limits = la_default_limits();
     result = compile_source(source, 0, limits, &events, &diagnostic, &stats);
     check(result == LA_OK, "nested namespaces and lexical invokes compile");
@@ -1381,6 +1453,97 @@ static void test_namespaces(void)
     check(stats.procedures == 4, "namespaced procedures counted");
     check(events.labels == 1, "namespace label event emitted");
     check(events.scoped_raw == 1, "qualified raw operand event emitted");
+    result = compile_source(
+        "proc target naked\n"
+        "begin\n"
+        "ret\n"
+        "end\n"
+        "proc other naked\n"
+        "begin\n"
+        "ret\n"
+        "end\n"
+        "data codeptr target, other\n"
+        "struct Handler\n"
+        "target : codeptr\n"
+        "end\n"
+        "static_assert sizeof Handler.target == 2\n"
+        "static_assert Handler.size == 2\n",
+        0, la_default_limits(), &events, &diagnostic, &stats);
+    check(result == LA_OK,
+          "target-sized code pointer data and layout compile");
+    check(events.saw_code_pointer_data,
+          "target-sized code pointer event emitted");
+    target = la_target_console6502;
+    target.code_pointer_units = 3;
+    result = compile_source_target(
+        "struct Handler\n"
+        "target : codeptr\n"
+        "end\n"
+        "static_assert sizeof Handler.target == 3\n"
+        "static_assert Handler.size == 3\n",
+        0, la_default_limits(), &events, &diagnostic, &stats, &target);
+    check(result == LA_OK,
+          "code pointer layout follows target storage width");
+    result = compile_source(
+        "proc accept naked\n"
+        "handler : codeptr in pFn\n"
+        "begin\n"
+        "ret\n"
+        "end\n"
+        "proc caller naked\n"
+        "handler : codeptr in pSource\n"
+        "begin\n"
+        "invoke accept, handler=handler\n"
+        "ret\n"
+        "end\n",
+        0, la_default_limits(), &events, &diagnostic, &stats);
+    check(result == LA_OK,
+          "typed code pointer invocation preserves target width");
+    expect_error(
+        "proc accept naked\n"
+        "handler : codeptr in pFn\n"
+        "begin\n"
+        "ret\n"
+        "end\n"
+        "proc caller naked\n"
+        "value : u8 in x\n"
+        "begin\n"
+        "invoke accept, handler=value\n"
+        "ret\n"
+        "end\n",
+        la_default_limits(), LA_ERR_INVOKE_BINDING,
+        "byte location cannot bind a code pointer input");
+    result = compile_source(
+        "struct Object\n"
+        "kind : u8\n"
+        "end\n"
+        "namespace Machine\n"
+        "location byte : u8 at $00\n"
+        "location word : u16 at $08\n"
+        "location object : ptr Object at $10\n"
+        "location function : codeptr at $14\n"
+        "location object_view : ptr Object at $10\n"
+        "proc inspect naked\n"
+        "self : ptr Object in Machine.object\n"
+        "begin\n"
+        "lda [self + Object.kind]\n"
+        "ret\n"
+        "end\n"
+        "end\n",
+        0, la_default_limits(), &events, &diagnostic, &stats);
+    check(result == LA_OK,
+          "scalar, pointer, code-pointer, overlap and qualified locations compile");
+    expect_error(
+        "namespace Machine\n"
+        "location byte : u8 at $00\n"
+        "proc bad naked\n"
+        "value : u16 in Machine.byte\n"
+        "begin\n"
+        "ret\n"
+        "end\n"
+        "end\n",
+        la_default_limits(), LA_ERR_MEMBER_PLACEMENT,
+        "qualified placement enforces typed storage width");
 
     limits = la_default_limits();
     limits.max_constants = 1;
@@ -1458,6 +1621,9 @@ static void test_namespaces(void)
     expect_error("data u8 low(Missing.run)\n",
                  la_default_limits(), LA_ERR_UNKNOWN_PROCEDURE,
                  "unknown procedure address rejected before emission");
+    expect_error("data codeptr Missing.run\n",
+                 la_default_limits(), LA_ERR_UNKNOWN_PROCEDURE,
+                 "unknown code pointer rejected before emission");
     expect_error(
         "proc target naked\nbegin\nret\nend\n"
         "data u8 addr(target)\n",
@@ -1549,6 +1715,7 @@ static void test_workspace_error(void)
     memory.length = (la_u16)strlen(source);
     memory.offset = 0;
     memory.chunk = 0;
+    memset(&input, 0, sizeof(input));
     input.read = memory_read;
     input.context = &memory;
     input.source_id = 1;
