@@ -31,10 +31,15 @@
       6,369 (-2), 50/50 byte-identical, worst pre-run 1,159/1,275, zero
       late flips, no TB case re-baseline needed; design 3, pre-run
       implementation result)
-- [ ] 3.1 Implement the narrow micro-PC, flags, data register and single-site
-      accumulator/store contract for tick-rate voice work
+- [x] 3.1 Implement the narrow micro-PC, flags, data register and single-site
+      accumulator/store contract for tick-rate voice work (landed: acc/wrd
+      word registers, the ta compare, engine read/write requests through
+      the two existing port sites, generalized displaced-read replay;
+      design 3, stage 3.1/3.2)
 - [ ] 3.2 Move record load/store, trigger metadata, row progression and pattern
-      control onto the tick microprogram
+      control onto the tick microprogram (row progression, trigger loads
+      and the load/store shrink landed with the bookkeeping family,
+      -25 placed at 6,344; pattern control W_MUS/ML/MS remains)
 - [ ] 3.3 Move pitch, volume, slide, vibrato, arpeggio, fade and instrument
       evaluation onto byte/word-serial micro-operations
 - [ ] 3.4 Remove superseded `sst` decode, named tick working-register muxes and

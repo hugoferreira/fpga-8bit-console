@@ -198,6 +198,79 @@ partially updated voice set.
   home; until then any control table is LUT-ROM and counts against its
   stage.
 
+#### Stage 3.1/3.2 design freeze: the bookkeeping family
+
+The first engine stage migrates the counter/loop family - tcnt, fcnt, sp,
+lps, lpe, play_len for both banks (11 registers, 84 bits) - out of the
+working-register file into flow-owned record words, with every producer
+and consumer. Word addresses replace the note/instrument destination
+muxes: the two advance paths become one sequence with a bank bit and a
++6 word-base.
+
+Relayout (tick words; family words are whole so no store ever merges
+register and memory fields):
+
+| word | contents | ownership |
+| --- | --- | --- |
+| 0 | {tcnt, fcnt} | flow-owned |
+| 1 | {lpe, lps} | flow-owned (pairs the loop compares in one word) |
+| 2 | {2'b0, play_len, sp} | flow-owned |
+| 3,4,5 | unchanged identity/filter fields | register-resident |
+| 6 | {ins_tcnt, ins_fcnt} | flow-owned |
+| 7 | {ins_lpe, ins_lps} | flow-owned |
+| 8 | {2'b0, ins_pitch, ins_sp} | flow-owned; V_LD refreshes the ins_pitch read-copy; all writers are in-flow |
+| 9 | {2'b0, ins_wt, ins_on, ins_prev_vol, ins_fx, ins_prev_pitch} | register-resident (wt/on relocate here from old word 2) |
+
+Flow-owned words are never unpacked and never stored by V_ST; the engine
+reads/modifies/writes them in place through the existing single state-port
+read and write sites (new address/data sources, same two always_ff
+owners). V_LD shrinks to {3,4,5,8,9,spar}, V_ST to {3,4,5,9,spar}.
+
+Engine (3.1): acc[15:0] and wrd[15:0] word registers, froll/ge_lpe/
+end_hit flags, one 9-bit add/compare unit, micro-steps E_A0..E_A6 shared
+by both banks (bank 1 skips the play_len arm - its word-8 high byte is
+ins_pitch, not a length). The trigger loads assemble words in acc/wrd
+(T_LE holds lps, T_NL writes {lpe,lps}, T_NH writes {play_len,sp}, T_LS
+writes the mod-32 seed into word 0; I_TR2/3/4 mirror onto words 6-8).
+The effect path's family reads become an EFFSEL staging step after the
+note/instrument dispatch: {eff_sp, eff_tcnt[4:0], eff_fcnt} (21 bits)
+replace the e_sp/e_tcnt/e_fcnt bank muxes; recip addressing, the
+vibrato LFO, arp_idx and the xs0 row-fraction operand read the staging.
+pat_rows and the T_NL assert read lps from the assembly instead of a
+register. Schedule cost ~+5..12 clocks per slot; pre_tick moves 181 to
+180 (two intervals) in the same stage.
+
+##### Implementation result
+
+Landed as designed, plus one mechanism the byte-compare demanded: at
+pre-run depths beyond one interval, the tick program's unbanked
+playing[] clears become visible early. The first run differed from the
+prior render in exactly one sample per case - the final note-off,
+rendered at the depth-2 pre-run's second interval. Deferred stop masks
+restore the exact visibility classes: note-end, length-stop and fade-out
+stops apply at the boundary flip (class 1), and the music-flow stops
+from W_MUS/ML_STOP - which previously landed behind the walk frozen by
+the boundary render - apply one sample later (class 2, at the scnt==1
+sample). A trigger clears both masks for its slot; a CPU launch's
+ML_STOP keeps stopping immediately (ml_cpu discriminates the entry
+path). With the masks in place the complete matrix is 50/50
+diagnostic-clean and every WAV byte-identical to the 3.0 render at
+depth 2, making the pre-run depth a free constant for section 3.3.
+
+Mapped 5,476 LUT4s (-25), 936 carries (-66), 1,512 flip-flops, 15 EBRs;
+seed-1 placed **6,344 cells (-25)**, routed 39.64 MHz. psg_tb passes with
+the sample deadline unchanged at 558/1,275 and worst pre-run completion
+1,114 clocks with zero late flips - the V_LD/V_ST shrink nearly offset
+the engine's added cycles, so even the grown pass fits one interval and
+depth 2 leaves ~1,400 clocks for section 3.3. The census counts
+597 unpackable flip-flops: the LUT-fanout class fell 431 to 334 (the
+deleted V_LD/V_ST arms and e_* muxes) while the engine's own
+state_q-fed word registers added route-throughs. The net is modest
+because the family's gross saving (~150 cells) largely paid the
+engine's fixed cost - acc/wrd, the port arbitration, the generalized
+replay, the pend masks - exactly once; sections 3.3's effect families
+ride the same infrastructure without re-paying it.
+
 #### Pre-run implementation result (task 3.0)
 
 `pre_tick` fires one sample before `tick_en` (scnt == 181) and queues the

@@ -129,7 +129,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           tick_en <= 1;
         end else begin
           scnt <= scnt + 1;
-          if (scnt == 8'd181)
+          // Two intervals of pre-run window: the engine's advance and
+          // staging sequences grew the tick program past one interval's
+          // slack, and the pre_tick constant is exactly the knob the 3.0
+          // handshake left for that (design 3, staging constraints).
+          if (scnt == 8'd180)
             pre_tick <= 1;
         end
       end else begin
@@ -274,42 +278,52 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // starts the record at X and the X leaks through the packing.
   initial for (int i = 0; i < NV * VSTR; i++) state_m[i] = 16'h0000;
 
-  // The working copy: the record of the slot the walk is visiting.
-  logic [7:0]  w_fcnt, w_tcnt;
-  logic [7:0]  w_sp, w_lps, w_lpe;
+  // The working copy: the record of the slot the walk is visiting. The
+  // counter/loop family (tcnt/fcnt, sp, lps/lpe, play_len, both banks) has
+  // no working registers any more: those fields are flow-owned record words
+  // (0..2 and 6..8) that the tick engine reads, modifies and writes in
+  // place. Only identity and filter fields remain register-resident.
   logic [5:0]  w_cur_pitch, w_prev_pitch;
   logic [2:0]  w_cur_wave, w_cur_vol, w_cur_fx, w_prev_vol;
-  logic [5:0]  w_play_len;
   logic        w_bf_noiz, w_bf_buzz;
   logic [1:0]  w_bf_det, w_bf_rev, w_bf_damp;
   logic        w_ins_on, w_ins_wt, w_ins_bass, w_ins_done;
   logic [2:0]  w_ins_id;
   logic [4:0]  w_ins_row;
-  logic [7:0]  w_ins_fcnt, w_ins_tcnt;
-  logic [7:0]  w_ins_sp, w_ins_lps, w_ins_lpe;
   logic [5:0]  w_ins_pitch, w_ins_prev_pitch;
   logic [2:0]  w_ins_wave, w_ins_vol, w_ins_fx, w_ins_prev_vol;
 
-  // Record layout, 154 bits in 10 words. This MUST stay an always_comb reading
-  // the working registers directly, not a function called from a continuous
-  // assign: iverilog does not infer sensitivity to signals a function reads
-  // internally, so `assign vwdata = vpack(vcnt)` held 0 forever and every store
-  // wrote zeros - the slot reloaded blank state each tick and no row ever
-  // advanced. Verilator was happy with it, which is why this needs saying.
-  // The unpack in V_LD is the mirror of this and the two must move together.
+  // The tick engine (3.1): two word registers, a 9-bit compare unit and
+  // flags. acc/wrd are datapath (no reset; every sequence loads them before
+  // reading them). One physical write site: the engine's stores go through
+  // the same scheduled state-memory port as V_ST, with the word address and
+  // data selected before it.
+  logic [15:0] acc, wrd;
+  logic        abank;                // 0 = note words 0..2, 1 = ins words 6..8
+  logic        froll;                // fcnt+1 >= sp: the row rolls over
+  logic        ge_lpe;               // row+1 >= lpe
+  // Effect staging: the family fields the effect path consumes, deposited
+  // by the EFFSEL steps after the note/instrument dispatch settles which
+  // bank supplies the effect. Replaces the e_sp/e_tcnt/e_fcnt bank muxes.
+  logic [7:0]  eff_sp, eff_fcnt;
+  logic [4:0]  eff_tcnt;
+
+  // Register-resident record layout, four words. This MUST stay an
+  // always_comb reading the working registers directly, not a function
+  // called from a continuous assign: iverilog does not infer sensitivity to
+  // signals a function reads internally, so `assign vwdata = vpack(vcnt)`
+  // held 0 forever and every store wrote zeros. The unpack in V_LD is the
+  // mirror of this and the two must move together. Flow-owned words never
+  // appear here: V_ST does not store them and V_LD does not unpack them
+  // (word 8's ins_pitch read-copy is the one exception, refreshed on load).
   always_comb begin
     case (vcnt)
-      4'd0: vwdata = {w_tcnt, w_fcnt};
-      4'd1: vwdata = {w_lps, w_sp};
-      4'd2: vwdata = {w_ins_wt, w_ins_on, w_play_len, w_lpe};
-      4'd3: vwdata = {w_ins_bass, w_cur_wave, w_prev_pitch, w_cur_pitch};
-      4'd4: vwdata = {w_ins_done, w_bf_rev, w_bf_det, w_bf_buzz, w_bf_noiz,
+      4'd0: vwdata = {w_ins_bass, w_cur_wave, w_prev_pitch, w_cur_pitch};
+      4'd1: vwdata = {w_ins_done, w_bf_rev, w_bf_det, w_bf_buzz, w_bf_noiz,
                       w_prev_vol, w_cur_fx, w_cur_vol};
-      4'd5: vwdata = {w_ins_vol, w_ins_wave, w_ins_row, w_ins_id, w_bf_damp};
-      4'd6: vwdata = {w_ins_tcnt, w_ins_fcnt};
-      4'd7: vwdata = {w_ins_lps, w_ins_sp};
-      4'd8: vwdata = {2'b0, w_ins_pitch, w_ins_lpe};
-      default: vwdata = {4'b0, w_ins_prev_vol, w_ins_fx, w_ins_prev_pitch};
+      4'd2: vwdata = {w_ins_vol, w_ins_wave, w_ins_row, w_ins_id, w_bf_damp};
+      default: vwdata = {2'b0, w_ins_wt, w_ins_on,
+                         w_ins_prev_vol, w_ins_fx, w_ins_prev_pitch};
     endcase
   end
 
@@ -372,6 +386,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
   logic [NV-1:0] trig_req;
   logic [NV-1:0] clr_tog;   // toggled to ask the synth walk to reset lp/brown
+  // Deferred stops (task 3.0 completed for arbitrary pre-run depth): the
+  // tick program mutates playing[] while it evaluates, but the render must
+  // observe those clears exactly when it did before the pre-run. Note-end,
+  // length-stop and fade-out stops were visible from the BOUNDARY sample
+  // (class 1, applied at tick_en); the music-flow stops ran after V_ST
+  // behind the frozen boundary render and were visible one sample later
+  // (class 2, applied at the scnt==1 sample). A trigger overrides both.
+  logic [NV-1:0] pend_stop, pend_stop2;
+  logic          ml_cpu;    // ML_STOP reached from a CPU launch, not the song
 
   // Music state
   logic        mus_playing, mus_launch;
@@ -426,7 +449,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     K_ADV, K_NL, K_NH, K_LD, K_ARP, K_ARPC,
     K_PF0, K_PF1, K_PF2, K_FX,
     K_SLP0, K_SLP1, K_SLP2, K_SLPM,
-    I_TR0, I_TR1, I_TR2, I_TR3, I_TR4, I_ADV, I_NL, I_NH, I_LD,
+    // The tick engine's advance sequence, one for both banks (abank picks
+    // note words 0..2 or instrument words 6..8), and the effect staging
+    // steps that replace the e_sp/e_tcnt/e_fcnt bank muxes.
+    EA0, EA1, EA2, EA3, EA4, EA5,
+    ES0, ES1, ES2,
+    I_TR0, I_TR1, I_TR2, I_TR3, I_TR4, I_TW, I_NL, I_NH, I_LD,
     W_MUS,
     K_ROT, V_LD, V_ST,
     ML_STOP, ML_RD0, ML_RD1, ML_RD2, ML_RD3, ML_LD,
@@ -436,11 +464,31 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
   logic [VW-1:0] c;                  // voice being processed
 
-  // V_ST first stores the ten tick words, then the four sounding words into
-  // the inactive bank. The active bank does not move until every slot has
-  // completed that sequence.
+  // The engine's one 9-bit compare unit: A+1 >= B, operands keyed by the
+  // advance step. EA2 compares fcnt+1 against the speed landing in state_q;
+  // EA4 compares row+1 against the loop end; EA5 against the end-of-record
+  // bound. arow is the bank's row.
+  wire [4:0] arow = abank ? w_ins_row : row[c];
+  // acc holds {lpe, lps} from EA3 on: the end-of-record rule's bound.
+  wire [7:0] ea_end_bound = (acc[7:0] != 0 && acc[15:8] == 0)
+                              ? ((acc[7:0] < 8'd32) ? acc[7:0] : 8'd32)
+                              : 8'd32;
+  logic [7:0] ta_a, ta_b;
   always_comb begin
-    case (vcnt - 4'(TREC))
+    case (sst)
+      EA2:     begin ta_a = acc[7:0];     ta_b = state_q[7:0]; end
+      EA4:     begin ta_a = {3'b0, arow}; ta_b = acc[15:8];    end
+      default: begin ta_a = {3'b0, arow}; ta_b = ea_end_bound; end
+    endcase
+  end
+  wire ta_ge = ({1'b0, ta_a} + 9'd1) >= {1'b0, ta_b};
+
+  // V_ST stores the four register-resident tick words, then the four
+  // sounding words into the inactive bank. The active bank does not move
+  // until every slot has completed that sequence. Flow-owned words are
+  // written in place by the engine and never appear in this store.
+  always_comb begin
+    case (vcnt - 4'd4)
       4'd0:    spar_wd = w_eff_inc[15:0];
       4'd1:    spar_wd = {1'b0, w_snd_id, w_snd_wt, w_snd_wave,
                           w_eff_inc[23:16]};
@@ -502,17 +550,18 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [2:0] nfx      = (w_ins_on && w_cur_fx == 3'd3) ? 3'd0 : w_cur_fx;
   wire       e_insfx  = ins_use && nfx == 3'd0 && w_ins_fx != 3'd0;
   wire [2:0] e_fx     = e_insfx ? w_ins_fx   : nfx;
-  wire [7:0] e_fcnt   = e_insfx ? w_ins_fcnt : w_fcnt;
-  wire [7:0] e_sp     = e_insfx ? w_ins_sp   : w_sp;
-  wire [7:0] e_tcnt   = e_insfx ? w_ins_tcnt : w_tcnt;
+  // The effect path's counter/speed reads come from the EFFSEL staging
+  // (eff_sp/eff_tcnt/eff_fcnt), deposited from the flow-owned words after
+  // the dispatch settles which bank supplies the effect. e_insfx picks the
+  // bank the ES states read.
 
   // Arpeggio source row: (tick / period) & 3, period from fx and speed
   logic [1:0] arp_idx;
   always_comb begin
     if (e_fx == 3'd6)
-      arp_idx = (e_sp <= 8) ? e_tcnt[2:1] : e_tcnt[3:2];
+      arp_idx = (eff_sp <= 8) ? eff_tcnt[2:1] : eff_tcnt[3:2];
     else
-      arp_idx = (e_sp <= 8) ? e_tcnt[3:2] : e_tcnt[4:3];
+      arp_idx = (eff_sp <= 8) ? eff_tcnt[3:2] : eff_tcnt[4:3];
   end
 
   // Audio RAM read port, shared: the sequencer owns it except on the one
@@ -637,8 +686,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // the loop start and seq_q the loop end. Mirrors the end-of-record rule the
   // per-tick walk applies, so a pattern's tick length matches the sound that
   // paces it.
-  wire [5:0] pat_rows = (w_lps != 0 && seq_q == 0)
-                          ? ((w_lps < 8'd32) ? w_lps[5:0] : 6'd32) : 6'd32;
+  // Valid in T_NL: acc[7:0] holds the loop start captured at T_LE and
+  // seq_q the loop-end byte landing now.
+  wire [5:0] pat_rows = (acc[7:0] != 0 && seq_q == 0)
+                          ? ((acc[7:0] < 8'd32) ? acc[5:0] : 6'd32) : 6'd32;
 
   wire [5:0] fdv    = fdec(seq_q[7:3]);
   wire [1:0] f_det  = fdv[1:0];
@@ -690,7 +741,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   end
   always_ff @(posedge clk) begin
     pinc_q  <= pinc[pinc_addr];
-    recip_q <= recip[e_sp];
+    recip_q <= recip[eff_sp];
   end
 
   wire [23:0] base_inc = base_r;
@@ -739,7 +790,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // delta from 128 here; the shared multiplier applies it below.
   logic signed [2:0] lfo;
   always_comb begin
-    case (e_tcnt[3:1])
+    case (eff_tcnt[3:1])
       3'd1, 3'd3: lfo =  3'sd1;
       3'd2:       lfo =  3'sd2;
       3'd5, 3'd7: lfo = -3'sd1;
@@ -793,7 +844,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     mul_a = 24'd0;
     mul_b = 8'd0;
     case (xs)
-      4'd0: begin mul_a = {8'b0, recip_q};     mul_b = e_fcnt; end
+      4'd0: begin mul_a = {8'b0, recip_q};     mul_b = eff_fcnt; end
       4'd1: begin
               if (e_fx == 3'd1) begin
                 mul_a = {18'b0, slp_mag};
@@ -849,6 +900,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       tickpend <= 0;
       bank_ready <= 0;
       flip_pend <= 0;
+      pend_stop <= 0;
+      pend_stop2 <= 0;
+      ml_cpu <= 0;
       trig_req <= 0;
       clr_tog <= 0;
       mus_playing <= 0;
@@ -905,7 +959,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       end
 `ifndef SYNTHESIS
       if (!walk_frozen && sst == T_NL && launched[c] && !tch_seen
-          && !(w_lps < seq_q) && m_busy)
+          && !(acc[7:0] < seq_q) && m_busy)
         $error("T_NL pattern-length product blocked by a busy m service");
 `endif
       // Boundary publication for the pre-run tick pass: the evaluation ran
@@ -921,6 +975,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           bank_ready <= 0;
         end else if (tickpend || (walk_tick && sst != S_IDLE))
           flip_pend <= 1;
+        // Class-1 deferred stops become audible from the boundary sample.
+        for (int i = 0; i < NV; i++)
+          if (pend_stop[i]) playing[i] <= 0;
+        pend_stop <= 0;
+      end
+      // Class-2 deferred stops (music flow) become audible one sample
+      // later, where the frozen walk used to land them.
+      if (sample_en && scnt == 8'd1) begin
+        for (int i = 0; i < NV; i++)
+          if (pend_stop2[i]) playing[i] <= 0;
+        pend_stop2 <= 0;
       end
       if (!walk_frozen)
       case (sst)
@@ -938,6 +1003,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           if (bank_ready) begin
           end else if (mus_launch) begin
             mus_launch <= 0;
+            ml_cpu <= 1;
             sst <= ML_STOP;
           end else if (trig_req != 0 || tickpend) begin
             walk_tick <= tickpend;
@@ -954,28 +1020,23 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // infers as block RAM instead of the LUT muxes it replaces.
         V_LD: begin
           case (vcnt)
-            4'd1: {w_tcnt, w_fcnt} <= state_q;
-            4'd2: {w_lps, w_sp} <= state_q;
-            4'd3: {w_ins_wt, w_ins_on, w_play_len, w_lpe} <= state_q;
-            4'd4: {w_ins_bass, w_cur_wave, w_prev_pitch, w_cur_pitch} <= state_q;
-            4'd5: {w_ins_done, w_bf_rev, w_bf_det, w_bf_buzz, w_bf_noiz,
+            4'd1: {w_ins_bass, w_cur_wave, w_prev_pitch, w_cur_pitch} <= state_q;
+            4'd2: {w_ins_done, w_bf_rev, w_bf_det, w_bf_buzz, w_bf_noiz,
                    w_prev_vol, w_cur_fx, w_cur_vol} <= state_q;
-            4'd6: {w_ins_vol, w_ins_wave, w_ins_row, w_ins_id, w_bf_damp}
+            4'd3: {w_ins_vol, w_ins_wave, w_ins_row, w_ins_id, w_bf_damp}
                     <= state_q;
-            4'd7: {w_ins_tcnt, w_ins_fcnt} <= state_q;
-            4'd8: {w_ins_lps, w_ins_sp} <= state_q;
-            4'd9: {w_ins_pitch, w_ins_lpe} <= state_q[13:0];
-            4'd10: {w_ins_prev_vol, w_ins_fx, w_ins_prev_pitch}
-                     <= state_q[11:0];
-            4'd11: w_eff_inc[15:0] <= state_q;
-            4'd12: {w_snd_id, w_snd_wt, w_snd_wave, w_eff_inc[23:16]}
+            4'd4: w_ins_pitch <= state_q[13:8];   // word 8 read-copy refresh
+            4'd5: {w_ins_wt, w_ins_on, w_ins_prev_vol, w_ins_fx,
+                   w_ins_prev_pitch} <= state_q[13:0];
+            4'd6: w_eff_inc[15:0] <= state_q;
+            4'd7: {w_snd_id, w_snd_wt, w_snd_wave, w_eff_inc[23:16]}
                      <= state_q[14:0];
-            4'd13: {w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz, w_ch_noiz,
+            4'd8: {w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz, w_ch_noiz,
                      w_snd_pitch} <= state_q[13:0];
-            4'd14: w_eff_vol <= state_q[7:0];
+            4'd9: w_eff_vol <= state_q[7:0];
             default: ;
           endcase
-          if (vcnt == 4'(VREC)) begin
+          if (vcnt == 4'd9) begin
             vcnt <= 0;
             sst <= K_ADV;
           end else
@@ -984,7 +1045,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
         // ---- record store: one word per cycle, then on to the next slot ---
         V_ST: begin
-          if (vcnt == 4'(VREC - 1)) begin
+          if (vcnt == 4'd7) begin
             vcnt <= 0;
             if (c == VW'(NV-1)) begin
               c <= 0;
@@ -1011,18 +1072,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // ---- trigger: filter byte, metadata, then the first note ------
         T_FL: begin
           trig_req[c] <= 0;
+          pend_stop[c] <= 0;                // a trigger overrides a pending stop
+          pend_stop2[c] <= 0;
           // A music slot has no pending parameters, so it starts at row 0 with
           // no length override; only a foreground slot consults the set.
           row[c] <= is_mus(c) ? 5'd0 : trg_row[c[1:0]];
-          w_play_len <= is_mus(c) ? 6'd0 : trg_len[c[1:0]];
+          // play_len stages in wrd's high byte until T_NH writes word 2;
+          // speed joins it in the low byte at T_LS.
+          wrd[15:8] <= is_mus(c) ? 8'd0 : {2'b0, trg_len[c[1:0]]};
           w_eff_vol <= 0;                   // do not carry the old note's level
           if (!is_mus(c)) begin
             trg_row[c[1:0]] <= 0;           // parameters are one-shot
             trg_len[c[1:0]] <= 0;
           end
           released[c] <= 0;
-          w_fcnt <= 0;
-          w_tcnt <= 0;
           w_prev_pitch <= 6'd24;
           w_prev_vol <= 0;
           playing[c] <= 1;
@@ -1045,23 +1108,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           sst <= T_LS;
         end
         T_LS: begin
-          w_sp <= (seq_q == 0) ? 8'd1 : seq_q;
-          // vibrato/arpeggio phase follows the row's place in the record,
-          // so a slice started at an offset sounds like the whole record.
-          // Only tcnt[4:0] is ever observed - arp_idx tops out at bit 4, the
-          // vibrato LFO at bit 3 - and the per-tick increment preserves
-          // residues mod 32, so the seed product is taken mod 32 and the
-          // 8x8 array multiplier shrinks to its 5x5 corner. The stored high
-          // bits differ from the old ones, but nothing reads them.
-          w_tcnt <= {3'b0, 5'(row[c] * ((seq_q == 0) ? 5'd1 : seq_q[4:0]))};
+          // Speed stages in wrd's low byte for the word-2 write at T_NH.
+          // The engine write this cycle seeds word 0: fcnt 0, tcnt from the
+          // mod-32 seed product (only tcnt[4:0] is ever observed - arp_idx
+          // tops out at bit 4, the vibrato LFO at bit 3 - and the per-tick
+          // increment preserves residues mod 32, so the 8x8 array shrank to
+          // its 5x5 corner).
+          wrd[7:0] <= (seq_q == 0) ? 8'd1 : seq_q;
           sst <= T_LE;
         end
         T_LE: begin
-          w_lps <= seq_q;
+          acc[7:0] <= seq_q;               // loop start, for the word-1 write
           sst <= T_NL;
         end
         T_NL: begin
-          w_lpe <= seq_q;
           // The pattern's length is taken from its left-most launched
           // non-looping channel; the walk reaches channels in order, so the
           // first one that qualifies wins. An all-looping pattern falls back
@@ -1074,9 +1134,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           if (launched[c]) begin
             if (!ptick_seen) begin
               ptick_seen <= 1;
-              ptick_tgt <= {w_sp, 5'b0};
+              ptick_tgt <= {wrd[7:0], 5'b0};
             end
-            if (!tch_seen && !(w_lps < seq_q)) begin
+            if (!tch_seen && !(acc[7:0] < seq_q)) begin
               tch_seen <= 1;
               // The w_sp * pat_rows product runs on the shared m service
               // (launch in the mul_start mux, capture below when it lands).
@@ -1102,10 +1162,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             w_ins_id <= {seq_q[0], note_lo[7:6]};
             sst <= I_TR0;
           end else
-            sst <= K_ARP;
+            sst <= ES0;
         end
 
-        // ---- per-tick walk -------------------------------------------
+        // ---- per-tick walk: the engine's advance sequence -------------
+        // One sequence for both banks. The note pass runs it on words 0..2
+        // with row[c], playing and play_len; the instrument pass on words
+        // 6..8 with w_ins_row and w_ins_done. Word addresses replace the
+        // note/instrument destination muxes the register file forced.
         K_ADV: begin
           if (trig_req[c]) begin
             sst <= T_FL;                    // this channel wants a new SFX
@@ -1113,42 +1177,88 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             if (!playing[c]) w_eff_vol <= 0;
             sst <= K_ROT;
           end else begin
-            w_tcnt <= w_tcnt + 1;
-            if ({1'b0, w_fcnt} + 9'd1 >= {1'b0, w_sp}) begin
-              // row finished: loop, stop, or advance, then refetch
+            abank <= 0;
+            sst <= EA0;
+          end
+        end
+        EA0: sst <= EA1;                    // issue {tcnt, fcnt}
+        EA1: begin                          // consume it, issue {-, plen, sp}
+          acc <= state_q;
+          sst <= EA2;
+        end
+        EA2: begin                          // consume speed word, issue loops
+          wrd <= state_q;
+          froll <= ta_ge;                   // fcnt+1 >= sp
+          // The engine write this cycle puts the advanced counters back.
+          sst <= EA3;
+        end
+        EA3: begin                          // consume {lpe, lps}
+          acc <= state_q;
+          if (!froll) begin
+            // the row holds, but the instrument playhead still advances
+            if (!abank) begin
+              if (w_ins_on && !w_ins_wt) begin
+                abank <= 1;
+                sst <= EA0;
+              end else
+                sst <= ES0;
+            end else
+              sst <= I_NL;
+          end else begin
+            // row finished: latch the sounding note as the previous one
+            if (!abank) begin
               w_prev_pitch <= w_cur_pitch;
               w_prev_vol <= w_cur_vol;
-              w_fcnt <= 0;
-              if (w_play_len != 0) begin
-                // an explicit length overrides the record's loop points
-                if (w_play_len == 6'd1 || row[c] == 5'd31) begin
-                  playing[c] <= 0;
-                  w_eff_vol <= 0;
-                  sst <= K_ROT;
-                end else begin
-                  w_play_len <= w_play_len - 1;
-                  row[c] <= row[c] + 1;
-                  sst <= K_NL;
-                end
-              end else if (w_lps < w_lpe && !released[c] &&
-                           {3'b0, row[c]} + 8'd1 >= w_lpe) begin
-                row[c] <= w_lps[4:0];
-                sst <= K_NL;
-              end else if ({3'b0, row[c]} + 8'd1 >=
-                           ((w_lps != 0 && w_lpe == 0)
-                              ? ((w_lps < 8'd32) ? w_lps : 8'd32)
-                              : 8'd32)) begin
-                playing[c] <= 0;
-                w_eff_vol <= 0;
-                sst <= K_ROT;
-              end else begin
-                row[c] <= row[c] + 1;
-                sst <= K_NL;
-              end
             end else begin
-              w_fcnt <= w_fcnt + 1;
-              // the row holds, but the instrument playhead still advances
-              sst <= sst_t'((w_ins_on && !w_ins_wt) ? I_ADV : K_ARP);
+              w_ins_prev_pitch <= w_ins_pitch;
+              w_ins_prev_vol <= w_ins_vol;
+            end
+            sst <= EA4;
+          end
+        end
+        EA4: begin
+          ge_lpe <= ta_ge;                  // row+1 >= lpe
+          sst <= EA5;
+        end
+        EA5: begin
+          // Decide: explicit length (note bank only), loop, end, advance.
+          // ta_ge here is row+1 >= the end-of-record bound.
+          if (!abank && wrd[13:8] != 0) begin
+            // an explicit length overrides the record's loop points
+            if (wrd[13:8] == 6'd1 || row[c] == 5'd31) begin
+              pend_stop[c] <= 1;             // visible from the boundary
+              w_eff_vol <= 0;
+              sst <= K_ROT;
+            end else begin
+              // the engine write this cycle decrements the length in place
+              row[c] <= row[c] + 1;
+              sst <= K_NL;
+            end
+          end else if (acc[7:0] < acc[15:8] && (abank || !released[c])
+                       && ge_lpe) begin
+            if (!abank) begin
+              row[c] <= acc[4:0];
+              sst <= K_NL;
+            end else begin
+              w_ins_row <= acc[4:0];
+              sst <= I_NL;
+            end
+          end else if (ta_ge) begin
+            if (!abank) begin
+              pend_stop[c] <= 1;           // visible from the boundary
+              w_eff_vol <= 0;
+              sst <= K_ROT;
+            end else begin
+              w_ins_done <= 1;             // instrument over: note silent
+              sst <= I_NL;
+            end
+          end else begin
+            if (!abank) begin
+              row[c] <= row[c] + 1;
+              sst <= K_NL;
+            end else begin
+              w_ins_row <= w_ins_row + 1;
+              sst <= I_NL;
             end
           end
         end
@@ -1171,8 +1281,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                 note_lo[5:0] != w_prev_pitch || w_prev_vol == 0 ||
                 seq_q[6:4] == 3'd3)
               sst <= I_TR0;
-            else
-              sst <= sst_t'(w_ins_wt ? K_ARP : I_ADV);
+            else if (w_ins_wt)
+              sst <= ES0;
+            else begin
+              abank <= 1;                  // instrument advance on words 6..8
+              sst <= EA0;
+            end
           end else begin
             w_ins_on <= 0;                 // back to the note's own filters
             w_ch_noiz <= w_bf_noiz;
@@ -1180,15 +1294,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             w_ch_det  <= w_bf_det;
             w_ch_rev  <= w_bf_rev;
             w_ch_damp <= w_bf_damp;
-            sst <= K_ARP;
+            sst <= ES0;
           end
         end
 
         // ---- custom instrument: retrigger, then per-tick advance -------
         I_TR0: begin
+          // The engine write this cycle zeroes word 6 ({ins_tcnt, ins_fcnt}).
           w_ins_row <= 0;
-          w_ins_fcnt <= 0;
-          w_ins_tcnt <= 0;
           w_ins_done <= 0;
           w_ins_prev_pitch <= 6'd24;
           w_ins_prev_vol <= 0;
@@ -1203,17 +1316,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           sst <= I_TR2;
         end
         I_TR2: begin
-          w_ins_sp   <= (seq_q == 0) ? 8'd1 : seq_q;
+          // The engine writes word 8 = {2'b0, ins_pitch copy, speed} this
+          // cycle; the speed also stages in wrd's low byte, which every path
+          // into I_LD keeps holding (the EA path reloads it from word 8).
+          wrd[7:0]   <= (seq_q == 0) ? 8'd1 : seq_q;
           w_ins_bass <= seq_q[0];          // wavetable: down an octave
           sst <= I_TR3;
         end
         I_TR3: begin
-          w_ins_lps <= seq_q;
+          acc[7:0]  <= seq_q;              // ins loop start, for the w7 write
           w_ins_wt  <= seq_q[7];           // loop start bit 7 = wavetable
           sst <= I_TR4;
         end
         I_TR4: begin
-          w_ins_lpe <= seq_q;
+          // The engine writes word 7 = {loop end, loop start} this cycle.
           if (w_ins_wt) begin              // no playhead: the record is PCM
             w_ins_pitch <= 6'd24;
             w_ins_prev_pitch <= 6'd24;
@@ -1221,40 +1337,42 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             w_ins_prev_vol <= 3'd7;
             w_ins_fx <= 0;
             w_ins_wave <= 0;
-            sst <= K_ARP;
+            sst <= I_TW;
           end else
             sst <= I_NL;
         end
-        I_ADV: begin
-          w_ins_tcnt <= w_ins_tcnt + 1;
-          if ({1'b0, w_ins_fcnt} + 9'd1 >= {1'b0, w_ins_sp}) begin
-            w_ins_prev_pitch <= w_ins_pitch;
-            w_ins_prev_vol <= w_ins_vol;
-            w_ins_fcnt <= 0;
-            if (w_ins_lps < w_ins_lpe &&
-                {3'b0, w_ins_row} + 8'd1 >= w_ins_lpe)
-              w_ins_row <= w_ins_lps[4:0];
-            else if ({3'b0, w_ins_row} + 8'd1 >=
-                     ((w_ins_lps != 0 && w_ins_lpe == 0)
-                        ? ((w_ins_lps < 8'd32) ? w_ins_lps : 8'd32)
-                        : 8'd32))
-              w_ins_done <= 1;             // instrument over: note silent
-            else
-              w_ins_row <= w_ins_row + 1;
-          end else
-            w_ins_fcnt <= w_ins_fcnt + 1;
-          sst <= I_NL;
+        I_TW: begin
+          // Wavetable default pitch lands in word 8 through the engine
+          // write; the register copy was set at I_TR4.
+          sst <= ES0;
         end
+        // The instrument's per-tick advance is the same EA0..EA5 sequence
+        // with abank = 1; there is no separate I_ADV any more.
         I_NL: sst <= I_NH;
         I_NH: begin
           note_lo <= seq_q;
           sst <= I_LD;
         end
         I_LD: begin
+          // The engine writes word 8 = {2'b0, new pitch, speed} this cycle;
+          // wrd's low byte still holds the speed on every path here (staged
+          // at I_TR2, or reloaded from word 8 by the EA sequence).
           w_ins_pitch <= note_lo[5:0];
           w_ins_wave  <= {seq_q[0], note_lo[7:6]};
           w_ins_vol   <= seq_q[3:1];
           w_ins_fx    <= seq_q[6:4];
+          sst <= ES0;
+        end
+
+        // ---- effect staging: the family fields the effect path reads ----
+        ES0: sst <= ES1;                    // issue the bank's counter word
+        ES1: begin                          // consume it, issue the speed word
+          eff_tcnt <= state_q[12:8];
+          eff_fcnt <= state_q[7:0];
+          sst <= ES2;
+        end
+        ES2: begin
+          eff_sp <= state_q[7:0];
           sst <= K_ARP;
         end
 
@@ -1358,18 +1476,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               if (f_stop) begin
                 mus_playing <= 0;
                 for (int i = NCH; i < NV; i++) begin
-                  playing[i] <= 0;
+                  pend_stop2[i] <= 1;      // visible one sample past the boundary
                           end
               end else if (f_lb) begin
                 scan_p <= mus_pat;
+                ml_cpu <= 0;
                 sst <= MS_RD;
               end else if (mus_pat == 6'd63) begin
                 mus_playing <= 0;
                 for (int i = NCH; i < NV; i++) begin
-                  playing[i] <= 0;
+                  pend_stop2[i] <= 1;
                           end
               end else begin
                 mus_pat <= mus_pat + 1;
+                ml_cpu <= 0;
                 sst <= ML_STOP;
               end
             end
@@ -1390,8 +1510,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
         // ---- music: launch pattern mus_pat ---------------------------
         ML_STOP: begin
+          // A CPU launch stops the old slots at once (arrival-relative, as
+          // before); the song's own pattern advance defers to class 2 so
+          // the boundary sample still renders the old pattern's tail.
           for (int i = NCH; i < NV; i++) begin
-            playing[i] <= 0;
+            if (ml_cpu)
+              playing[i] <= 0;
+            else
+              pend_stop2[i] <= 1;
               end
           launched <= 0;
           sst <= ML_RD0;
@@ -1445,7 +1571,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               mus_playing <= 0;
               mus_launch <= 0;
               for (int i = NCH; i < NV; i++) begin
-                playing[i] <= 0;
+                pend_stop[i] <= 1;            // visible from the boundary
                       end
             end
           end else begin
@@ -1600,19 +1726,102 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     end
   end
 
-  // Map the tick engine's streaming index onto its discontiguous record. The
-  // bank is an explicit argument so simulators include it in combinational
-  // sensitivity (some do not look through a function's free variables).
-  function automatic logic [4:0] tick_state_word(
+  // Load and store sequences over the register-resident words. The
+  // flow-owned family words (0..2 and 6..8) never appear here: the engine
+  // reads, modifies and writes them in place through the same two port
+  // sites. The bank is an explicit argument so simulators include it in
+  // combinational sensitivity.
+  function automatic logic [4:0] tick_load_word(
       input logic [3:0] n, input logic bank);
-    if (n < 4'(TREC))
-      tick_state_word = V_TICK + 5'(n);
-    else if (n < 4'(VREC))
-      tick_state_word = (bank ? V_PAR1 : V_PAR0)
-                        + 5'(n - 4'(TREC));
-    else
-      tick_state_word = V_TICK;
+    case (n)
+      4'd0: tick_load_word = 5'd3;
+      4'd1: tick_load_word = 5'd4;
+      4'd2: tick_load_word = 5'd5;
+      4'd3: tick_load_word = 5'd8;         // ins_pitch read-copy refresh
+      4'd4: tick_load_word = 5'd9;
+      default: tick_load_word = (bank ? V_PAR1 : V_PAR0) + 5'(n - 4'd5);
+    endcase
   endfunction
+  function automatic logic [4:0] tick_store_word(
+      input logic [3:0] n, input logic bank);
+    case (n)
+      4'd0: tick_store_word = 5'd3;
+      4'd1: tick_store_word = 5'd4;
+      4'd2: tick_store_word = 5'd5;
+      4'd3: tick_store_word = 5'd9;
+      default: tick_store_word = (bank ? V_PAR0 : V_PAR1) + 5'(n - 4'd4);
+    endcase
+  endfunction
+
+  // Engine read requests: addresses are pure functions of the held state,
+  // so a read displaced by a sample walk re-issues itself, and a consume
+  // state re-issues the displaced word during the replay cycle (the V_LD
+  // pattern, generalized).
+  logic       eng_rd;
+  logic [4:0] eng_word;
+  always_comb begin
+    eng_rd = 1'b1;
+    eng_word = 5'd0;
+    case (sst)
+      EA0:  eng_word = abank ? 5'd6 : 5'd0;
+      EA1:  eng_word = state_replay ? (abank ? 5'd6 : 5'd0)
+                                    : (abank ? 5'd8 : 5'd2);
+      EA2:  eng_word = state_replay ? (abank ? 5'd8 : 5'd2)
+                                    : (abank ? 5'd7 : 5'd1);
+      EA3:  begin
+              eng_word = abank ? 5'd7 : 5'd1;
+              eng_rd = state_replay;
+            end
+      ES0:  eng_word = e_insfx ? 5'd6 : 5'd0;
+      ES1:  eng_word = state_replay ? (e_insfx ? 5'd6 : 5'd0)
+                                    : (e_insfx ? 5'd8 : 5'd2);
+      ES2:  begin
+              eng_word = e_insfx ? 5'd8 : 5'd2;
+              eng_rd = state_replay;
+            end
+      default: eng_rd = 1'b0;
+    endcase
+  end
+
+  // Engine store requests, one per state, selected before the single
+  // physical write site below.
+  logic        eng_we;
+  logic [4:0]  eng_wa;
+  logic [15:0] eng_wd;
+  wire [7:0] sp_in = (seq_q == 0) ? 8'd1 : seq_q;
+  // The mod-32 trigger seed: row * speed's low bits (design 5b, stage 4).
+  wire [4:0] seed5 = 5'(row[c] * sp_in[4:0]);
+  always_comb begin
+    eng_we = 1'b1;
+    eng_wa = 5'd0;
+    eng_wd = 16'd0;
+    case (sst)
+      T_LS:  begin eng_wa = 5'd0; eng_wd = {3'b0, seed5, 8'b0}; end
+      T_NL:  begin eng_wa = 5'd1; eng_wd = {seq_q, acc[7:0]}; end
+      T_NH:  begin eng_wa = 5'd2; eng_wd = {2'b0, wrd[13:8], wrd[7:0]}; end
+      I_TR0: begin eng_wa = 5'd6; eng_wd = 16'd0; end
+      I_TR2: begin eng_wa = 5'd8; eng_wd = {2'b0, w_ins_pitch, sp_in}; end
+      I_TR4: begin eng_wa = 5'd7; eng_wd = {seq_q, acc[7:0]}; end
+      I_TW:  begin eng_wa = 5'd8; eng_wd = {2'b0, 6'd24, wrd[7:0]}; end
+      I_LD:  begin eng_wa = 5'd8; eng_wd = {2'b0, note_lo[5:0], wrd[7:0]}; end
+      EA2:   begin
+               eng_wa = abank ? 5'd6 : 5'd0;
+               eng_wd = {acc[15:8] + 8'd1,
+                         ta_ge ? 8'd0 : acc[7:0] + 8'd1};
+             end
+      EA5:   begin
+               // The explicit-length decrement, note bank only; the other
+               // EA5 outcomes write no word.
+               eng_wa = 5'd2;
+               eng_wd = {2'b0, wrd[13:8] - 6'd1, wrd[7:0]};
+               eng_we = !abank && wrd[13:8] != 0
+                        && !(wrd[13:8] == 6'd1 || row[c] == 5'd31);
+             end
+      default: eng_we = 1'b0;
+    endcase
+    if (walk_frozen)
+      eng_we = 1'b0;
+  end
 
   wire state_tick_we = (sst == V_ST) && !walk_frozen;
   logic [3:0] tick_issue;
@@ -1624,7 +1833,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     if (state_replay && sst == V_LD && vcnt != 0)
       tick_issue = vcnt - 1'b1;
 
-    state_ra = {c, tick_state_word(tick_issue, spar_bank)};
+    state_ra = eng_rd ? {c, eng_word}
+                      : {c, tick_load_word(tick_issue, spar_bank)};
     if (state_sample_read) begin
       if (pph < 7'(PLOSC))
         state_ra = {pc_ch, V_OSC + 5'(pph)};
@@ -1638,16 +1848,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     // Sample write-back has absolute priority. The tick engine is frozen for
     // the complete sample walk, so these owners never contend in practice;
     // retaining explicit priority makes that port contract structural.
-    state_we = state_sample_we | state_tick_we;
+    state_we = state_sample_we | state_tick_we | eng_we;
     if (state_sample_we) begin
       state_wa = {pc_ch, V_OSC + 5'(s_stw)};
       state_wd = sosc_wd;
+    end else if (eng_we) begin
+      state_wa = {c, eng_wa};
+      state_wd = eng_wd;
     end else begin
-      state_wa = {c, (vcnt < 4'(TREC))
-                       ? V_TICK + 5'(vcnt)
-                       : (spar_bank ? V_PAR0 : V_PAR1)
-                         + 5'(vcnt - 4'(TREC))};
-      state_wd = (vcnt < 4'(TREC)) ? vwdata : spar_wd;
+      state_wa = {c, tick_store_word(vcnt, spar_bank)};
+      state_wd = (vcnt < 4'd4) ? vwdata : spar_wd;
     end
   end
 
@@ -2127,9 +2337,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // m cannot be busy here - the nearest preceding launch site is the
         // previous slot's xs 6 product, a full record store earlier - and
         // the simulation-only check below guards that schedule fact.
-        T_NL: if (launched[c] && !tch_seen && !(w_lps < seq_q)) begin
+        T_NL: if (launched[c] && !tch_seen && !(acc[7:0] < seq_q)) begin
           mul_start   = 1'b1;
-          mul_start_a = {16'b0, w_sp};
+          mul_start_a = {16'b0, wrd[7:0]};       // speed, staged at T_LS
           mul_start_b = {4'b0, pat_rows};
         end
         default: ;
