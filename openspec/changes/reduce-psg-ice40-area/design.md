@@ -604,6 +604,39 @@ their muxes). The visit has the idle span (18..51) and the store port is
 free there; the byte-compare is the gate that makes the choreography safe
 to attempt.
 
+#### The map after section 3: where the remaining 714 cells are
+
+With tasks 3.1-3.3 closed at 6,214, the census and ablations re-price
+what remains, and two candidates fall away honestly:
+
+- **The section-2 public-array migration is dead under the current
+  record budget.** sfx_id+row need 11 bits; the flow-owned words hold
+  10 spare even counting tcnt's three dead high bits, no single word
+  can host a whole field, and the record is at 32/32 words. The CPU
+  mirror would eat half the win regardless.
+- **Task 4.7 as a register retirement is mispriced**: the s_old_*
+  family packs far better than the handover netlist suggested (it no
+  longer appears among the top route-through families). A two-pass
+  render harvests ~40-70 cells at the highest choreography risk on the
+  board - not worth standalone.
+
+What remains, by size: **the fidelity/transition family still maps
+~900 LUT4 above REALTIME_PREVIEW** (the dual-voice schedule muxes, the
+three wide inequality compares, the phase_op cone and the blend
+datapath - logic, not registers), and the only credible attack is the
+open task 4.1: the sample-side counterpart of what section 3 did to
+the tick side - one signed accumulator service with one result write
+site, migrated family by family under the same gates. Second, the
+section-5.1 chain: computing two ROM waves frees the EBRs that home
+the constants ROM (pinc+nz_gain, -77 measured) and a microcode store,
+which in turn enables compressing what remains of the sst decode.
+Third, scraps above the noise floor: fade_step via recip>>4 (needs the
+port-borrow guard), and the transition compares folded into whatever
+4.1 family touches them. Summed optimistically these reach ~600 of the
+714; the goal therefore likely needs 4.1 to over-deliver the way 3.3b
+did, and the fallback trade to name explicitly is REVERB (~150 cells,
+currently a protected feature).
+
 ### 6. Keep tables scheduled, not replicated
 
 Pitch, noise gain, filter decode, fade-step and microcode constants are
