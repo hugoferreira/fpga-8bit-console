@@ -800,7 +800,8 @@ def check_platform_game_design() -> None:
     platform = check_namespace(
         "platform.inlay.asm",
         "Platform",
-        {"reset", "wait_frame", "sample_input"},
+        {"reset", "wait_frame", "sample_input",
+         "left", "right", "up", "down", "jump", "dash"},
         {
             "reset": "proc reset using console6502 naked",
             "wait_frame": "proc wait_frame using console6502",
@@ -1064,7 +1065,8 @@ def check_remaining_subsystem_design() -> None:
         ),
         "sound.inlay.asm": (
             "Audio",
-            {"init", "sfx", "guarded_sfx", "music", "fade", "stop"},
+            {"init", "sfx", "guarded_sfx", "music", "fade", "stop",
+             "music_title", "music_climb", "music_orb", "music_stop"},
             {
                 "init", "sfx", "channel_bits", "guarded_sfx", "music",
                 "fade", "stop",

@@ -11,6 +11,12 @@ namespace Platform
     export wait_frame
     export sample_input
     namespace Input
+        export left
+        export right
+        export up
+        export down
+        export jump
+        export dash
         left = $01
         right = $02
         up = $04

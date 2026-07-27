@@ -179,7 +179,7 @@ next:
     jmp .advance
 .play:
     lda Room.cue_music, x
-    ldx #FADE_500MS
+    ldx #Audio.fade_500ms
     jsr Audio.fade
 .advance:
     lda [game + GameState.room_slot]

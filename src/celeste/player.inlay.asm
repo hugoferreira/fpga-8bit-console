@@ -74,11 +74,11 @@ end
 proc sample_input using console6502
     self : ptr CelesteObject in pObj
 begin
-    tbz [game + GameState.buttons], #BTN_R, .noright  ; input = right and 1 or (left and -1 or 0)
+    tbz [game + GameState.buttons], #Platform.Input.right, .noright  ; input = right and 1 or (left and -1 or 0)
     lda #1
     bne .haveinput
 .noright:
-    tbz [game + GameState.buttons], #BTN_L, .noinput
+    tbz [game + GameState.buttons], #Platform.Input.left, .noinput
     lda #$FF
     bne .haveinput
 .noinput:
@@ -128,7 +128,7 @@ begin
     pla
     jsr Objects.spawn_smoke
 .nosmoke:
-    tbz [game + GameState.buttons], #BTN_JUMP, .nojumpheld  ; jump = btn(jump) and not Player.jump_edge
+    tbz [game + GameState.buttons], #Platform.Input.jump, .nojumpheld  ; jump = btn(jump) and not Player.jump_edge
     mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
     lda (pObj), y
     and #Player.bit_jump
@@ -159,7 +159,7 @@ begin
     lda #4
     sta [pObj + CelesteObject.payload.player.jump_buffer]
 .dashedge:
-    tbz [game + GameState.buttons], #BTN_DASH, .nodashheld  ; dash = btn(dash) and not Player.dash_edge
+    tbz [game + GameState.buttons], #Platform.Input.dash, .nodashheld  ; dash = btn(dash) and not Player.dash_edge
     mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: mask constant remains target-owned
     lda (pObj), y
     and #Player.bit_dash
@@ -543,11 +543,11 @@ begin
     mov [game + GameState.has_dashed], #1
     lda #10
     sta [pObj + CelesteObject.payload.player.dash_effect]
-    tbz [game + GameState.buttons], #BTN_U, .notup  ; v_input
+    tbz [game + GameState.buttons], #Platform.Input.up, .notup  ; v_input
     lda #$FF
     bne .havev
 .notup:
-    tbz [game + GameState.buttons], #BTN_D, .nov
+    tbz [game + GameState.buttons], #Platform.Input.down, .nov
     lda #1
     bne .havev
 .nov:
@@ -693,11 +693,11 @@ begin
     lda #3
     jmp .setspr
 .onground:
-    tbz [game + GameState.buttons], #BTN_D, .notdown
+    tbz [game + GameState.buttons], #Platform.Input.down, .notdown
     lda #6
     jmp .setspr
 .notdown:
-    tbz [game + GameState.buttons], #BTN_U, .notup
+    tbz [game + GameState.buttons], #Platform.Input.up, .notup
     lda #7
     jmp .setspr
 .notup:
@@ -706,7 +706,7 @@ begin
     iny
     ora (pObj), y
     beq .still
-    tbz [game + GameState.buttons], #BTN_L|BTN_R, .still
+    tbz [game + GameState.buttons], #Platform.Input.left|Platform.Input.right, .still
     lda [pObj + CelesteObject.payload.player.sprite_offset]
     lsr
     lsr

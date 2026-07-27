@@ -869,21 +869,22 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
         return 1;
     case LA_TARGET_OP_BRANCH_OVERLAY_DISP:
         if (!begin_line(output, event->span, "overlay-branch")) return 0;
-        fprintf(output->assembly, "    %.*s %.*s + %u, %.*s",
+        fprintf(output->assembly, "    %.*s %.*s + %u, ",
                 (int)event->scratch.length, event->scratch.data,
                 (int)event->base.length, event->base.data,
-                (unsigned)event->value,
-                (int)event->text.length, event->text.data);
+                (unsigned)event->value);
+        /* The tail may name scoped Inlay constants; mangle them like raw. */
+        emit_scoped_raw(output->assembly, event->text);
         fprintf(output->assembly, " ; inlay branch %.*s.%.*s\n",
                 (int)event->owner.length, event->owner.data,
                 (int)event->path.length, event->path.data);
         return 1;
     case LA_TARGET_OP_STORE_IMM_OVERLAY_ABS:
         if (!begin_line(output, event->span, "overlay-store-source")) return 0;
-        fprintf(output->assembly, "    mov %.*s + %u, %.*s",
+        fprintf(output->assembly, "    mov %.*s + %u, ",
                 (int)event->base.length, event->base.data,
-                (unsigned)event->value,
-                (int)event->text.length, event->text.data);
+                (unsigned)event->value);
+        emit_scoped_raw(output->assembly, event->text);
         fprintf(output->assembly, " ; inlay store %.*s.%.*s\n",
                 (int)event->owner.length, event->owner.data,
                 (int)event->path.length, event->path.data);

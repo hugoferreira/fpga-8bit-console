@@ -302,7 +302,7 @@ hair_draw:
     sta hair_lx+1
     mov hair_lx, #0
 
-    tbz [game + GameState.buttons], #BTN_D, .lastup  ; last.y = y + (btn(down) and 4 or 3)
+    tbz [game + GameState.buttons], #Platform.Input.down, .lastup  ; last.y = y + (btn(down) and 4 or 3)
     lda #4
     bne .lasty
 .lastup:

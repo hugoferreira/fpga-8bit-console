@@ -94,7 +94,7 @@ begin
     sta [game + GameState.start_game]
     sta [game + GameState.start_game_flash]
     mov [game + GameState.max_dash_jumps], #1
-    lda #MUS_TITLE
+    lda #Audio.music_title
     jsr Audio.music
     lda #0                      ; slot 0 is the title room, level 31
     jmp Room.load
@@ -109,7 +109,7 @@ begin
     sta [game + GameState.minutes]
     sta [game + GameState.music_timer]
     sta [game + GameState.start_game]
-    lda #MUS_CLIMB
+    lda #Audio.music_climb
     jsr Audio.music
     lda #1                      ; slot 1 is the first playing room
     jmp Room.load
@@ -134,7 +134,7 @@ begin
     beq .nomusictimer
     dec [game + GameState.music_timer]
     bne .nomusictimer
-    lda #MUS_ORB
+    lda #Audio.music_orb
     jsr Audio.music
 .nomusictimer:
 
@@ -195,7 +195,7 @@ begin
     lda [game + GameState.start_game]
     bne .flashing
 
-    tbz [game + GameState.buttons], #BTN_JUMP|BTN_DASH, .done
+    tbz [game + GameState.buttons], #Platform.Input.jump|Platform.Input.dash, .done
     jsr Audio.stop
     mov [game + GameState.start_game_flash], #50
     mov [game + GameState.start_game], #1

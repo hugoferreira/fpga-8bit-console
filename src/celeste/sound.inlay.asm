@@ -22,6 +22,11 @@ namespace Audio
     export music
     export fade
     export stop
+    export music_title
+    export music_climb
+    export music_orb
+    export music_stop
+    export fade_500ms
     location address_low : u8 at $4100
     location address_high : u8 at $4101
     location music_mask : u8 at $4121
@@ -128,6 +133,6 @@ fade:
     rts
 
 stop:
-    lda #MUS_STOP
+    lda #Audio.music_stop
     jmp Audio.music
 end
