@@ -5415,8 +5415,8 @@ static int la_parse_pool_address(LaContext *ctx,
     cursor = la_trim_left(start, end);
     if (!la_line_keyword(cursor, end, "address")) return 0;
     cursor += 7;
-    if (!la_read_identifier(&cursor, end, &destination_start,
-                            &destination_length)) return -1;
+    if (!la_read_qualified_identifier(&cursor, end, &destination_start,
+                                      &destination_length)) return -1;
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != ',' ||
         !la_read_identifier(&cursor, end, &pool_start, &pool_length)) {

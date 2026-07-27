@@ -26,6 +26,7 @@ namespace Room
     location load_index : u8 at $4b
     width = 16
     height = 16
+    map_stride = TileMap.patterns.count / height
     playfield_width = 128
     camera_y_max = 8
     title_level = 31
@@ -78,8 +79,7 @@ load:
     sta [room_tiles.cells[y]]
     iny
     bne .copy
-    mov Machine.destination, #<MAP_LO
-    mov Machine.destination+1, #>MAP_LO
+    address Machine.destination, tile_map.patterns
     lda [game.room_bank]
     beq .bank0
     lda Machine.destination
@@ -91,7 +91,7 @@ load:
 .row:
     ldy #0
 .col:
-    lda ROOMTILES, x
+    lda [room_tiles.cells[x]]
     stx t5
     tax
     lda Gfx.tile_base, x
@@ -108,7 +108,7 @@ load:
     cpy #Room.width
     bne .col
     lda Machine.destination                    ; next cell row
-    add #MAP_STRIDE
+    add #map_stride
     sta Machine.destination
     bcc .norow
     inc Machine.destination+1
@@ -117,7 +117,7 @@ load:
     bne .row
     ldx #0                      ; spawn the objects the marker tiles ask for
 .spawn:
-    lda ROOMTILES, x
+    lda [room_tiles.cells[x]]
     cmp #Room.tile_spawn
     bne .nextspawn
     txa

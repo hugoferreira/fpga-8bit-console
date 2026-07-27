@@ -429,16 +429,15 @@ asr_w2:
 ; something in it changed, which for this program is once a second.
 ; ------------------------------------------------------------------------------
 overlay_init:
-    mov Machine.destination, #<OVLSHADOW
-    mov Machine.destination+1, #>OVLSHADOW
+    address Machine.destination, overlay_shadow.pixels
     ldx #0
 .row:
     lda Machine.destination
-    sta OVLROW_LO, x
+    sta [overlay_rows.low[x]]
     lda Machine.destination+1
-    sta OVLROW_HI, x
+    sta [overlay_rows.high[x]]
     lda Machine.destination
-    add #OVL_STRIDE
+    add #overlay_stride
     sta Machine.destination
     bcc .norow
     inc Machine.destination+1
@@ -458,19 +457,19 @@ overlay_clear:
     lda #0
     ldx #0
 .page:
-    sta OVLSHADOW+$000, x
-    sta OVLSHADOW+$100, x
-    sta OVLSHADOW+$200, x
-    sta OVLSHADOW+$300, x
-    sta OVLSHADOW+$400, x
-    sta OVLSHADOW+$500, x
-    sta OVLSHADOW+$600, x
-    sta OVLSHADOW+$700, x
-    sta OVLSHADOW+$800, x
+    sta [overlay_shadow_pages.page0[x]]
+    sta [overlay_shadow_pages.page1[x]]
+    sta [overlay_shadow_pages.page2[x]]
+    sta [overlay_shadow_pages.page3[x]]
+    sta [overlay_shadow_pages.page4[x]]
+    sta [overlay_shadow_pages.page5[x]]
+    sta [overlay_shadow_pages.page6[x]]
+    sta [overlay_shadow_pages.page7[x]]
+    sta [overlay_shadow_pages.page8[x]]
     inx
     bne .page
 .tail:
-    sta OVLSHADOW+$900, x
+    sta [overlay_shadow_pages.page9[x]]
     inx
     cpx #96
     bne .tail
@@ -518,29 +517,29 @@ overlay_end:
     mov [game.overlay_dirty], #0
     ldx #0
 .page:
-    lda OVLSHADOW+$000, x
-    sta OVL+$000, x
-    lda OVLSHADOW+$100, x
-    sta OVL+$100, x
-    lda OVLSHADOW+$200, x
-    sta OVL+$200, x
-    lda OVLSHADOW+$300, x
-    sta OVL+$300, x
-    lda OVLSHADOW+$400, x
-    sta OVL+$400, x
-    lda OVLSHADOW+$500, x
-    sta OVL+$500, x
-    lda OVLSHADOW+$600, x
-    sta OVL+$600, x
-    lda OVLSHADOW+$700, x
-    sta OVL+$700, x
-    lda OVLSHADOW+$800, x
-    sta OVL+$800, x
+    lda [overlay_shadow_pages.page0[x]]
+    sta [framebuffer_pages.page0[x]]
+    lda [overlay_shadow_pages.page1[x]]
+    sta [framebuffer_pages.page1[x]]
+    lda [overlay_shadow_pages.page2[x]]
+    sta [framebuffer_pages.page2[x]]
+    lda [overlay_shadow_pages.page3[x]]
+    sta [framebuffer_pages.page3[x]]
+    lda [overlay_shadow_pages.page4[x]]
+    sta [framebuffer_pages.page4[x]]
+    lda [overlay_shadow_pages.page5[x]]
+    sta [framebuffer_pages.page5[x]]
+    lda [overlay_shadow_pages.page6[x]]
+    sta [framebuffer_pages.page6[x]]
+    lda [overlay_shadow_pages.page7[x]]
+    sta [framebuffer_pages.page7[x]]
+    lda [overlay_shadow_pages.page8[x]]
+    sta [framebuffer_pages.page8[x]]
     inx
     bne .page
 .tail:
-    lda OVLSHADOW+$900, x
-    sta OVL+$900, x
+    lda [overlay_shadow_pages.page9[x]]
+    sta [framebuffer_pages.page9[x]]
     inx
     cpx #96
     bne .tail
