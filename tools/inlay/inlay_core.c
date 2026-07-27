@@ -2229,8 +2229,8 @@ static LaDiagnosticCode la_parse_member(LaContext *ctx,
         cursor = la_trim_left(cursor, end);
         if (cursor != end) {
             if (!la_take_word(&cursor, end, "in") ||
-                !la_read_identifier(&cursor, end, &physical_start,
-                                    &physical_length) ||
+                !la_read_qualified_identifier(&cursor, end, &physical_start,
+                                              &physical_length) ||
                 la_trim_left(cursor, end) != end) {
                 return la_fail(ctx, LA_ERR_MEMBER_ROLE, line, 1, 1,
                                la_slice("return [in PHYSICAL]", 20),

@@ -1107,6 +1107,23 @@ static void test_indexed_pools_and_procedures(void)
         "proc scoped naked\nself : ptr R in p\nbegin\nret\nend\n"
         "lda [self + R.x]\n",
         limits, LA_ERR_LOCATION_TYPE, "parameter alias is procedure scoped");
+    /* A procedure may place a parameter and a return at qualified locations
+       declared in a namespace (the return branch used to reject the dotted
+       spelling). */
+    result = compile_source(
+        "namespace Fix\n"
+        "    location slot : u16 at $08\n"
+        "    location other : u16 at $0a\n"
+        "proc op naked\n"
+        "    value : u16 in Fix.other\n"
+        "    result : u16 return in Fix.slot\n"
+        "begin\n"
+        "    ret\n"
+        "end\n"
+        "end\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK,
+          "qualified parameter and return placement resolve");
 }
 
 static void test_comments_and_pointer_fields(void)
