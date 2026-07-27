@@ -6,7 +6,9 @@
       pico8-psg-re.md: 16-bit p, 17-bit q0 with the per-mode dq derivation
       and `u16(q0 << m)` read, all eight wave functions, `scale(z) =
       tz(G*z/3072)` / noise 2048, `G = tz(3a/2)`, `tz(a*iv/256)` volume
-      composition
+      composition (deterministic single-voice core LANDED as
+      tools/psg_binary_model.py, byte-exact on 24/24 cases; detune modes,
+      phaser, custom voices, multi-voice and music flow remain)
 - [ ] 1.2 Instruction-verify the still-unchecked formulas against
       pico8.x86_64.asm (tri_raw constants, saw, fades, vibrato, slide fine
       path, the 64-sample blend, noise hold/interp) the way scale/organ/

@@ -1,0 +1,331 @@
+#!/usr/bin/env python3
+"""Reference model of the PICO-8 binary's integer audio pipeline.
+
+Implements the exact integer forms recovered in
+/Applications/PICO-8.app/Contents/MacOS/pico8-psg-re.md and spot-verified
+against pico8.x86_64.asm (see openspec/changes/adopt-pico8-integer-audio).
+The model is the gate for that change: RTL stages must match it exactly,
+and the model itself must match the stored PICO-8 exports byte-for-byte
+on deterministic cases (task 1.3).
+
+Scope: deterministic paths (waves 0-5 and 8, effects 0-7, the per-tick
+64-sample crossfade, single-voice soft_add mixing). Noise and phaser are
+excluded pending their own verification tasks; noise is sequence-inexact
+in principle (shared RNG).
+
+Usage:
+  psg_binary_model.py render <case.bin> --ticks N [--sfx N] --out out.wav
+  psg_binary_model.py compare <case.bin> --ticks N <reference.wav>
+"""
+
+from __future__ import annotations
+
+import argparse
+import struct
+import sys
+import wave
+from pathlib import Path
+
+TICK_SAMPLES = 183
+BLEND_SAMPLES = 64
+
+# Thirteen entries: _get_dx_for_note_fine reads dx[chromatic + 1], and the
+# binary's table carries the octave wrap (1046) for it.
+NOTE_DX = [523, 554, 587, 622, 659, 698,
+           740, 784, 831, 880, 932, 984, 1046]
+
+
+def tz(a: int, d: int) -> int:
+    """Signed integer division truncated toward zero."""
+    q = abs(a) // d
+    return -q if a < 0 else q
+
+
+def u16(x: int) -> int:
+    return x & 0xFFFF
+
+
+# --- phase increments -------------------------------------------------------
+
+def dx_for_note(semitone: int) -> int:
+    """_get_dx_for_note: 16-bit oscillator increment for an integer pitch."""
+    octave, chromatic = divmod(semitone, 12)
+    dp = ((NOTE_DX[chromatic] << 16) * 0x2F8DF18F) >> 44
+    return dp >> (3 - octave) if octave < 3 else dp << (octave - 3)
+
+
+def dx_for_note_fine(p_1616: int) -> int:
+    """_get_dx_for_note_fine, instruction-exact: the TABLE entries are
+    interpolated by the 16-bit fraction, then the shared reciprocal
+    multiply and octave shift follow - not interpolation of final dx
+    values. Verified against pico8.x86_64.asm L249743."""
+    frac = p_1616 & 0xFFFF
+    semi = p_1616 >> 16
+    octave = tz(semi + 48, 12) - 4
+    s = semi
+    if p_1616 < 0:
+        s += 12 * ((-semi) // 12) + 12
+    chromatic = s % 12
+    blended = ((0x10000 - frac) * NOTE_DX[chromatic]
+               + frac * NOTE_DX[chromatic + 1])
+    dp = (blended * 0x2F8DF18F) >> 44
+    return dp >> (3 - octave) if octave < 3 else dp << (octave - 3)
+
+
+def dx_clamped(p_1616: int) -> int:
+    return max(8, min(32768, dx_for_note_fine(p_1616)))
+
+
+# --- waveforms (exact integer forms) ----------------------------------------
+
+def tri_raw(x: int) -> int:
+    return 3 * x - 49152 if x < 32768 else 147456 - 3 * x
+
+
+def tilt(x: int, t_break: int = 57344) -> int:
+    if x < t_break:
+        return (24572 * x) // t_break - 12286
+    return (24572 * (65535 - x)) // (65536 - t_break) - 12286
+
+
+def saw(x: int) -> int:
+    return tz(x - 32768, 4)
+
+
+def square_at(x: int, threshold: int) -> int:
+    return -6143 if x < threshold else 6143
+
+
+def organ(x: int) -> int:
+    if x < 16384:
+        return x - 8192
+    if x < 32768:
+        return 24576 - x
+    if x < 49152:
+        return tz(2 * (x - 32768), 3) - 8192
+    return tz(2 * (65536 - x), 3) - 8192
+
+
+def wave_pair(w: int, p: int, q0: int, mode: int) -> int:
+    """The pre-scale oscillator value: primary plus half-weight secondary."""
+    q = u16(q0 << (1 if mode == 2 else 0))
+    if w == 0:
+        return tz(tri_raw(p), 4) + tz(tri_raw(u16(q0)), 8)
+    if w == 1:
+        return tilt(p) + tz(tilt(q), 2)
+    if w == 2:
+        return saw(p) + tz(saw(q), 2)
+    if w == 3:
+        return square_at(p, 0x8000) + tz(square_at(q, 0x8000), 2)
+    if w == 4:
+        return square_at(p, 0xB000) + tz(square_at(q, 0xB000), 2)
+    if w == 5:
+        return organ(p) + tz(organ(q), 2)
+    raise ValueError(f"wave {w} not in the deterministic model")
+
+
+def scale(g: int, z: int) -> int:
+    return tz(g * z, 3072)
+
+
+# --- SFX record parsing ------------------------------------------------------
+
+class Sfx:
+    def __init__(self, blob: bytes):
+        self.notes = []
+        for i in range(32):
+            lo, hi = blob[2 * i], blob[2 * i + 1]
+            self.notes.append({
+                "pitch": lo & 0x3F,
+                "wave": ((hi & 1) << 2) | (lo >> 6),
+                "vol": (hi >> 1) & 0x07,
+                "fx": (hi >> 4) & 0x07,
+                "custom": hi >> 7,
+            })
+        self.filters = blob[64]
+        self.speed = max(1, blob[65])
+        self.loop_start = blob[66]
+        self.loop_end = blob[67]
+
+
+def load_sfx(bin_path: Path, index: int) -> Sfx:
+    blob = bin_path.read_bytes()
+    return Sfx(blob[256 + 68 * index: 256 + 68 * (index + 1)])
+
+
+# --- oscillator/effect state -------------------------------------------------
+
+class OscState:
+    """Everything _mix_osc_tick_new consumes for one tick's render."""
+
+    __slots__ = ("wave", "dp", "dq", "g", "p", "q0", "mode")
+
+    def __init__(self):
+        self.wave = 0
+        self.dp = 0
+        self.dq = 0
+        self.g = 0
+        self.p = 0
+        self.q0 = 0
+        self.mode = 0
+
+    def copy(self) -> "OscState":
+        o = OscState()
+        for f in self.__slots__:
+            setattr(o, f, getattr(self, f))
+        return o
+
+    def render(self, n: int) -> list[int]:
+        out = []
+        for _ in range(n):
+            if self.g == 0:
+                out.append(0)
+            else:
+                out.append(scale(self.g, wave_pair(
+                    self.wave, self.p, self.q0, self.mode)))
+                self.p = u16(self.p + self.dp)
+                self.q0 = (self.q0 + self.dq) & 0x1FFFF
+        return out
+
+
+def calc_tick_state(sfx: Sfx, pos: int, prev: OscState) -> OscState:
+    """_calculate_osc_state for basic instruments."""
+    d = sfx.speed
+    n = tz(pos, d)
+    t = pos - n * d
+    if n >= 32:
+        st = prev.copy()
+        st.g = 0
+        return st
+    note = sfx.notes[n]
+    p0 = note["pitch"] << 16
+    a0 = note["vol"] << 8
+    fx = note["fx"]
+
+    p_1616, a = p0, a0
+    if fx == 1:                               # slide
+        if n == 0:
+            ps, a_s = 24 << 16, a0
+        else:
+            pn = sfx.notes[n - 1]
+            ps, a_s = pn["pitch"] << 16, pn["vol"] << 8
+        p_1616 = tz((d - t) * ps + t * p0, d)
+        a = tz((d - t) * a_s + t * a0, d)
+    elif fx == 4:                             # fade in
+        a = tz(a0 * t, d)
+    elif fx == 5:                             # fade out
+        a = tz(a0 * (d - t), d)
+    elif fx in (6, 7):                        # arpeggios
+        q_div = (2 if fx == 6 else 4) if sfx.speed <= 8 else (4 if fx == 6 else 8)
+        sel = (n & 0x1C) + (tz(pos, q_div) % 4)
+        p_1616 = sfx.notes[sel]["pitch"] << 16
+
+    dp = dx_clamped(p_1616)
+    if fx == 2:                               # vibrato, post-clamp
+        m = [128, 129, 130, 129, 128, 127, 126, 127][(pos >> 1) & 7]
+        dp = (dx_clamped(p0) * m) >> 7
+    elif fx == 3:                             # drop, post-clamp
+        dp = tz(dx_clamped(p0) * (d - t), d)
+
+    st = OscState()
+    st.wave = note["wave"]
+    st.dp = dp
+    st.dq = tz(dp * 256, 256)                 # mode 0: dq = dp exactly
+    st.g = tz(3 * a, 2)
+    st.mode = 0
+    if st.g == 0:
+        # A zero-amplitude tick is not an inaudible running oscillator:
+        # the next nonzero tick starts from the canonical phase again
+        # (exposed by speed-2 fade-in rows, whose audible ticks the binary
+        # exports byte-identically).
+        st.p, st.q0 = 0, 0
+    else:
+        st.p, st.q0 = prev.p, prev.q0         # phase continues across ticks
+    return st
+
+
+def render_voice(sfx: Sfx, ticks: int) -> list[int]:
+    """_mix_sfx_tick: per tick, render new state, blend 64 samples of old."""
+    out: list[int] = []
+    cur = OscState()                          # silent pre-trigger state
+    for pos in range(ticks):
+        old = cur.copy()
+        cur = calc_tick_state(sfx, pos, cur)
+        new_samples = cur.render(TICK_SAMPLES)
+        old_samples = old.render(BLEND_SAMPLES)
+        for i in range(BLEND_SAMPLES):
+            new_samples[i] = tz(
+                i * new_samples[i] + (BLEND_SAMPLES - i) * old_samples[i],
+                BLEND_SAMPLES)
+        out.extend(new_samples)
+    return out
+
+
+# --- mixing and output ---------------------------------------------------
+
+SOFT_TH = 24576
+
+
+def soft_add(a: int, b: int) -> int:
+    s = a + b
+    if s >= SOFT_TH:
+        return SOFT_TH + tz((s - SOFT_TH) * 52429, 1 << 18)
+    if s <= -SOFT_TH:
+        return -SOFT_TH - tz((-SOFT_TH - s) * 52429, 1 << 18)
+    return s
+
+
+def mix_single(voice: list[int]) -> list[int]:
+    """The 8-leaf tree with seven zero leaves: three soft_adds."""
+    return [soft_add(soft_add(soft_add(v, 0), 0), 0) for v in voice]
+
+
+def write_wav(path: Path, samples: list[int]) -> None:
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        clipped = [max(-32768, min(32767, s)) for s in samples]
+        w.writeframes(struct.pack(f"<{len(clipped)}h", *clipped))
+
+
+def read_wav(path: Path) -> list[int]:
+    with wave.open(str(path), "rb") as w:
+        n = w.getnframes()
+        return list(struct.unpack(f"<{n}h", w.readframes(n)))
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mode", choices=["render", "compare"])
+    ap.add_argument("bin", type=Path)
+    ap.add_argument("reference", type=Path, nargs="?")
+    ap.add_argument("--ticks", type=int, required=True)
+    ap.add_argument("--sfx", type=int, default=0)
+    ap.add_argument("--out", type=Path)
+    args = ap.parse_args()
+
+    sfx = load_sfx(args.bin, args.sfx)
+    samples = mix_single(render_voice(sfx, args.ticks))
+
+    if args.mode == "render":
+        write_wav(args.out or Path("model.wav"), samples)
+        print(f"wrote {len(samples)} samples")
+        return 0
+
+    ref = read_wav(args.reference)
+    n = min(len(ref), len(samples))
+    diffs = [(i, samples[i], ref[i]) for i in range(n) if samples[i] != ref[i]]
+    print(f"model {len(samples)} vs reference {len(ref)} samples; "
+          f"{len(diffs)} differ")
+    if diffs:
+        for i, m, r in diffs[:8]:
+            print(f"  [{i:5d}] model {m:7d}  ref {r:7d}  (tick {i // 183}, "
+                  f"sample {i % 183})")
+        return 1
+    print("BYTE-EXACT")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

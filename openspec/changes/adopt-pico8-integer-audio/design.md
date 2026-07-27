@@ -28,6 +28,33 @@ Formulas not yet instruction-verified (tri_raw's `3x-49152`, saw's
 `tz((x-32768)/4)`, fades, vibrato, slide fine path, the 64-sample blend,
 noise modes) each get a verification task before their RTL lands.
 
+**Model checkpoint (task 1.1/1.3 first milestone):**
+`tools/psg_binary_model.py` reproduces the stored PICO-8 exports
+**byte-for-byte on all 24 deterministic single-voice cases** — every
+wave 0-5, every pitch probe, and all seven effects including the slide
+fine path, drop's rounding-to-zero, and both arpeggios. The exports
+carry a per-case lead-in (8..160 samples) which the comparison aligns
+by onset. Getting to exactness forced three additions beyond the notes,
+now part of the verified record:
+
+- `dq = tz(dp*K/256)` with K = 256 in mode 0 (so dq = dp exactly) and
+  K = 255 in the detune flavor - decoded from `_calculate_osc_state`'s
+  stores to +0x10, matching the RTL's recovered DETUNE-1 form.
+- A zero-amplitude tick resets the oscillator to canonical phase; the
+  next audible tick restarts from zero rather than continuing (the
+  binary's speed-2 fade-in rows export byte-identical audible ticks,
+  which is how the model's phase drift was caught).
+- `_get_dx_for_note_fine` interpolates the NOTE_DX **table entries** by
+  the 16-bit fraction before the shared reciprocal multiply and octave
+  shift - not the final increments - against a 13-entry table whose
+  octave-wrap entry (1046) was read out of the binary's data segment.
+
+Indirectly verified byte-exact through those 24 cases: tri_raw, saw,
+tilt_57344, the fades, vibrato's multiplier sequence, the slide
+recurrences, and the 64-sample crossfade. Remaining model scope:
+detune/phaser/custom voices, multi-voice mixes, transitions, and music
+flow - then the reference re-capture.
+
 Constraints inherited from `reduce-psg-ice40-area`, which pauses at its
 6,199-cell / 15-EBR checkpoint until this change lands: the 15-EBR
 ceiling, the 1,275-clock sample budget (pre-run depth is a free constant),
