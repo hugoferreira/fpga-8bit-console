@@ -38,26 +38,46 @@ Current replay measurements are approximately 140 KiB of physical semantic
 module source using 4,728 bytes of module workspace. The compiler workspace is
 188,248 bytes with the host profile's 256-location capacity.
 
-### Progress since the checkpoint (frontend operation matrix)
+### Progress since the checkpoint (operation matrix + MMIO/state/const migration)
 
-The independently-buildable frontend work is now in place, all with the frozen
-ROM (`e57a8ea4…`) preserved, C89/C99/C++11/UBSan/cc65 portability green and
-byte-exact conformance fixtures:
+All the following landed with the frozen ROM (`e57a8ea4…`) preserved after
+every commit, C89/C99/C++11/UBSan/cc65 portability green, byte-exact
+conformance fixtures, and the overlay-operation count tracked (now 203).
 
-- 5.5 — every MMIO, tile-world, working-RAM, effects and overlay-shadow
-  boundary that `memmap.inlay.asm` still states numerically is pinned to the
-  typed layout with `static_assert`s in `layout.inlay.asm`.
-- 4.1 / 4.2 — `address DEST, overlay.field` materializes a fixed overlay base +
-  field displacement into a pointer-width, non-code destination via a low/high
-  `mov` pair (no field read, no clobber); exact-byte fixture in
-  `tests/inlay/overlay_address*`.
-- 4.5 — `cmp [overlay + field]` accumulator compare (flags-only, carries
-  volatility); pointer/indexed compares stay raw.
-- 4.6 — `inc`/`dec`/`and`/`ora [overlay + field]` RMW: inc/dec lower native
-  (no register clobber), and/ora keep the accumulator; each carries volatility.
-- 4.7 — fixed-overlay byte access is absolute-addressed, so page views past the
-  first 256 bytes are reachable with `ADDR + field[,Y]`; overlays now bound only
-  the 8-bit index range, not a 255-byte displacement window.
+Production migration completed — sections 6.2 through 6.6:
+
+- 6.2 — every video/PSG operand now reads `[video + VideoRegisters.*]` /
+  `[psg + PsgRegisters.*]`; no raw `SPR_`/`PSG_` operand remains.
+- 6.3 — all 135 game-state operands now read `[game + GameState.*]`.
+- 6.4 — input masks are `Platform.Input.*`, music/fade are `Audio.*`.
+- 6.5 — room geometry, camera limits and tile identifiers are `Room.*`.
+- 6.6 — object capacity/flags are `Objects.*`; OBJ_MAX/HAIR_NODES derive from
+  `objects.count` / `CelesteObject.payload.hair.hair.count` via namespace
+  constants (raw pool/field queries only resolve inside `mov`/`cmp`, so they
+  are wrapped in `Objects.slot_count` / `Draw.hair_nodes`).
+
+Frontend operation matrix (the forms the migration needed):
+
+- 4.1 / 4.2 — `address DEST, overlay.field` materialization (low/high `mov`).
+- 4.3 — overlay byte load/store plus `ldx`/`ldy`/`stx`/`sty`, `and`/`ora`/
+  `add`/`sub` accumulator forms, and absolute indexed access with X or Y.
+- 4.4 — `mov [overlay+field], SRC` (immediate or `table + x`), memory-to-memory
+  rejected.
+- 4.5 — `cmp [overlay+field]` accumulator compare.
+- 4.6 — `inc`/`dec`/`and`/`ora [overlay+field]` RMW with volatility.
+- 4.7 — page views past 256 bytes via absolute indexed addressing.
+- Compare/test-and-branch `cbeq/cbne/cblt/cble/cbgt/cbge/tbz/tbnz
+  [overlay+field], …` (BRANCH_OVERLAY_DISP), tail passed through `emit_scoped_raw`
+  so scoped constants in the tail resolve.
+- 5.5 — every numeric region boundary pinned to the typed layout.
+
+**Caveat for the remaining scratch migration (6.7+):** a procedure `in`
+placement to a location in its *own* namespace must be written unqualified
+(`in left`, not `in Fixed.left`); the qualified self-reference is rejected with
+`member-role`. Cross-namespace placements (`in Machine.object`) are qualified as
+usual. A migration of `w0`/`pObj`/`spawn_*`/etc. must therefore emit unqualified
+names inside the owning namespace (math=Fixed, obj=Objects, draw=Draw) and
+qualified names elsewhere. The 6.7 attempt was reverted for lacking this split.
 
 ### Deliberately unfinished
 
@@ -89,20 +109,33 @@ than deepening the temporary detached-export form.
 
 ### Recommended continuation order
 
-1. Finish/integrate the predecessor's default convention and attached-export
-   work, then close task 1.1. **This gates everything below** — the production
-   migration must adopt its export/convention syntax, not the temporary
-   detached-export form.
-2. Migrate one ownership group at a time in section 6, checking the frozen ROM
-   after each group. As each group surfaces the exact operand forms Celeste
-   uses, close 4.3 (load/store forms) and 4.4 (`mov` forms) with the evidence,
-   then run the 4.8 fixture sweep.
-3. Turn the temporary alias inventory into the permanent deny-list, delete
-   `memmap.inlay.asm`, then run section 8.
+The section-4 operation matrix and 6.2–6.6 are done, so the remaining migration
+is the scratch/array groups plus deletion and validation:
 
-The section-4 operation matrix (address materialization, overlay compare,
-overlay RMW, absolute/page-view indexed access) and the 5.5 boundary assertions
-are already done and fixtured, so section 6 can consume them directly.
+1. 6.7 — migrate `w0`/`w1`/`w2` to `Fixed.*`, the shared pointer/dispatch
+   locations (`pObj`→`Machine.object`, `pOth`, `pFn`→`Machine.function`,
+   `pSrc`/`pDst`→`Machine.source`/`destination`, `pOvl`→`Draw.overlay_pointer`,
+   `obj_slot`/`obj_free`/`spawn_*`→`Objects.*`). Honor the same-namespace
+   `in`-placement caveat above: unqualified inside the owning namespace,
+   qualified elsewhere. Skip struct-field and `location`/`namespace` lines.
+2. 6.8 — collision (`c_*`→`Collision.*`), drawing/hair (`d_*`, `hair_*`→`Draw.*`)
+   and loader scratch to their namespaces.
+3. 6.9 — cloud/particle arrays (`CL_*`, `PA_*`) to the indexed `effects`
+   (`FxStorage`) overlay via the `[effects + FxStorage.field[x]]` form.
+4. 6.10 — room tiles, row pointers, overlay shadow and framebuffer copies
+   (`ROOMTILES`, `OVLROW_*`, `OVLSHADOW`, `MAP_*`) to typed linear/page views.
+5. 4.8 fixture sweep, then section 7 (delete `memmap.inlay.asm`, enable the
+   permanent deny-list) and section 8 (final validation).
+
+Task 1.1 stays blocked on `redesign-celeste-for-inlay`; the exports added so far
+use the temporary detached form and should adopt its declaration-attached syntax
+once it lands.
+
+Per-group workflow that worked: survey the raw operand forms, map names to the
+owning namespace's declared locations/constants, migrate the code portion only
+(skip comments/declarations), add `export` for cross-module names, rebuild and
+confirm the ROM is still `e57a8ea4`, then update the conformance
+overlay-operation count and any namespace export manifest before committing.
 
 ### Validation commands
 
