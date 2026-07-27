@@ -637,6 +637,42 @@ port-borrow guard), and the transition compares folded into whatever
 did, and the fallback trade to name explicitly is REVERB (~150 cells,
 currently a protected feature).
 
+#### Task 4.1 design freeze: the sample-side service is the three
+#### existing units, plus lifetime discipline
+
+The sample side already owns one 24-bit add/subtract ALU (with the
+fold's serial sequencing on top of it) and one 24x10 product service.
+4.1 is therefore not a new datapath: it is the rule that no sample-side
+operation may keep a dedicated chain or a dedicated lifetime register
+when a shared unit is idle in its window and a shared temporary is dead
+there. Families, in landing order:
+
+**Family 1 was implemented in both shapes and rejected on placed
+cells, and the two rejections refine the law this task rests on.**
+The full service shape - blend chains as ALU operand arms at
++23/+24/+33, mx_new/mx_old retired into fx_r/ft2 - measured
+**+35** (the three 24-bit operand-mux arms, especially the sign-swap's
+stacked muxes, outweigh 61 deleted carries and 33 deleted flops). The
+salvage shape - registers borrowed, dedicated chains kept - measured
+**+132**: sharing fx_r/ft2 across the fold and blend domains entangles
+their fanout cones, and abc9 duplicates what it previously optimized
+as separate islands. Both reverted; the tree is byte-identical to the
+6,214 checkpoint.
+
+The refined law: **shared routing pays only through address-selected
+storage.** The section-3 wins borrowed a MEMORY - BRAM ports have no
+per-bit input muxes, so new users cost address arms, not datapath. A
+borrowed register costs its D-mux and its fanout entanglement, and a
+shared ALU costs operand-mux arms wider than the chains they delete.
+With three blend attempts at +31/+35/+132, the transition family is
+measured DENSE: its remaining ~900 LUT4 is schedule decode, the
+wavetable-interpolation feature, and arithmetic already at its
+cheapest form. Task 4.1's credible remainder is therefore not the
+transition family: it is the section-5.1 chain, which is BRAM-shaped
+(compute waves, free EBRs, home the constants and microcode) and
+consistent with the law - plus the explicit REVERB decision if the
+final gap demands it.
+
 ### 6. Keep tables scheduled, not replicated
 
 Pitch, noise gain, filter decode, fade-step and microcode constants are
