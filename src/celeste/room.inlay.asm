@@ -44,7 +44,7 @@ init:
     lda #0
     sta [video.clip_x0]
     sta [video.clip_y0]
-    mov [video.clip_x1], #Room.playfield_width-1
+    mov [video.clip_x1], #playfield_width-1
     mov [video.clip_y1], #119
     mov [video.control], #$03
     mov [video.overlay_color], #7  ; colour 7 everywhere it matters
@@ -57,7 +57,7 @@ init:
 ; ------------------------------------------------------------------------------
 title:
     lda [game.level]
-    cmp #Room.title_level
+    cmp #title_level
     rts
 ; ------------------------------------------------------------------------------
 ; load_room: A = index into the resident room table. Clobbers everything.
@@ -87,7 +87,7 @@ load:
     sta Machine.destination
 .bank0:
     ldx #0                      ; X walks the 256 tile ids in order
-    mov Machine.t6, #Room.height
+    mov Machine.t6, #height
 .row:
     ldy #0
 .col:
@@ -105,7 +105,7 @@ load:
     ldx Machine.t5
     inx
     iny
-    cpy #Room.width
+    cpy #width
     bne .col
     lda Machine.destination                    ; next cell row
     add #map_stride
@@ -118,7 +118,7 @@ load:
     ldx #0                      ; spawn the objects the marker tiles ask for
 .spawn:
     lda [room_tiles.cells[x]]
-    cmp #Room.tile_spawn
+    cmp #tile_spawn
     bne .nextspawn
     txa
     and #15
@@ -139,25 +139,25 @@ load:
     bne .spawn
     lda [game.room_bank]               ; show the bank we just filled
     beq .cam0
-    lda #Room.playfield_width
+    lda #playfield_width
 .cam0:
     sta Machine.t3
-    jsr Room.title              ; the cart draws the title room at x = -4:
+    jsr title              ; the cart draws the title room at x = -4:
     bne .notitle                ;   map(room.x*16, room.y*16, off, 0, 16, 16, 2)
     lda Machine.t3                      ; with off = -4. Scrolling the camera 4 to the
     add #4
     sta Machine.t3
-    mov [video.clip_x1], #Room.playfield_width-5  ; does not appear in the gap that opens up
+    mov [video.clip_x1], #playfield_width-5  ; does not appear in the gap that opens up
     jmp .cam
 .notitle:
-    mov [video.clip_x1], #Room.playfield_width-1
+    mov [video.clip_x1], #playfield_width-1
 .cam:
     lda Machine.t3
     sta [video.camera_x]
     lda #0
     sta [game.camera_y]
     sta [video.camera_y]
-    jsr Room.title              ; the cart shows no room title on the title
+    jsr title              ; the cart shows no room title on the title
     beq .done                   ; screen: `if not is_title() then ... end`
     mov Objects.spawn_type, #ObjectKind.title
     lda #0
@@ -177,7 +177,7 @@ load:
 next:
     ldx #0                      ; the cart's four music cues, keyed on the room
 .cue:                           ; being LEFT - see the table below
-    lda Room.cue_level, x
+    lda cue_level, x
     cmp [game.level]
     beq .play
     inx
@@ -185,7 +185,7 @@ next:
     bne .cue
     jmp .advance
 .play:
-    lda Room.cue_music, x
+    lda cue_music, x
     ldx #Audio.fade_500ms
     jsr Audio.fade
 .advance:
@@ -195,7 +195,7 @@ next:
     bcc .go
     lda #1                      ; wrap to the first PLAYING room: slot 0 is the
 .go:                            ; title screen and is only reached from reset
-    jmp Room.load
+    jmp load
 ; The cart's next_room() cues, by the level being left. All four are ported
 ; even though this room set only reaches two of them (11 and 20): they are
 ; data, not code, and the table is the same size either way.
@@ -208,7 +208,7 @@ cue_music:
     #d8 30, 20, 30, 30
 restart:
     lda [game.room_slot]
-    jmp Room.load
+    jmp load
 ; ------------------------------------------------------------------------------
 ; camera_update: the vertical follow that covers a 128-line room in a 120-line
 ; window. The cart's camera is static per room; this is the port's one
@@ -235,9 +235,9 @@ camera:
     bmi .top                    ; above the room: show the top
     sub #56
     bcc .top
-    cmp #Room.camera_y_max
+    cmp #camera_y_max
     bcc .set
-    lda #Room.camera_y_max
+    lda #camera_y_max
     jmp .set
 .top:
     lda #0

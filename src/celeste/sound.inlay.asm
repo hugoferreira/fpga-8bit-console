@@ -78,7 +78,7 @@ sfx:
     sta Machine.t0
     ldy #0
 .find:
-    lda Audio.channel_bits, y
+    lda channel_bits, y
     and Machine.t0
     beq .go
     iny
@@ -90,7 +90,7 @@ sfx:
     and #3
     sta [game.next_channel]
     tay
-    lda Audio.channel_bits, y
+    lda channel_bits, y
     and [psg.music_mask]
     bne .steal
 .go:
@@ -109,7 +109,7 @@ channel_bits:
 guarded_sfx:
     ldx [game.sfx_timer]
     bne .skip
-    jmp Audio.sfx
+    jmp sfx
 .skip:
     rts
 
@@ -133,6 +133,6 @@ fade:
     rts
 
 stop:
-    lda #Audio.music_stop
-    jmp Audio.music
+    lda #music_stop
+    jmp music
 end

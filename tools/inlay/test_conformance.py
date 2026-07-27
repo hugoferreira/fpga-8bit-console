@@ -827,7 +827,7 @@ def check_platform_game_design() -> None:
     for service in (
         "jsr Platform.wait_frame",
         "jsr Platform.sample_input",
-        "jsr Game.update",
+        "jsr update",
         "jsr Draw.frame",
     ):
         if service not in game:
@@ -912,7 +912,7 @@ def check_objects_design() -> None:
         "ldw operand, [self.core.speed_x]",
         "addw ab, operand",
         "stw [self.core.remainder_y], value",
-        "jsr Objects.prepare_step",
+        "jsr prepare_step",
     }
     missing = sorted(item for item in required if item not in text)
     if missing:
@@ -994,13 +994,13 @@ def check_object_kind_design() -> set[str]:
         )
 
     required = {
-        "jmp Player.sample_input",
-        "jmp Player.environment",
-        "jmp Player.active_dash",
-        "jmp Player.horizontal",
-        "jmp Player.vertical",
-        "jmp Player.jump_dash",
-        "jmp Player.animation",
+        "jmp sample_input",
+        "jmp environment",
+        "jmp active_dash",
+        "jmp horizontal",
+        "jmp vertical",
+        "jmp jump_dash",
+        "jmp animation",
         "input = $50",
         "wall = $5F",
         "jmp Draw.hair_create",

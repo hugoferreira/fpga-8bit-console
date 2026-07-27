@@ -96,11 +96,11 @@ type_draw_hi:
 proc clear using console6502
 begin
     lda #0
-    ldx #Objects.slot_count-1
+    ldx #slot_count-1
 .slot:
     txa
     pha
-    jsr Objects.pointer
+    jsr pointer
     lda #0
     sta [Machine.object.core.kind]
     pla
@@ -115,26 +115,26 @@ end
 ; slot is $FF if the pool is full. Clobbers A, X, Y, t0 and pObj.
 ; ------------------------------------------------------------------------------
 proc allocate using console6502
-    kind : ObjectKind in Objects.spawn_type
-    x_position : i8 in Objects.spawn_x
-    y_position : i8 in Objects.spawn_y
-    slot : u8 return in Objects.spawn_slot
+    kind : ObjectKind in spawn_type
+    x_position : i8 in spawn_x
+    y_position : i8 in spawn_y
+    slot : u8 return in spawn_slot
     result : ptr CelesteObject return in Machine.object
 begin
     ldx #0
 .find:
     txa
-    jsr Objects.pointer
+    jsr pointer
     lda [Machine.object.core.kind]
     beq .found
     inx
-    cpx #Objects.slot_count
+    cpx #slot_count
     bne .find
     lda #$FF                    ; pool full: the cart has no such case, this
-    sta Objects.spawn_slot              ; console does. Dropping the object is the only
+    sta spawn_slot              ; console does. Dropping the object is the only
     rts                         ; option that cannot corrupt the list.
 .found:
-    stx Objects.spawn_slot
+    stx spawn_slot
 
     mov y, #CelesteObject.size-1 ; a fresh record starts empty, so every field
     lda #0                      ; the type does not set reads as the cart's nil
@@ -143,32 +143,32 @@ begin
     dey
     bpl .clear
 
-    lda Objects.spawn_type
+    lda spawn_type
     sta [Machine.object.core.kind]
     tax
-    lda Objects.type_tile-1, x   ; obj.spr = type.tile
+    lda type_tile-1, x   ; obj.spr = type.tile
     sta [Machine.object.core.sprite]
-    lda Objects.spawn_x
+    lda spawn_x
     sta [Machine.object.core.x]
-    lda Objects.spawn_y
+    lda spawn_y
     sta [Machine.object.core.y]
 
     lda #8                      ; the cart's default hitbox {0,0,8,8}
     sta [Machine.object.core.hitbox.w]
     sta [Machine.object.core.hitbox.h]
-    lda #Objects.flag_collideable|Objects.flag_solids
+    lda #flag_collideable|flag_solids
     mov y, offset CelesteObject.core.flags
     sta (Machine.object), y
 
-    lda Objects.spawn_type              ; type.init(this)
+    lda spawn_type              ; type.init(this)
     tax
-    lda Objects.type_init_lo-1, x
+    lda type_init_lo-1, x
     sta Machine.function
-    lda Objects.type_init_hi-1, x
+    lda type_init_hi-1, x
     sta Machine.function+1
     ora Machine.function
     beq .noinit
-    jsr Objects.dispatch
+    jsr dispatch
 .noinit:
     ret
 end
@@ -193,11 +193,11 @@ proc spawn_smoke using console6502
     y_position : i8 in x
     saved_self : ptr CelesteObject in frame
 begin
-    sta Objects.spawn_x
-    stx Objects.spawn_y
-    mov Objects.spawn_type, #ObjectKind.smoke
+    sta spawn_x
+    stx spawn_y
+    mov spawn_type, #ObjectKind.smoke
     mov [saved_self], self
-    jsr Objects.allocate
+    jsr allocate
     mov self, [saved_self]
     ret
 end
@@ -223,30 +223,30 @@ end
 ; ------------------------------------------------------------------------------
 proc update_all using console6502
 begin
-    mov Objects.slot, #0
+    mov slot, #0
 .loop:
-    lda Objects.slot
-    jsr Objects.pointer
+    lda slot
+    jsr pointer
     lda [Machine.object.core.kind]
     beq .next
 
-    jsr Objects.move            ; obj.move(obj.spd.x, obj.spd.y)
+    jsr move            ; obj.move(obj.spd.x, obj.spd.y)
 
-    lda Objects.slot                ; the object may have been destroyed by its own
-    jsr Objects.pointer         ; move (nothing in stage 1 does, but reloading
+    lda slot                ; the object may have been destroyed by its own
+    jsr pointer         ; move (nothing in stage 1 does, but reloading
     lda [Machine.object.core.kind] ; cheaper than proving it cannot)
     beq .next
     tax
-    lda Objects.type_update_lo-1, x
+    lda type_update_lo-1, x
     sta Machine.function
-    lda Objects.type_update_hi-1, x
+    lda type_update_hi-1, x
     sta Machine.function+1
     ora Machine.function
     beq .next
-    jsr Objects.dispatch
+    jsr dispatch
 .next:
-    inc Objects.slot
-    cbne Objects.slot, #Objects.slot_count, .loop
+    inc slot
+    cbne slot, #slot_count, .loop
     ret
 end
 
@@ -256,23 +256,23 @@ end
 ; ------------------------------------------------------------------------------
 proc draw_all using console6502
 begin
-    mov Objects.slot, #0
+    mov slot, #0
 .loop:
-    lda Objects.slot
-    jsr Objects.pointer
+    lda slot
+    jsr pointer
     lda [Machine.object.core.kind]
     beq .next
     tax
-    lda Objects.type_draw_lo-1, x
+    lda type_draw_lo-1, x
     sta Machine.function
-    lda Objects.type_draw_hi-1, x
+    lda type_draw_hi-1, x
     sta Machine.function+1
     ora Machine.function
     beq .next
-    jsr Objects.dispatch
+    jsr dispatch
 .next:
-    inc Objects.slot
-    cbne Objects.slot, #Objects.slot_count, .loop
+    inc slot
+    cbne slot, #slot_count, .loop
     ret
 end
 
@@ -313,7 +313,7 @@ begin
     sub Machine.t0
     sta (Machine.object), y
 
-    jsr Objects.step_x
+    jsr step_x
 
     ldw value, [self.core.remainder_y] ; and the same for y
     ldw operand, [self.core.speed_y]
@@ -334,7 +334,7 @@ begin
     sub Machine.t0
     sta (Machine.object), y
 
-    jmp Objects.step_y
+    jmp step_y
 end
 
 ; ------------------------------------------------------------------------------
@@ -377,7 +377,7 @@ proc step_x using console6502
     amount : i8 in Machine.t0
 begin
     lda [Machine.object.core.flags]
-    and #Objects.flag_solids
+    and #flag_solids
     bne .solid
 
     mov y, offset CelesteObject.core.x ; inlay-exception: variable update operand t0
@@ -387,7 +387,7 @@ begin
     rts
 
 .solid:
-    jsr Objects.prepare_step
+    jsr prepare_step
 
 .loop:
     lda Machine.t1                      ; is_solid(step, 0)
@@ -426,7 +426,7 @@ proc step_y using console6502
     amount : i8 in Machine.t0
 begin
     lda [Machine.object.core.flags]
-    and #Objects.flag_solids
+    and #flag_solids
     bne .solid
 
     mov y, offset CelesteObject.core.y ; inlay-exception: variable update operand t0
@@ -436,7 +436,7 @@ begin
     rts
 
 .solid:
-    jsr Objects.prepare_step
+    jsr prepare_step
 
 .loop:
     mov Collision.offset_x, #0

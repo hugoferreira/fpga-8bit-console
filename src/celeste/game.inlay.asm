@@ -67,9 +67,9 @@ begin
     sta [game.previous_buttons]
     mov [game.max_dash_jumps], #1
 
-    jsr Game.show_title
+    jsr show_title
 .loop:
-    jsr Game.frame
+    jsr frame
     jmp .loop
 end
 
@@ -80,7 +80,7 @@ begin
     jsr Platform.wait_frame     ; PICO-8 _update is 30 Hz; the display is 60,
     jsr Platform.wait_frame     ; so one game frame spans two display frames
     jsr Platform.sample_input
-    jsr Game.update
+    jsr update
     jsr Draw.frame
     ret
 end
@@ -182,7 +182,7 @@ begin
 .objects:
     jsr Fx.update
     jsr Objects.update_all
-    jmp Game.title_tick
+    jmp title_tick
 end
 
 ; Inputs: none. Returns: none. Frame locals: none. Clobbers: A.
@@ -208,7 +208,7 @@ begin
     bpl .done
     cmp #<(-29)
     bcs .done
-    jmp Game.begin_play
+    jmp begin_play
 .done:
     ret
 end

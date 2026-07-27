@@ -59,7 +59,7 @@ namespace Fx
 ; ------------------------------------------------------------------------------
 proc init using console6502 naked
 begin
-    ldx #Fx.cloud_count-1
+    ldx #cloud_count-1
 .cloud:
     lda [video.random]                 ; x = rnd(128)
     and #$7F
@@ -82,7 +82,7 @@ begin
     dex
     bpl .cloud
 
-    ldx #Fx.particle_count-1
+    ldx #particle_count-1
 .part:
     lda [video.random]
     and #$7F
@@ -122,7 +122,7 @@ end
 ; ------------------------------------------------------------------------------
 proc update using console6502 naked
 begin
-    ldx #Fx.cloud_count-1
+    ldx #cloud_count-1
 .cloud:
     lda [effects.cloud_x_low[x]]                 ; x += spd
     clc
@@ -160,7 +160,7 @@ begin
     dex
     bpl .cloud
 
-    ldx #Fx.particle_count-1
+    ldx #particle_count-1
 .part:
     lda [effects.particle_x_low[x]]                 ; x += spd
     clc
@@ -180,10 +180,10 @@ begin
     tay
     lda [effects.particle_y_low[x]]
     clc
-    adc Fx.sin_low, y
+    adc sin_low, y
     sta [effects.particle_y_low[x]]
     lda [effects.particle_y_high[x]]
-    adc Fx.sin_high, y
+    adc sin_high, y
     sta [effects.particle_y_high[x]]
 
     lda [effects.particle_x_high[x]]                 ; if x > 132 then x = -4, y = rnd(128); same
@@ -229,7 +229,7 @@ begin
     jsr Draw.sprite
     ldx Machine.t6
     inx
-    cpx #Fx.cloud_count
+    cpx #cloud_count
     bne .cloud
     ret
 end
@@ -254,7 +254,7 @@ begin
     jsr Draw.sprite
     ldx Machine.t6
     inx
-    cpx #Fx.particle_count
+    cpx #particle_count
     bne .part
     ret
 end

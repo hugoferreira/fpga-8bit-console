@@ -34,8 +34,8 @@ begin
     cld
     ldx #$FF
     txs
-    jsr Platform.upload_sheet
-    jsr Platform.upload_palette
+    jsr upload_sheet
+    jsr upload_palette
     jmp Game.run
 end
 

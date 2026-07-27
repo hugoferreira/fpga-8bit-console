@@ -39,13 +39,13 @@ namespace Collision
 ; real. They come back with the types, in stage 2.
 ; ------------------------------------------------------------------------------
 solid:
-    mov Collision.mask, #Room.flag_solid
-    jsr Collision.box
-    jmp Collision.flags
+    mov mask, #Room.flag_solid
+    jsr box
+    jmp flags
 ice:
-    mov Collision.mask, #Room.flag_ice
-    jsr Collision.box
-    jmp Collision.flags
+    mov mask, #Room.flag_ice
+    jsr box
+    jmp flags
 ; ------------------------------------------------------------------------------
 ; obj_box: c_x/c_y/c_w/c_h = the object's hitbox, displaced by c_ox/c_oy.
 ; spikes_at wants the same box, so it is a routine rather than a prologue.
@@ -56,27 +56,27 @@ box:
     mov y, offset CelesteObject.core.hitbox.x
     clc
     adc (Machine.object), y
-    add Collision.offset_x
+    add offset_x
     sta Collision.x
     lda [Machine.object.core.y]
     mov y, offset CelesteObject.core.hitbox.y
     clc
     adc (Machine.object), y
-    add Collision.offset_y
+    add offset_y
     sta Collision.y
     lda [Machine.object.core.hitbox.w]
-    sta Collision.width
+    sta width
     lda [Machine.object.core.hitbox.h]
-    sta Collision.height
+    sta height
     rts
 ; ------------------------------------------------------------------------------
 ; tile_flag_at: is any tile overlapping the box c_x,c_y,c_w,c_h flagged c_mask?
 ; Returns A/Z. Clobbers A, X, Y, t3..t5, c_i, c_j, c_i1, c_j1.
 ; ------------------------------------------------------------------------------
 flags:
-    jsr Collision.tiles
+    jsr tiles
     bcc .miss                   ; the box does not touch the room at all
-    lda Collision.row
+    lda row
     sta Machine.t3
 .row:
     lda Machine.t3                      ; the row base: j * 16, one shift short of free
@@ -85,7 +85,7 @@ flags:
     asl
     asl
     sta Machine.t4
-    lda Collision.column
+    lda column
     sta Machine.t5
 .col:
     lda Machine.t4
@@ -94,16 +94,16 @@ flags:
     lda [room_tiles.cells[y]] ; mget
     tay
     lda tile_flags, y
-    and Collision.mask
+    and mask
     bne .hit
     inc Machine.t5
     lda Machine.t5
-    cmp Collision.last_column
+    cmp last_column
     bcc .col
     beq .col
     inc Machine.t3
     lda Machine.t3
-    cmp Collision.last_row
+    cmp last_row
     bcc .row
     beq .row
 .miss:
@@ -123,44 +123,44 @@ flags:
 ; ------------------------------------------------------------------------------
 tiles:
     lda Collision.x                     ; i0 = max(0, x >> 3)
-    jsr Collision.floor
+    jsr floor
     bpl .i0
     lda #0
 .i0:
-    sta Collision.column
+    sta column
     lda Collision.x                     ; i1 = min(15, (x + w - 1) >> 3)
-    add Collision.width
+    add width
     bvs .i1max                  ; signed overflow: off the right edge
     sub #1
     bmi .miss                   ; the whole box is left of the room
-    jsr Collision.floor
+    jsr floor
     cmp #16
     bcc .i1
 .i1max:
     lda #15
 .i1:
-    sta Collision.last_column
-    cmp Collision.column
+    sta last_column
+    cmp column
     bcc .miss
     lda Collision.y                     ; and the same vertically
-    jsr Collision.floor
+    jsr floor
     bpl .j0
     lda #0
 .j0:
-    sta Collision.row
+    sta row
     lda Collision.y
-    add Collision.height
+    add height
     bvs .j1max
     sub #1
     bmi .miss
-    jsr Collision.floor
+    jsr floor
     cmp #16
     bcc .j1
 .j1max:
     lda #15
 .j1:
-    sta Collision.last_row
-    cmp Collision.row
+    sta last_row
+    cmp row
     bcc .miss
     sec
     rts
@@ -188,9 +188,9 @@ floor:
 ; Returns A/Z. Clobbers A, X, Y, t3..t7 and the c_* box.
 ; ------------------------------------------------------------------------------
 spikes:
-    jsr Collision.tiles
+    jsr tiles
     bcc .miss
-    lda Collision.row
+    lda row
     sta Machine.t3
 .row:
     lda Machine.t3
@@ -199,7 +199,7 @@ spikes:
     asl
     asl
     sta Machine.t4
-    lda Collision.column
+    lda column
     sta Machine.t5
 .col:
     lda Machine.t4
@@ -208,27 +208,27 @@ spikes:
     lda [room_tiles.cells[y]]
     ldx #0
 .which:
-    cmp Collision.ids, x
+    cmp ids, x
     beq .found
     inx
     cpx #4
     bne .which
     jmp .next
 .found:
-    mov Machine.function, Collision.lo + x
-    lda Collision.hi, x
+    mov Machine.function, lo + x
+    lda hi, x
     sta Machine.function+1
     jsr Objects.dispatch
     bne .hit
 .next:
     inc Machine.t5
     lda Machine.t5
-    cmp Collision.last_column
+    cmp last_column
     bcc .col
     beq .col
     inc Machine.t3
     lda Machine.t3
-    cmp Collision.last_row
+    cmp last_row
     bcc .row
     beq .row
 .miss:
@@ -248,7 +248,7 @@ begin
     lda (Machine.object), y
     bmi .no
     lda Collision.y
-    add Collision.height
+    add height
     sta Machine.t6                      ; y + h
     sub #1
     and #7
@@ -319,7 +319,7 @@ begin
     lda (Machine.object), y
     bmi .no
     lda Collision.x
-    add Collision.width
+    add width
     sta Machine.t6
     sub #1
     and #7

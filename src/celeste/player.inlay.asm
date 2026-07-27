@@ -58,7 +58,7 @@ begin
     sta [Machine.object.payload.player.dash_jumps]
     lda #1
     sta [Machine.object.core.sprite]
-    jmp Player.create_hair
+    jmp create_hair
 ; Player.update
 end
 proc update using console6502
@@ -68,7 +68,7 @@ begin
     beq .go
     ret
 .go:
-    jmp Player.sample_input
+    jmp sample_input
 end
 ; Input: self in pObj. Output: Player.input. Clobbers: A.
 proc sample_input using console6502
@@ -84,8 +84,8 @@ begin
 .noinput:
     lda #0
 .haveinput:
-    sta Player.input
-    jmp Player.environment
+    sta input
+    jmp environment
 end
 ; Input: self in pObj. Outputs: owned ground/ice/edge/grace state.
 ; Clobbers: A, X, Y and collision scratch.
@@ -98,27 +98,27 @@ begin
     jsr Collision.box
     jsr Collision.spikes
     beq .nospike
-    jmp Player.kill
+    jmp kill
 .nospike:
     lda [Machine.object.core.y]  ; port's positions are signed bytes, so the
     bmi .notbottom              ; test moves 8 pixels up rather than wrapping
     cmp #121                    ; into "above the room", which is next_room -
     bcc .notbottom              ; and the sign has to be tested BEFORE the
-    jmp Player.kill             ; compare, not from its flags.
+    jmp kill             ; compare, not from its flags.
 .notbottom:
     mov Collision.offset_x, #0
     mov Collision.offset_y, #1
     jsr Collision.solid
-    sta Player.ground
+    sta ground
     mov Collision.offset_x, #0
     mov Collision.offset_y, #1
     jsr Collision.ice
-    sta Player.ice
-    lda Player.ground              ; landing smoke
+    sta ice
+    lda ground              ; landing smoke
     beq .nosmoke
     mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: mask constant remains target-owned
     lda (Machine.object), y
-    and #Player.bit_ground
+    and #bit_ground
     bne .nosmoke
     lda [Machine.object.core.x]
     pha
@@ -131,22 +131,22 @@ begin
     tbz [game.buttons], #Platform.Input.jump, .nojumpheld  ; jump = btn(jump) and not Player.jump_edge
     mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
     lda (Machine.object), y
-    and #Player.bit_jump
+    and #bit_jump
     bne .jumpheld
-    mov Player.jump_edge, #1
+    mov jump_edge, #1
     mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: mask constant remains target-owned
     lda (Machine.object), y
-    ora #Player.bit_jump
+    ora #bit_jump
     sta (Machine.object), y
     jmp .jbuf
 .jumpheld:
-    mov Player.jump_edge, #0
+    mov jump_edge, #0
     jmp .jbufdec
 .nojumpheld:
-    mov Player.jump_edge, #0
+    mov jump_edge, #0
     mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
     lda (Machine.object), y
-    and #<!Player.bit_jump
+    and #<!bit_jump
     sta (Machine.object), y
 .jbufdec:
     mov y, offset CelesteObject.payload.player.jump_buffer ; inlay-exception: branch observes pre-decrement value
@@ -162,25 +162,25 @@ begin
     tbz [game.buttons], #Platform.Input.dash, .nodashheld  ; dash = btn(dash) and not Player.dash_edge
     mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: mask constant remains target-owned
     lda (Machine.object), y
-    and #Player.bit_dash
+    and #bit_dash
     bne .dashheld
-    mov Player.dash_edge, #1
+    mov dash_edge, #1
     mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
     lda (Machine.object), y
-    ora #Player.bit_dash
+    ora #bit_dash
     sta (Machine.object), y
     jmp .grace
 .dashheld:
-    mov Player.dash_edge, #0
+    mov dash_edge, #0
     jmp .grace
 .nodashheld:
-    mov Player.dash_edge, #0
+    mov dash_edge, #0
     mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
     lda (Machine.object), y
-    and #<!Player.bit_dash
+    and #<!bit_dash
     sta (Machine.object), y
 .grace:
-    lda Player.ground
+    lda ground
     beq .airborne
     lda #6
     sta [Machine.object.payload.player.grace]
@@ -199,7 +199,7 @@ begin
     sub #1
     sta (Machine.object), y
 .gracedone:
-    jmp Player.active_dash
+    jmp active_dash
 end
 ; Input: self in pObj and owned environment state. Returns through either
 ; Player.horizontal or Player.animation. Clobbers: A, X, Y and w0-w2.
@@ -212,7 +212,7 @@ begin
     beq .move
     jmp .dashing
 .move:
-    jmp Player.horizontal
+    jmp horizontal
 .dashing:
     sub #1
     sta (Machine.object), y
@@ -248,30 +248,30 @@ begin
     jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_y
     jsr Fixed.store_object
-    jmp Player.animation
+    jmp animation
 ; The cart's `else` branch: run, gravity, wall slide, jump, dash.
 end
 proc horizontal using console6502
     self : ptr CelesteObject in Machine.object
 begin
-    mov Player.maxrun, #<Player.max_run
-    mov Player.accel, #<Player.accel_ground
-    mov Player.accel+1, #>Player.accel_ground
-    mov Player.decel_word, #<Player.deceleration
-    mov Player.decel_word+1, #>Player.deceleration
-    lda Player.ground
+    mov maxrun, #<max_run
+    mov accel, #<accel_ground
+    mov accel+1, #>accel_ground
+    mov decel_word, #<deceleration
+    mov decel_word+1, #>deceleration
+    lda ground
     bne .grounded
-    mov Player.accel, #<Player.accel_air
-    mov Player.accel+1, #>Player.accel_air
+    mov accel, #<accel_air
+    mov accel+1, #>accel_air
     jmp .run
 .grounded:
-    lda Player.ice
+    lda ice
     beq .run
-    mov Player.accel, #<Player.accel_ice
-    mov Player.accel+1, #>Player.accel_ice
+    mov accel, #<accel_ice
+    mov accel+1, #>accel_ice
 .run:
-    lda #<Player.max_run                ; if abs(spd.x) > maxrun then decelerate
-    ldx #>Player.max_run
+    lda #<max_run                ; if abs(spd.x) > maxrun then decelerate
+    ldx #>max_run
     jsr Fixed.set_value
     mov y, offset CelesteObject.core.speed_x
     jsr Fixed.load_object_target
@@ -287,17 +287,17 @@ begin
     jsr Fixed.load_object
     lda Fixed.word0+1
     bmi .decelneg
-    lda #<Player.max_run
-    ldx #>Player.max_run
+    lda #<max_run
+    ldx #>max_run
     jsr Fixed.set_target
     jmp .decel
 .decelneg:
-    lda #<(-Player.max_run & $FFFF)
-    ldx #>(-Player.max_run & $FFFF)
+    lda #<(-max_run & $FFFF)
+    ldx #>(-max_run & $FFFF)
     jsr Fixed.set_target
 .decel:
-    lda Player.decel_word
-    ldx Player.decel_word+1
+    lda decel_word
+    ldx decel_word+1
     jsr Fixed.set_amount
     jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_x
@@ -306,16 +306,16 @@ begin
 .accelerate:                    ; spd.x = Fixed.approach(spd.x, input*maxrun, accel)
     mov y, offset CelesteObject.core.speed_x
     jsr Fixed.load_object
-    lda Player.input
+    lda input
     beq .targetzero
     bmi .targetneg
-    lda #<Player.max_run
-    ldx #>Player.max_run
+    lda #<max_run
+    ldx #>max_run
     jsr Fixed.set_target
     jmp .doaccel
 .targetneg:
-    lda #<(-Player.max_run & $FFFF)
-    ldx #>(-Player.max_run & $FFFF)
+    lda #<(-max_run & $FFFF)
+    ldx #>(-max_run & $FFFF)
     jsr Fixed.set_target
     jmp .doaccel
 .targetzero:
@@ -323,8 +323,8 @@ begin
     tax
     jsr Fixed.set_target
 .doaccel:
-    lda Player.accel
-    ldx Player.accel+1
+    lda accel
+    ldx accel+1
     jsr Fixed.set_amount
     jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_x
@@ -348,54 +348,54 @@ begin
     ora #$01
     sta (Machine.object), y
 .done:
-    jmp Player.vertical
+    jmp vertical
 end
 ; Input: self and owned environment state. Updates vertical speed/wall slide.
 ; Clobbers: A, X, Y, w0-w2 and collision scratch.
 proc vertical using console6502
     self : ptr CelesteObject in Machine.object
 begin
-    mov Player.maxfall, #<Player.max_fall
-    mov Player.maxfall+1, #>Player.max_fall
-    mov Player.grav, #<Player.gravity
-    mov Player.grav+1, #>Player.gravity
+    mov maxfall, #<max_fall
+    mov maxfall+1, #>max_fall
+    mov grav, #<gravity
+    mov grav+1, #>gravity
     mov y, offset CelesteObject.core.speed_y                 ; if abs(spd.y) <= 0.15 then gravity *= 0.5
     jsr Fixed.load_object
     jsr Fixed.absolute
-    lda #<Player.y_epsilon
-    ldx #>Player.y_epsilon
+    lda #<y_epsilon
+    ldx #>y_epsilon
     jsr Fixed.set_target
     jsr Fixed.compare                   ; N set: abs(spd.y) < 0.15
     bmi .halfgrav
-    cbne Fixed.word0, #<Player.y_epsilon, .slide  ; the cart's test is <=, so catch equality too
-    cbne Fixed.word0+1, #>Player.y_epsilon, .slide
+    cbne Fixed.word0, #<y_epsilon, .slide  ; the cart's test is <=, so catch equality too
+    cbne Fixed.word0+1, #>y_epsilon, .slide
 .halfgrav:
-    mov Player.grav, #<Player.gravity_half
-    mov Player.grav+1, #>Player.gravity_half
+    mov grav, #<gravity_half
+    mov grav+1, #>gravity_half
 .slide:                         ; wall slide
-    lda Player.input
+    lda input
     beq .fall
     sta Collision.offset_x
     mov Collision.offset_y, #0
     jsr Collision.solid
     beq .fall
-    lda Player.input
+    lda input
     sta Collision.offset_x
     mov Collision.offset_y, #0
     jsr Collision.ice
     bne .fall
-    mov Player.maxfall, #<Player.fall_slide
-    mov Player.maxfall+1, #>Player.fall_slide
+    mov maxfall, #<fall_slide
+    mov maxfall+1, #>fall_slide
     lda [video.random]                 ; if rnd(10) < 2 then a puff off the wall
     cmp #51
     bcs .fall
     lda [Machine.object.core.x]
-    add Player.input  ; x + input*6, by adding input six times rather
-    add Player.input
-    add Player.input
-    add Player.input
-    add Player.input
-    add Player.input
+    add input  ; x + input*6, by adding input six times rather
+    add input
+    add input
+    add input
+    add input
+    add input
     pha
     mov y, offset CelesteObject.core.y
     lda (Machine.object), y
@@ -403,21 +403,21 @@ begin
     pla
     jsr Objects.spawn_smoke
 .fall:
-    lda Player.ground
+    lda ground
     bne .done
     mov y, offset CelesteObject.core.speed_y                 ; spd.y = Fixed.approach(spd.y, maxfall, gravity)
     jsr Fixed.load_object
-    lda Player.maxfall
-    ldx Player.maxfall+1
+    lda maxfall
+    ldx maxfall+1
     jsr Fixed.set_target
-    lda Player.grav
-    ldx Player.grav+1
+    lda grav
+    ldx grav+1
     jsr Fixed.set_amount
     jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_y
     jsr Fixed.store_object
 .done:
-    jmp Player.jump_dash
+    jmp jump_dash
 end
 ; Input: self and owned input/environment state. Performs jump and dash
 ; transitions. Clobbers: A, X, Y, w0-w2 and collision scratch.
@@ -435,10 +435,10 @@ begin
     lda #0
     sta [Machine.object.payload.player.jump_buffer]
     sta [Machine.object.payload.player.grace]
-    lda #<Player.jump_speed
+    lda #<jump_speed
     mov y, offset CelesteObject.core.speed_y.fraction
     sta (Machine.object), y
-    lda #>Player.jump_speed
+    lda #>jump_speed
     iny
     sta (Machine.object), y
     lda [Machine.object.core.x]
@@ -455,58 +455,58 @@ begin
     mov Collision.offset_y, #0
     jsr Collision.solid
     beq .wallright
-    mov Player.wall, #$FF
+    mov wall, #$FF
     jmp .havewall
 .wallright:
     mov Collision.offset_x, #3
     mov Collision.offset_y, #0
     jsr Collision.solid
     beq .dash
-    mov Player.wall, #1
+    mov wall, #1
 .havewall:
     lda #2
     jsr Audio.guarded_sfx
     lda #0
     sta [Machine.object.payload.player.jump_buffer]
-    lda #<Player.jump_speed
+    lda #<jump_speed
     mov y, offset CelesteObject.core.speed_y.fraction
     sta (Machine.object), y
-    lda #>Player.jump_speed
+    lda #>jump_speed
     iny
     sta (Machine.object), y
-    lda Player.wall               ; spd.x = -wall_dir * (maxrun + 1)
+    lda wall               ; spd.x = -wall_dir * (maxrun + 1)
     bmi .wjright
-    lda #<(-Player.wall_jump & $FFFF)
-    ldx #>(-Player.wall_jump & $FFFF)
+    lda #<(-wall_jump & $FFFF)
+    ldx #>(-wall_jump & $FFFF)
     jmp .wjset
 .wjright:
-    lda #<Player.wall_jump
-    ldx #>Player.wall_jump
+    lda #<wall_jump
+    ldx #>wall_jump
 .wjset:
     mov y, offset CelesteObject.core.speed_x.fraction
     sta (Machine.object), y
     txa
     iny
     sta (Machine.object), y
-    lda Player.wall               ; the puff, unless the wall is ice
+    lda wall               ; the puff, unless the wall is ice
     asl
     asl
-    add Player.wall  ; wall_dir * 5 ... the cart tests ice at *3
+    add wall  ; wall_dir * 5 ... the cart tests ice at *3
     sta Collision.offset_x                    ; and puffs at *6; close enough is not enough,
-    lda Player.wall               ; so both are spelled out
+    lda wall               ; so both are spelled out
     asl
-    add Player.wall
+    add wall
     sta Collision.offset_x                    ; wall_dir * 3
     mov Collision.offset_y, #0
     jsr Collision.ice
     bne .dash
     lda [Machine.object.core.x]
-    add Player.wall
-    add Player.wall
-    add Player.wall
-    add Player.wall
-    add Player.wall
-    add Player.wall
+    add wall
+    add wall
+    add wall
+    add wall
+    add wall
+    add wall
     pha
     mov y, offset CelesteObject.core.y
     lda (Machine.object), y
@@ -514,7 +514,7 @@ begin
     pla
     jsr Objects.spawn_smoke
 .dash:
-    lda Player.dash_edge
+    lda dash_edge
     beq .nodash
     lda [Machine.object.payload.player.dash_jumps]
     bne .dodash
@@ -528,7 +528,7 @@ begin
     pla
     jsr Objects.spawn_smoke
 .nodash:
-    jmp Player.animation
+    jmp animation
 .dodash:
     lda [Machine.object.core.x]
     pha
@@ -553,41 +553,41 @@ begin
 .nov:
     lda #0
 .havev:
-    sta Player.vinput
-    lda Player.input
+    sta vinput
+    lda input
     beq .vonly
-    lda Player.vinput
+    lda vinput
     beq .honly
-    lda Player.input                 ; diagonal: both axes at d_half
-    ldx #<Player.dash_half
-    ldy #>Player.dash_half
-    jsr Player.set_speed_x_signed
-    lda Player.vinput
-    ldx #<Player.dash_half
-    ldy #>Player.dash_half
-    jsr Player.set_speed_y_signed
+    lda input                 ; diagonal: both axes at d_half
+    ldx #<dash_half
+    ldy #>dash_half
+    jsr set_speed_x_signed
+    lda vinput
+    ldx #<dash_half
+    ldy #>dash_half
+    jsr set_speed_y_signed
     jmp .dashdone
 .honly:
-    lda Player.input
-    ldx #<Player.dash_full
-    ldy #>Player.dash_full
-    jsr Player.set_speed_x_signed
+    lda input
+    ldx #<dash_full
+    ldy #>dash_full
+    jsr set_speed_x_signed
     lda #0
     ldx #0
     ldy #0
-    jsr Player.set_speed_y_signed
+    jsr set_speed_y_signed
     jmp .dashdone
 .vonly:
-    lda Player.vinput
+    lda vinput
     beq .neutral
     lda #0
     ldx #0
     ldy #0
-    jsr Player.set_speed_x_signed
-    lda Player.vinput
-    ldx #<Player.dash_full
-    ldy #>Player.dash_full
-    jsr Player.set_speed_y_signed
+    jsr set_speed_x_signed
+    lda vinput
+    ldx #<dash_full
+    ldy #>dash_full
+    jsr set_speed_y_signed
     jmp .dashdone
 .neutral:                       ; no direction held: the cart dashes at 1 px/frame
     lda [Machine.object.core.flip]
@@ -598,13 +598,13 @@ begin
 .neutralright:
     lda #1
 .neutralset:
-    ldx #<Player.max_run
-    ldy #>Player.max_run
-    jsr Player.set_speed_x_signed
+    ldx #<max_run
+    ldy #>max_run
+    jsr set_speed_x_signed
     lda #0
     ldx #0
     ldy #0
-    jsr Player.set_speed_y_signed
+    jsr set_speed_y_signed
 .dashdone:
     lda #3
     jsr Audio.guarded_sfx
@@ -613,17 +613,17 @@ begin
     mov y, offset CelesteObject.core.speed_x                 ; dash_target = 2 * sign(spd), dash_accel = 1.5
     jsr Fixed.load_object
     jsr Fixed.sign
-    ldx #<Player.dash_target
-    ldy #>Player.dash_target
-    jsr Player.signed_word
+    ldx #<dash_target
+    ldy #>dash_target
+    jsr signed_word
     mov y, offset CelesteObject.payload.player.dash_target_x
     jsr Fixed.store_object
     mov y, offset CelesteObject.core.speed_y
     jsr Fixed.load_object
     jsr Fixed.sign
-    ldx #<Player.dash_target
-    ldy #>Player.dash_target
-    jsr Player.signed_word
+    ldx #<dash_target
+    ldy #>dash_target
+    jsr signed_word
     mov y, offset CelesteObject.payload.player.dash_target_y
     jsr Fixed.store_object
     mov y, offset CelesteObject.core.speed_y.fraction
@@ -633,19 +633,19 @@ begin
     beq .yzero
     lda [Machine.object.core.speed_y.integer]
     bpl .ynonzero
-    lda #<(-Player.dash_target_up & $FFFF)
+    lda #<(-dash_target_up & $FFFF)
     mov y, offset CelesteObject.payload.player.dash_target_y.fraction
     sta (Machine.object), y
-    lda #>(-Player.dash_target_up & $FFFF)
+    lda #>(-dash_target_up & $FFFF)
     iny
     sta (Machine.object), y
 .ynonzero:
-    lda #<Player.dash_accel_diag       ; spd.y != 0: dash_accel.x *= sqrt(2)/2
-    ldx #>Player.dash_accel_diag
+    lda #<dash_accel_diag       ; spd.y != 0: dash_accel.x *= sqrt(2)/2
+    ldx #>dash_accel_diag
     jmp .setax
 .yzero:
-    lda #<Player.dash_accel
-    ldx #>Player.dash_accel
+    lda #<dash_accel
+    ldx #>dash_accel
 .setax:
     mov y, offset CelesteObject.payload.player.dash_accel_x.fraction
     sta (Machine.object), y
@@ -657,19 +657,19 @@ begin
     iny
     ora (Machine.object), y
     beq .xzero
-    lda #<Player.dash_accel_diag
-    ldx #>Player.dash_accel_diag
+    lda #<dash_accel_diag
+    ldx #>dash_accel_diag
     jmp .setay
 .xzero:
-    lda #<Player.dash_accel
-    ldx #>Player.dash_accel
+    lda #<dash_accel
+    ldx #>dash_accel
 .setay:
     mov y, offset CelesteObject.payload.player.dash_accel_y.fraction
     sta (Machine.object), y
     txa
     iny
     sta (Machine.object), y
-    jmp Player.animation
+    jmp animation
 end
 ; Animation, the level exit, and the ground latch.
 proc animation using console6502
@@ -680,9 +680,9 @@ begin
     add #1
     and #15
     sta (Machine.object), y
-    lda Player.ground
+    lda ground
     bne .onground
-    lda Player.input                 ; airborne: 5 against a wall, 3 otherwise
+    lda input                 ; airborne: 5 against a wall, 3 otherwise
     sta Collision.offset_x
     mov Collision.offset_y, #0
     jsr Collision.solid
@@ -725,10 +725,10 @@ begin
     rts
 .stay:
     lda [Machine.object.payload.player.player_bits]
-    and #<!Player.bit_ground
-    ldy Player.ground
+    and #<!bit_ground
+    ldy ground
     beq .nolatch
-    ora #Player.bit_ground
+    ora #bit_ground
 .nolatch:
     sta [Machine.object.payload.player.player_bits]
     ret
@@ -742,7 +742,7 @@ proc set_speed_x_signed using console6502 naked
     low : u8 in x
     high : u8 in y
 begin
-    jsr Player.signed_word
+    jsr signed_word
     mov y, offset CelesteObject.core.speed_x
     jmp Fixed.store_object
 end
@@ -752,7 +752,7 @@ proc set_speed_y_signed using console6502 naked
     low : u8 in x
     high : u8 in y
 begin
-    jsr Player.signed_word
+    jsr signed_word
     mov y, offset CelesteObject.core.speed_y
     jmp Fixed.store_object
 end
@@ -833,8 +833,8 @@ begin
     sta (Machine.object), y
 .inside:
     lda [Machine.object.payload.player.dash_jumps]
-    jsr Player.set_hair_color
-    jsr Player.draw_hair
+    jsr set_hair_color
+    jsr draw_hair
     jmp Draw.object
 ; player_spawn - the cart's three-state entry animation.
 end
@@ -859,10 +859,10 @@ begin
     sta [Machine.object.payload.spawn.target_y]
     lda #127                    ; the cart starts at y = 128, one past what a
     sta [Machine.object.core.y]  ; screen either way
-    lda #<Spawn.speed
+    lda #<speed
     mov y, offset CelesteObject.core.speed_y.fraction
     sta (Machine.object), y
-    lda #>Spawn.speed
+    lda #>speed
     iny
     sta (Machine.object), y
     mov y, offset CelesteObject.core.flags ; inlay-exception: complemented target constant
@@ -897,8 +897,8 @@ begin
 .falling:
     mov y, offset CelesteObject.core.speed_y                 ; spd.y += 0.5
     jsr Fixed.load_object
-    lda #<Spawn.gravity
-    ldx #>Spawn.gravity
+    lda #<gravity
+    ldx #>gravity
     jsr Fixed.set_target
     jsr Fixed.add
     mov y, offset CelesteObject.core.speed_y
@@ -993,10 +993,10 @@ proc init using console6502
 begin
     lda #29
     sta [Machine.object.core.sprite]
-    lda #<Smoke.speed_y
+    lda #<speed_y
     mov y, offset CelesteObject.core.speed_y.fraction
     sta (Machine.object), y
-    lda #>Smoke.speed_y
+    lda #>speed_y
     iny
     sta (Machine.object), y
     lda [video.random]                 ; spd.x = 0.3 + rnd(0.2)
