@@ -10,6 +10,8 @@
 ; touch t0, t1 or t2 - those hold the step and the loop counter of the caller.
 ; ------------------------------------------------------------------------------
 namespace Collision
+    export offset_x
+    export offset_y
     location x : u8 at $22
     location y : u8 at $23
     location width : u8 at $24
@@ -37,11 +39,11 @@ namespace Collision
 ; real. They come back with the types, in stage 2.
 ; ------------------------------------------------------------------------------
 solid:
-    mov c_mask, #Room.flag_solid
+    mov Collision.mask, #Room.flag_solid
     jsr Collision.box
     jmp Collision.flags
 ice:
-    mov c_mask, #Room.flag_ice
+    mov Collision.mask, #Room.flag_ice
     jsr Collision.box
     jmp Collision.flags
 ; ------------------------------------------------------------------------------
@@ -54,18 +56,18 @@ box:
     mov y, offset CelesteObject.core.hitbox.x
     clc
     adc (Machine.object), y
-    add c_ox
-    sta c_x
+    add Collision.offset_x
+    sta Collision.x
     lda [Machine.object.core.y]
     mov y, offset CelesteObject.core.hitbox.y
     clc
     adc (Machine.object), y
-    add c_oy
-    sta c_y
+    add Collision.offset_y
+    sta Collision.y
     lda [Machine.object.core.hitbox.w]
-    sta c_w
+    sta Collision.width
     lda [Machine.object.core.hitbox.h]
-    sta c_h
+    sta Collision.height
     rts
 ; ------------------------------------------------------------------------------
 ; tile_flag_at: is any tile overlapping the box c_x,c_y,c_w,c_h flagged c_mask?
@@ -74,7 +76,7 @@ box:
 flags:
     jsr Collision.tiles
     bcc .miss                   ; the box does not touch the room at all
-    lda c_j
+    lda Collision.row
     sta t3
 .row:
     lda t3                      ; the row base: j * 16, one shift short of free
@@ -83,7 +85,7 @@ flags:
     asl
     asl
     sta t4
-    lda c_i
+    lda Collision.column
     sta t5
 .col:
     lda t4
@@ -92,16 +94,16 @@ flags:
     lda [room_tiles.cells[y]] ; mget
     tay
     lda tile_flags, y
-    and c_mask
+    and Collision.mask
     bne .hit
     inc t5
     lda t5
-    cmp c_i1
+    cmp Collision.last_column
     bcc .col
     beq .col
     inc t3
     lda t3
-    cmp c_j1
+    cmp Collision.last_row
     bcc .row
     beq .row
 .miss:
@@ -120,14 +122,14 @@ flags:
 ; is not just three shifts.
 ; ------------------------------------------------------------------------------
 tiles:
-    lda c_x                     ; i0 = max(0, x >> 3)
+    lda Collision.x                     ; i0 = max(0, x >> 3)
     jsr Collision.floor
     bpl .i0
     lda #0
 .i0:
-    sta c_i
-    lda c_x                     ; i1 = min(15, (x + w - 1) >> 3)
-    add c_w
+    sta Collision.column
+    lda Collision.x                     ; i1 = min(15, (x + w - 1) >> 3)
+    add Collision.width
     bvs .i1max                  ; signed overflow: off the right edge
     sub #1
     bmi .miss                   ; the whole box is left of the room
@@ -137,17 +139,17 @@ tiles:
 .i1max:
     lda #15
 .i1:
-    sta c_i1
-    cmp c_i
+    sta Collision.last_column
+    cmp Collision.column
     bcc .miss
-    lda c_y                     ; and the same vertically
+    lda Collision.y                     ; and the same vertically
     jsr Collision.floor
     bpl .j0
     lda #0
 .j0:
-    sta c_j
-    lda c_y
-    add c_h
+    sta Collision.row
+    lda Collision.y
+    add Collision.height
     bvs .j1max
     sub #1
     bmi .miss
@@ -157,8 +159,8 @@ tiles:
 .j1max:
     lda #15
 .j1:
-    sta c_j1
-    cmp c_j
+    sta Collision.last_row
+    cmp Collision.row
     bcc .miss
     sec
     rts
@@ -188,7 +190,7 @@ floor:
 spikes:
     jsr Collision.tiles
     bcc .miss
-    lda c_j
+    lda Collision.row
     sta t3
 .row:
     lda t3
@@ -197,7 +199,7 @@ spikes:
     asl
     asl
     sta t4
-    lda c_i
+    lda Collision.column
     sta t5
 .col:
     lda t4
@@ -221,12 +223,12 @@ spikes:
 .next:
     inc t5
     lda t5
-    cmp c_i1
+    cmp Collision.last_column
     bcc .col
     beq .col
     inc t3
     lda t3
-    cmp c_j1
+    cmp Collision.last_row
     bcc .row
     beq .row
 .miss:
@@ -245,8 +247,8 @@ begin
     mov y, offset CelesteObject.core.speed_y.integer
     lda (Machine.object), y
     bmi .no
-    lda c_y
-    add c_h
+    lda Collision.y
+    add Collision.height
     sta t6                      ; y + h
     sub #1
     and #7
@@ -277,7 +279,7 @@ begin
     ora (Machine.object), y
     bne .no
 .maybe:
-    lda c_y
+    lda Collision.y
     and #7
     cmp #3
     bcc .yes
@@ -299,7 +301,7 @@ begin
     ora (Machine.object), y
     bne .no
 .maybe:
-    lda c_x
+    lda Collision.x
     and #7
     cmp #3
     bcc .yes
@@ -316,8 +318,8 @@ begin
     mov y, offset CelesteObject.core.speed_x.integer
     lda (Machine.object), y
     bmi .no
-    lda c_x
-    add c_w
+    lda Collision.x
+    add Collision.width
     sta t6
     sub #1
     and #7

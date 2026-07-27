@@ -125,13 +125,13 @@ load:
     asl
     asl
     asl
-    sta spawn_x
+    sta Objects.spawn_x
     txa
     and #$F0
     lsr
-    sta spawn_y
+    sta Objects.spawn_y
     stx [game.room_load_index]
-    mov spawn_type, #ObjectKind.spawn
+    mov Objects.spawn_type, #ObjectKind.spawn
     jsr Objects.allocate
     ldx [game.room_load_index]
 .nextspawn:
@@ -159,10 +159,10 @@ load:
     sta [video.camera_y]
     jsr Room.title              ; the cart shows no room title on the title
     beq .done                   ; screen: `if not is_title() then ... end`
-    mov spawn_type, #ObjectKind.title
+    mov Objects.spawn_type, #ObjectKind.title
     lda #0
-    sta spawn_x
-    sta spawn_y
+    sta Objects.spawn_x
+    sta Objects.spawn_y
     jsr Objects.allocate
 .done:
     jmp Draw.overlay_dirty

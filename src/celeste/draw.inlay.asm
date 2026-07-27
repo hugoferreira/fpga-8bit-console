@@ -271,7 +271,7 @@ hair_color:
     ldx [game.frames]                  ; 7 + flr((frames/3)%2)*4, without a divide
     lda Draw.hair_palette, x
 .done:
-    sta hair_col
+    sta Draw.hair_color_value
     rts
 
 ; frames is 0..29 and the cart wants (frames/3) & 1. Thirty bytes is cheaper
@@ -300,8 +300,8 @@ hair_draw:
     mov y, offset CelesteObject.core.x
     clc
     adc (Machine.object), y
-    sta hair_lx+1
-    mov hair_lx, #0
+    sta Draw.hair_last_x+1
+    mov Draw.hair_last_x, #0
 
     tbz [game.buttons], #Platform.Input.down, .lastup  ; last.y = y + (btn(down) and 4 or 3)
     lda #4
@@ -312,57 +312,57 @@ hair_draw:
     mov y, offset CelesteObject.core.y
     clc
     adc (Machine.object), y
-    sta hair_ly+1
-    mov hair_ly, #$80
+    sta Draw.hair_last_y+1
+    mov Draw.hair_last_y, #$80
 
-    mov hair_i, #0
-    mov d_n, #CelesteObject.payload.hair.hair.offset
+    mov Draw.hair_index, #0
+    mov Draw.count, #CelesteObject.payload.hair.hair.offset
 .node:
-    ldy d_n                     ; h.x += (last.x - h.x) * 0.625
+    ldy Draw.count                     ; h.x += (last.x - h.x) * 0.625
     jsr Fixed.load_object
-    ldab hair_lx
+    ldab Draw.hair_last_x
     stab Fixed.word1
     jsr Draw.hair_chase
-    ldy d_n
+    ldy Draw.count
     jsr Fixed.store_object
     ldab Fixed.word0
-    stab hair_hx
+    stab Draw.hair_head_x
 
-    lda d_n
+    lda Draw.count
     add #2
     tay
     jsr Fixed.load_object
-    ldab hair_ly
+    ldab Draw.hair_last_y
     stab Fixed.word1
     jsr Draw.hair_chase
-    lda d_n
+    lda Draw.count
     add #2
     tay
     jsr Fixed.store_object
     ldab Fixed.word0
-    stab hair_hy
+    stab Draw.hair_head_y
 
-    ldab hair_hx  ; this node becomes the next one's target
-    stab hair_lx
-    ldab hair_hy
-    stab hair_ly
+    ldab Draw.hair_head_x  ; this node becomes the next one's target
+    stab Draw.hair_last_x
+    ldab Draw.hair_head_y
+    stab Draw.hair_last_y
 
-    lda hair_col                ; blob size: 2, 2, 1, 1, 1
+    lda Draw.hair_color_value                ; blob size: 2, 2, 1, 1, 1
     sta t3
-    cbge hair_i, #2, .small
-    lda hair_hx+1
+    cbge Draw.hair_index, #2, .small
+    lda Draw.hair_head_x+1
     sub #2
     sta t4
-    lda hair_hy+1
+    lda Draw.hair_head_y+1
     sub #2
     sta t5
     lda #Gfx.hair_big
     jmp .plot
 .small:
-    lda hair_hx+1
+    lda Draw.hair_head_x+1
     sub #1
     sta t4
-    lda hair_hy+1
+    lda Draw.hair_head_y+1
     sub #1
     sta t5
     lda #Gfx.hair_small
@@ -378,11 +378,11 @@ hair_draw:
     pla
     jsr Draw.sprite
 
-    lda d_n
+    lda Draw.count
     add #4
-    sta d_n
-    inc hair_i
-    cbeq hair_i, #Draw.hair_nodes, .done
+    sta Draw.count
+    inc Draw.hair_index
+    cbeq Draw.hair_index, #Draw.hair_nodes, .done
     jmp .node                   ; the node loop is longer than a branch reaches
 .done:
     rts
@@ -561,48 +561,48 @@ overlay_end:
     glyph_end = $FF
 
 char:
-    sta d_ch
+    sta Draw.character
     asl
     asl
-    add d_ch  ; glyph * 5
+    add Draw.character  ; glyph * 5
     tax
-    mov d_row, #0
+    mov Draw.row, #0
 .row:
-    mov d_bits, Draw.font + x
-    mov d_n, #0
-    tbz d_x, #7, .placed
+    mov Draw.bits, Draw.font + x
+    mov Draw.count, #0
+    tbz Draw.pen_x, #7, .placed
     tay
 .shift:
-    asl d_bits
-    rol d_n
+    asl Draw.bits
+    rol Draw.count
     dey
     bne .shift
 .placed:
-    lda d_y
-    add d_row
+    lda Draw.pen_y
+    add Draw.row
     tay
     lda [overlay_rows.low[y]]
     sta pOvl
     lda [overlay_rows.high[y]]
     sta pOvl+1
-    lda d_x
+    lda Draw.pen_x
     lsr
     lsr
     lsr
     tay
     lda (pOvl), y
-    ora d_bits
+    ora Draw.bits
     sta (pOvl), y
     iny
     lda (pOvl), y
-    ora d_n
+    ora Draw.count
     sta (pOvl), y
     inx
-    inc d_row
-    cbne d_row, #5, .row
-    lda d_x
+    inc Draw.row
+    cbne Draw.row, #5, .row
+    lda Draw.pen_x
     add #4
-    sta d_x
+    sta Draw.pen_x
     rts
 
 ; text: print the glyph string at pSrc, starting at (d_x, d_y).
@@ -612,9 +612,9 @@ text:
     lda (Machine.source), y
     cmp #Draw.glyph_end
     beq .done
-    sty d_i
+    sty Draw.index
     jsr Draw.char
-    ldy d_i
+    ldy Draw.index
     iny
     bne .ch
 .done:
@@ -653,14 +653,14 @@ byte:
 ; room starts - so this is the port using space the original did not have.
 ; ------------------------------------------------------------------------------
 hud:
-    mov d_x, #132
-    mov d_y, #4
+    mov Draw.pen_x, #132
+    mov Draw.pen_y, #4
     lda #<Draw.str_time
     ldx #>Draw.str_time
     jsr Draw.string
 
-    mov d_x, #130
-    mov d_y, #11
+    mov Draw.pen_x, #130
+    mov Draw.pen_y, #11
     lda [game.minutes]
     jsr Draw.byte
     lda #Draw.glyph_colon
@@ -668,14 +668,14 @@ hud:
     lda [game.seconds]
     jsr Draw.byte
 
-    mov d_x, #132
-    mov d_y, #22
+    mov Draw.pen_x, #132
+    mov Draw.pen_y, #22
     lda #<Draw.str_dead
     ldx #>Draw.str_dead
     jsr Draw.string
 
-    mov d_x, #138
-    mov d_y, #29
+    mov Draw.pen_x, #138
+    mov Draw.pen_y, #29
     lda [game.deaths]
     jmp Draw.byte
 
@@ -689,20 +689,20 @@ hud:
 ; 3x5 uppercase, so the names are capitalised.
 ; ------------------------------------------------------------------------------
 title_credits:
-    mov d_x, #58
-    mov d_y, #80
+    mov Draw.pen_x, #58
+    mov Draw.pen_y, #80
     lda #<Draw.str_xc
     ldx #>Draw.str_xc
     jsr Draw.string
 
-    mov d_x, #42
-    mov d_y, #96
+    mov Draw.pen_x, #42
+    mov Draw.pen_y, #96
     lda #<Draw.str_thorson
     ldx #>Draw.str_thorson
     jsr Draw.string
 
-    mov d_x, #46
-    mov d_y, #102
+    mov Draw.pen_x, #46
+    mov Draw.pen_y, #102
     lda #<Draw.str_berry
     ldx #>Draw.str_berry
     jmp Draw.string
@@ -720,8 +720,8 @@ room_title:
     cmp #30
     beq .summit
 
-    mov d_x, #52
-    mov d_y, #62
+    mov Draw.pen_x, #52
+    mov Draw.pen_y, #62
     lda [game.level]
     add #1
     jsr Draw.byte
@@ -735,15 +735,15 @@ room_title:
     jmp Draw.char
 
 .oldsite:
-    mov d_x, #48
-    mov d_y, #62
+    mov Draw.pen_x, #48
+    mov Draw.pen_y, #62
     lda #<Draw.str_oldsite
     ldx #>Draw.str_oldsite
     jmp Draw.string
 
 .summit:
-    mov d_x, #52
-    mov d_y, #62
+    mov Draw.pen_x, #52
+    mov Draw.pen_y, #62
     lda #<Draw.str_summit
     ldx #>Draw.str_summit
     jmp Draw.string

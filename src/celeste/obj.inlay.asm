@@ -45,6 +45,11 @@ namespace Objects
     export flag_collideable
     export flag_solids
     export slot_count
+    export slot
+    export spawn_type
+    export spawn_x
+    export spawn_y
+    export spawn_slot
     slot_count = objects.count
     flag_collideable = $01
     flag_solids = $02
@@ -110,10 +115,10 @@ end
 ; slot is $FF if the pool is full. Clobbers A, X, Y, t0 and pObj.
 ; ------------------------------------------------------------------------------
 proc allocate using console6502
-    kind : ObjectKind in spawn_type
-    x_position : i8 in spawn_x
-    y_position : i8 in spawn_y
-    slot : u8 return in spawn_slot
+    kind : ObjectKind in Objects.spawn_type
+    x_position : i8 in Objects.spawn_x
+    y_position : i8 in Objects.spawn_y
+    slot : u8 return in Objects.spawn_slot
     result : ptr CelesteObject return in Machine.object
 begin
     ldx #0
@@ -126,10 +131,10 @@ begin
     cpx #Objects.slot_count
     bne .find
     lda #$FF                    ; pool full: the cart has no such case, this
-    sta spawn_slot              ; console does. Dropping the object is the only
+    sta Objects.spawn_slot              ; console does. Dropping the object is the only
     rts                         ; option that cannot corrupt the list.
 .found:
-    stx spawn_slot
+    stx Objects.spawn_slot
 
     mov y, #CelesteObject.size-1 ; a fresh record starts empty, so every field
     lda #0                      ; the type does not set reads as the cart's nil
@@ -138,14 +143,14 @@ begin
     dey
     bpl .clear
 
-    lda spawn_type
+    lda Objects.spawn_type
     sta [Machine.object.core.kind]
     tax
     lda Objects.type_tile-1, x   ; obj.spr = type.tile
     sta [Machine.object.core.sprite]
-    lda spawn_x
+    lda Objects.spawn_x
     sta [Machine.object.core.x]
-    lda spawn_y
+    lda Objects.spawn_y
     sta [Machine.object.core.y]
 
     lda #8                      ; the cart's default hitbox {0,0,8,8}
@@ -155,7 +160,7 @@ begin
     mov y, offset CelesteObject.core.flags
     sta (Machine.object), y
 
-    lda spawn_type              ; type.init(this)
+    lda Objects.spawn_type              ; type.init(this)
     tax
     lda Objects.type_init_lo-1, x
     sta Machine.function
@@ -188,9 +193,9 @@ proc spawn_smoke using console6502
     y_position : i8 in x
     saved_self : ptr CelesteObject in frame
 begin
-    sta spawn_x
-    stx spawn_y
-    mov spawn_type, #ObjectKind.smoke
+    sta Objects.spawn_x
+    stx Objects.spawn_y
+    mov Objects.spawn_type, #ObjectKind.smoke
     mov [saved_self], self
     jsr Objects.allocate
     mov self, [saved_self]
@@ -218,16 +223,16 @@ end
 ; ------------------------------------------------------------------------------
 proc update_all using console6502
 begin
-    mov obj_slot, #0
+    mov Objects.slot, #0
 .loop:
-    lda obj_slot
+    lda Objects.slot
     jsr Objects.pointer
     lda [Machine.object.core.kind]
     beq .next
 
     jsr Objects.move            ; obj.move(obj.spd.x, obj.spd.y)
 
-    lda obj_slot                ; the object may have been destroyed by its own
+    lda Objects.slot                ; the object may have been destroyed by its own
     jsr Objects.pointer         ; move (nothing in stage 1 does, but reloading
     lda [Machine.object.core.kind] ; cheaper than proving it cannot)
     beq .next
@@ -240,8 +245,8 @@ begin
     beq .next
     jsr Objects.dispatch
 .next:
-    inc obj_slot
-    cbne obj_slot, #Objects.slot_count, .loop
+    inc Objects.slot
+    cbne Objects.slot, #Objects.slot_count, .loop
     ret
 end
 
@@ -251,9 +256,9 @@ end
 ; ------------------------------------------------------------------------------
 proc draw_all using console6502
 begin
-    mov obj_slot, #0
+    mov Objects.slot, #0
 .loop:
-    lda obj_slot
+    lda Objects.slot
     jsr Objects.pointer
     lda [Machine.object.core.kind]
     beq .next
@@ -266,8 +271,8 @@ begin
     beq .next
     jsr Objects.dispatch
 .next:
-    inc obj_slot
-    cbne obj_slot, #Objects.slot_count, .loop
+    inc Objects.slot
+    cbne Objects.slot, #Objects.slot_count, .loop
     ret
 end
 
@@ -386,8 +391,8 @@ begin
 
 .loop:
     lda t1                      ; is_solid(step, 0)
-    sta c_ox
-    mov c_oy, #0
+    sta Collision.offset_x
+    mov Collision.offset_y, #0
     jsr Collision.solid
     bne .blocked
 
@@ -434,9 +439,9 @@ begin
     jsr Objects.prepare_step
 
 .loop:
-    mov c_ox, #0
+    mov Collision.offset_x, #0
     lda t1
-    sta c_oy
+    sta Collision.offset_y
     jsr Collision.solid
     bne .blocked
 

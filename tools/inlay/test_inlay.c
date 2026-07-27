@@ -1143,6 +1143,17 @@ static void test_indexed_pools_and_procedures(void)
         "lda [Mac.missing.core]\n",
         limits, LA_ERR_LOCATION_TYPE,
         "unknown qualified base rejected in shorthand");
+    /* `mov` accepts a namespace-qualified destination so the immediate value
+       (here an enum member) still resolves semantically. */
+    result = compile_source(
+        "enum Kind : u8\n    idle = 0\n    active = 3\nend\n"
+        "namespace Own\n"
+        "    location slot : u8 at $20\n"
+        "mov Own.slot, #Kind.active\n"
+        "end\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK,
+          "qualified mov destination resolves the immediate");
 }
 
 static void test_comments_and_pointer_fields(void)

@@ -857,9 +857,9 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
                     (int)event->base.length, event->base.data,
                     (long)event->signed_value);
         } else {
-            fprintf(output->assembly, "    mov %.*s, #%ld\n",
-                    (int)event->base.length, event->base.data,
-                    (long)event->signed_value);
+            fputs("    mov ", output->assembly);
+            emit_target_symbol(output->assembly, event->base);
+            fprintf(output->assembly, ", #%ld\n", (long)event->signed_value);
         }
         return 1;
     case LA_TARGET_OP_VALUE_CMP:

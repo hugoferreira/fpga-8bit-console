@@ -93,8 +93,8 @@ proc environment using console6502
     self : ptr CelesteObject in Machine.object
 begin
     lda #0                      ; spikes collide
-    sta c_ox
-    sta c_oy
+    sta Collision.offset_x
+    sta Collision.offset_y
     jsr Collision.box
     jsr Collision.spikes
     beq .nospike
@@ -106,12 +106,12 @@ begin
     bcc .notbottom              ; and the sign has to be tested BEFORE the
     jmp Player.kill             ; compare, not from its flags.
 .notbottom:
-    mov c_ox, #0
-    mov c_oy, #1
+    mov Collision.offset_x, #0
+    mov Collision.offset_y, #1
     jsr Collision.solid
     sta Player.ground
-    mov c_ox, #0
-    mov c_oy, #1
+    mov Collision.offset_x, #0
+    mov Collision.offset_y, #1
     jsr Collision.ice
     sta Player.ice
     lda Player.ground              ; landing smoke
@@ -375,13 +375,13 @@ begin
 .slide:                         ; wall slide
     lda Player.input
     beq .fall
-    sta c_ox
-    mov c_oy, #0
+    sta Collision.offset_x
+    mov Collision.offset_y, #0
     jsr Collision.solid
     beq .fall
     lda Player.input
-    sta c_ox
-    mov c_oy, #0
+    sta Collision.offset_x
+    mov Collision.offset_y, #0
     jsr Collision.ice
     bne .fall
     mov Player.maxfall, #<Player.fall_slide
@@ -451,15 +451,15 @@ begin
     jsr Objects.spawn_smoke
     jmp .dash
 .walljump:                      ; wall_dir = is_solid(-3,0) and -1 or is_solid(3,0) and 1 or 0
-    mov c_ox, #$FD
-    mov c_oy, #0
+    mov Collision.offset_x, #$FD
+    mov Collision.offset_y, #0
     jsr Collision.solid
     beq .wallright
     mov Player.wall, #$FF
     jmp .havewall
 .wallright:
-    mov c_ox, #3
-    mov c_oy, #0
+    mov Collision.offset_x, #3
+    mov Collision.offset_y, #0
     jsr Collision.solid
     beq .dash
     mov Player.wall, #1
@@ -492,12 +492,12 @@ begin
     asl
     asl
     add Player.wall  ; wall_dir * 5 ... the cart tests ice at *3
-    sta c_ox                    ; and puffs at *6; close enough is not enough,
+    sta Collision.offset_x                    ; and puffs at *6; close enough is not enough,
     lda Player.wall               ; so both are spelled out
     asl
     add Player.wall
-    sta c_ox                    ; wall_dir * 3
-    mov c_oy, #0
+    sta Collision.offset_x                    ; wall_dir * 3
+    mov Collision.offset_y, #0
     jsr Collision.ice
     bne .dash
     lda [Machine.object.core.x]
@@ -683,8 +683,8 @@ begin
     lda Player.ground
     bne .onground
     lda Player.input                 ; airborne: 5 against a wall, 3 otherwise
-    sta c_ox
-    mov c_oy, #0
+    sta Collision.offset_x
+    mov Collision.offset_y, #0
     jsr Collision.solid
     beq .air
     lda #5
@@ -963,12 +963,12 @@ begin
     pla
     bpl .stillhere
     lda [Machine.object.core.x]
-    sta spawn_x
+    sta Objects.spawn_x
     mov y, offset CelesteObject.core.y
     lda (Machine.object), y
-    sta spawn_y
+    sta Objects.spawn_y
     jsr Objects.destroy
-    mov spawn_type, #ObjectKind.player
+    mov Objects.spawn_type, #ObjectKind.player
     jmp Objects.allocate
 .stillhere:
     rts

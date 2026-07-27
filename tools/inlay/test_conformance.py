@@ -866,6 +866,7 @@ def check_objects_design() -> None:
         "pointer", "clear", "allocate", "dispatch", "spawn_smoke",
         "destroy", "update_all", "draw_all",
         "flag_collideable", "flag_solids", "slot_count",
+        "slot", "spawn_type", "spawn_x", "spawn_y", "spawn_slot",
     }
     exports = set(re.findall(
         r"^\s*export ([a-z_]+)$", text, re.MULTILINE
@@ -1030,7 +1031,7 @@ def check_remaining_subsystem_design() -> None:
     manifests = {
         "collide.inlay.asm": (
             "Collision",
-            {"solid", "ice", "box", "spikes"},
+            {"solid", "ice", "box", "spikes", "offset_x", "offset_y"},
             {
                 "solid", "ice", "box", "flags", "tiles", "floor", "spikes",
                 "ids", "lo", "hi",

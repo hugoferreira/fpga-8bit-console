@@ -6299,7 +6299,7 @@ static int la_parse_qualified_immediate(LaContext *ctx,
     if (la_line_keyword(cursor, end, "mov")) {
         operation = LA_TARGET_OP_VALUE_MOV;
         cursor += 3;
-        if (!la_read_identifier(
+        if (!la_read_qualified_identifier(
                 &cursor, end, &destination_start,
                 &destination_length)) return 0;
         cursor = la_trim_left(cursor, end);
@@ -6315,6 +6315,12 @@ static int la_parse_qualified_immediate(LaContext *ctx,
     if (cursor < end && *cursor == '#') {
         ++cursor;
         expression_start = la_trim_left(cursor, end);
+        /* Byte-select operators (#<, #>) are a target spelling the semantic
+           evaluator does not model; let the scoped-raw path emit them. */
+        if (expression_start < end &&
+            (*expression_start == '<' || *expression_start == '>')) {
+            return 0;
+        }
     } else {
         const char *query_end;
         const char *suffix;
