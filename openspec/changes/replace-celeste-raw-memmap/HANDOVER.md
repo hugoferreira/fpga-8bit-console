@@ -1,4 +1,55 @@
-## Handover — 2026-07-27
+## Completion — migration finished
+
+`src/celeste/memmap.inlay.asm` is deleted. Every subsystem (sections 6.2–6.10)
+was migrated to typed overlays, scoped locations and scoped constants, one
+ownership group at a time, each re-checked against the frozen ROM
+`e57a8ea4112c6f16086d6a618254214c453d464d4de9ce19bfa03ac608f53da6` (8.4). Two
+clean builds are byte-deterministic across assembly, source map and ROM (8.3);
+the full Inlay core/module/host/conformance suite (8.1), strict
+C89/C99/C++11/UBSan/cc65 portability (8.2), and the Celeste functional /
+framebuffer / PSG-trace / resource suites (8.5) all pass.
+
+### Counts (8.7)
+
+- **Legacy aliases:** 142 retired; **1 reviewed retention** — `OBJPOOL` (the
+  object-pool base, consumed by the pool strategy's raw `obj_lo`/`obj_hi` target
+  tables), declared in `layout.inlay.asm`.
+- **Typed Celeste operands:** 207 fixed-overlay operations, 89 object-pointer
+  field operations; 129 reviewed raw object indirects; 0 legacy offset setups.
+- **Compiler workspace:** 188,768 bytes (host profile, 256-location capacity).
+- The temporary alias-freeze gate is now a **permanent deny-list**
+  (`tools/inlay/check_celeste_memmap_migration.py`): it rejects any handwritten
+  module that reintroduces a retired alias as a bare `NAME = VALUE` definition.
+
+### Frontend capabilities added to finish the migration (8.6)
+
+- **Overlay address materialization** — `address DEST, overlay.field` and
+  `address DEST, overlay` (qualified DEST) into a pointer-width location.
+- **Fixed-overlay operations** — byte load/store, `cmp`, `inc`/`dec`/`and`/`ora`
+  RMW, register loads/stores (`ldx`/`ldy`/`stx`/`sty`), accumulator logic
+  (`and`/`ora`/`add`/`sub`), store-immediate/`mov` (incl. indexed
+  memory-to-memory), and `cbeq`/`cbne`/`cblt`/`cbge`/`tbz`/`tbnz` compare/
+  test-and-branch — qualified or unqualified inside the owner.
+- **Page views + indexed arrays** — absolute indexed access with either X or Y,
+  page fields past the first 256 bytes, and indexed carry arithmetic
+  (`adc`/`sbc [overlay.field[x]]`) for the effects structure-of-arrays.
+- **Enclosing-namespace resolution** — a bare name resolves lexically against
+  the enclosing namespace chain (registers always win; siblings excluded).
+- **Namespace-qualified operand bases** — `[Machine.object.core.x]` and
+  qualified procedure return placements (`return in Fixed.left`).
+
+### Remaining (not blocking archive of the memory-map work)
+
+- **1.1** verifies the predecessor `redesign-celeste-for-inlay` integration
+  (target-default calling conventions in particular); the migration itself uses
+  its exports/namespaces/`codeptr`.
+- **4.8** is the exhaustive per-operation fixture sweep; the operations added
+  here carry core unit tests and byte-exact conformance fixtures for the
+  address, RMW, compare, page-view and indexed-arithmetic forms.
+
+---
+
+## Handover — 2026-07-27 (historical, superseded by the completion note above)
 
 This change is an intentionally build-clean checkpoint, not a completed
 memory-map migration. Do not archive it yet.

@@ -74,10 +74,10 @@
 
 ## 8. Final validation and documentation
 
-- [ ] 8.1 Run strict OpenSpec validation and the complete Inlay core/module/host/conformance suite
-- [ ] 8.2 Run strict frontend portability under C89, C99, C++11, UBSan and cc65
-- [ ] 8.3 Force two clean Celeste builds and compare assembly, source map, ROM, symbols, labels and readmemh deterministically
-- [ ] 8.4 Verify the final ROM matches the frozen pre-change digest byte for byte
-- [ ] 8.5 Run the complete Celeste functional, framebuffer, PSG trace and resource regression suites
-- [ ] 8.6 Document replayable modules, fixed locations, overlay address materialization, page views and the removed compatibility file
-- [ ] 8.7 Publish pre/post source-workspace and legacy-alias counts
+- [x] 8.1 Run strict OpenSpec validation and the complete Inlay core/module/host/conformance suite
+- [x] 8.2 Run strict frontend portability under C89, C99, C++11, UBSan and cc65
+- [x] 8.3 Force two clean Celeste builds and compare assembly, source map, ROM, symbols, labels and readmemh deterministically
+- [x] 8.4 Verify the final ROM matches the frozen pre-change digest byte for byte
+- [x] 8.5 Run the complete Celeste functional, framebuffer, PSG trace and resource regression suites
+- [x] 8.6 Document replayable modules, fixed locations, overlay address materialization, page views and the removed compatibility file
+- [x] 8.7 Publish pre/post source-workspace and legacy-alias counts

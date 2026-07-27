@@ -127,11 +127,26 @@ use the target immediate marker `#`. `offset` is a prefix operand, not a
 standalone instruction. Direct typed memory operations remain preferable to
 materialising an offset solely for a following raw instruction.
 
-The fixed-width primitive types are `u8`, `i8`, `u16` and `i16`. Pointer width
-comes from the target and is two storage units for `console6502`. Layouts are
-nominal. Forward nominal references are allowed; unknown types and recursive
-by-value structure/union graphs are rejected. Pointer references do not create
-a by-value cycle.
+The fixed-width primitive types are `u8`, `i8`, `u16` and `i16`. `codeptr` is
+a distinct target-sized primitive for executable addresses; its storage width
+and byte order come from the selected target. Data-pointer width comes from the
+target independently. Both are two little-endian storage units for
+`console6502`. Layouts are nominal. Forward nominal references are allowed;
+unknown types and recursive by-value structure/union graphs are rejected.
+Pointer references do not create a by-value cycle.
+
+A complete procedure address uses the target-sized form directly:
+
+```asm
+data codeptr Platform.reset
+```
+
+The procedure must be declared and visible. The backend receives its canonical
+identity, code-pointer width and byte order and emits the target relocation.
+`data u8 low(Procedure)` and `data u8 high(Procedure)` remain available for
+tables that deliberately store split address bytes. The
+`data u16 addr(Procedure)` form remains an explicit fixed-width compatibility
+form and is not the portable spelling of a code pointer.
 
 ### Enums, layout policies, unions and overlays
 
@@ -668,14 +683,20 @@ Every handwritten instruction module is expanded through Inlay `include`.
 Generated graphics is also semantic: `Gfx` publishes an explicit manifest of
 sprite constants and data labels while keeping generator-only values private.
 The portable core deliberately uses 16-bit source slices, while the complete
-game source is larger, so three data-only modules remain explicit exceptions:
-`memmap`, `rooms` and `audio` are opaque target includes. They are still
-authoritative `.inlay.asm` production files and no legacy source is involved.
+game source is larger, so the two generated data payloads `rooms` and `audio`
+remain opaque target includes; every handwritten language module is consumed
+semantically. The raw compatibility memory map (`memmap.inlay.asm`) has been
+**deleted**: its 142 aliases are now typed overlays, scoped locations and
+scoped constants, with the single reviewed exception `OBJPOOL` (the pool base,
+needed by the pool strategy's raw `obj_lo`/`obj_hi` tables) declared in
+`layout.inlay.asm`. A permanent deny-list rejects any reintroduction.
 
 `Fx` exports only initialization, update and its two draw stages; effect
-capacities and sine tables remain private. `Fixed` declares the physical
-`w0`/`w1`/`w2` contracts for signed comparison, sign, absolute value and
-approach, and uses the custom CPU word operations for eligible arithmetic.
+capacities and sine tables remain private, and the cloud/particle
+structure-of-arrays is accessed through the indexed `effects` (`FxStorage`)
+overlay. `Fixed` declares the physical `word0`/`word1`/`word2` locations for
+signed comparison, sign, absolute value and approach, and uses the custom CPU
+word operations for eligible arithmetic.
 
 `Platform` owns the naked reset entry, hardware initialization, frame wait and
 input sample services. Reset establishes the physical stack before its first
@@ -869,6 +890,6 @@ categories:
   effect storage.
 
 Conformance freezes those exception counts, rejects any newly eligible legacy
-field sequence and rejects raw procedure-address slicing elsewhere. Spike
-dispatch and reset-vector addresses now use semantic `low(...)`/`high(...)`
-procedure declarations.
+field sequence and rejects raw procedure-address slicing elsewhere. Split
+lifecycle dispatch tables use semantic `low(...)`/`high(...)` declarations;
+the reset vectors use target-sized `data codeptr` declarations.
