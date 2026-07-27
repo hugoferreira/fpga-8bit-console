@@ -71,7 +71,7 @@ module psg_tb;
       sample_job_active = 1;
     end else if (sample_job_active) begin
       sample_job_clocks++;
-      if (!dut.prun && dut.mxs == 0 && dut.dry_valid) begin
+      if (!dut.prun && dut.fmc == 0 && dut.dry_valid) begin
         if (sample_job_clocks > max_sample_job_clocks)
           max_sample_job_clocks = sample_job_clocks;
         sample_job_active = 0;

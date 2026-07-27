@@ -48,8 +48,11 @@
       onto the service
 - [x] 4.4 Replace the separate sample-volume, transition-blend and wavetable
       interpolation engines with the shared shift/add operation
-- [ ] 4.5 Store the eight mix leaves/intermediates as scratch words and execute
+- [x] 4.5 Store the eight mix leaves/intermediates as scratch words and execute
       all seven ordered `soft_add` operations iteratively through the service
+      (landed as a three-entry stack plus a serial fold microprogram on the
+      24-bit phase ALU rather than scratch words or the m service - both
+      rejected shapes; see design 5b. Byte-identical, -124 placed cells)
 - [ ] 4.6 Remove superseded arithmetic registers and prove the worst-case
       sample microprogram remains below 1,275 derived PSG clocks
 

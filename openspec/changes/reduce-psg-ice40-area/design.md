@@ -317,6 +317,71 @@ DAMPEN/noise/brown and reverb arithmetic onto the already-proven scheduled
 add/sub contract. A partially started filter-serialization experiment was
 removed before handover; no unmeasured filter schedule remains in the source.
 
+### 5b. Serial soft_add fold, single-chain fusions, and the packing metric
+
+Placed logic cells and mapped LUT4s disagree by about a thousand cells, and
+the difference is measurable, not noise: an iCE40 flip-flop can share a cell
+only with the LUT that drives its D input, and only when that LUT has no other
+fanout. A census of the handover netlist (`tools`-candidate script, currently
+`ff_census.py` in the session scratchpad) counted 671 of 1,557 flip-flops that
+fail this test and therefore each occupy a whole logic cell behind a
+feed-through LUT. The l1/l2a/l2b/sa_hold/dry16 mix-tree registers alone were
+165 such cells. **Consequence: a stage that trades flip-flops for mapped LUTs
+can be a large placed win while mapped counts call it a regression - the two
+earlier soft_add serialization rejections were partly artifacts of this.**
+Stages are now judged on seed-1 placed cells, with the census as the fast
+in-between proxy.
+
+Four stages landed on this basis, every one byte-identical across all 50
+oracle candidate WAVs against the pre-stage render:
+
+1. **Serial soft_add fold on the phase ALU.** The parallel node (23-bit sum,
+   two signed compares, excess mux, and the 20/32/34-bit shift-add network
+   for (excess * 52429) >> 18) and the l1[]/l2a/l2b/sa_hold register file are
+   replaced by a three-entry stack and a ten-cycle fold microprogram on the
+   shared 24-bit phase ALU, idle from PWORK+10 onward. Division by five is a
+   truncating series plus one bounded fixup, verified exhaustively equal to
+   the binary's multiply form for every excess below 80k. Mid-walk folds run
+   inside the following visit's record-load phases; the slot-7 chain runs
+   past the walk with walk_frozen extended by fold_busy. The ALU gained a
+   carry-in and computes subtract as a + ~b + 1, so add and subtract share
+   one physical chain.
+2. **Offset-stored fractional divider.** divd holds the classical divacc
+   minus the wrap threshold; the sample decision is its sign bit. One adder
+   with a two-constant operand mux replaces a 27-bit comparator plus separate
+   add and subtract. Identical clock-for-clock sample_en/tick_en sequence.
+3. **Single-chain arithmetic fusions.** Vibrato's floor/ceil rounding and
+   sign selection, DROP's subtract, slide's +/-, fade's fx-1 volume arm and
+   the mixer's nm_signed negate each collapsed to one carry chain via
+   two's-complement identities (x - y as x + ~y + 1 with the round-up riding
+   the carry-in).
+4. **Tick-side multipliers.** The row*speed seed keeps only its observable
+   residue - arp_idx tops out at tcnt bit 4 and the vibrato LFO at bit 3, and
+   the per-tick increment preserves residues mod 32 - so the 8x8 array is a
+   5x5 corner. The pattern-length product w_sp*pat_rows launches
+   fire-and-forget on the m service at T_NL and is captured when it lands;
+   K_FX's existing m_busy stall absorbs the overlap with no new wait states.
+   One trap recorded: m_res holds the product IN PLACE (bit k is product bit
+   k); the volume steps' [15:8] slice is a semantic Q8 scale, not a placement
+   offset. The first capture read [20:8], which shortened every music
+   pattern; the oracle matrix flagged 44 cases and the byte-compare against
+   the prior render caught it immediately. The WAV byte-compare is the
+   cheapest exact gate this change has and should be run per stage.
+
+At `rtl/psg.sv` fingerprint `232353e9d469`: Yosys maps 5,508 LUT4s, 1,001
+carries, 1,526 flip-flops and 15 EBRs; the census counts 563 unpackable
+flip-flops (from 671). Seed-1 place-and-route packs to **6,371 logic cells**
+(from 6,662 at handover, -291) and routes at 41.94 MHz (from 33.75), passing
+the 28.125 MHz constraint. The structural testbench passes with a worst
+combined deadline of 1,159/1,275 clocks (1,133 before the serial fold), and
+the fold-collision and product-launch simulation checks stayed silent for
+the complete run. The remaining gap to 5,500 (871 cells) is tracked in
+tasks; the tick microengine (section 3)
+remains the stage expected to close most of it, and it should be planned
+against the census as much as against mapped counts - pb, note_lo, base_r,
+last_addr, fade_step and the public sfx_id/row arrays are ~230 of the
+remaining unpackable flip-flops.
+
 ### 6. Keep tables scheduled, not replicated
 
 Pitch, noise gain, filter decode, fade-step and microcode constants are

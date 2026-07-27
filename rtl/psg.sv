@@ -88,25 +88,31 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // ------------------------------------------------------------------
   // Timing: 22050 Hz virtual sample rate, sequencer tick every 183
   // ------------------------------------------------------------------
-  // 27 bits, not 32. The accumulator only ever holds values below CLK_HZ, and
-  // the fastest clock this design can be given is the 112.5 MHz PLL output -
-  // 0x6B49D20, which is 27 bits. The extra five cost 10 iCE40 logic cells of
-  // adder and comparator for range that cannot occur.
-  logic [26:0] divacc;
+  // The accumulator is stored OFFSET by the wrap threshold: divd is the
+  // classical divacc minus (CLK_HZ - 22050), so "time to emit a sample" is
+  // simply divd's sign bit. The unsigned form spent a 27-bit comparator AND
+  // separate 27-bit add and subtract networks on the same decision; this is
+  // one adder whose second operand is a mux of two constants. The clock-for-
+  // clock sample_en/tick_en sequence is unchanged - same Bresenham, same
+  // phase - and sim/psg_wav.cpp mirrors the recurrence, not the register.
+  // 28 bits: the fastest clock this design can be given is the 112.5 MHz PLL
+  // output, and the offset form needs its magnitude plus a sign.
+  localparam logic [26:0] DIV_DOWN = 27'(CLK_HZ - 32'd22050);
+  logic signed [27:0] divd;
   logic        sample_en;
   logic [7:0]  scnt;
   logic        tick_en;
 
   always_ff @(posedge clk) begin
     if (reset) begin
-      divacc <= 0;
+      divd <= -$signed({1'b0, DIV_DOWN});
       sample_en <= 0;
       scnt <= 0;
       tick_en <= 0;
     end else begin
       tick_en <= 0;
-      if ({5'b0, divacc} >= CLK_HZ - 32'd22050) begin
-        divacc <= divacc - 27'(CLK_HZ - 32'd22050);
+      if (!divd[27]) begin             // divacc >= CLK_HZ - 22050
+        divd <= divd - $signed({1'b0, DIV_DOWN});
         sample_en <= 1;
         if (scnt == 8'd182) begin
           scnt <= 0;
@@ -114,7 +120,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         end else
           scnt <= scnt + 1;
       end else begin
-        divacc <= divacc + 27'd22050;
+        divd <= divd + 28'sd22050;
         sample_en <= 0;
       end
     end
@@ -366,6 +372,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // scheduler records the pattern length and a global pattern-tick position -
   // rather than asking any one voice whether it is still playing.
   logic [12:0] pticks, ptick_tgt;
+  logic        ptick_pend;           // w_sp * pat_rows in flight on m service
 
   // Music fade: an 8-bit gain ramped at tick rate. fade_len is in 16 ms
   // units and a tick is ~8.3 ms, so stepping a 16-bit accumulator by
@@ -508,11 +515,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // sample without changing any sample-visible state. One replay cycle restores
   // a synchronous V_LD word displaced when a sample began mid-trigger.
   logic        state_replay;
+  // The serial soft_add fold engine (datapath in the mixer section below).
+  // Declared here because walk_frozen must hold the tick sequencer while the
+  // post-walk fold chain still owns the phase ALU and the m service idle slot.
+  logic [3:0]  fmc;                  // fold micro-cycle, 0 = idle
+  wire         fold_busy = (fmc != 4'd0);
   wire         state_sample_read = prun && pph < 7'(PLOSC + SPAR);
   wire         state_sample_we = prun
                                && pph >= 7'(PSTOR)
                                && pph <= 7'(PLAST);
-  wire         walk_frozen = seq_frozen | prun | state_replay;
+  wire         walk_frozen = seq_frozen | prun | state_replay | fold_busy;
   always_ff @(posedge clk) begin
     if (reset)
       state_replay <= 0;
@@ -728,9 +740,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                             - $signed({1'b0, e_prevp});
   wire               slp_neg = slp_d[6];
   wire [5:0]         slp_mag = slp_neg ? 6'(-slp_d) : 6'(slp_d);
-  wire signed [15:0] slp_q8 =
-      $signed({2'b0, e_prevp, 8'b0})
-      + (slp_neg ? -$signed(m_res[15:0]) : $signed(m_res[15:0]));
+  // One chain here too: +/- m_res[15:0] as xor-and-carry, not two adders.
+  wire signed [15:0] slp_q8 = $signed(
+      {2'b0, e_prevp, 8'b0}
+      + (slp_neg ? ~m_res[15:0] : m_res[15:0])
+      + {15'b0, slp_neg});
   wire signed [8:0] slp_whole = {slp_q8[15], slp_q8[15:8]};
   wire [5:0] slp_int = pclamp(slp_whole);
   wire [7:0] slp_frac = (slp_whole < 0 || slp_whole > 9'sd62)
@@ -739,12 +753,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Step results (fxv_next also feeds the last product's operand)
   wire [23:0] p24 = m_res[31:8];
   wire [7:0]  p8  = m_res[15:8];
-  wire [24:0] vib_floor = m_res[31:7];
-  wire [24:0] vib_ceil  = vib_floor + 25'(|m_res[6:0]);
-  wire [23:0] vib_scaled =
-      lfo_neg ? (base_inc - vib_ceil[23:0])
-              : (base_inc + vib_floor[23:0]);
-  wire [23:0] drop_scaled = base_inc - p24;
+  // Vibrato and DROP corrections on ONE 24-bit carry chain. The old spelling
+  // built three: vib_ceil's round-up increment, an add and a subtract behind
+  // the sign mux, and DROP's own subtract. All of them are the same modular
+  // sum: base - (floor + cb) is base + ~floor + !cb, and base - p24 is
+  // base + ~p24 + 1, so the round-up and the negations ride the carry-in.
+  // Two's-complement identities - the results are bit-for-bit unchanged.
+  wire        vib_cb  = |m_res[6:0];
+  wire        fxp_neg = (e_fx == 3'd3) | lfo_neg;
+  wire [23:0] fxp_op  = (e_fx == 3'd3) ? p24 : m_res[30:7];
+  wire [23:0] fxp_res = base_inc + (fxp_neg ? ~fxp_op : fxp_op)
+                      + {23'b0, (e_fx == 3'd3) | (lfo_neg & ~vib_cb)};
   logic [23:0] fxi_next;
   logic [7:0]  fxv_next;
 
@@ -790,14 +809,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // PICO-8 multiplies its integer `dp`, then the FPGA phase convention
       // expands that result by eight bits.  Multiplying base_inc directly is
       // otherwise subtly more precise and accumulates audible phase drift.
-      3'd2: fxi_next = {vib_scaled[23:8], 8'b0};
-      3'd3: fxi_next = {drop_scaled[23:8], 8'b0};
+      3'd2, 3'd3: fxi_next = {fxp_res[23:8], 8'b0};
       3'd6, 3'd7: fxi_next = arp_r;
       default: ;
     endcase
     fxv_next = vol_r;
     case (e_fx)
-      3'd1: fxv_next = pvol_r + (vl_neg ? (8'd0 - p8) : p8);
+      3'd1: fxv_next = pvol_r + (vl_neg ? ~p8 : p8) + {7'b0, vl_neg};
       3'd4: fxv_next = p8;
       3'd5: fxv_next = vol_r - p8;
       default: ;
@@ -822,6 +840,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       f_stop <= 0;
       pticks <= 0;
       ptick_tgt <= 0;
+      ptick_pend <= 0;
       scan_p <= 0;
       note_lo <= 0;
       arp_p <= 0;
@@ -850,6 +869,24 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         pb[i] <= 0;
       xs <= 0;
     end else begin
+      // Deferred pattern-length capture: T_NL launched w_sp * pat_rows on the
+      // m service and moved on. Ungated by walk_frozen deliberately - the
+      // product completes even if a sample walk freezes the sequencer, and it
+      // must be read before that sample's own PWORK+4 product reuses m_res.
+      // The launch-to-capture gap is at most nine cycles; the first sample
+      // product launches at PWORK+4, so the capture always wins.
+      if (ptick_pend && !m_busy) begin
+        // m_res holds the product in place (m_res[k] is product bit k); the
+        // [15:8] slice volume steps use is a semantic Q8 scale, not a
+        // placement offset, so the 13-bit tick count is the low 13 bits.
+        ptick_tgt <= m_res[12:0];
+        ptick_pend <= 0;
+      end
+`ifndef SYNTHESIS
+      if (!walk_frozen && sst == T_NL && launched[c] && !tch_seen
+          && !(w_lps < seq_q) && m_busy)
+        $error("T_NL pattern-length product blocked by a busy m service");
+`endif
       if (!walk_frozen)
       case (sst)
         // One pass over the slots in order, servicing any pending trigger and,
@@ -959,8 +996,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         T_LS: begin
           w_sp <= (seq_q == 0) ? 8'd1 : seq_q;
           // vibrato/arpeggio phase follows the row's place in the record,
-          // so a slice started at an offset sounds like the whole record
-          w_tcnt <= 8'({3'b0, row[c]} * ((seq_q == 0) ? 8'd1 : seq_q));
+          // so a slice started at an offset sounds like the whole record.
+          // Only tcnt[4:0] is ever observed - arp_idx tops out at bit 4, the
+          // vibrato LFO at bit 3 - and the per-tick increment preserves
+          // residues mod 32, so the seed product is taken mod 32 and the
+          // 8x8 array multiplier shrinks to its 5x5 corner. The stored high
+          // bits differ from the old ones, but nothing reads them.
+          w_tcnt <= {3'b0, 5'(row[c] * ((seq_q == 0) ? 5'd1 : seq_q[4:0]))};
           sst <= T_LE;
         end
         T_LE: begin
@@ -985,7 +1027,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             end
             if (!tch_seen && !(w_lps < seq_q)) begin
               tch_seen <= 1;
-              ptick_tgt <= 13'(w_sp * pat_rows);
+              // The w_sp * pat_rows product runs on the shared m service
+              // (launch in the mul_start mux, capture below when it lands).
+              // Nothing reads ptick_tgt before the pattern's first tick
+              // check, and K_FX already stalls on m_busy, so the nine busy
+              // cycles cost nothing and the 13-bit array multiplier is gone.
+              ptick_pend <= 1;
             end
           end
           sst <= T_NH;
@@ -1659,12 +1706,23 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     end
   end
 
+  // The soft_add fold engine borrows this ALU whenever fmc is nonzero; its
+  // operands are prepared in the mixer section, where the stack lives.
+  logic [23:0] fold_a, fold_b;
+  logic        fold_sub, fold_cin;
   logic [23:0] phase_alu_a, phase_alu_b;
-  logic phase_alu_sub;
+  logic phase_alu_sub, phase_alu_cin;
   always_comb begin
     phase_alu_a = s_phase;
     phase_alu_b = einc;
     phase_alu_sub = 1'b0;
+    phase_alu_cin = 1'b0;
+    if (fold_busy) begin
+      phase_alu_a = fold_a;
+      phase_alu_b = fold_b;
+      phase_alu_sub = fold_sub;
+      phase_alu_cin = fold_cin;
+    end else
     case (pph)
       7'(PWORK): begin
         case (phase_op)
@@ -1716,9 +1774,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       default: ;
     endcase
   end
+  // One physical carry chain: a - b is a + ~b + 1, and the fold's single
+  // "+1" micro-op rides the same carry-in, so subtract and add no longer
+  // build two 24-bit adders behind a result mux.
   wire [23:0] phase_alu_y =
-      phase_alu_sub ? (phase_alu_a - phase_alu_b)
-                    : (phase_alu_a + phase_alu_b);
+      phase_alu_a + (phase_alu_sub ? ~phase_alu_b : phase_alu_b)
+                  + {23'b0, phase_alu_sub | phase_alu_cin};
 
   // Wavetable instruments read their 64 samples out of audio RAM, one
   // borrowed read per voice per sample (the sequencer FSM freezes for it).
@@ -1913,8 +1974,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Padding the 6-bit blend weight to eight bits costs two otherwise idle
   // cycles and leaves one accumulator, counter, adder and result write site
   // for all three product families.
-  wire signed [16:0] nm_signed =
-      mx_neg ? -$signed(m_res[16:0]) : $signed(m_res[16:0]);
+  wire signed [16:0] nm_signed = $signed(
+      (m_res[16:0] ^ {17{mx_neg}}) + {16'b0, mx_neg});
   wire signed [16:0] nm_noise_scaled = nm_signed + (nm_signed >>> 1);
   logic signed [16:0] mx_new, mx_old, mx_prod;
   wire signed [16:0] blend_diff = mx_new - mx_old;
@@ -2006,6 +2067,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           mul_start_a = 24'd1317;
           mul_start_b = {4'b0, vmul};
         end
+        // The music pattern's tick length, launched fire-and-forget; the
+        // ungated capture in the sequencer picks m_res up when it lands.
+        // m cannot be busy here - the nearest preceding launch site is the
+        // previous slot's xs 6 product, a full record store earlier - and
+        // the simulation-only check below guards that schedule fact.
+        T_NL: if (launched[c] && !tch_seen && !(w_lps < seq_q)) begin
+          mul_start   = 1'b1;
+          mul_start_a = {16'b0, w_sp};
+          mul_start_b = {4'b0, pat_rows};
+        end
         default: ;
       endcase
     end
@@ -2053,51 +2124,101 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // twice output scale. The previous quarter-scale assumption made every
   // exported waveform almost exactly 6 dB too quiet. Keep the tree and
   // threshold at 2x, then shift once at the end.
-  // Every comparison and subtraction here must be SIGNED. A concatenation is
-  // unsigned in Verilog however signed its operands are, so writing the
-  // threshold as {SA_TH[21], SA_TH} silently makes `sa_s <= -threshold` an
-  // unsigned compare - which is true for almost every input, including 0 + 0.
-  // That produced a large negative constant out of an idle chip: a steady
-  // -9175 in the output with no slot playing at all.
+  //
+  // The tree used to be a parallel soft_add node - a 23-bit sum, two signed
+  // compares, the excess mux and a four-stage shift-add network for the
+  // binary's (excess * 52429) >> 18 division - plus l1[0:3]/l2a/l2b/sa_hold
+  // holding registers. The register file was the expensive half: every one of
+  // those flops was fed by shared logic, so nextpnr gave each its own logic
+  // cell with a feed-through LUT - cost that mapped LUT4 counts never showed.
+  //
+  // It is now ONE serial fold engine on the shared phase ALU. The stack S0
+  // carries the running left spine, S1/S2 the pending right subtrees, and the
+  // (dest, src) schedule below reproduces PICO-8's exact pairing order:
+  //
+  //   slot 0  push S0        slot 1  S0 += leaf1            (L1 0+1)
+  //   slot 2  push S1        slot 3  S1 += leaf3, S0 += S1  (L1 2+3, L2 0+2)
+  //   slot 4  push S1        slot 5  S1 += leaf5            (L1 4+5)
+  //   slot 6  push S2        slot 7  S2 += leaf7, S1 += S2, S0 += S1
+  //
+  // soft_add is not associative and the zero leaves are part of the function,
+  // so the order above IS the old tree, fold for fold - bit-identical.
+  //
+  // The division by five: floor(x/5) via a truncating shift-add series with a
+  // single bounded fixup,
+  //
+  //   q = (x>>1) + (x>>2);  q += q>>4;  q += q>>8;  q >>= 2;
+  //   r = x - 5q;  q += (r >= 5);
+  //
+  // verified exhaustively equal to the binary's (x * 52429) >> 18 for every
+  // x below 80k (the largest reachable excess is under 72k: a leaf is at most
+  // 32512, level 1 receives at most 65024, and repeating the compressed bound
+  // through levels 2 and 3 stays under 72k - 17 bits). Every step is one
+  // A +/- (B >> k) pass through the 24-bit phase ALU, which is idle from
+  // PWORK+10 to the end of the visit, so the network of 20/24/32/34-bit
+  // adders is gone and no service got wider.
+  //
+  // Comparisons are done by subtracting on the ALU and testing bit 23, with
+  // both operands sign-extended to 24 bits first - the old parallel node's
+  // unsigned-concatenation trap does not exist here, but the sign extension
+  // below is still load-bearing for exactly that reason.
   localparam signed [22:0] SA_TH = 23'sd49152;    // 24576 << 1
-  logic signed [21:0] sa_a, sa_b;
-  wire  signed [22:0] sa_s = $signed({sa_a[21], sa_a}) + $signed({sa_b[21], sa_b});
-  wire         sa_over  = (sa_s >=  SA_TH);
-  wire         sa_under = (sa_s <= -SA_TH);
-  wire  signed [22:0] sa_exs = sa_over  ? (sa_s - SA_TH)
-                             : sa_under ? (-SA_TH - sa_s)
-                                        : 23'sd0;
-  // The binary's division by five: (excess * 52429) >> 18. The excess is
-  // non-negative by construction, so this stays unsigned.
-  //
-  // Not as a multiply. 52429 factors exactly:
-  //
-  //     52429 = 4 * 3 * 17 * 257 + 1 = (((3x * 17) * 257) << 2) + x
-  //
-  // and 17 = 1 + (1<<4), 257 = 1 + (1<<8), 3 = 1 + (1<<1), so the whole product
-  // is four adds of shifted copies. The array multiplier yosys built for the
-  // literal form measured 529 LC - the largest single item in the chip - and
-  // this is the identical product, so the mix stays bit-for-bit the same.
-  //
-  // 18 bits is enough for the excess. A leaf is at most 32512, so level 1
-  // receives at most 65024; after compression it is about 52327. Repeating the
-  // bound through levels 2 and 3 keeps the largest excess below 72k (17 bits).
-  wire  [17:0] sa_ex   = 18'(sa_exs);
-  wire  [19:0] sa_x3   = {sa_ex, 1'b0} + {2'b0, sa_ex};
-  wire  [23:0] sa_x51  = {sa_x3, 4'b0} + {4'b0, sa_x3};
-  wire  [31:0] sa_x13k = {sa_x51, 8'b0} + {8'b0, sa_x51};
-  // 34 bits, not 32: at the largest reachable excess the product is 5.82e9.
-  wire  [33:0] sa_div  = {sa_x13k, 2'b0} + {16'b0, sa_ex};
-  wire  [21:0] sa_q    = 22'(sa_div >> 18);
-  wire  signed [21:0] sa_r =
-      sa_over  ? ( 22'sd49152 + $signed({1'b0, sa_q[20:0]}))
-    : sa_under ? (-22'sd49152 - $signed({1'b0, sa_q[20:0]}))
-               : 22'(sa_s);
+  logic signed [21:0] fstk[0:2];      // S0, S1, S2
+  logic [2:0]  fsel;                  // active fold: see fda/fdb below
+  logic [1:0]  fpend;                 // folds still queued in this chain
+  logic        ffin;                  // this chain ends in dry16
+  logic        f_over, f_under;
+  logic [17:0] fx_r;                  // |excess|, then the partial remainder
+  logic [17:0] ft2;                   // series accumulator (q << 2)
+  logic [3:0]  fr_r;                  // final remainder, 0..9
 
-  logic signed [21:0] sa_hold;        // the even leaf, waiting for its partner
-  logic signed [21:0] l1[0:3];        // level-1 results
-  logic signed [21:0] l2a, l2b;       // level-2 results
-  logic [1:0]  mxs;                   // post-walk reduction step
+  // Fold operand selection: 0/1/2 combine a stack entry with the slot leaf,
+  // 3 folds S1 into S0, 4 folds S2 into S1. fda is always the destination.
+  logic signed [21:0] fda, fdb;
+  always_comb begin
+    case (fsel)
+      3'd0:    begin fda = fstk[0]; fdb = mix_leaf; end
+      3'd1:    begin fda = fstk[1]; fdb = mix_leaf; end
+      3'd2:    begin fda = fstk[2]; fdb = mix_leaf; end
+      3'd4:    begin fda = fstk[1]; fdb = fstk[2];  end
+      default: begin fda = fstk[0]; fdb = fstk[1];  end
+    endcase
+  end
+  wire [1:0] fdsti = (fsel == 3'd2) ? 2'd2
+                   : (fsel == 3'd1 || fsel == 3'd4) ? 2'd1 : 2'd0;
+
+  // One ALU micro-op per fmc step. fmc 1 forms the plain sum, 2/3 the two
+  // threshold compares (capturing the excess), 4-6 the divide series, 7/8
+  // the remainder, 9 rebuilds TH + q (+1 rides the carry-in), 10 negates for
+  // the underflow side. Steps 4-10 run regardless and commit nothing unless
+  // a compare fired; the schedule is fixed so nothing downstream cares.
+  always_comb begin
+    fold_a = 24'd0; fold_b = 24'd0; fold_sub = 1'b0; fold_cin = 1'b0;
+    case (fmc)
+      4'd1:  begin fold_a = {{2{fda[21]}}, fda};
+                   fold_b = {{2{fdb[21]}}, fdb}; end
+      4'd2:  begin fold_a = {{2{fda[21]}}, fda};
+                   fold_b = 24'(SA_TH); fold_sub = 1'b1; end
+      4'd3:  begin fold_a = 24'(-SA_TH);
+                   fold_b = {{2{fda[21]}}, fda}; fold_sub = 1'b1; end
+      4'd4:  begin fold_a = {7'b0, fx_r[17:1]};
+                   fold_b = {8'b0, fx_r[17:2]}; end
+      4'd5:  begin fold_a = {6'b0, ft2};
+                   fold_b = {10'b0, ft2[17:4]}; end
+      4'd6:  begin fold_a = {6'b0, ft2};
+                   fold_b = {14'b0, ft2[17:8]}; end
+      4'd7:  begin fold_a = {6'b0, fx_r};
+                   fold_b = {6'b0, ft2[17:2], 2'b00}; fold_sub = 1'b1; end
+      4'd8:  begin fold_a = {6'b0, fx_r};
+                   fold_b = {8'b0, ft2[17:2]}; fold_sub = 1'b1; end
+      4'd9:  begin fold_a = 24'(SA_TH);
+                   fold_b = {8'b0, ft2[17:2]};
+                   fold_cin = (fr_r >= 4'd5); end
+      4'd10: begin fold_a = 24'd0;
+                   fold_b = {{2{fda[21]}}, fda}; fold_sub = 1'b1; end
+      default: ;
+    endcase
+  end
 
   logic [1:0]  rev_max;
   // The echo has to outlive the note that asked for it, so the level any
@@ -2122,16 +2243,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                     && walk_tick
                     && !walk_frozen;
 
-  // Level 1 happens inside the walk, levels 2 and 3 after it, all on this one
-  // unit - the tree is seven soft_adds spread over time, not seven instances.
-  always_comb begin
-    case (mxs)
-      2'd1:    begin sa_a = l1[0];   sa_b = l1[1];      end
-      2'd2:    begin sa_a = l1[2];   sa_b = l1[3];      end
-      2'd3:    begin sa_a = l2a;     sa_b = l2b;        end
-      default: begin sa_a = sa_hold; sa_b = mix_leaf;   end
-    endcase
-  end
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -2140,7 +2251,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       pc_ch <= 0;
       pph <= 0;
       clr_ack <= 0;
-      mxs <= 0;
+      fmc <= 0;
+      fpend <= 0;
+      ffin <= 0;
       rev_max <= 0;
       rev_lvl <= 0;
       rev_ttl <= 0;
@@ -2149,32 +2262,69 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // Datapath and streamed voice fields deliberately have no reset mux.
       // state_m supplies every s_* field before PWORK; each product/blend
       // register is committed before its count or phase consumes it; and the
-      // mix leaves are overwritten in voice order before mxs starts. Only the
+      // mix leaves are overwritten in voice order before the fold consumes
+      // them. Only the
       // validity/count controls above require a defined reset value.
     end else begin
       dry_valid <= 0;
 
-      // Levels 2 and 3 of the tree, one soft_add per cycle on the shared unit.
-      // The walk has already left the four level-1 results in l1[].
-      case (mxs)
-        2'd1: begin l2a <= sa_r; mxs <= 2'd2; end
-        2'd2: begin l2b <= sa_r; mxs <= 2'd3; end
-        2'd3: begin
-          dry16 <= 16'(sa_r >>> 1);
-          dry_valid <= 1;
-          mxs <= 2'd0;
-          // hold the requested echo level for one delay line past the last
-          // request, so a note that ends still gets its own echo back
-          if (rev_max != 2'd0) begin
-            rev_lvl <= rev_max;
-            rev_ttl <= 10'd732;
-          end else if (rev_ttl != 0)
-            rev_ttl <= rev_ttl - 1;
-          else
-            rev_lvl <= 0;
+      // The serial soft_add fold: one phase-ALU micro-op per cycle. A chain
+      // launched at an odd slot's PFOLD runs into the following visit's
+      // record-load phases - the ALU is idle there - and the slot-7 chain
+      // runs on past the walk, with walk_frozen holding the tick sequencer
+      // until the final fold lands in dry16.
+      if (fmc != 4'd0) begin
+`ifndef SYNTHESIS
+        if (prun && !REALTIME_PREVIEW
+            && ((pph >= 7'(PWORK) && pph <= 7'(PWORK + 1))
+                || (pph >= 7'(PWORK + 5) && pph <= 7'(PWORK + 9))))
+          $error("fold engine and sample walk both claim the phase ALU");
+`endif
+        case (fmc)
+          4'd1:  begin fstk[fdsti] <= phase_alu_y[21:0]; fmc <= 4'd2; end
+          4'd2:  begin
+            f_over <= ~phase_alu_y[23];
+            if (!phase_alu_y[23]) fx_r <= phase_alu_y[17:0];
+            fmc <= 4'd3;
           end
-        default: ;
-      endcase
+          4'd3:  begin
+            f_under <= ~phase_alu_y[23];
+            if (!phase_alu_y[23]) fx_r <= phase_alu_y[17:0];
+            fmc <= 4'd4;
+          end
+          4'd4, 4'd5, 4'd6: begin ft2 <= phase_alu_y[17:0]; fmc <= fmc + 1; end
+          4'd7:  begin fx_r <= phase_alu_y[17:0]; fmc <= 4'd8; end
+          4'd8:  begin fr_r <= phase_alu_y[3:0]; fmc <= 4'd9; end
+          4'd9:  begin
+            if (f_over | f_under) fstk[fdsti] <= phase_alu_y[21:0];
+            fmc <= f_under ? 4'd10 : 4'd11;
+          end
+          4'd10: begin fstk[fdsti] <= phase_alu_y[21:0]; fmc <= 4'd11; end
+          default: begin                       // chain step complete
+            if (fpend != 2'd0) begin
+              fpend <= fpend - 1;
+              fsel <= (fsel == 3'd2) ? 3'd4 : 3'd3;
+              fmc <= 4'd1;
+            end else begin
+              fmc <= 4'd0;
+              if (ffin) begin
+                ffin <= 0;
+                dry16 <= 16'($signed(fstk[0]) >>> 1);
+                dry_valid <= 1;
+                // hold the requested echo level for one delay line past the
+                // last request, so a note that ends still gets its echo back
+                if (rev_max != 2'd0) begin
+                  rev_lvl <= rev_max;
+                  rev_ttl <= 10'd732;
+                end else if (rev_ttl != 0)
+                  rev_ttl <= rev_ttl - 1;
+                else
+                  rev_lvl <= 0;
+              end
+            end
+          end
+        endcase
+      end
 
       if (sample_en && tick_en) begin
         // The tick engine publishes before this sample is rendered.
@@ -2240,10 +2390,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
         if (pph == 7'(PLAST)) begin
           pph <= 0;
-          if (pc_ch == VW'(NV-1)) begin
+          // Slot 7's fold chain was launched at its PFOLD and finishes after
+          // the walk; fold_busy keeps the tick sequencer off the ALU until
+          // the final fold has landed in dry16.
+          if (pc_ch == VW'(NV-1))
             prun <= 0;
-            mxs <= 2'd1;                 // start the tree's levels 2 and 3
-          end
           pc_ch <= pc_ch + 1;
         end else
           pph <= pph + 1;
@@ -2295,9 +2446,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             end
             7'(PFOLD): begin
               if (pc_ch[0] == 1'b0)
-                sa_hold <= mix_leaf;
-              else
-                l1[pc_ch[2:1]] <= sa_r;
+                fstk[(pc_ch == 3'd0) ? 2'd0
+                   : (pc_ch == 3'd6) ? 2'd2 : 2'd1] <= mix_leaf;
+              else begin
+                fsel  <= (pc_ch == 3'd1) ? 3'd0
+                       : (pc_ch == 3'd7) ? 3'd2 : 3'd1;
+                fpend <= (pc_ch == 3'd3) ? 2'd1
+                       : (pc_ch == 3'd7) ? 2'd2 : 2'd0;
+                ffin  <= (pc_ch == 3'd7);
+                fmc   <= 4'd1;
+              end
               if (mx_aud && mx_rev > rev_max) rev_max <= mx_rev;
               if (mx_play && mx_damp != 0) s_lp <= mx_lp;
             end
@@ -2517,13 +2675,22 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             end
           end
           7'(PFOLD): begin               // fold into the tree
-            // Level 1: hold the even slot's leaf, combine it with the odd one.
-            // mix_leaf is zero for a slot that is running but suppressed, which
-            // is deliberate - the tree's zero leaves are part of the function.
+            // An even slot's leaf waits on the stack; an odd slot's launches
+            // the fold chain (one fold, or the queued multi-fold steps after
+            // slots 3 and 7). mix_leaf is zero for a slot that is running but
+            // suppressed, which is deliberate - the tree's zero leaves are
+            // part of the function.
             if (pc_ch[0] == 1'b0)
-              sa_hold <= mix_leaf;
-            else
-              l1[pc_ch[2:1]] <= sa_r;
+              fstk[(pc_ch == 3'd0) ? 2'd0
+                 : (pc_ch == 3'd6) ? 2'd2 : 2'd1] <= mix_leaf;
+            else begin
+              fsel  <= (pc_ch == 3'd1) ? 3'd0
+                     : (pc_ch == 3'd7) ? 3'd2 : 3'd1;
+              fpend <= (pc_ch == 3'd3) ? 2'd1
+                     : (pc_ch == 3'd7) ? 2'd2 : 2'd0;
+              ffin  <= (pc_ch == 3'd7);
+              fmc   <= 4'd1;
+            end
             if (mx_aud && mx_rev > rev_max) rev_max <= mx_rev;
           end
           default: ;
