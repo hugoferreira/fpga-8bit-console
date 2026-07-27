@@ -73,16 +73,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // and saw use bounded integer phase formulae below; square and pulse are
   // exact thresholds; noise and phaser have their own synthesis paths.
   logic signed [7:0] wrom[0:511];
-  // Noise gain per key: PICO-8's noise amplitude rises with pitch and this
-  // chip's sample-and-hold is flat, so the slope is restored from a table.
-  // 1.0 = 256. See tools/gen_psg_tables.py.
-  logic [7:0]  nz_gain[0:63];
-  logic [23:0] pinc[0:63];           // 2^24 * f(pitch) / 22050
+  // The constants block, homed in the EBR the computed waveforms freed:
+  // words 0..63 are the pitch increment's effective 13 bits (every pinc is
+  // dp << 8), words 64..255 are reserved for microcode and scheduled tables
+  // (design section 6). Padded to 256x16 so yosys spends the block RAM.
+  logic [15:0] crom[0:255];
   logic [15:0] recip[0:255];         // 65536 / speed
   initial begin
     $readmemh("./rtl/psg_waves_compact.hex", wrom);
-    $readmemh("./rtl/psg_pitch.hex", pinc);
-    $readmemh("./rtl/psg_noise.hex", nz_gain);
+    $readmemh("./rtl/psg_const.hex", crom);
     $readmemh("./rtl/psg_recip.hex", recip);
   end
 
@@ -681,7 +680,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // one for slide, the arpeggio row) are prefetched into registers by the
   // K_PF states before K_FX runs.
   logic [5:0]  pinc_addr;
-  logic [23:0] pinc_q;
+  logic [15:0] crom_q;
+  // Every pitch increment is dp << 8 with dp in 13 bits, so the 24-bit
+  // value is a wiring reconstruction of the constants word.
+  wire [23:0] pinc_q = {3'b000, crom_q[12:0], 8'h00};
   logic [15:0] recip_q;
   logic [23:0] arp_r;
   logic [5:0] slide_addr;
@@ -707,7 +709,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     endcase
   end
   always_ff @(posedge clk) begin
-    pinc_q  <= pinc[pinc_addr];
+    crom_q  <= crom[{2'b00, pinc_addr}];
     recip_q <= recip[eff_sp];
   end
 
@@ -2195,22 +2197,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       wi_neg ? -$signed({1'b0, wi_mag_ceil})
              :  $signed({1'b0, wi_mag_floor});
 
-  // nz_hold * nz_gain[key] / 256, saturated. The gain runs 87/256 at the
-  // bottom of the range to 222/256 at the top; it used to be a flat 192/256
-  // (0.75), which made low-pitched noise about twice as loud as PICO-8's.
-  //
-  // The gain table is read SYNCHRONOUSLY. As an asynchronous lookup it was a
-  // 64-to-1 mux of eight bits built out of logic - measured at 170 LC, on a
-  // table small enough that yosys will not spend a block RAM on it either way.
-  // A register costs eight flops instead, and it is free of timing risk here:
-  // s_snd_pitch is unpacked at pph 3 and held for the rest of the slot's visit,
-  // so the value latched here is settled long before pph 9 consumes it.
-  logic [7:0] nz_g;
-  always_ff @(posedge clk) nz_g <= nz_gain[s_snd_pitch];
-  wire signed [15:0] nz_mul = $signed(s_nz_hold) * $signed({1'b0, nz_g});
-  wire signed [7:0] nz_scaled =
-      (nz_mul >>> 8) > 16'sd127  ?  8'sd127 :
-      (nz_mul >>> 8) < -16'sd127 ? -8'sd127 : 8'(nz_mul >>> 8);
+  // The nz_gain sample-and-hold gain path died in the fidelity rework: the
+  // built-in noise became the one-pole s_noise_lp process below, nothing
+  // consumed nz_scaled, and synthesis had already trimmed the whole cone.
+  // The table, its hex load and the 8x8 multiply are gone with it.
   // Built-in noise is a stateful one-pole process, not a flat sample-and-hold.
   // Q8 coefficient 15/16 gives the exported reference's short-lag decay;
   // x3 restores the oscillator's higher noise gain before its separate 3/2

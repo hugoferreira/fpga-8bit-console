@@ -407,11 +407,13 @@ module psg_tb;
       for (int i = 0; i < 4; i++) hits[i] = 0;
       for (int i = 0; i < 15; i++) begin
         ticks(1);
+        // The pitch table lives in the constants block now: word k holds
+        // the effective 13 bits of pinc k, reconstructed as dp << 8.
         case (eff_inc_of(1))
-          dut.pinc[10]: hits[0]++;
-          dut.pinc[20]: hits[1]++;
-          dut.pinc[30]: hits[2]++;
-          dut.pinc[40]: hits[3]++;
+          {3'b0, dut.crom[10][12:0], 8'b0}: hits[0]++;
+          {3'b0, dut.crom[20][12:0], 8'b0}: hits[1]++;
+          {3'b0, dut.crom[30][12:0], 8'b0}: hits[2]++;
+          {3'b0, dut.crom[40][12:0], 8'b0}: hits[3]++;
           default: ;
         endcase
       end
@@ -808,7 +810,7 @@ module psg_tb;
       loud = 0; quiet = 0;
       wr(8'h10, 8'd18);                  // instrument 0 alternates vol 5/2
       ticks(1);
-      check(eff_inc_of(0) == dut.pinc[33],
+      check(eff_inc_of(0) == {3'b0, dut.crom[33][12:0], 8'b0},
             "instrument pitch 24 leaves the note's pitch alone");
       for (int i = 0; i < 6; i++) begin
         if (eff_vol_of(0) == 8'd180) loud++;
@@ -820,7 +822,7 @@ module psg_tb;
     end
     wr(8'h11, 8'd19);                    // instrument 1 sits at pitch 36
     ticks(2);
-    check(eff_inc_of(1) == dut.pinc[45],
+    check(eff_inc_of(1) == {3'b0, dut.crom[45][12:0], 8'b0},
           "instrument pitch adds relative to C-2 (33 + 36 - 24)");
     wr(8'h11, 8'h80);
 
@@ -836,7 +838,8 @@ module psg_tb;
     wr(8'h12, 8'd26);                    // effect 3 asks for a retrigger
     ticks(6);
     check(ins_row_of(2) <= 5'd3, "effect 3 retriggers instead of dropping");
-    check(eff_inc_of(2) == dut.pinc[33], "effect 3 does not drop the pitch");
+    check(eff_inc_of(2) == {3'b0, dut.crom[33][12:0], 8'b0},
+          "effect 3 does not drop the pitch");
     wr(8'h12, 8'h80);
 
     // ---- 20. waveform instruments -----------------------------------

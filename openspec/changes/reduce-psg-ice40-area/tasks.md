@@ -95,6 +95,10 @@
       meets the 15-EBR ceiling with clean oracle probes
 - [ ] 5.3 Consolidate or serialize pitch, noise-gain, filter-decode, fade-step
       and microcode constants without increasing the accepted BRAM count
+      (pitch landed: 13-bit words in the constants EBR, 6,199 at the
+      15-block ceiling, byte-identical; noise-gain deleted as dead code;
+      words 64..255 reserved as the microcode home; filter-decode and
+      fade-step remain)
 
 ## 6. Final verification and evidence
 

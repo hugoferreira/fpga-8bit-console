@@ -96,6 +96,19 @@ with open("rtl/psg_pitch.hex", "w") as f:
     for p in range(64):
         f.write(f"{pico8_phase_increment(p):06x}\n")
 
+# The constants block RAM (rtl/psg_const.hex): one 256x16 EBR in the block
+# freed by the computed waveforms. Words 0..63 hold the pitch increment's
+# effective bits - every pinc is dp << 8 and dp fits 13 bits, so the RTL
+# reconstructs {3'b0, word[12:0], 8'b0}. Words 64..255 are reserved for
+# microcode and scheduled tables (design section 6).
+with open("rtl/psg_const.hex", "w") as f:
+    for p in range(64):
+        dp = pico8_phase_increment(p) >> 8
+        assert dp < (1 << 13)
+        f.write(f"{dp:04x}\n")
+    for _ in range(64, 256):
+        f.write("0000\n")
+
 with open("rtl/psg_waves.hex", "w") as f:
     for w in range(8):
         for i in range(256):

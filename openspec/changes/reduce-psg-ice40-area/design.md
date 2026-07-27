@@ -514,6 +514,19 @@ placed at 6,268 (+54), but failed the unchanged `effect-3-drop` NRMSE gate
 measurements close the per-waveform choice: formulas are retained only for
 tilted saw and saw.
 
+The constants block landed in the freed EBR immediately after: words
+0..63 hold the pitch increment's effective 13 bits (every pinc is
+dp << 8, dp max 0x1CE0), reconstructed as {3'b0, word, 8'b0} on the
+same synchronous port, and words 64..255 are reserved for microcode
+and scheduled tables (section 6 finally has a home). The dead
+nz_gain/nz_mul/nz_scaled cone - orphaned when the fidelity rework made
+built-in noise the one-pole process - left the source with it. Seed-1
+places **6,199 cells at the 15-EBR ceiling**, routed 41.18 MHz; the
+oracle is 50/50 with every render byte-identical to the re-frozen
+area-wave-formulae baseline, and psg_tb rebinds its three pitch-table
+checks to the constants words. The two-stage chain closes net -15
+against the 6,214 checkpoint with the microcode store banked.
+
 The final combined checkpoint must still improve LC as well as satisfying the
 BRAM ceiling.
 
