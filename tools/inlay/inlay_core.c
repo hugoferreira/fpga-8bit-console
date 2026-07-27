@@ -4687,6 +4687,7 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
     const char *path_start;
     const char *immediate_start;
     la_u16 pointer_location;
+    la_u16 overlay_base;
     la_u16 root_length;
     la_u16 field_index;
     la_u16 field_offset;
@@ -4695,6 +4696,7 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
     la_i32 immediate;
     LaTargetOperationKind operation;
     int needs_immediate;
+    int rmw_is_overlay;
     cursor = la_trim_left(start, end);
     needs_immediate = 0;
     if ((la_u16)(end - cursor) >= 4 && memcmp(cursor, "inc ", 4) == 0) {
@@ -4790,17 +4792,29 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
     procedure = la_procedure_at_line(ctx, line);
     pointer_location = la_find_location_text_at(
         ctx, base_start, (la_u16)(base_end - base_start), procedure);
-    if (pointer_location == LA_INVALID_HANDLE ||
-        !ctx->locations[pointer_location].is_pointer) {
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                (la_u16)(base_end - base_start),
-                la_slice(base_start, (la_u16)(base_end - base_start)),
-                la_slice("typed pointer", 13), 0, 0);
-        return -1;
+    overlay_base = LA_INVALID_HANDLE;
+    rmw_is_overlay = 0;
+    if (pointer_location == LA_INVALID_HANDLE) {
+        /* A fixed overlay base updates an absolute address in place. */
+        overlay_base = la_find_overlay_text(
+            ctx, base_start, (la_u16)(base_end - base_start));
+        if (overlay_base == LA_INVALID_HANDLE) {
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
+                    (la_u16)(base_end - base_start),
+                    la_slice(base_start, (la_u16)(base_end - base_start)),
+                    la_slice("typed pointer or overlay", 24), 0, 0);
+            return -1;
+        }
+        rmw_is_overlay = 1;
     }
     {
         LaSlice declared;
-        declared = la_name_slice(ctx, ctx->locations[pointer_location].type_name);
+        if (rmw_is_overlay) {
+            declared = la_name_slice(ctx, ctx->overlays[overlay_base].type_name);
+        } else {
+            declared =
+                la_name_slice(ctx, ctx->locations[pointer_location].type_name);
+        }
         if (declared.length != root_length ||
             memcmp(declared.data, root_start, root_length) != 0) {
             la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, root_length,
@@ -4822,7 +4836,9 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
                 la_slice("byte", 4), field_size, 1);
         return -1;
     }
-    if (field_offset > ctx->target->max_displacement) {
+    /* A fixed overlay names an absolute address, so the field displacement is
+       not bounded by the target's pointer displacement window. */
+    if (!rmw_is_overlay && field_offset > ctx->target->max_displacement) {
         la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1,
                 (la_u16)(close - path_start),
                 la_slice(path_start, (la_u16)(close - path_start)),
@@ -4840,17 +4856,43 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
     ctx->stats->operations = ctx->operation_count;
     la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
                   (la_u16)(end - start));
-    event->operation = operation;
     event->owner = la_slice(root_start, root_length);
     event->path = la_slice(path_start, (la_u16)(close - path_start));
-    event->base =
-        la_name_slice(ctx, ctx->locations[pointer_location].physical);
-    event->scratch = la_slice("a", 1);
-    event->clobbers = la_slice("a,flags", 7);
     event->value = field_offset;
     event->offset = (la_u16)immediate;
     event->access_width = 1;
-    event->volatility = LA_ACCESS_NONVOLATILE;
+    if (rmw_is_overlay) {
+        /* inc/dec lower to a native read-modify-write that clobbers no
+           register; and/ora still need the accumulator. */
+        int is_mask;
+        is_mask = (operation == LA_TARGET_OP_AND8_PTR_DISP ||
+                   operation == LA_TARGET_OP_OR8_PTR_DISP);
+        event->operation =
+            operation == LA_TARGET_OP_INC8_PTR_DISP ?
+                LA_TARGET_OP_INC8_OVERLAY_ABS :
+            operation == LA_TARGET_OP_DEC8_PTR_DISP ?
+                LA_TARGET_OP_DEC8_OVERLAY_ABS :
+            operation == LA_TARGET_OP_AND8_PTR_DISP ?
+                LA_TARGET_OP_AND8_OVERLAY_ABS :
+                LA_TARGET_OP_OR8_OVERLAY_ABS;
+        event->base = la_name_slice(ctx, ctx->overlays[overlay_base].base);
+        if (is_mask) {
+            event->scratch = la_slice("a", 1);
+            event->clobbers = la_slice("a,flags", 7);
+        } else {
+            event->scratch = la_slice("", 0);
+            event->clobbers = la_slice("flags", 5);
+        }
+        event->volatility = ctx->overlays[overlay_base].volatile_access ?
+            LA_ACCESS_VOLATILE : LA_ACCESS_NONVOLATILE;
+    } else {
+        event->operation = operation;
+        event->base =
+            la_name_slice(ctx, ctx->locations[pointer_location].physical);
+        event->scratch = la_slice("a", 1);
+        event->clobbers = la_slice("a,flags", 7);
+        event->volatility = LA_ACCESS_NONVOLATILE;
+    }
     return 1;
 }
 

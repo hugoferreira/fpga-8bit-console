@@ -36,7 +36,7 @@
 - [ ] 4.3 Extend fixed-overlay byte load/store to every evidenced accumulator and physical-index form
 - [ ] 4.4 Add registered fixed-overlay `mov` forms and reject unsupported memory-to-memory combinations
 - [ ] 4.5 Add accumulator compare and the evidenced compare/test-and-branch overlay forms with exact flag contracts
-- [ ] 4.6 Add fixed-overlay `inc`, `dec`, `and` and `ora` RMW events with volatility metadata
+- [x] 4.6 Add fixed-overlay `inc`, `dec`, `and` and `ora` RMW events with volatility metadata
 - [ ] 4.7 Support explicit page-view arrays and unit-stride indexed access without hidden scratch
 - [ ] 4.8 Add exact customasm and machine-byte references plus negative width, volatility, index, scratch and clobber tests for every operation
 

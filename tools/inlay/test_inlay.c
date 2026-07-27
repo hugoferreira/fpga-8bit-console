@@ -42,6 +42,11 @@ typedef struct {
     int saw_overlay_indexed_store;
     int saw_code_pointer_data;
     int saw_overlay_address;
+    int saw_overlay_increment;
+    int saw_overlay_decrement;
+    int saw_overlay_and;
+    int saw_overlay_or;
+    int saw_overlay_volatile_increment;
 } TestEvents;
 
 typedef struct {
@@ -257,6 +262,39 @@ static int test_event(void *context, const LaEvent *event)
             } else {
                 events->saw_overlay_indexed_store = 1;
             }
+        } else if (event->operation == LA_TARGET_OP_INC8_OVERLAY_ABS ||
+                   event->operation == LA_TARGET_OP_DEC8_OVERLAY_ABS ||
+                   event->operation == LA_TARGET_OP_AND8_OVERLAY_ABS ||
+                   event->operation == LA_TARGET_OP_OR8_OVERLAY_ABS) {
+            int mask;
+            mask = event->operation == LA_TARGET_OP_AND8_OVERLAY_ABS ||
+                   event->operation == LA_TARGET_OP_OR8_OVERLAY_ABS;
+            check(event->access_width == 1,
+                  "overlay update reports one-unit width");
+            check(mask ?
+                      (event->scratch.length == 1 &&
+                       event->scratch.data[0] == 'a') :
+                      event->scratch.length == 0,
+                  "overlay update reports accumulator scratch only when masking");
+            check(mask ?
+                      (event->clobbers.length == 7 &&
+                       memcmp(event->clobbers.data, "a,flags", 7) == 0) :
+                      (event->clobbers.length == 5 &&
+                       memcmp(event->clobbers.data, "flags", 5) == 0),
+                  "overlay update reports its clobber contract");
+            if (event->operation == LA_TARGET_OP_INC8_OVERLAY_ABS) {
+                if (event->volatility == LA_ACCESS_VOLATILE) {
+                    events->saw_overlay_volatile_increment = 1;
+                } else {
+                    events->saw_overlay_increment = 1;
+                }
+            } else if (event->operation == LA_TARGET_OP_DEC8_OVERLAY_ABS) {
+                events->saw_overlay_decrement = 1;
+            } else if (event->operation == LA_TARGET_OP_AND8_OVERLAY_ABS) {
+                events->saw_overlay_and = 1;
+            } else {
+                events->saw_overlay_or = 1;
+            }
         } else if (event->operation ==
                    LA_TARGET_OP_ADDRESS_OVERLAY_FIELD) {
             check(event->access_width == 2,
@@ -350,6 +388,18 @@ static void test_typed_word_transfers(void)
         "overlay tile_map : TileMap at $f000\n"
         "address dest, tile_map.patterns\n"
         "address dest, tile_map.attributes\n";
+    static const char overlay_rmw_source[] =
+        "struct GameState\n"
+        "    frames : u8 at 0\n"
+        "    flags : u8 at 9\n"
+        "end\n"
+        "overlay game : GameState at $0030\n"
+        "overlay video : GameState at $4000 volatile\n"
+        "inc [game + GameState.frames]\n"
+        "dec [game + GameState.frames]\n"
+        "and [game + GameState.flags], #$fe\n"
+        "ora [game + GameState.flags], #1\n"
+        "inc [video + GameState.frames]\n";
     LaLimits limits;
     TestEvents events;
     TestDiagnostic diagnostic;
@@ -384,6 +434,23 @@ static void test_typed_word_transfers(void)
     check(result == LA_OK, "overlay field address materialization compiles");
     check(stats.operations == 2, "overlay address operations are counted");
     check(events.saw_overlay_address, "overlay field address event emitted");
+    result = compile_source(
+        overlay_rmw_source, 0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, "fixed-overlay byte updates compile");
+    check(stats.operations == 5, "overlay update operations are counted");
+    check(events.saw_overlay_increment,
+          "nonvolatile overlay increment event emitted");
+    check(events.saw_overlay_decrement,
+          "overlay decrement event emitted");
+    check(events.saw_overlay_and, "overlay mask-and event emitted");
+    check(events.saw_overlay_or, "overlay mask-or event emitted");
+    check(events.saw_overlay_volatile_increment,
+          "volatile overlay increment event emitted");
+    expect_error(
+        "struct GameState\nframes : u8 at 0\nend\n"
+        "inc [missing + GameState.frames]\n",
+        limits, LA_ERR_LOCATION_TYPE,
+        "overlay update with unknown base rejected");
     expect_error(
         "struct TileMap packed\npatterns : u8[512]\nend\n"
         "location byte_dest : u8 at $10\n"

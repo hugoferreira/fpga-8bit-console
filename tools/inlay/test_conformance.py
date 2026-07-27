@@ -534,10 +534,14 @@ def check_overlay_address_fixture(first: Path, second: Path) -> None:
         "mov $1a+1, #>(TILE_RAM + 0)",
         "mov $1a, #<(TILE_RAM + 512)",
         "mov $10, #<(OBJECT_RAM + 17)",
+        "inc $0030 + 0",
+        "dec $0030 + 0",
+        "and #254",
+        "ora #1",
     ):
         if required not in generated:
             raise AssertionError(
-                f"overlay-address lowering missing line: {required!r}"
+                f"fixed-overlay lowering missing line: {required!r}"
             )
     frontend = first / "overlay_address.bin"
     reference = first / "overlay_address-reference.bin"

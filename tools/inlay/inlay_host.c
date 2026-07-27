@@ -867,6 +867,37 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
         fprintf(output->assembly, "    cmp #%ld\n",
                 (long)event->signed_value);
         return 1;
+    case LA_TARGET_OP_INC8_OVERLAY_ABS:
+    case LA_TARGET_OP_DEC8_OVERLAY_ABS:
+        if (!begin_line(output, event->span, "overlay-update")) return 0;
+        fprintf(output->assembly, "    %s %.*s + %u",
+                event->operation == LA_TARGET_OP_INC8_OVERLAY_ABS ?
+                    "inc" : "dec",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value);
+        fprintf(output->assembly, " ; inlay update %.*s.%.*s\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
+        return 1;
+    case LA_TARGET_OP_AND8_OVERLAY_ABS:
+    case LA_TARGET_OP_OR8_OVERLAY_ABS:
+        if (!begin_line(output, event->span, "overlay-update")) return 0;
+        fprintf(output->assembly, "    lda %.*s + %u\n",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value);
+        if (!begin_line(output, event->span, "overlay-update")) return 0;
+        fprintf(output->assembly, "    %s #%u\n",
+                event->operation == LA_TARGET_OP_AND8_OVERLAY_ABS ?
+                    "and" : "ora",
+                (unsigned)event->offset);
+        if (!begin_line(output, event->span, "overlay-update")) return 0;
+        fprintf(output->assembly, "    sta %.*s + %u",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value);
+        fprintf(output->assembly, " ; inlay update %.*s.%.*s\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
+        return 1;
     case LA_TARGET_OP_ADDRESS_OVERLAY_FIELD:
         if (!begin_line(output, event->span, "overlay-address")) return 0;
         fprintf(output->assembly, "    mov %.*s, #<(%.*s + %u)\n",

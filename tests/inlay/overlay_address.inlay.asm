@@ -8,11 +8,17 @@ struct HeaderView
     flags : u8 at 17
 end
 
+struct GameState
+    frames : u8 at 0
+    flags : u8 at 9
+end
+
 location destination : u16 at $1a
 location cursor : ptr TileMap at $10
 
 overlay tile_map : TileMap at TILE_RAM
 overlay header : HeaderView at OBJECT_RAM
+overlay game : GameState at $0030
 
 static_assert TileMap.attributes.offset == 512
 static_assert HeaderView.flags.offset == 17
@@ -27,6 +33,10 @@ start:
     address destination, tile_map.patterns
     address destination, tile_map.attributes
     address cursor, header.flags
+    inc [game + GameState.frames]
+    dec [game + GameState.frames]
+    and [game + GameState.flags], #$fe
+    ora [game + GameState.flags], #1
     rts
 
 TILE_RAM = $f000

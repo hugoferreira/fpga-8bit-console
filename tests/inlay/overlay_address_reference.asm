@@ -19,4 +19,15 @@ start:
     mov $1b, #$f2
     mov $10, #$11
     mov $11, #$80
+; Fixed-overlay byte updates: inc/dec are native single-instruction RMW that
+; clobber no register; and/ora need the accumulator. game is $0030 (frames +0,
+; flags +9 = $0039).
+    inc $30
+    dec $30
+    lda $39
+    and #$fe
+    sta $39
+    lda $39
+    ora #$01
+    sta $39
     rts
