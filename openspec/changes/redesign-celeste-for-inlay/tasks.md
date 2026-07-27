@@ -70,12 +70,12 @@
 
 ## 9. Restructure object-kind behavior
 
-- [ ] 9.1 Move all player constants and private helpers into `Player`
-- [ ] 9.2 Split `Player.update` into explicit input, environment, horizontal, jump/dash, vertical and animation responsibilities where contracts permit
-- [ ] 9.3 Replace file-scope player temporaries with justified frame locals or explicitly owned player scratch
-- [ ] 9.4 Complete scoped procedure coverage for player drawing, hair, death and movement helpers
-- [ ] 9.5 Scope spawn, smoke and title constants and helpers under their existing namespaces
-- [ ] 9.6 Pass running, jump, dash, wall collision, death, smoke and animation checkpoints after each object-kind migration
+- [x] 9.1 Move all player constants and private helpers into `Player`
+- [x] 9.2 Split `Player.update` into explicit input, environment, horizontal, jump/dash, vertical and animation responsibilities where contracts permit
+- [x] 9.3 Replace file-scope player temporaries with justified frame locals or explicitly owned player scratch
+- [x] 9.4 Complete scoped procedure coverage for player drawing, hair, death and movement helpers
+- [x] 9.5 Scope spawn, smoke and title constants and helpers under their existing namespaces
+- [x] 9.6 Pass running, jump, dash, wall collision, death, smoke and animation checkpoints after each object-kind migration
 
 ## 10. Scope remaining subsystems
 

@@ -14,9 +14,9 @@ sha256  d85795e3daa7f1fbea0cef869efd554871f316c6196586dac3938e6340ae011a
 ```
 
 Phase B intentionally changes the executable while retaining behavioral,
-framebuffer, audio and resource gates. After the Objects redesign, the
+framebuffer, audio and resource gates. After the object-kind redesign, the
 deterministic production image remains 65,536 bytes with SHA-256
-`8b5b04b0606b4c44e7bc6f0164336779ac4d3ee9500508838f6beb91bbd4ee3b`.
+`e57a8ea4112c6f16086d6a618254214c453d464d4de9ce19bfa03ac608f53da6`.
 
 customasm v0.14.1 remains the host instruction encoder. The frontend owns
 packed and aligned layouts, enums, unions, sparse views, overlays, compile-time
@@ -540,7 +540,7 @@ semicolon comments outside quoted strings and trims insignificant leading
 indentation and trailing whitespace before charging source capacity, while
 retaining one source-mapped newline per input line. Celeste can therefore keep
 its checked-in commentary without weakening the bounded model. Its current
-expanded input uses 62,525 bytes, 4,281 lines and depth 2; the module workspace
+expanded input uses 65,191 bytes, 4,275 lines and depth 2; the module workspace
 reservation is 117,848 bytes.
 
 The installed cc65 compiler successfully compiles the same core and ca65
@@ -695,6 +695,16 @@ local rather than handwritten stack pushes. The two global pool address-table
 labels remain a documented target-boundary exception because the current pool
 declaration accepts target identifiers rather than qualified semantic labels.
 
+`Player`, `Spawn`, `Smoke` and `Title` are now actual bounded namespaces
+rather than dotted global procedure spellings. Each exports only its
+`init`/`update`/`draw` lifecycle. Player constants, movement/death/hair helpers
+and the persistent `$50`-`$5f` update scratch are private to `Player`;
+spawn/smoke constants are similarly private. `Player.update` transfers through
+explicit input, environment, active-dash, horizontal, vertical, jump/dash and
+animation procedures. The scratch remains deliberately physical because those
+values live across several calls and tail transfers; it is not a hidden
+virtual value or a short-lived frame local.
+
 The old direct customasm corpus lives only at
 `tests/inlay/reference/celeste-customasm/` as the immutable Phase-A baseline.
 Phase B intentionally changes instruction bytes, so acceptance is based on
@@ -721,8 +731,9 @@ The conformance gate independently:
 5. compares pool address, conventions, returns, scalar,
    pointer and aggregate frames, and marshalled calls with handwritten bytes;
 6. assembles the complete production entry with customasm;
-7. checks the semantic manifest, Platform/Game public APIs, procedure
-   contracts, minimal composition root and readable-source rules;
+7. checks the semantic manifest, Platform/Game/Objects/object-kind public APIs,
+   procedure manifests and contracts, minimal composition root and
+   readable-source rules;
 8. inventories 50 overlay operations, 89 typed operations, 97 semantic
    offset queries, zero legacy `offset y` setups and 129 residual raw
    `(pObj|pOth),y` accesses;

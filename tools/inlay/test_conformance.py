@@ -893,10 +893,95 @@ def check_objects_design() -> None:
         raise AssertionError(f"legacy object API names remain: {found}")
 
 
+def check_object_kind_design() -> set[str]:
+    text = (CELESTE_DIR / "player.inlay.asm").read_text(encoding="ascii")
+    namespaces = ("Player", "Spawn", "Smoke", "Title")
+    starts = []
+    for namespace in namespaces:
+        marker = f"namespace {namespace}\n"
+        if text.count(marker) != 1:
+            raise AssertionError(
+                f"player.inlay.asm: expected one {namespace} namespace"
+            )
+        starts.append(text.index(marker))
+    if starts != sorted(starts):
+        raise AssertionError("Celeste object-kind namespace order changed")
+
+    expected_procedures = {
+        "Player": {
+            "init", "update", "sample_input", "environment", "active_dash",
+            "horizontal", "vertical", "jump_dash", "animation",
+            "set_speed_x_signed", "set_speed_y_signed", "signed_word",
+            "create_hair", "set_hair_color", "draw_hair", "kill", "draw",
+        },
+        "Spawn": {"init", "update", "draw"},
+        "Smoke": {"init", "update", "draw"},
+        "Title": {"init", "update", "draw"},
+    }
+    lifecycle = set()
+    for index, namespace in enumerate(namespaces):
+        finish = starts[index + 1] if index + 1 < len(starts) else len(text)
+        body = text[starts[index]:finish]
+        exports = set(re.findall(
+            r"^\s*export ([a-z_]+)$", body, re.MULTILINE
+        ))
+        if exports != {"init", "update", "draw"}:
+            raise AssertionError(
+                f"{namespace} export manifest changed: "
+                f"expected ['draw', 'init', 'update'], got {sorted(exports)}"
+            )
+        procedures = set(re.findall(
+            r"^proc ([a-z_]+) using console6502(?: naked)?$",
+            body,
+            re.MULTILINE,
+        ))
+        if procedures != expected_procedures[namespace]:
+            raise AssertionError(
+                f"{namespace} procedure manifest changed: "
+                f"expected {sorted(expected_procedures[namespace])}, "
+                f"got {sorted(procedures)}"
+            )
+        lifecycle.update(
+            f"{namespace}.{operation}"
+            for operation in ("init", "update", "draw")
+        )
+
+    required = {
+        "jmp Player.sample_input",
+        "jmp Player.environment",
+        "jmp Player.active_dash",
+        "jmp Player.horizontal",
+        "jmp Player.vertical",
+        "jmp Player.jump_dash",
+        "jmp Player.animation",
+        "input = $50",
+        "wall = $5F",
+        "jmp player_hair_create_impl",
+        "jmp player_hair_color_impl",
+        "jmp player_hair_draw_impl",
+    }
+    missing = sorted(item for item in required if item not in text)
+    if missing:
+        raise AssertionError(
+            f"Celeste object-kind semantic design changed: {missing}"
+        )
+    production = "\n".join(
+        path.read_text(encoding="ascii")
+        for path in sorted(CELESTE_DIR.glob("*.inlay.asm"))
+    )
+    legacy_scratch = sorted(set(re.findall(r"\bp_[a-z_]+\b", production)))
+    if legacy_scratch:
+        raise AssertionError(
+            f"legacy file-scope player scratch remains: {legacy_scratch}"
+        )
+    return lifecycle
+
+
 def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
     production_files = check_celeste_source_boundary()
     check_platform_game_design()
     check_objects_design()
+    lifecycle_names = check_object_kind_design()
     module_texts = [
         path.read_text(encoding="ascii")
         for path in production_files
@@ -1014,26 +1099,6 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
     if missing_layout:
         raise AssertionError(
             f"Celeste semantic layout manifest changed: {missing_layout}"
-        )
-    lifecycle_module = (CELESTE_DIR / "player.inlay.asm").read_text(
-        encoding="ascii"
-    )
-    lifecycle_names = {
-        f"{kind}.{operation}"
-        for kind in ("Player", "Spawn", "Smoke", "Title")
-        for operation in ("init", "update", "draw")
-    }
-    declared_lifecycle = set(re.findall(
-        r"^proc ((?:Player|Spawn|Smoke|Title)\.(?:init|update|draw)) "
-        r"using console6502$",
-        lifecycle_module,
-        re.MULTILINE,
-    ))
-    if declared_lifecycle != lifecycle_names:
-        raise AssertionError(
-            "Celeste lifecycle procedure manifest changed: "
-            f"expected {sorted(lifecycle_names)}, "
-            f"got {sorted(declared_lifecycle)}"
         )
     generated = tmp / "celeste.asm"
     translate(

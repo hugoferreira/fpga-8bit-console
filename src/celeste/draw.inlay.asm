@@ -201,7 +201,7 @@ obj_screen_pos:
 ; is a multiply by 2/3; here the node moves (d>>1) + (d>>3) = 0.625d instead of
 ; 0.667d, which is two shifts and an add. The trail is imperceptibly tighter.
 ; ------------------------------------------------------------------------------
-create_hair:
+player_hair_create_impl:
     lda [pObj + CelesteObject.core.x]
     sta t3
     lda [pObj + CelesteObject.core.y]
@@ -231,7 +231,7 @@ create_hair:
 ; base - and which base reaches which colour is now a property of the generated
 ; draw palette, not of arithmetic. The generator emits the four the cart can
 ; ask for.
-set_hair_color:
+player_hair_color_impl:
     cmp #1
     beq .red
     cmp #2
@@ -262,7 +262,7 @@ hair_flash:
     #d8 Gfx.palette_7, Gfx.palette_7, Gfx.palette_7
     #d8 Gfx.palette_11, Gfx.palette_11, Gfx.palette_11
 
-draw_hair:
+player_hair_draw_impl:
     lda [pObj + CelesteObject.core.flip]
     and #1
     beq .faceright

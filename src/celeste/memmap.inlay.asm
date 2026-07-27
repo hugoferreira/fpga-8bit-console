@@ -188,21 +188,8 @@
     start_game = $4C     ; the title screen's hand-off to the game
     start_game_flash = $4D     ; counts 50 down to -30, signed
 
-; player update locals. The cart declares these with `local` inside update();
-; here they are seven bytes of file scope, which is the frame-pointer slice's
-; evidence and is deliberately not hidden.
-    p_input = $50     ; -1, 0 or 1
-    p_onground = $51
-    p_onice = $52
-    p_jump = $53     ; edge, not level
-    p_dash = $54
-    p_maxrun = $55
-    p_accel = $56     ; +$57  8.8
-    p_deccel = $58     ; +$59
-    p_maxfall = $5A     ; +$5B
-    p_gravity = $5C     ; +$5D
-    p_vinput = $5E
-    p_walldir = $5F
+; $50-$5f is the explicit private Player scratch block. Its scoped physical
+; names live with Player rather than leaking through this target memory map.
 
 ; drawing pen, which cannot live in t0..t7 because the glyph blitter calls the
 ; row blitter and both want scratch
