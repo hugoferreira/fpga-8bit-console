@@ -15,28 +15,20 @@ import psg_oracle_render
 
 ROOT = Path(__file__).resolve().parents[1]
 
-DETERMINISTIC_TOLERANCE = {
+# Deterministic cases compare EXACTLY against the PICO-8 export (change
+# adopt-pico8-integer-audio, task 5.1): after lead-in alignment, every
+# overlapping sample must be byte-identical. The graduated fitted-gain /
+# correlation / NRMSE tiers this replaces adjudicated approximations;
+# the adopted integer pipeline's gate is equality, and the tolerance
+# metrics remain in the results only as diagnostics for a red case.
+EXACT_TOLERANCE = {
     "duration_samples": 0,
-    "fitted_gain_min": 0.90,
-    "fitted_gain_max": 1.10,
-    "correlation_min": 0.99,
-    "nrmse_max": 0.10,
+    "mismatches_max": 0,
 }
-TRANSITION_TOLERANCE = {
-    **DETERMINISTIC_TOLERANCE,
-    "correlation_min": 0.999,
-    "nrmse_max": 0.03,
-}
-DROP_TOLERANCE = {
-    **DETERMINISTIC_TOLERANCE,
-    "correlation_min": 0.995,
-    "nrmse_max": 0.08,
-}
-SECONDARY_TOLERANCE = {
-    **TRANSITION_TOLERANCE,
-    "fitted_gain_min": 0.99,
-    "fitted_gain_max": 1.01,
-}
+# Noise-consuming cases stay statistical permanently: their samples
+# consume the binary's shared RNG, whose state depends on everything
+# else the process rendered, so the sample sequence is inexact in
+# principle (the documented shared-RNG boundary).
 STOCHASTIC_TOLERANCE = {
     "duration_samples": 0,
     "rms_mean_relative_max": 0.10,
@@ -50,19 +42,7 @@ def tolerance(case: dict) -> dict:
     """Return the explicit diagnostic gate carried with this case's result."""
     if case["stochastic"]:
         return dict(STOCHASTIC_TOLERANCE)
-    if (case["name"].startswith("transition-")
-            or case["name"] == "pattern-chain"):
-        return dict(TRANSITION_TOLERANCE)
-    if (case["name"] == "effect-1-slide"
-            or case["name"].startswith("sfx-instrument")):
-        return dict(TRANSITION_TOLERANCE)
-    if case["name"] in {"effect-3-drop", "effect-drop-once"}:
-        return dict(DROP_TOLERANCE)
-    if (case["name"] == "waveform-instrument"
-            or case["name"] in {"filter-detune-1", "filter-detune-low",
-                                "filter-detune-high"}):
-        return dict(SECONDARY_TOLERANCE)
-    return dict(DETERMINISTIC_TOLERANCE)
+    return dict(EXACT_TOLERANCE)
 
 
 def classify(case: dict, metrics: dict) -> list[str]:
@@ -84,11 +64,7 @@ def classify(case: dict, metrics: dict) -> list[str]:
             failures.append("noise/filter-shape")
         return failures
     gate = tolerance(case)
-    gain = abs(metrics["fitted_gain"])
-    if not gate["fitted_gain_min"] <= gain <= gate["fitted_gain_max"]:
-        failures.append("mixer/amplitude")
-    if (metrics["correlation"] < gate["correlation_min"]
-            or metrics["nrmse"] > gate["nrmse_max"]):
+    if metrics["mismatches"] > gate["mismatches_max"]:
         if case["name"].startswith("effect-"):
             failures.append("effect")
         elif case["name"].startswith("filter-"):

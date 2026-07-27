@@ -22,9 +22,9 @@ Usage:
 
 `render`/`compare` run the full music player (pattern 0 launch, the real
 export path). `sweep` is the durable regression harness: it drives every
-deterministic case from the oracle matrix's results.json through
-render_case and requires byte-equality against the stored reference,
-aligned by the export's constant lead-in (shift search 0..220).
+deterministic case of the generated matrix (cases/manifest.json) through
+render_case and requires byte-equality against the captured reference
+set, aligned by the export's constant lead-in (shift search 0..220).
 """
 
 from __future__ import annotations
@@ -701,21 +701,29 @@ def aligned_diff(model: list[int], ref: list[int], max_shift: int = 220):
     return best
 
 
-def run_sweep(results_path: Path, cases_dir: Path, ref_dir: Path,
+def run_sweep(cases_dir: Path, ref_dir: Path,
               only: list[str], max_shift: int) -> int:
-    matrix = json.loads(results_path.read_text())["cases"]
+    matrix = json.loads((cases_dir / "manifest.json").read_text())["cases"]
     failed = []
     ran = skipped = 0
     for case in matrix:
         name = case["name"]
         if only and name not in only:
             continue
+        if case["long"] and not only:
+            continue                          # out of the fast matrix
         if case["stochastic"]:
             skipped += 1
             print(f"{name:44s} SKIP (stochastic: shared-RNG boundary)")
             continue
+        ref_path = ref_dir / f"{name}.wav"
+        if not ref_path.exists():
+            failed.append(name)
+            ran += 1
+            print(f"{name:44s} NO-REFERENCE ({ref_path})")
+            continue
         model = render_case(cases_dir / case["audio"], case["expected_ticks"])
-        ref = read_wav(ref_dir / f"{name}.wav")
+        ref = read_wav(ref_path)
         s, mism, n, first = aligned_diff(model, ref, max_shift)
         ran += 1
         if mism == 0:
@@ -741,17 +749,16 @@ def main() -> int:
     ap.add_argument("--out", type=Path)
     ap.add_argument("--max-shift", type=int, default=220)
     ap.add_argument("--only", nargs="*", default=[])
-    ap.add_argument("--oracle", type=Path,
-                    default=Path("build/psg_oracle"),
-                    help="oracle root: cases/ plus area-final/{reference,"
-                         "results.json}")
+    ap.add_argument("--cases", type=Path,
+                    default=Path("build/psg_oracle/cases"),
+                    help="generated case dir (manifest.json + images)")
+    ap.add_argument("--reference", dest="ref_dir", type=Path,
+                    default=Path("build/psg_oracle/adopt-exact/reference"),
+                    help="captured PICO-8 export dir to compare against")
     args = ap.parse_args()
 
     if args.mode == "sweep":
-        return run_sweep(args.oracle / "area-final" / "results.json",
-                         args.oracle / "cases",
-                         args.oracle / "area-final" / "reference",
-                         args.only, args.max_shift)
+        return run_sweep(args.cases, args.ref_dir, args.only, args.max_shift)
 
     if args.bin is None or args.ticks is None:
         ap.error(f"{args.mode} requires <case.bin> and --ticks")

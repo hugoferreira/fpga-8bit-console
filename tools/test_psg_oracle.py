@@ -46,37 +46,20 @@ def main() -> int:
                "sfx-instrument-waveform", "filter-detune-low",
                "filter-detune-high"} <= names,
               "remaining-fidelity isolation probes are generated")
-        transition = next(c for c in cases
-                          if c["name"] == "transition-pitch")
-        gate = psg_oracle_matrix.tolerance(transition)
-        check(gate["correlation_min"] == 0.999
-              and gate["nrmse_max"] == 0.03,
-              "transition probes carry the tightened deterministic gate")
-        pattern = next(c for c in cases if c["name"] == "pattern-chain")
-        check(psg_oracle_matrix.tolerance(pattern) == gate,
-              "pattern handoff carries the tightened transition gate")
-        for composite_name in ("effect-1-slide", "sfx-instrument",
-                               "sfx-instrument-pitch-waveform"):
-            composite = next(c for c in cases
-                             if c["name"] == composite_name)
-            composite_gate = psg_oracle_matrix.tolerance(composite)
-            check(composite_gate["correlation_min"] == 0.999
-                  and composite_gate["nrmse_max"] == 0.03,
-                  f"{composite_name}: strict transition gate")
-        for drop_name in ("effect-3-drop", "effect-drop-once"):
-            drop = next(c for c in cases if c["name"] == drop_name)
-            drop_gate = psg_oracle_matrix.tolerance(drop)
-            check(drop_gate["correlation_min"] == 0.995
-                  and drop_gate["nrmse_max"] == 0.08,
-                  f"{drop_name}: strict drop gate")
-        for secondary_name in ("filter-detune-high", "waveform-instrument"):
-            secondary = next(c for c in cases
-                             if c["name"] == secondary_name)
-            secondary_gate = psg_oracle_matrix.tolerance(secondary)
-            check(secondary_gate["fitted_gain_min"] == 0.99
-                  and secondary_gate["fitted_gain_max"] == 1.01
-                  and secondary_gate["nrmse_max"] == 0.03,
-                  f"{secondary_name}: strict secondary-oscillator gate")
+        check({"filter-reverb-2", "filter-dampen-2",
+               "filter-dampen-reverb"} <= names,
+              "level-2 and filter-order probes are generated")
+        for case in cases:
+            gate = psg_oracle_matrix.tolerance(case)
+            if case["stochastic"]:
+                check("mismatches_max" not in gate
+                      and gate["rms_mean_relative_max"] == 0.10,
+                      f"{case['name']}: statistical gate at the shared-RNG "
+                      "boundary")
+            else:
+                check(gate == {"duration_samples": 0, "mismatches_max": 0},
+                      f"{case['name']}: deterministic cases gate on exact "
+                      "byte equality")
         impulse = next(c for c in cases
                        if c["name"] == "filter-reverb-impulse")
         check(impulse["alignment_max_shift"] == 256,
@@ -98,6 +81,13 @@ def main() -> int:
         check(abs(metrics["alignment_samples"] + 37) <= 1,
               f"alignment: {json.dumps(metrics)}")
         check(metrics["nrmse"] < 1e-4, f"gain/DC fit: {json.dumps(metrics)}")
+        check(metrics["mismatches"] > 0,
+              "a rescaled signal is not byte-exact")
+        same = psg_oracle.deterministic_metrics(signal, list(signal),
+                                                len(signal))
+        check(same["mismatches"] == 0
+              and same["aligned_overlap"] == len(signal),
+              "an identical signal is byte-exact over the full overlap")
 
         a = root / "a.wav"
         b = root / "b.wav"

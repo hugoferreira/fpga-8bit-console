@@ -192,7 +192,8 @@ def probes() -> list[Probe]:
     ))
 
     for name, filt in (("noiz", 2), ("buzz", 4), ("detune-1", 8),
-                       ("reverb-1", 24), ("dampen-1", 72)):
+                       ("reverb-1", 24), ("dampen-1", 72),
+                       ("reverb-2", 48), ("dampen-2", 144)):
         out.append(Probe(
             f"filter-{name}", f"filter byte {filt}: {name}",
             {0: constant(30, 3, filt=filt)},
@@ -226,6 +227,15 @@ def probes() -> list[Probe]:
                 speed=1, length=16, filt=72)},
         [([0, None, None, None], False, False, True)],
         16,
+    ))
+    out.append(Probe(
+        "filter-dampen-reverb",
+        "impulse through dampen-1 AND reverb-1: pins the filter order",
+        {0: sfx([note(30, 3, 7)] + [note(30, 3, 0)] * 15,
+                speed=1, length=16, filt=96)},
+        [([0, None, None, None], False, False, True)],
+        16,
+        alignment_max_shift=256,
     ))
 
     instrument_rows = (
@@ -459,7 +469,10 @@ def deterministic_metrics(reference: list[int], candidate: list[int],
     errors = [x - y for x, y in zip(ref, adjusted)]
     ref_rms = math.sqrt(statistics.fmean(x * x for x in ref)) or 1.0
     ref_peak = max((abs(x) for x in ref), default=1) or 1
+    mismatches = sum(1 for x, y in zip(ref, cand) if x != y)
     return {
+        "mismatches": mismatches,
+        "aligned_overlap": len(ref),
         "reference_samples": len(reference),
         "candidate_samples": len(candidate),
         "expected_samples": expected_samples,
