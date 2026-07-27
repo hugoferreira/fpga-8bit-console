@@ -66,25 +66,25 @@ load:
     tax
     mov [game.level], room_levels + x
     mov [game.has_dashed], #0
-    mov pSrc, room_ptr_lo + x
-    mov pSrc+1, room_ptr_hi + x
+    mov Machine.source, room_ptr_lo + x
+    mov Machine.source+1, room_ptr_hi + x
     jsr Objects.clear           ; the cart's foreach(objects, destroy)
     lda [game.room_bank]               ; load into the bank that is not on screen
     eor #1
     sta [game.room_bank]
     ldy #0                      ; the room's tile ids become this port's mget
 .copy:
-    lda (pSrc), y
+    lda (Machine.source), y
     sta [room_tiles.cells[y]]
     iny
     bne .copy
-    mov pDst, #<MAP_LO
-    mov pDst+1, #>MAP_LO
+    mov Machine.destination, #<MAP_LO
+    mov Machine.destination+1, #>MAP_LO
     lda [game.room_bank]
     beq .bank0
-    lda pDst
+    lda Machine.destination
     add #16
-    sta pDst
+    sta Machine.destination
 .bank0:
     ldx #0                      ; X walks the 256 tile ids in order
     mov t6, #Room.height
@@ -95,23 +95,23 @@ load:
     stx t5
     tax
     lda Gfx.tile_base, x
-    sta (pDst), y
+    sta (Machine.destination), y
     lda Gfx.tile_attr, x
-    inc pDst+1                  ; the attribute plane is $200 higher
-    inc pDst+1
-    sta (pDst), y
-    dec pDst+1
-    dec pDst+1
+    inc Machine.destination+1                  ; the attribute plane is $200 higher
+    inc Machine.destination+1
+    sta (Machine.destination), y
+    dec Machine.destination+1
+    dec Machine.destination+1
     ldx t5
     inx
     iny
     cpy #Room.width
     bne .col
-    lda pDst                    ; next cell row
+    lda Machine.destination                    ; next cell row
     add #MAP_STRIDE
-    sta pDst
+    sta Machine.destination
     bcc .norow
-    inc pDst+1
+    inc Machine.destination+1
 .norow:
     dec t6
     bne .row
@@ -220,7 +220,7 @@ camera:
 .find:
     txa
     jsr Objects.pointer
-    lda [pObj.core.kind]
+    lda [Machine.object.core.kind]
     cmp #ObjectKind.player
     beq .found
     cmp #ObjectKind.spawn
@@ -231,7 +231,7 @@ camera:
     rts                         ; no player: leave the camera where it is
 .found:
     mov y, offset CelesteObject.core.y
-    lda (pObj), y
+    lda (Machine.object), y
     bmi .top                    ; above the room: show the top
     sub #56
     bcc .top

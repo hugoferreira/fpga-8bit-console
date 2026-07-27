@@ -696,13 +696,13 @@ def eligible_legacy_field_loads(path: Path, text: str) -> list[str]:
     offset = re.compile(
         r"^\s*mov\s+y,\s+offset\s+(CelesteObject\.[A-Za-z0-9_.]+)"
     )
-    load = re.compile(r"^\s*lda\s+\(pObj\),\s*y\b")
+    load = re.compile(r"^\s*lda\s+\(Machine\.object\),\s*y\b")
     kills_y = re.compile(r"^\s*(?:ldy\b|tay\b|mov\s+y,)")
     control_boundary = re.compile(
         r"^\s*(?:[.@A-Za-z_][.@A-Za-z0-9_]*:|"
         r"b(?:cc|cs|eq|mi|ne|pl|vc|vs|ra)\b|j(?:mp|sr)\b|rts\b)"
     )
-    reads_y = re.compile(r"(?:\by\b|\(pObj\),\s*y)")
+    reads_y = re.compile(r"(?:\by\b|\(Machine\.object\),\s*y)")
     for index, line in enumerate(lines[:-1]):
         match = offset.match(line)
         if not match or not load.match(lines[index + 1]):
@@ -727,13 +727,13 @@ def check_legacy_exception_contract() -> None:
     path = Path("fixture.inlay.asm")
     candidate = (
         "mov y, offset CelesteObject.core.kind\n"
-        "lda (pObj), y\n"
+        "lda (Machine.object), y\n"
         "ldy #0\n"
     )
     documented = (
         "mov y, offset CelesteObject.core.kind "
         "; inlay-exception: flags are consumed\n"
-        "lda (pObj), y\n"
+        "lda (Machine.object), y\n"
         "ldy #0\n"
     )
     assert eligible_legacy_field_loads(path, candidate)
@@ -1203,7 +1203,7 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
         )
     typed_operations = sum(
         len(re.findall(
-            r"\[(?:pObj|pOth)(?: \+ CelesteObject)?\.", text))
+            r"\[Machine\.(?:object|other)(?:\.| \+ CelesteObject\.)", text))
         for text in module_texts
     )
     if typed_operations != EXPECTED_CELESTE_TYPED_OPERATIONS:
@@ -1253,7 +1253,7 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
             f"got {semantic_offsets}"
         )
     raw_indirects = sum(
-        len(re.findall(r"\((?:pObj|pOth)\),\s*y\b", text))
+        len(re.findall(r"\(Machine\.(?:object|other)\),\s*y\b", text))
         for text in module_texts
     )
     if raw_indirects != EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS:

@@ -40,16 +40,16 @@ namespace Audio
 init:
     mov [psg.address_low], #$00
     mov [psg.address_high], #$31
-    mov pSrc, #<audio_data
-    mov pSrc+1, #>audio_data
+    mov Machine.source, #<audio_data
+    mov Machine.source+1, #>audio_data
     ldx #18                     ; 18 pages = 4608 bytes
     ldy #0
 .up:
-    lda (pSrc), y
+    lda (Machine.source), y
     sta [psg.data]
     iny
     bne .up
-    inc pSrc+1
+    inc Machine.source+1
     dex
     bne .up
 

@@ -168,10 +168,10 @@ end
 proc load_object using console6502 naked
     value : u16 return in Fixed.word0
 begin
-    lda (pObj), y
+    lda (Machine.object), y
     sta Fixed.word0
     iny
-    lda (pObj), y
+    lda (Machine.object), y
     sta Fixed.word0+1
     ret
 end
@@ -180,10 +180,10 @@ proc store_object using console6502 naked
     value : u16 in Fixed.word0
 begin
     lda Fixed.word0
-    sta (pObj), y
+    sta (Machine.object), y
     iny
     lda Fixed.word0+1
-    sta (pObj), y
+    sta (Machine.object), y
     ret
 end
 
@@ -194,10 +194,10 @@ end
 proc load_object_target using console6502 naked
     target : u16 return in Fixed.word1
 begin
-    lda (pObj), y
+    lda (Machine.object), y
     sta Fixed.word1
     iny
-    lda (pObj), y
+    lda (Machine.object), y
     sta Fixed.word1+1
     ret
 end

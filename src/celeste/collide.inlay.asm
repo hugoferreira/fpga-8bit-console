@@ -50,21 +50,21 @@ ice:
 ; Clobbers A, Y.
 ; ------------------------------------------------------------------------------
 box:
-    lda [pObj.core.x]
+    lda [Machine.object.core.x]
     mov y, offset CelesteObject.core.hitbox.x
     clc
-    adc (pObj), y
+    adc (Machine.object), y
     add c_ox
     sta c_x
-    lda [pObj.core.y]
+    lda [Machine.object.core.y]
     mov y, offset CelesteObject.core.hitbox.y
     clc
-    adc (pObj), y
+    adc (Machine.object), y
     add c_oy
     sta c_y
-    lda [pObj.core.hitbox.w]
+    lda [Machine.object.core.hitbox.w]
     sta c_w
-    lda [pObj.core.hitbox.h]
+    lda [Machine.object.core.hitbox.h]
     sta c_h
     rts
 ; ------------------------------------------------------------------------------
@@ -213,9 +213,9 @@ spikes:
     bne .which
     jmp .next
 .found:
-    mov pFn, Collision.lo + x
+    mov Machine.function, Collision.lo + x
     lda Collision.hi, x
-    sta pFn+1
+    sta Machine.function+1
     jsr Objects.dispatch
     bne .hit
 .next:
@@ -243,7 +243,7 @@ hi:
 proc down using console6502 naked
 begin
     mov y, offset CelesteObject.core.speed_y.integer
-    lda (pObj), y
+    lda (Machine.object), y
     bmi .no
     lda c_y
     add c_h
@@ -270,11 +270,11 @@ end
 proc up using console6502 naked
 begin
     mov y, offset CelesteObject.core.speed_y.integer
-    lda (pObj), y
+    lda (Machine.object), y
     bmi .maybe
-    lda [pObj.core.speed_y.fraction]  ; high byte: +0.004 is still moving down
+    lda [Machine.object.core.speed_y.fraction]  ; high byte: +0.004 is still moving down
     mov y, offset CelesteObject.core.speed_y.integer
-    ora (pObj), y
+    ora (Machine.object), y
     bne .no
 .maybe:
     lda c_y
@@ -292,11 +292,11 @@ end
 proc right using console6502 naked
 begin
     mov y, offset CelesteObject.core.speed_x.integer
-    lda (pObj), y
+    lda (Machine.object), y
     bmi .maybe
-    lda [pObj.core.speed_x.fraction]
+    lda [Machine.object.core.speed_x.fraction]
     mov y, offset CelesteObject.core.speed_x.integer
-    ora (pObj), y
+    ora (Machine.object), y
     bne .no
 .maybe:
     lda c_x
@@ -314,7 +314,7 @@ end
 proc left using console6502 naked
 begin
     mov y, offset CelesteObject.core.speed_x.integer
-    lda (pObj), y
+    lda (Machine.object), y
     bmi .no
     lda c_x
     add c_w

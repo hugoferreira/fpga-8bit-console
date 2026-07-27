@@ -59,7 +59,7 @@ namespace Objects
 ; pointer: pObj = the record for slot A. Clobbers A, X.
 ; ------------------------------------------------------------------------------
 proc pointer using console6502
-    result : ptr CelesteObject return in pObj
+    result : ptr CelesteObject return in Machine.object
     slot : u8 in a
 begin
     address result, objects[a]
@@ -97,7 +97,7 @@ begin
     pha
     jsr Objects.pointer
     lda #0
-    sta [pObj.core.kind]
+    sta [Machine.object.core.kind]
     pla
     tax
     dex
@@ -114,13 +114,13 @@ proc allocate using console6502
     x_position : i8 in spawn_x
     y_position : i8 in spawn_y
     slot : u8 return in spawn_slot
-    result : ptr CelesteObject return in pObj
+    result : ptr CelesteObject return in Machine.object
 begin
     ldx #0
 .find:
     txa
     jsr Objects.pointer
-    lda [pObj.core.kind]
+    lda [Machine.object.core.kind]
     beq .found
     inx
     cpx #Objects.slot_count
@@ -134,34 +134,34 @@ begin
     mov y, #CelesteObject.size-1 ; a fresh record starts empty, so every field
     lda #0                      ; the type does not set reads as the cart's nil
 .clear:
-    sta (pObj), y
+    sta (Machine.object), y
     dey
     bpl .clear
 
     lda spawn_type
-    sta [pObj.core.kind]
+    sta [Machine.object.core.kind]
     tax
     lda Objects.type_tile-1, x   ; obj.spr = type.tile
-    sta [pObj.core.sprite]
+    sta [Machine.object.core.sprite]
     lda spawn_x
-    sta [pObj.core.x]
+    sta [Machine.object.core.x]
     lda spawn_y
-    sta [pObj.core.y]
+    sta [Machine.object.core.y]
 
     lda #8                      ; the cart's default hitbox {0,0,8,8}
-    sta [pObj.core.hitbox.w]
-    sta [pObj.core.hitbox.h]
+    sta [Machine.object.core.hitbox.w]
+    sta [Machine.object.core.hitbox.h]
     lda #Objects.flag_collideable|Objects.flag_solids
     mov y, offset CelesteObject.core.flags
-    sta (pObj), y
+    sta (Machine.object), y
 
     lda spawn_type              ; type.init(this)
     tax
     lda Objects.type_init_lo-1, x
-    sta pFn
+    sta Machine.function
     lda Objects.type_init_hi-1, x
-    sta pFn+1
-    ora pFn
+    sta Machine.function+1
+    ora Machine.function
     beq .noinit
     jsr Objects.dispatch
 .noinit:
@@ -174,7 +174,7 @@ end
 ; ------------------------------------------------------------------------------
 proc dispatch using console6502 naked
 begin
-    jmp (pFn)
+    jmp (Machine.function)
 end
 
 ; ------------------------------------------------------------------------------
@@ -183,7 +183,7 @@ end
 ; than a handwritten hardware-stack convention.
 ; ------------------------------------------------------------------------------
 proc spawn_smoke using console6502
-    self : ptr CelesteObject in pObj
+    self : ptr CelesteObject in Machine.object
     x_position : i8 in a
     y_position : i8 in x
     saved_self : ptr CelesteObject in frame
@@ -201,10 +201,10 @@ end
 ; destroy: free the record pObj points at. Clobbers A, Y.
 ; ------------------------------------------------------------------------------
 proc destroy using console6502
-    self : ptr CelesteObject in pObj
+    self : ptr CelesteObject in Machine.object
 begin
     lda #0
-    sta [pObj.core.kind]
+    sta [Machine.object.core.kind]
     ret
 end
 
@@ -222,21 +222,21 @@ begin
 .loop:
     lda obj_slot
     jsr Objects.pointer
-    lda [pObj.core.kind]
+    lda [Machine.object.core.kind]
     beq .next
 
     jsr Objects.move            ; obj.move(obj.spd.x, obj.spd.y)
 
     lda obj_slot                ; the object may have been destroyed by its own
     jsr Objects.pointer         ; move (nothing in stage 1 does, but reloading
-    lda [pObj.core.kind] ; cheaper than proving it cannot)
+    lda [Machine.object.core.kind] ; cheaper than proving it cannot)
     beq .next
     tax
     lda Objects.type_update_lo-1, x
-    sta pFn
+    sta Machine.function
     lda Objects.type_update_hi-1, x
-    sta pFn+1
-    ora pFn
+    sta Machine.function+1
+    ora Machine.function
     beq .next
     jsr Objects.dispatch
 .next:
@@ -255,14 +255,14 @@ begin
 .loop:
     lda obj_slot
     jsr Objects.pointer
-    lda [pObj.core.kind]
+    lda [Machine.object.core.kind]
     beq .next
     tax
     lda Objects.type_draw_lo-1, x
-    sta pFn
+    sta Machine.function
     lda Objects.type_draw_hi-1, x
-    sta pFn+1
-    ora pFn
+    sta Machine.function+1
+    ora Machine.function
     beq .next
     jsr Objects.dispatch
 .next:
@@ -285,7 +285,7 @@ end
 ; Clobbers everything. t0 holds the integer step amount.
 ; ------------------------------------------------------------------------------
 proc move using console6502
-    self : ptr CelesteObject in pObj
+    self : ptr CelesteObject in Machine.object
     value : u16 in Fixed.word0
     operand : u16 in Fixed.word1
 begin
@@ -304,9 +304,9 @@ begin
     sta t0
 
     mov y, offset CelesteObject.core.remainder_x.integer ; inlay-exception: variable update operand t0
-    lda (pObj), y               ; rem.x -= amount, in the high half only
+    lda (Machine.object), y               ; rem.x -= amount, in the high half only
     sub t0
-    sta (pObj), y
+    sta (Machine.object), y
 
     jsr Objects.step_x
 
@@ -325,9 +325,9 @@ begin
     sta t0
 
     mov y, offset CelesteObject.core.remainder_y.integer ; inlay-exception: variable update operand t0
-    lda (pObj), y
+    lda (Machine.object), y
     sub t0
-    sta (pObj), y
+    sta (Machine.object), y
 
     jmp Objects.step_y
 end
@@ -368,17 +368,17 @@ end
 ; it was trying to be. Clobbers A, X, Y, t1, t2.
 ; ------------------------------------------------------------------------------
 proc step_x using console6502
-    self : ptr CelesteObject in pObj
+    self : ptr CelesteObject in Machine.object
     amount : i8 in t0
 begin
-    lda [pObj.core.flags]
+    lda [Machine.object.core.flags]
     and #Objects.flag_solids
     bne .solid
 
     mov y, offset CelesteObject.core.x ; inlay-exception: variable update operand t0
-    lda (pObj), y                    ; not solid: x += amount, no collision at all
+    lda (Machine.object), y                    ; not solid: x += amount, no collision at all
     add t0
-    sta (pObj), y
+    sta (Machine.object), y
     rts
 
 .solid:
@@ -392,9 +392,9 @@ begin
     bne .blocked
 
     mov y, offset CelesteObject.core.x ; inlay-exception: variable update operand t1
-    lda (pObj), y
+    lda (Machine.object), y
     add t1
-    sta (pObj), y
+    sta (Machine.object), y
 
     dec t2                      ; inclusive loop: t2 counts down through zero
     bpl .loop
@@ -403,13 +403,13 @@ begin
 .blocked:
     lda #0                      ; spd.x = 0, rem.x = 0
     mov y, offset CelesteObject.core.speed_x.fraction
-    sta (pObj), y
+    sta (Machine.object), y
     iny
-    sta (pObj), y
+    sta (Machine.object), y
     mov y, offset CelesteObject.core.remainder_x.fraction
-    sta (pObj), y
+    sta (Machine.object), y
     iny
-    sta (pObj), y
+    sta (Machine.object), y
     ret
 end
 
@@ -417,17 +417,17 @@ end
 ; step_y: the same, vertically. Clobbers A, X, Y, t1, t2.
 ; ------------------------------------------------------------------------------
 proc step_y using console6502
-    self : ptr CelesteObject in pObj
+    self : ptr CelesteObject in Machine.object
     amount : i8 in t0
 begin
-    lda [pObj.core.flags]
+    lda [Machine.object.core.flags]
     and #Objects.flag_solids
     bne .solid
 
     mov y, offset CelesteObject.core.y ; inlay-exception: variable update operand t0
-    lda (pObj), y
+    lda (Machine.object), y
     add t0
-    sta (pObj), y
+    sta (Machine.object), y
     rts
 
 .solid:
@@ -441,9 +441,9 @@ begin
     bne .blocked
 
     mov y, offset CelesteObject.core.y ; inlay-exception: variable update operand t1
-    lda (pObj), y
+    lda (Machine.object), y
     add t1
-    sta (pObj), y
+    sta (Machine.object), y
 
     dec t2
     bpl .loop
@@ -452,13 +452,13 @@ begin
 .blocked:
     lda #0
     mov y, offset CelesteObject.core.speed_y.fraction
-    sta (pObj), y
+    sta (Machine.object), y
     iny
-    sta (pObj), y
+    sta (Machine.object), y
     mov y, offset CelesteObject.core.remainder_y.fraction
-    sta (pObj), y
+    sta (Machine.object), y
     iny
-    sta (pObj), y
+    sta (Machine.object), y
     ret
 end
 end

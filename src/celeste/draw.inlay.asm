@@ -176,7 +176,7 @@ sprite:
 
 object:
     mov y, offset CelesteObject.core.sprite
-    lda (pObj), y
+    lda (Machine.object), y
     beq .done                   ; the cart's `elseif obj.spr > 0`
     cmp #29
     bcs .smoke
@@ -192,7 +192,7 @@ object:
     lda #Gfx.smoke_attr
 .flip:
     mov y, offset CelesteObject.core.flip
-    ora (pObj), y
+    ora (Machine.object), y
     sta t3
     jsr Draw.position
     pla
@@ -205,10 +205,10 @@ object:
 ; Clobbers A, Y.
 ; ------------------------------------------------------------------------------
 position:
-    lda [pObj.core.x]
+    lda [Machine.object.core.x]
     add [game.shake_x]
     sta t4
-    lda [pObj.core.y]
+    lda [Machine.object.core.y]
     sub [game.camera_y]
     add [game.shake_y]
     sta t5
@@ -228,24 +228,24 @@ position:
 ; 0.667d, which is two shifts and an add. The trail is imperceptibly tighter.
 ; ------------------------------------------------------------------------------
 hair_create:
-    lda [pObj.core.x]
+    lda [Machine.object.core.x]
     sta t3
-    lda [pObj.core.y]
+    lda [Machine.object.core.y]
     sta t4
     mov y, offset CelesteObject.payload.hair.hair
     ldx #Draw.hair_nodes
 .node:
     lda #0
-    sta (pObj), y
+    sta (Machine.object), y
     iny
     lda t3
-    sta (pObj), y
+    sta (Machine.object), y
     iny
     lda #0
-    sta (pObj), y
+    sta (Machine.object), y
     iny
     lda t4
-    sta (pObj), y
+    sta (Machine.object), y
     iny
     dex
     bne .node
@@ -289,7 +289,7 @@ hair_palette:
     #d8 Gfx.palette_11, Gfx.palette_11, Gfx.palette_11
 
 hair_draw:
-    lda [pObj.core.flip]
+    lda [Machine.object.core.flip]
     and #1
     beq .faceright
     lda #6
@@ -299,7 +299,7 @@ hair_draw:
 .lastx:
     mov y, offset CelesteObject.core.x
     clc
-    adc (pObj), y
+    adc (Machine.object), y
     sta hair_lx+1
     mov hair_lx, #0
 
@@ -311,7 +311,7 @@ hair_draw:
 .lasty:
     mov y, offset CelesteObject.core.y
     clc
-    adc (pObj), y
+    adc (Machine.object), y
     sta hair_ly+1
     mov hair_ly, #$80
 
@@ -429,19 +429,19 @@ asr_w2:
 ; something in it changed, which for this program is once a second.
 ; ------------------------------------------------------------------------------
 overlay_init:
-    mov pDst, #<OVLSHADOW
-    mov pDst+1, #>OVLSHADOW
+    mov Machine.destination, #<OVLSHADOW
+    mov Machine.destination+1, #>OVLSHADOW
     ldx #0
 .row:
-    lda pDst
+    lda Machine.destination
     sta OVLROW_LO, x
-    lda pDst+1
+    lda Machine.destination+1
     sta OVLROW_HI, x
-    lda pDst
+    lda Machine.destination
     add #OVL_STRIDE
-    sta pDst
+    sta Machine.destination
     bcc .norow
-    inc pDst+1
+    inc Machine.destination+1
 .norow:
     inx
     cpx #120
@@ -483,7 +483,7 @@ overlay_begin:
 .find:
     txa
     jsr Objects.pointer
-    lda [pObj.core.kind]
+    lda [Machine.object.core.kind]
     cmp #ObjectKind.title
     beq .yes
     inx
@@ -609,7 +609,7 @@ char:
 text:
     ldy #0
 .ch:
-    lda (pSrc), y
+    lda (Machine.source), y
     cmp #Draw.glyph_end
     beq .done
     sty d_i
@@ -622,8 +622,8 @@ text:
 
 ; string: A/X = string address, then print it.
 string:
-    sta pSrc
-    stx pSrc+1
+    sta Machine.source
+    stx Machine.source+1
     jmp Draw.text
 
 ; byte: print A as two decimal digits.

@@ -923,6 +923,31 @@ static la_u16 la_find_location_text(LaContext *ctx,
     return la_find_location_text_at(ctx, text, length, LA_INVALID_HANDLE);
 }
 
+/* Advance *base_end across dotted components while the accumulated name is not
+   yet a known location or overlay, so a namespace-qualified operand base such
+   as `Machine.object` is read whole. Stops at the shortest resolving prefix;
+   if none resolves, *base_end is left unchanged so callers report the leading
+   name. */
+static void la_extend_qualified_base(LaContext *ctx, const char *base_start,
+                                     const char **base_end, const char *close,
+                                     la_u16 procedure)
+{
+    const char *scan;
+    scan = *base_end;
+    while (la_find_location_text_at(
+               ctx, base_start, (la_u16)(scan - base_start), procedure) ==
+               LA_INVALID_HANDLE &&
+           la_find_overlay_text(
+               ctx, base_start, (la_u16)(scan - base_start)) ==
+               LA_INVALID_HANDLE &&
+           scan < close && *scan == '.' && scan + 1 < close &&
+           la_is_ident_start(scan[1])) {
+        ++scan;
+        while (scan < close && la_is_ident(*scan)) ++scan;
+        *base_end = scan;
+    }
+}
+
 static int la_primitive_size(LaContext *ctx, la_u16 type_name,
                              la_u16 *size)
 {
@@ -4562,6 +4587,8 @@ static int la_parse_typed_word_operation(LaContext *ctx,
     base_start = la_trim_left(bracket + 1, close);
     base_end = base_start;
     while (base_end < close && la_is_ident(*base_end)) ++base_end;
+    la_extend_qualified_base(ctx, base_start, &base_end, close,
+                             la_procedure_at_line(ctx, line));
     cursor = la_trim_left(base_end, close);
     if (base_end == base_start || cursor >= close ||
         (*cursor != '.' && *cursor != '+')) {
@@ -4881,6 +4908,8 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
     base_start = la_trim_left(bracket + 1, close);
     base_end = base_start;
     while (base_end < close && la_is_ident(*base_end)) ++base_end;
+    la_extend_qualified_base(ctx, base_start, &base_end, close,
+                             la_procedure_at_line(ctx, line));
     cursor = la_trim_left(base_end, close);
     if (base_end == base_start || cursor >= close ||
         (*cursor != '.' && *cursor != '+')) {
@@ -5109,6 +5138,8 @@ static int la_parse_overlay_branch(LaContext *ctx,
     base_start = la_trim_left(bracket + 1, close);
     base_end = base_start;
     while (base_end < close && la_is_ident(*base_end)) ++base_end;
+    la_extend_qualified_base(ctx, base_start, &base_end, close,
+                             la_procedure_at_line(ctx, line));
     cursor = la_trim_left(base_end, close);
     if (base_end == base_start || cursor >= close ||
         (*cursor != '.' && *cursor != '+')) return 0;
@@ -5200,6 +5231,8 @@ static int la_parse_overlay_store_immediate(LaContext *ctx,
     base_start = la_trim_left(bracket + 1, close);
     base_end = base_start;
     while (base_end < close && la_is_ident(*base_end)) ++base_end;
+    la_extend_qualified_base(ctx, base_start, &base_end, close,
+                             la_procedure_at_line(ctx, line));
     cursor = la_trim_left(base_end, close);
     if (base_end == base_start) return 0;
     /* Only a field operand [base.field] / [base + Type.field] is a store to a

@@ -80,20 +80,20 @@ begin
     sta [video.sheet_address_low]
     sta [video.sheet_address_high]
     lda #<Gfx.sheet
-    sta pSrc
+    sta Machine.source
     lda #>Gfx.sheet
-    sta pSrc+1
+    sta Machine.source+1
     lda #<Gfx.upload_bytes
     sta t0
     lda #>Gfx.upload_bytes
     sta t1
     ldy #0
 .byte:
-    lda (pSrc), y
+    lda (Machine.source), y
     sta [video.sheet_data]
-    inc pSrc
+    inc Machine.source
     bne .nohi
-    inc pSrc+1
+    inc Machine.source+1
 .nohi:
     lda t0
     bne .low
