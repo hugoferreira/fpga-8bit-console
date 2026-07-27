@@ -49,6 +49,7 @@ typedef struct {
     int saw_overlay_volatile_increment;
     int saw_overlay_compare;
     int saw_overlay_store_immediate;
+    int saw_enclosing_resolution;
 } TestEvents;
 
 typedef struct {
@@ -364,6 +365,16 @@ static int test_event(void *context, const LaEvent *event)
         ++events->labels;
     } else if (event->kind == LA_EVENT_SCOPED_RAW) {
         ++events->scoped_raw;
+        if (event->text.length >= 11) {
+            la_u16 offset;
+            for (offset = 0; offset + 11 <= event->text.length; ++offset) {
+                if (memcmp(event->text.data + offset,
+                           "Widget.tick", 11) == 0) {
+                    events->saw_enclosing_resolution = 1;
+                    break;
+                }
+            }
+        }
     }
     return 1;
 }
@@ -542,6 +553,27 @@ static void test_typed_word_transfers(void)
         "cblt [missing + GameState.frames], #1, target\n",
         limits, LA_ERR_LOCATION_TYPE,
         "overlay branch with unknown base rejected");
+    /* Enclosing-namespace resolution: a bare same-namespace name is qualified;
+       a physical register with the same name as a member is preserved; a
+       sibling-namespace name is never reached. */
+    result = compile_source(
+        "namespace Other\n"
+        "    export tick\n"
+        "tick:\n"
+        "    rts\n"
+        "end\n"
+        "namespace Widget\n"
+        "    export tick\n"
+        "    y = 3\n"
+        "tick:\n"
+        "    jsr tick\n"
+        "    sta (p), y\n"
+        "    rts\n"
+        "end\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, "enclosing-namespace resolution compiles");
+    check(events.saw_enclosing_resolution,
+          "bare same-namespace reference is qualified to the namespace symbol");
     expect_error(
         "struct Big packed\ncells : u8[300] at 0\nend\n"
         "overlay b : Big at $e000\n"

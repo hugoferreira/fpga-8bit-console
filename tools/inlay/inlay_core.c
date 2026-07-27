@@ -191,6 +191,7 @@ typedef struct {
     char *names;
     char *line_buffer;
     char *path_buffer;
+    char *resolve_buffer;
     LaStructRec *structs;
     LaFieldRec *fields;
     LaEnumRec *enums;
@@ -295,6 +296,7 @@ la_u32 la_workspace_required(const LaLimits *limits)
     total = 0;
     total += la_align_size((la_u32)limits->max_source_bytes + 1);
     total += la_align_size((la_u32)limits->max_name_bytes + 1);
+    total += la_align_size((la_u32)limits->max_line_bytes + 1);
     total += la_align_size((la_u32)limits->max_line_bytes + 1);
     total += la_align_size((la_u32)limits->max_line_bytes + 1);
     total += la_align_size(
@@ -6415,6 +6417,201 @@ static int la_emit_member_events(LaContext *ctx, la_u16 procedure)
     return 1;
 }
 
+/* True when some top-level (non-procedure) label, constant, procedure or
+   location carries exactly this fully-qualified name. */
+static int la_symbol_named(LaContext *ctx, const char *text, la_u16 length)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->label_count; ++index) {
+        LaSlice name;
+        name = la_name_slice(ctx, ctx->labels[index].name);
+        if (name.length == length &&
+            memcmp(name.data, text, length) == 0) return 1;
+    }
+    for (index = 0; index < ctx->constant_count; ++index) {
+        LaSlice name;
+        name = la_name_slice(ctx, ctx->constants[index].name);
+        if (name.length == length &&
+            memcmp(name.data, text, length) == 0) return 1;
+    }
+    for (index = 0; index < ctx->procedure_count; ++index) {
+        LaSlice name;
+        name = la_name_slice(ctx, ctx->procedures[index].name);
+        if (name.length == length &&
+            memcmp(name.data, text, length) == 0) return 1;
+    }
+    for (index = 0; index < ctx->location_count; ++index) {
+        LaSlice name;
+        if (ctx->locations[index].procedure != LA_INVALID_HANDLE) continue;
+        name = la_name_slice(ctx, ctx->locations[index].name);
+        if (name.length == length &&
+            memcmp(name.data, text, length) == 0) return 1;
+    }
+    return 0;
+}
+
+/* Resolve a bare identifier against the enclosing namespace chain (innermost
+   outward). If some enclosing namespace owns a matching symbol, build its
+   qualified spelling into path_buffer and return 1; a global/unknown name is
+   left to the caller (return 0). Sibling namespaces are never searched. */
+/* Physical registers are reserved spellings that always win over any symbol,
+   so a namespace member named `x`/`y`/`a` must be referenced explicitly. */
+static int la_is_target_register(LaContext *ctx, const char *text,
+                                 la_u16 length)
+{
+    la_u16 c;
+    la_u16 i;
+    if (ctx->target->word_accumulator != 0 &&
+        la_equal_text(text, length, ctx->target->word_accumulator)) return 1;
+    for (c = 0; c < ctx->target->convention_count; ++c) {
+        const LaConvention *convention;
+        convention = &ctx->target->conventions[c];
+        for (i = 0; i < convention->scalar_input_count; ++i) {
+            if (la_equal_text(text, length, convention->scalar_inputs[i])) {
+                return 1;
+            }
+        }
+        if (convention->scalar_return != 0 &&
+            la_equal_text(text, length, convention->scalar_return)) return 1;
+    }
+    return 0;
+}
+
+static int la_resolve_bare_identifier(LaContext *ctx, la_u16 namespace_handle,
+                                      const char *ident, la_u16 ident_length,
+                                      la_u16 *qualified_length)
+{
+    la_u16 ns;
+    if (la_is_target_register(ctx, ident, ident_length)) return 0;
+    ns = namespace_handle;
+    while (ns != LA_INVALID_HANDLE) {
+        LaSlice ns_name;
+        la_u32 total;
+        ns_name = la_name_slice(ctx, ctx->namespaces[ns].name);
+        total = (la_u32)ns_name.length + 1 + ident_length;
+        if (total <= ctx->limits->max_line_bytes) {
+            memcpy(ctx->path_buffer, ns_name.data, ns_name.length);
+            ctx->path_buffer[ns_name.length] = '.';
+            memcpy(ctx->path_buffer + ns_name.length + 1, ident,
+                   ident_length);
+            if (la_symbol_named(ctx, ctx->path_buffer, (la_u16)total)) {
+                *qualified_length = (la_u16)total;
+                return 1;
+            }
+        }
+        ns = ctx->namespaces[ns].parent;
+    }
+    return 0;
+}
+
+/* Rewrite a raw line, qualifying every bare identifier that resolves to an
+   enclosing-namespace symbol into resolve_buffer. Returns 1 (and sets *length)
+   when at least one identifier was qualified, 0 when the line is unchanged, or
+   -1 on overflow. Qualified names, local labels, strings and comments pass
+   through untouched so byte output is identical to the explicit spelling. */
+static int la_qualify_scoped_line(LaContext *ctx, const char *start,
+                                  const char *end, la_u16 line,
+                                  la_u16 *length)
+{
+    la_u16 namespace_handle;
+    char *out;
+    char *out_end;
+    const char *cursor;
+    int changed;
+    int quote;
+    int escaped;
+    namespace_handle = la_namespace_at_line(ctx, line);
+    if (namespace_handle == LA_INVALID_HANDLE) return 0;
+    out = ctx->resolve_buffer;
+    out_end = ctx->resolve_buffer + ctx->limits->max_line_bytes;
+    cursor = start;
+    changed = 0;
+    quote = 0;
+    escaped = 0;
+    while (cursor < end) {
+        char value;
+        value = *cursor;
+        if (out >= out_end) return -1;
+        if (quote != 0) {
+            *out++ = value;
+            if (escaped) escaped = 0;
+            else if (value == '\\') escaped = 1;
+            else if (value == quote) quote = 0;
+            ++cursor;
+            continue;
+        }
+        if (value == ';') {
+            while (cursor < end) {
+                if (out >= out_end) return -1;
+                *out++ = *cursor++;
+            }
+            break;
+        }
+        if (value == '"' || value == '\'') {
+            quote = value;
+            *out++ = value;
+            ++cursor;
+            continue;
+        }
+        if (value == '.') {
+            /* A local label or member access: copy the dot and any following
+               identifier verbatim so it is never treated as bare. */
+            *out++ = value;
+            ++cursor;
+            while (cursor < end && la_is_ident(*cursor)) {
+                if (out >= out_end) return -1;
+                *out++ = *cursor++;
+            }
+            continue;
+        }
+        if (la_is_ident_start(value)) {
+            const char *ident_start;
+            const char *scan;
+            la_u16 ident_length;
+            ident_start = cursor++;
+            while (cursor < end && la_is_ident(*cursor)) ++cursor;
+            ident_length = (la_u16)(cursor - ident_start);
+            if (cursor < end && *cursor == '.' && cursor + 1 < end &&
+                la_is_ident_start(cursor[1])) {
+                /* Already qualified: copy the whole dotted chain verbatim. */
+                scan = cursor;
+                while (scan < end && *scan == '.' && scan + 1 < end &&
+                       la_is_ident_start(scan[1])) {
+                    ++scan;
+                    while (scan < end && la_is_ident(*scan)) ++scan;
+                }
+                while (ident_start < scan) {
+                    if (out >= out_end) return -1;
+                    *out++ = *ident_start++;
+                }
+                cursor = scan;
+                continue;
+            }
+            {
+                la_u16 qualified_length;
+                if (la_resolve_bare_identifier(ctx, namespace_handle,
+                                               ident_start, ident_length,
+                                               &qualified_length)) {
+                    if (out + qualified_length > out_end) return -1;
+                    memcpy(out, ctx->path_buffer, qualified_length);
+                    out += qualified_length;
+                    changed = 1;
+                } else {
+                    if (out + ident_length > out_end) return -1;
+                    memcpy(out, ident_start, ident_length);
+                    out += ident_length;
+                }
+            }
+            continue;
+        }
+        *out++ = value;
+        ++cursor;
+    }
+    if (!changed) return 0;
+    *length = (la_u16)(out - ctx->resolve_buffer);
+    return 1;
+}
+
 static int la_validate_scoped_raw(LaContext *ctx, const char *start,
                                   const char *end, la_u16 line)
 {
@@ -6885,15 +7082,38 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
                                0, 0);
             } else {
                 int scoped_raw;
+                int qualified;
+                la_u16 qualified_length;
                 scoped_raw = la_validate_scoped_raw(
                     ctx, cursor, content_end, line);
                 if (scoped_raw < 0) return ctx->error;
-                la_init_event(ctx, &event,
-                              scoped_raw ? LA_EVENT_SCOPED_RAW :
-                                           LA_EVENT_RAW,
-                              line,
-                              (la_u16)(line_end - cursor));
-                event.text = la_slice(cursor, (la_u16)(line_end - cursor));
+                qualified_length = 0;
+                qualified = la_qualify_scoped_line(
+                    ctx, cursor, line_end, line, &qualified_length);
+                if (qualified < 0) {
+                    return la_fail(ctx, LA_ERR_NAME_CAPACITY, line, 1,
+                                   (la_u16)(line_end - cursor),
+                                   la_slice("resolved line", 13),
+                                   la_slice("", 0),
+                                   (la_i32)(line_end - cursor),
+                                   ctx->limits->max_line_bytes);
+                }
+                if (qualified > 0) {
+                    /* Enclosing-namespace names were qualified in place; the
+                       result must go through the scoped-raw mangler. */
+                    la_init_event(ctx, &event, LA_EVENT_SCOPED_RAW, line,
+                                  qualified_length);
+                    event.text = la_slice(ctx->resolve_buffer,
+                                          qualified_length);
+                } else {
+                    la_init_event(ctx, &event,
+                                  scoped_raw ? LA_EVENT_SCOPED_RAW :
+                                               LA_EVENT_RAW,
+                                  line,
+                                  (la_u16)(line_end - cursor));
+                    event.text = la_slice(cursor,
+                                          (la_u16)(line_end - cursor));
+                }
                 if (!la_write_event(ctx, &event)) return ctx->error;
             }
         }
@@ -6987,6 +7207,8 @@ LaDiagnosticCode la_compile(const LaInput *input,
                                       (la_u32)limits->max_line_bytes + 1);
     ctx.path_buffer = (char *)la_take(&cursor, &remaining,
                                       (la_u32)limits->max_line_bytes + 1);
+    ctx.resolve_buffer = (char *)la_take(&cursor, &remaining,
+                                         (la_u32)limits->max_line_bytes + 1);
     ctx.structs = (LaStructRec *)la_take(
         &cursor, &remaining,
         ((la_u32)limits->max_structs + limits->max_unions) *
