@@ -306,11 +306,11 @@ begin
     jsr Fixed.set_target
     jsr Fixed.add
     lda Fixed.word0+1
-    sta t0
+    sta Machine.t0
 
     mov y, offset CelesteObject.core.remainder_x.integer ; inlay-exception: variable update operand t0
     lda (Machine.object), y               ; rem.x -= amount, in the high half only
-    sub t0
+    sub Machine.t0
     sta (Machine.object), y
 
     jsr Objects.step_x
@@ -327,11 +327,11 @@ begin
     jsr Fixed.set_target
     jsr Fixed.add
     lda Fixed.word0+1
-    sta t0
+    sta Machine.t0
 
     mov y, offset CelesteObject.core.remainder_y.integer ; inlay-exception: variable update operand t0
     lda (Machine.object), y
-    sub t0
+    sub Machine.t0
     sta (Machine.object), y
 
     jmp Objects.step_y
@@ -342,25 +342,25 @@ end
 ; This physical helper is shared by both collision axes.
 ; ------------------------------------------------------------------------------
 proc prepare_step using console6502 naked
-    amount : i8 in t0
-    step : i8 return in t1
-    remaining : u8 return in t2
+    amount : i8 in Machine.t0
+    step : i8 return in Machine.t1
+    remaining : u8 return in Machine.t2
 begin
-    lda t0
+    lda Machine.t0
     bmi .negative
     beq .zero
-    mov t1, #1
-    sta t2
+    mov Machine.t1, #1
+    sta Machine.t2
     ret
 .negative:
-    mov t1, #$FF
+    mov Machine.t1, #$FF
     lda #0
-    sub t0
-    sta t2
+    sub Machine.t0
+    sta Machine.t2
     ret
 .zero:
-    sta t1
-    sta t2
+    sta Machine.t1
+    sta Machine.t2
     ret
 end
 
@@ -374,7 +374,7 @@ end
 ; ------------------------------------------------------------------------------
 proc step_x using console6502
     self : ptr CelesteObject in Machine.object
-    amount : i8 in t0
+    amount : i8 in Machine.t0
 begin
     lda [Machine.object.core.flags]
     and #Objects.flag_solids
@@ -382,7 +382,7 @@ begin
 
     mov y, offset CelesteObject.core.x ; inlay-exception: variable update operand t0
     lda (Machine.object), y                    ; not solid: x += amount, no collision at all
-    add t0
+    add Machine.t0
     sta (Machine.object), y
     rts
 
@@ -390,7 +390,7 @@ begin
     jsr Objects.prepare_step
 
 .loop:
-    lda t1                      ; is_solid(step, 0)
+    lda Machine.t1                      ; is_solid(step, 0)
     sta Collision.offset_x
     mov Collision.offset_y, #0
     jsr Collision.solid
@@ -398,10 +398,10 @@ begin
 
     mov y, offset CelesteObject.core.x ; inlay-exception: variable update operand t1
     lda (Machine.object), y
-    add t1
+    add Machine.t1
     sta (Machine.object), y
 
-    dec t2                      ; inclusive loop: t2 counts down through zero
+    dec Machine.t2                      ; inclusive loop: t2 counts down through zero
     bpl .loop
     rts
 
@@ -423,7 +423,7 @@ end
 ; ------------------------------------------------------------------------------
 proc step_y using console6502
     self : ptr CelesteObject in Machine.object
-    amount : i8 in t0
+    amount : i8 in Machine.t0
 begin
     lda [Machine.object.core.flags]
     and #Objects.flag_solids
@@ -431,7 +431,7 @@ begin
 
     mov y, offset CelesteObject.core.y ; inlay-exception: variable update operand t0
     lda (Machine.object), y
-    add t0
+    add Machine.t0
     sta (Machine.object), y
     rts
 
@@ -440,17 +440,17 @@ begin
 
 .loop:
     mov Collision.offset_x, #0
-    lda t1
+    lda Machine.t1
     sta Collision.offset_y
     jsr Collision.solid
     bne .blocked
 
     mov y, offset CelesteObject.core.y ; inlay-exception: variable update operand t1
     lda (Machine.object), y
-    add t1
+    add Machine.t1
     sta (Machine.object), y
 
-    dec t2
+    dec Machine.t2
     bpl .loop
     rts
 

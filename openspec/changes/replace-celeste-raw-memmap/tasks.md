@@ -65,12 +65,12 @@
 
 ## 7. Delete the compatibility surface
 
-- [ ] 7.1 Replace every remaining derivable address, capacity, stride and offset with a typed declaration or compile-time query
-- [ ] 7.2 Review and annotate every irreducible raw memory operation with its flag, volatility, page or clobber reason
-- [ ] 7.3 Remove the raw memory-map include from `main.inlay.asm`
-- [ ] 7.4 Delete `src/celeste/memmap.inlay.asm`
-- [ ] 7.5 Enable the permanent legacy-alias and represented-region raw-address deny-list
-- [ ] 7.6 Confirm no handwritten Celeste language module is consumed through raw `#include`
+- [x] 7.1 Replace every remaining derivable address, capacity, stride and offset with a typed declaration or compile-time query
+- [x] 7.2 Review and annotate every irreducible raw memory operation with its flag, volatility, page or clobber reason
+- [x] 7.3 Remove the raw memory-map include from `main.inlay.asm`
+- [x] 7.4 Delete `src/celeste/memmap.inlay.asm`
+- [x] 7.5 Enable the permanent legacy-alias and represented-region raw-address deny-list
+- [x] 7.6 Confirm no handwritten Celeste language module is consumed through raw `#include`
 
 ## 8. Final validation and documentation
 

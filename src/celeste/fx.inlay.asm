@@ -217,17 +217,17 @@ proc draw_clouds using console6502 naked
 begin
     ldx #0
 .cloud:
-    stx t6
+    stx Machine.t6
     lda [effects.cloud_y[x]]                  ; clouds do not scroll with the camera: they
     sub [game.camera_y]
-    sta t5
-    mov t3, #Gfx.palette_1
-    mov t4, cloud_x_high + x
+    sta Machine.t5
+    mov Machine.t3, #Gfx.palette_1
+    mov Machine.t4, cloud_x_high + x
     lda [effects.cloud_width[x]]                  ; the whole cloud is ONE entry: the compositor
     sta [video.repeat]                 ; repeats the fetched row across its cells
     lda #Gfx.solid
     jsr Draw.sprite
-    ldx t6
+    ldx Machine.t6
     inx
     cpx #Fx.cloud_count
     bne .cloud
@@ -244,15 +244,15 @@ begin
     mov [video.repeat], #1
     ldx #0
 .part:
-    stx t6
-    mov t3, particle_attribute + x
-    mov t4, particle_x_high + x
+    stx Machine.t6
+    mov Machine.t3, particle_attribute + x
+    mov Machine.t4, particle_x_high + x
     lda [effects.particle_y_high[x]]
     sub [game.camera_y]
-    sta t5
+    sta Machine.t5
     lda #Gfx.dot
     jsr Draw.sprite
-    ldx t6
+    ldx Machine.t6
     inx
     cpx #Fx.particle_count
     bne .part

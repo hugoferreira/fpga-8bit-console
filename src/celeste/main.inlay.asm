@@ -16,7 +16,6 @@ include "layout.inlay.asm"
 #bank ram
 #addr 0x0300
 
-include "memmap.inlay.asm"
 
 include "gfx.inlay.asm"
     #include "../../src/celeste/rooms.inlay.asm"

@@ -87,12 +87,12 @@ load:
     sta Machine.destination
 .bank0:
     ldx #0                      ; X walks the 256 tile ids in order
-    mov t6, #Room.height
+    mov Machine.t6, #Room.height
 .row:
     ldy #0
 .col:
     lda [room_tiles.cells[x]]
-    stx t5
+    stx Machine.t5
     tax
     lda Gfx.tile_base, x
     sta (Machine.destination), y
@@ -102,7 +102,7 @@ load:
     sta (Machine.destination), y
     dec Machine.destination+1
     dec Machine.destination+1
-    ldx t5
+    ldx Machine.t5
     inx
     iny
     cpy #Room.width
@@ -113,7 +113,7 @@ load:
     bcc .norow
     inc Machine.destination+1
 .norow:
-    dec t6
+    dec Machine.t6
     bne .row
     ldx #0                      ; spawn the objects the marker tiles ask for
 .spawn:
@@ -141,18 +141,18 @@ load:
     beq .cam0
     lda #Room.playfield_width
 .cam0:
-    sta t3
+    sta Machine.t3
     jsr Room.title              ; the cart draws the title room at x = -4:
     bne .notitle                ;   map(room.x*16, room.y*16, off, 0, 16, 16, 2)
-    lda t3                      ; with off = -4. Scrolling the camera 4 to the
+    lda Machine.t3                      ; with off = -4. Scrolling the camera 4 to the
     add #4
-    sta t3
+    sta Machine.t3
     mov [video.clip_x1], #Room.playfield_width-5  ; does not appear in the gap that opens up
     jmp .cam
 .notitle:
     mov [video.clip_x1], #Room.playfield_width-1
 .cam:
-    lda t3
+    lda Machine.t3
     sta [video.camera_x]
     lda #0
     sta [game.camera_y]

@@ -84,9 +84,9 @@ begin
     lda #>Gfx.sheet
     sta Machine.source+1
     lda #<Gfx.upload_bytes
-    sta t0
+    sta Machine.t0
     lda #>Gfx.upload_bytes
-    sta t1
+    sta Machine.t1
     ldy #0
 .byte:
     lda (Machine.source), y
@@ -95,13 +95,13 @@ begin
     bne .nohi
     inc Machine.source+1
 .nohi:
-    lda t0
+    lda Machine.t0
     bne .low
-    dec t1
+    dec Machine.t1
 .low:
-    dec t0
-    lda t0
-    ora t1
+    dec Machine.t0
+    lda Machine.t0
+    ora Machine.t1
     bne .byte
     ret
 end

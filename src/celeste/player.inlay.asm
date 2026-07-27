@@ -882,10 +882,10 @@ begin
 .rising:                        ; if y < target.y + 16 then state = 1
     lda [Machine.object.payload.spawn.target_y]
     add #16
-    sta t3
+    sta Machine.t3
     mov y, offset CelesteObject.core.y
     lda (Machine.object), y
-    cmp t3
+    cmp Machine.t3
     bcs .done
     lda #1
     sta [Machine.object.payload.spawn.phase]
@@ -922,13 +922,13 @@ begin
     rts
 .land:
     lda [Machine.object.payload.spawn.target_y]
-    sta t3
+    sta Machine.t3
     mov y, offset CelesteObject.core.y
     lda (Machine.object), y
-    cmp t3
+    cmp Machine.t3
     bcc .done2
     beq .done2
-    lda t3
+    lda Machine.t3
     sta [Machine.object.core.y]
     lda #0
     mov y, offset CelesteObject.core.speed_x.fraction

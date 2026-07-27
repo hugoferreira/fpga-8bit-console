@@ -147,16 +147,16 @@ sprite:
     ldx [game.sprite_count]
     cpx #128
     bcs .drop
-    ldy t5
+    ldy Machine.t5
     bmi .drop
     cpy #120
     bcs .drop
     stx [video.sprite_index]
     sta [video.sprite_base]
-    lda t4
+    lda Machine.t4
     sta [video.sprite_x]
     sty [video.sprite_y]
-    lda t3
+    lda Machine.t3
     sta [video.sprite_flags]               ; the write commits the staged entry
     inc [game.sprite_count]
 .drop:
@@ -193,7 +193,7 @@ object:
 .flip:
     mov y, offset CelesteObject.core.flip
     ora (Machine.object), y
-    sta t3
+    sta Machine.t3
     jsr Draw.position
     pla
     jmp Draw.sprite
@@ -207,11 +207,11 @@ object:
 position:
     lda [Machine.object.core.x]
     add [game.shake_x]
-    sta t4
+    sta Machine.t4
     lda [Machine.object.core.y]
     sub [game.camera_y]
     add [game.shake_y]
-    sta t5
+    sta Machine.t5
     rts
 
 ; ------------------------------------------------------------------------------
@@ -229,22 +229,22 @@ position:
 ; ------------------------------------------------------------------------------
 hair_create:
     lda [Machine.object.core.x]
-    sta t3
+    sta Machine.t3
     lda [Machine.object.core.y]
-    sta t4
+    sta Machine.t4
     mov y, offset CelesteObject.payload.hair.hair
     ldx #Draw.hair_nodes
 .node:
     lda #0
     sta (Machine.object), y
     iny
-    lda t3
+    lda Machine.t3
     sta (Machine.object), y
     iny
     lda #0
     sta (Machine.object), y
     iny
-    lda t4
+    lda Machine.t4
     sta (Machine.object), y
     iny
     dex
@@ -348,33 +348,33 @@ hair_draw:
     stab Draw.hair_last_y
 
     lda Draw.hair_color_value                ; blob size: 2, 2, 1, 1, 1
-    sta t3
+    sta Machine.t3
     cbge Draw.hair_index, #2, .small
     lda Draw.hair_head_x+1
     sub #2
-    sta t4
+    sta Machine.t4
     lda Draw.hair_head_y+1
     sub #2
-    sta t5
+    sta Machine.t5
     lda #Gfx.hair_big
     jmp .plot
 .small:
     lda Draw.hair_head_x+1
     sub #1
-    sta t4
+    sta Machine.t4
     lda Draw.hair_head_y+1
     sub #1
-    sta t5
+    sta Machine.t5
     lda #Gfx.hair_small
 .plot:
     pha
-    lda t4                      ; the hair is in world space like the Draw.object
+    lda Machine.t4                      ; the hair is in world space like the Draw.object
     add [game.shake_x]
-    sta t4
-    lda t5
+    sta Machine.t4
+    lda Machine.t5
     sub [game.camera_y]
     add [game.shake_y]
-    sta t5
+    sta Machine.t5
     pla
     jsr Draw.sprite
 
@@ -581,21 +581,21 @@ char:
     add Draw.row
     tay
     lda [overlay_rows.low[y]]
-    sta pOvl
+    sta overlay_pointer
     lda [overlay_rows.high[y]]
-    sta pOvl+1
+    sta overlay_pointer+1
     lda Draw.pen_x
     lsr
     lsr
     lsr
     tay
-    lda (pOvl), y
+    lda (overlay_pointer), y
     ora Draw.bits
-    sta (pOvl), y
+    sta (overlay_pointer), y
     iny
-    lda (pOvl), y
+    lda (overlay_pointer), y
     ora Draw.count
-    sta (pOvl), y
+    sta (overlay_pointer), y
     inx
     inc Draw.row
     cbne Draw.row, #5, .row
@@ -640,10 +640,10 @@ byte:
     inx
     jmp .tens
 .units:
-    sta t7
+    sta Machine.t7
     txa
     jsr Draw.char
-    lda t7
+    lda Machine.t7
     jmp Draw.char
 
 ; ------------------------------------------------------------------------------

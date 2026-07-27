@@ -371,6 +371,12 @@ namespace Machine
     location destination : u16 at $1a
 end
 
+; The object pool base. The pool strategy and its obj_lo/obj_hi address tables
+; consume a raw target address, so this one boundary constant is retained
+; (reviewed) rather than derived; everything else formerly in memmap.inlay.asm
+; is now a typed overlay, location or scoped constant.
+OBJPOOL = $5000
+
 ; Temporary backend-bound spellings retained only for the typed pool strategy.
 location pObj : ptr CelesteObject
 location pOth : ptr CelesteObject

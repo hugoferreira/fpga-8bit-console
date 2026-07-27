@@ -77,32 +77,32 @@ flags:
     jsr Collision.tiles
     bcc .miss                   ; the box does not touch the room at all
     lda Collision.row
-    sta t3
+    sta Machine.t3
 .row:
-    lda t3                      ; the row base: j * 16, one shift short of free
+    lda Machine.t3                      ; the row base: j * 16, one shift short of free
     asl
     asl
     asl
     asl
-    sta t4
+    sta Machine.t4
     lda Collision.column
-    sta t5
+    sta Machine.t5
 .col:
-    lda t4
-    add t5
+    lda Machine.t4
+    add Machine.t5
     tay
     lda [room_tiles.cells[y]] ; mget
     tay
     lda tile_flags, y
     and Collision.mask
     bne .hit
-    inc t5
-    lda t5
+    inc Machine.t5
+    lda Machine.t5
     cmp Collision.last_column
     bcc .col
     beq .col
-    inc t3
-    lda t3
+    inc Machine.t3
+    lda Machine.t3
     cmp Collision.last_row
     bcc .row
     beq .row
@@ -191,19 +191,19 @@ spikes:
     jsr Collision.tiles
     bcc .miss
     lda Collision.row
-    sta t3
+    sta Machine.t3
 .row:
-    lda t3
+    lda Machine.t3
     asl
     asl
     asl
     asl
-    sta t4
+    sta Machine.t4
     lda Collision.column
-    sta t5
+    sta Machine.t5
 .col:
-    lda t4
-    add t5
+    lda Machine.t4
+    add Machine.t5
     tay
     lda [room_tiles.cells[y]]
     ldx #0
@@ -221,13 +221,13 @@ spikes:
     jsr Objects.dispatch
     bne .hit
 .next:
-    inc t5
-    lda t5
+    inc Machine.t5
+    lda Machine.t5
     cmp Collision.last_column
     bcc .col
     beq .col
-    inc t3
-    lda t3
+    inc Machine.t3
+    lda Machine.t3
     cmp Collision.last_row
     bcc .row
     beq .row
@@ -249,17 +249,17 @@ begin
     bmi .no
     lda Collision.y
     add Collision.height
-    sta t6                      ; y + h
+    sta Machine.t6                      ; y + h
     sub #1
     and #7
     cmp #6
     bcs .yes
-    lda t3                      ; j*8 + 8
+    lda Machine.t3                      ; j*8 + 8
     asl
     asl
     asl
     add #8
-    cmp t6
+    cmp Machine.t6
     beq .yes
 .no:
     lda #0
@@ -320,17 +320,17 @@ begin
     bmi .no
     lda Collision.x
     add Collision.width
-    sta t6
+    sta Machine.t6
     sub #1
     and #7
     cmp #6
     bcs .yes
-    lda t5
+    lda Machine.t5
     asl
     asl
     asl
     add #8
-    cmp t6
+    cmp Machine.t6
     beq .yes
 .no:
     lda #0

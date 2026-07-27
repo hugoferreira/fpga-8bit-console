@@ -75,11 +75,11 @@ sfx:
 
     lda [psg.status]
     ora [psg.music_mask]
-    sta t0
+    sta Machine.t0
     ldy #0
 .find:
     lda Audio.channel_bits, y
-    and t0
+    and Machine.t0
     beq .go
     iny
     cpy #4
