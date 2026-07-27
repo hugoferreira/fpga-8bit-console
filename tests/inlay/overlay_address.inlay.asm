@@ -13,6 +13,11 @@ struct GameState
     flags : u8 at 9
 end
 
+struct FramebufferPages packed
+    page0 : u8[256] at 0
+    page9 : u8[96] at 2304
+end
+
 location destination : u16 at $1a
 location cursor : ptr TileMap at $10
 
@@ -20,6 +25,7 @@ overlay tile_map : TileMap at TILE_RAM
 overlay header : HeaderView at OBJECT_RAM
 overlay game : GameState at $0030
 overlay video : HeaderView at $4000 volatile
+overlay framebuffer : FramebufferPages at $e000 volatile
 
 static_assert TileMap.attributes.offset == 512
 static_assert HeaderView.flags.offset == 17
@@ -39,6 +45,8 @@ start:
     and [game + GameState.flags], #$fe
     ora [game + GameState.flags], #1
     cmp [video + HeaderView.flags]
+    lda [framebuffer + FramebufferPages.page0[y]]
+    sta [framebuffer + FramebufferPages.page9[y]]
     rts
 
 TILE_RAM = $f000

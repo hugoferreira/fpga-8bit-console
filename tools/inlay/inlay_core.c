@@ -4282,8 +4282,19 @@ static int la_parse_typed_operation(LaContext *ctx,
                     stride, is_overlay ? 1 : 8);
             return -1;
         }
-        if ((la_u32)offset + (la_u32)(count - 1) * stride >
-            ctx->target->max_displacement) {
+        if (is_overlay) {
+            /* Absolute indexed access (ADDR + field, Y): the field offset is
+               part of the 16-bit base address, so only the index range must
+               fit the 8-bit physical register. This lets page views past the
+               first 256 bytes be reached without hidden scratch. */
+            if ((la_u32)(count - 1) * stride > 255) {
+                la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1, index.length,
+                        index, la_slice("index register range", 20),
+                        (la_i32)((la_u32)(count - 1) * stride), 255);
+                return -1;
+            }
+        } else if ((la_u32)offset + (la_u32)(count - 1) * stride >
+                   ctx->target->max_displacement) {
             la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1, index.length,
                     index, la_slice("indexed displacement", 20),
                     (la_i32)((la_u32)offset +
@@ -4309,7 +4320,10 @@ static int la_parse_typed_operation(LaContext *ctx,
                 la_slice("byte", 4), leaf_size, 1);
         return -1;
     }
-    if (offset > ctx->target->max_displacement) {
+    /* A fixed overlay field is reached by absolute addressing, so its offset
+       is part of the 16-bit address and is not bound by the pointer
+       displacement window. */
+    if (!is_overlay && offset > ctx->target->max_displacement) {
         la_fail(ctx, LA_ERR_DISPLACEMENT, line,
                 (la_u16)(path_start - start + 1),
                 (la_u16)(close - path_start),

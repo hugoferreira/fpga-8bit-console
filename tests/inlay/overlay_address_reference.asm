@@ -33,4 +33,9 @@ start:
 ; Fixed-overlay accumulator compare against volatile MMIO: video is $4000
 ; (HeaderView.flags +17 = $4011); cmp reads memory and sets flags only.
     cmp $4011
+; Page-view indexed access: each 256-byte page is reached by absolute indexed
+; addressing with no hidden scratch. framebuffer is $e000, so page0 is $e000
+; and page9 (offset 2304) is $e900; Y selects the byte within the page.
+    lda $e000, y
+    sta $e900, y
     rts

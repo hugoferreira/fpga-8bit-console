@@ -466,6 +466,27 @@ static void test_typed_word_transfers(void)
     check(result == LA_OK, "fixed-overlay accumulator compare compiles");
     check(stats.operations == 1, "overlay compare operation is counted");
     check(events.saw_overlay_compare, "overlay compare event emitted");
+    result = compile_source(
+        "struct Pages packed\n"
+        "    page0 : u8[256] at 0\n"
+        "    page9 : u8[96] at 2304\n"
+        "end\n"
+        "overlay fb : Pages at $e000 volatile\n"
+        "lda [fb + Pages.page0[y]]\n"
+        "sta [fb + Pages.page9[y]]\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK,
+          "indexed access into a page view past 256 bytes compiles");
+    check(events.saw_overlay_indexed_load,
+          "page-view indexed load event emitted");
+    check(events.saw_overlay_indexed_store,
+          "page-view indexed store event emitted");
+    expect_error(
+        "struct Big packed\ncells : u8[300] at 0\nend\n"
+        "overlay b : Big at $e000\n"
+        "lda [b + Big.cells[y]]\n",
+        limits, LA_ERR_DISPLACEMENT,
+        "indexed overlay access beyond the 8-bit register range rejected");
     expect_error(
         "struct GameState\nframes : u8 at 0\nend\n"
         "inc [missing + GameState.frames]\n",
