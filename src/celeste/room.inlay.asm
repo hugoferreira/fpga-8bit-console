@@ -226,7 +226,7 @@ camera:
     cmp #ObjectKind.spawn
     beq .found
     inx
-    cpx #OBJ_MAX
+    cpx #Objects.slot_count
     bne .find
     rts                         ; no player: leave the camera where it is
 .found:

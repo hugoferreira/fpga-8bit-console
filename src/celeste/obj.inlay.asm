@@ -42,6 +42,9 @@ namespace Objects
     export destroy
     export update_all
     export draw_all
+    export flag_collideable
+    export flag_solids
+    export slot_count
     slot_count = objects.count
     flag_collideable = $01
     flag_solids = $02
@@ -88,7 +91,7 @@ type_draw_hi:
 proc clear using console6502
 begin
     lda #0
-    ldx #OBJ_MAX-1
+    ldx #Objects.slot_count-1
 .slot:
     txa
     pha
@@ -120,7 +123,7 @@ begin
     lda [pObj + CelesteObject.core.kind]
     beq .found
     inx
-    cpx #OBJ_MAX
+    cpx #Objects.slot_count
     bne .find
     lda #$FF                    ; pool full: the cart has no such case, this
     sta spawn_slot              ; console does. Dropping the object is the only
@@ -148,7 +151,7 @@ begin
     lda #8                      ; the cart's default hitbox {0,0,8,8}
     sta [pObj + CelesteObject.core.hitbox.w]
     sta [pObj + CelesteObject.core.hitbox.h]
-    lda #F_COLLIDEABLE|F_SOLIDS
+    lda #Objects.flag_collideable|Objects.flag_solids
     mov y, offset CelesteObject.core.flags
     sta (pObj), y
 
@@ -238,7 +241,7 @@ begin
     jsr Objects.dispatch
 .next:
     inc obj_slot
-    cbne obj_slot, #OBJ_MAX, .loop
+    cbne obj_slot, #Objects.slot_count, .loop
     ret
 end
 
@@ -264,7 +267,7 @@ begin
     jsr Objects.dispatch
 .next:
     inc obj_slot
-    cbne obj_slot, #OBJ_MAX, .loop
+    cbne obj_slot, #Objects.slot_count, .loop
     ret
 end
 
@@ -369,7 +372,7 @@ proc step_x using console6502
     amount : i8 in t0
 begin
     lda [pObj + CelesteObject.core.flags]
-    and #F_SOLIDS
+    and #Objects.flag_solids
     bne .solid
 
     mov y, offset CelesteObject.core.x ; inlay-exception: variable update operand t0
@@ -418,7 +421,7 @@ proc step_y using console6502
     amount : i8 in t0
 begin
     lda [pObj + CelesteObject.core.flags]
-    and #F_SOLIDS
+    and #Objects.flag_solids
     bne .solid
 
     mov y, offset CelesteObject.core.y ; inlay-exception: variable update operand t0

@@ -867,7 +867,7 @@ begin
     sta (pObj), y
     mov y, offset CelesteObject.core.flags ; inlay-exception: complemented target constant
     lda (pObj), y                ; solids = false
-    and #<!F_SOLIDS
+    and #<!Objects.flag_solids
     sta (pObj), y
     jmp Player.create_hair
 end
@@ -1026,7 +1026,7 @@ begin
     sta [pObj + CelesteObject.core.flip]
     mov y, offset CelesteObject.core.flags ; inlay-exception: complemented target constant
     lda (pObj), y
-    and #<!F_SOLIDS
+    and #<!Objects.flag_solids
     sta (pObj), y
     rts
 end

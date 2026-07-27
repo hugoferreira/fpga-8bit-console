@@ -865,6 +865,7 @@ def check_objects_design() -> None:
     expected_exports = {
         "pointer", "clear", "allocate", "dispatch", "spawn_smoke",
         "destroy", "update_all", "draw_all",
+        "flag_collideable", "flag_solids", "slot_count",
     }
     exports = set(re.findall(
         r"^\s*export ([a-z_]+)$", text, re.MULTILINE

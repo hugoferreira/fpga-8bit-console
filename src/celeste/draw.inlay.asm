@@ -37,6 +37,7 @@ namespace Draw
     location hair_head_x : u16 at $6e
     location hair_head_y : u16 at $70
     overlay_stride = OverlayFramebuffer.size / 120
+    hair_nodes = CelesteObject.payload.hair.hair.count
 
 ; ------------------------------------------------------------------------------
 ; frame: the cart's _draw, minus the effects it has no primitives for.
@@ -232,7 +233,7 @@ hair_create:
     lda [pObj + CelesteObject.core.y]
     sta t4
     mov y, offset CelesteObject.payload.hair.hair
-    ldx #HAIR_NODES
+    ldx #Draw.hair_nodes
 .node:
     lda #0
     sta (pObj), y
@@ -381,7 +382,7 @@ hair_draw:
     add #4
     sta d_n
     inc hair_i
-    cbeq hair_i, #HAIR_NODES, .done
+    cbeq hair_i, #Draw.hair_nodes, .done
     jmp .node                   ; the node loop is longer than a branch reaches
 .done:
     rts
@@ -486,7 +487,7 @@ overlay_begin:
     cmp #ObjectKind.title
     beq .yes
     inx
-    cpx #OBJ_MAX
+    cpx #Objects.slot_count
     bne .find
     jmp .check
 .yes:
