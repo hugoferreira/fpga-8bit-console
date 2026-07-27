@@ -62,6 +62,12 @@ def s16(v):
     return v - 65536 if v > 32767 else v
 
 
+def inlay_symbol(name):
+    return "__inlay_q" + "".join(
+        f"{len(component)}_{component}" for component in name.split(".")
+    )
+
+
 def visual_digest(rig):
     state = bytearray(rig.map_lo)
     state.extend(rig.map_hi)
@@ -390,7 +396,7 @@ def main():
         return rows
 
     def font(ch):
-        base = sym["font3x5"] + ch * 5
+        base = sym[inlay_symbol("Draw.font")] + ch * 5
         return list(m[base:base + 5])
 
     for label, px, want in (("seconds tens", 142, m[SECONDS] // 10),

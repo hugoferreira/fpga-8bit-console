@@ -15,8 +15,15 @@
 ; nemo's cart that number is honest - its patterns use exactly those three. So
 ; the mask is the cart's, not a corrected one.
 ; ------------------------------------------------------------------------------
+namespace Audio
+    export init
+    export sfx
+    export guarded_sfx
+    export music
+    export fade
+    export stop
 
-sound_init:
+init:
     mov PSG_ADDR_LO, #$00
     mov PSG_ADDR_HI, #$31
     mov pSrc, #<audio_data
@@ -45,7 +52,7 @@ sound_init:
 ; implement -1, so it is done here - the same routine breakout and nemo each
 ; needed, for the same reason. Clobbers A, X, Y, t0.
 ; ------------------------------------------------------------------------------
-sfx_play:
+sfx:
     tax
     lda [psg + PsgRegisters.music_mask]
     and #$0F
@@ -57,7 +64,7 @@ sfx_play:
     sta t0
     ldy #0
 .find:
-    lda chbit, y
+    lda Audio.channel_bits, y
     and t0
     beq .go
     iny
@@ -69,7 +76,7 @@ sfx_play:
     and #3
     sta nextch
     tay
-    lda chbit, y
+    lda Audio.channel_bits, y
     and PSG_MUSMASK
     bne .steal
 .go:
@@ -78,17 +85,17 @@ sfx_play:
 .none:
     rts
 
-chbit:
+channel_bits:
     #d8 $01, $02, $04, $08
 
 ; ------------------------------------------------------------------------------
 ; psfx: the cart's psfx(n) - play unless a scripted sound is holding the
 ; channel budget. Clobbers A, X, Y, t0.
 ; ------------------------------------------------------------------------------
-psfx:
+guarded_sfx:
     ldx sfx_timer
     bne .skip
-    jmp sfx_play
+    jmp Audio.sfx
 .skip:
     rts
 
@@ -100,17 +107,18 @@ psfx:
 ; theme ended up fading in behind a cut that was supposed to be instant.
 ; Clobbers A.
 ; ------------------------------------------------------------------------------
-music_play:
+music:
     ldx #0
     ; fall through
 
 ; music_fade: A = pattern (or MUS_STOP), X = fade length in 16 ms units.
 ; Clobbers A.
-music_fade:
+fade:
     stx PSG_FADE
     sta [psg + PsgRegisters.music]
     rts
 
-music_stop:
+stop:
     lda #MUS_STOP
-    jmp music_play
+    jmp Audio.music
+end

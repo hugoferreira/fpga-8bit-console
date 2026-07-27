@@ -12,17 +12,27 @@
 ; only, and shaking the terrain out from under a stationary player would be
 ; worse than not shaking at all.
 ; ------------------------------------------------------------------------------
+namespace Draw
+    export frame
+    export sprite
+    export object
+    export hair_create
+    export hair_color
+    export hair_draw
+    export overlay_init
+    export overlay_dirty
+    export room_title
 
 ; ------------------------------------------------------------------------------
-; draw_frame: the cart's _draw, minus the effects it has no primitives for.
+; frame: the cart's _draw, minus the effects it has no primitives for.
 ; ------------------------------------------------------------------------------
-draw_frame:
-    jsr flash_palette
-    jsr camera_update
-    jsr ovl_begin
+frame:
+    jsr Draw.palette
+    jsr Room.camera
+    jsr Draw.overlay_begin
 
     mov nspr, #0
-    jsr is_title                ; the cart draws no clouds on the title screen
+    jsr Room.title              ; the cart draws no clouds on the title screen
     beq .nosky
     jsr Fx.draw_clouds
 .nosky:
@@ -35,10 +45,10 @@ draw_frame:
     jsr Fx.draw_particles       ; in front of everything, title screen included
     lda nspr
     sta [video + VideoRegisters.sprite_count]
-    jmp ovl_end
+    jmp Draw.overlay_end
 
 ; ------------------------------------------------------------------------------
-; flash_palette: the cart's start-game flash.
+; palette: the cart's start-game flash.
 ;
 ;   pal(6,c) pal(12,c) pal(13,c) pal(5,c) pal(1,c) pal(7,c)
 ;
@@ -48,7 +58,7 @@ draw_frame:
 ; port does what the cart does by the same mechanism rather than an equivalent
 ; one. Clobbers A, X.
 ; ------------------------------------------------------------------------------
-flash_palette:
+palette:
     lda start_game
     beq .ident                  ; not flashing at all
 
@@ -74,7 +84,7 @@ flash_palette:
 .ident:
     ldx #5
 .identloop:
-    ldy flash_slot, x
+    ldy Draw.palette_slots, x
     tya
     sta [video + VideoRegisters.screen_palette[y]] ; entry n holds n
     dex
@@ -99,25 +109,25 @@ flash_palette:
 .apply:
     ldx #5
 .set:
-    ldy flash_slot, x
+    ldy Draw.palette_slots, x
     sta [video + VideoRegisters.screen_palette[y]]
     dex
     bpl .set
     rts
 
 ; The six colours the cart recolours: pal(6) pal(12) pal(13) pal(5) pal(1) pal(7)
-flash_slot:
+palette_slots:
     #d8 6, 12, 13, 5, 1, 7
 
 ; ------------------------------------------------------------------------------
-; stage_sprite: A = pattern base, t3 = attributes, t4 = screen x, t5 = screen y.
+; sprite: A = pattern base, t3 = attributes, t4 = screen x, t5 = screen y.
 ; Sprites outside the visible band are dropped rather than clamped: SPR_Y is
 ; seven bits, so a negative y would reappear at the bottom of the screen.
 ; Horizontally there is nothing to do - the compositor's x is 8-bit and wraps,
 ; and the clip rectangle already cuts the row at the playfield edge.
 ; Clobbers A, X, Y.
 ; ------------------------------------------------------------------------------
-stage_sprite:
+sprite:
     ldx nspr
     cpx #128
     bcs .drop
@@ -137,7 +147,7 @@ stage_sprite:
     rts
 
 ; ------------------------------------------------------------------------------
-; draw_obj_sprite: the cart's spr(this.spr, this.x, this.y, 1,1, flip.x, flip.y).
+; object: the cart's spr(this.spr, this.x, this.y, 1,1, flip.x, flip.y).
 ;
 ; The cart's sprite numbers survive in the object's sprite field, so the
 ; game logic reads the way the Lua does; the translation to a sheet slot is one
@@ -145,10 +155,10 @@ stage_sprite:
 ; smoke's three.
 ; ------------------------------------------------------------------------------
 ; ca65 .if -> #assert below: SPR_SMOKE_STRIDE != 1
-; "smoke frames are no longer adjacent; draw_obj_sprite needs a multiply"
+; "smoke frames are no longer adjacent; object needs a multiply"
 ;
 
-draw_obj_sprite:
+object:
     mov y, offset CelesteObject.core.sprite
     lda (pObj), y
     beq .done                   ; the cart's `elseif obj.spr > 0`
@@ -168,17 +178,17 @@ draw_obj_sprite:
     mov y, offset CelesteObject.core.flip
     ora (pObj), y
     sta t3
-    jsr obj_screen_pos
+    jsr Draw.position
     pla
-    jmp stage_sprite
+    jmp Draw.sprite
 .done:
     rts
 
 ; ------------------------------------------------------------------------------
-; obj_screen_pos: t4/t5 = where the object at pObj lands on screen this frame.
+; position: t4/t5 = where the object at pObj lands on screen this frame.
 ; Clobbers A, Y.
 ; ------------------------------------------------------------------------------
-obj_screen_pos:
+position:
     lda [pObj + CelesteObject.core.x]
     add shake_x
     sta t4
@@ -201,7 +211,7 @@ obj_screen_pos:
 ; is a multiply by 2/3; here the node moves (d>>1) + (d>>3) = 0.625d instead of
 ; 0.667d, which is two shifts and an add. The trail is imperceptibly tighter.
 ; ------------------------------------------------------------------------------
-player_hair_create_impl:
+hair_create:
     lda [pObj + CelesteObject.core.x]
     sta t3
     lda [pObj + CelesteObject.core.y]
@@ -231,7 +241,7 @@ player_hair_create_impl:
 ; base - and which base reaches which colour is now a property of the generated
 ; draw palette, not of arithmetic. The generator emits the four the cart can
 ; ask for.
-player_hair_color_impl:
+hair_color:
     cmp #1
     beq .red
     cmp #2
@@ -243,14 +253,14 @@ player_hair_color_impl:
     jmp .done
 .flash:
     ldx frames                  ; 7 + flr((frames/3)%2)*4, without a divide
-    lda hair_flash, x
+    lda Draw.hair_palette, x
 .done:
     sta hair_col
     rts
 
 ; frames is 0..29 and the cart wants (frames/3) & 1. Thirty bytes is cheaper
 ; than a division by three, and the table is the specification.
-hair_flash:
+hair_palette:
     #d8 Gfx.palette_7, Gfx.palette_7, Gfx.palette_7
     #d8 Gfx.palette_11, Gfx.palette_11, Gfx.palette_11
     #d8 Gfx.palette_7, Gfx.palette_7, Gfx.palette_7
@@ -262,7 +272,7 @@ hair_flash:
     #d8 Gfx.palette_7, Gfx.palette_7, Gfx.palette_7
     #d8 Gfx.palette_11, Gfx.palette_11, Gfx.palette_11
 
-player_hair_draw_impl:
+hair_draw:
     lda [pObj + CelesteObject.core.flip]
     and #1
     beq .faceright
@@ -296,7 +306,7 @@ player_hair_draw_impl:
     jsr Fixed.load_object
     ldab hair_lx
     stab w1
-    jsr hair_chase
+    jsr Draw.hair_chase
     ldy d_n
     jsr Fixed.store_object
     ldab w0
@@ -308,7 +318,7 @@ player_hair_draw_impl:
     jsr Fixed.load_object
     ldab hair_ly
     stab w1
-    jsr hair_chase
+    jsr Draw.hair_chase
     lda d_n
     add #2
     tay
@@ -342,7 +352,7 @@ player_hair_draw_impl:
     lda #Gfx.hair_small
 .plot:
     pha
-    lda t4                      ; the hair is in world space like the object
+    lda t4                      ; the hair is in world space like the Draw.object
     add shake_x
     sta t4
     lda t5
@@ -350,7 +360,7 @@ player_hair_draw_impl:
     add shake_y
     sta t5
     pla
-    jsr stage_sprite
+    jsr Draw.sprite
 
     lda d_n
     add #4
@@ -369,11 +379,11 @@ hair_chase:
 
     ldab w2  ; w1 = d >> 1
     stab w1
-    jsr asr_w1
+    jsr Draw.asr_w1
 
-    jsr asr_w2                  ; w2 = d >> 3
-    jsr asr_w2
-    jsr asr_w2
+    jsr Draw.asr_w2                  ; w2 = d >> 3
+    jsr Draw.asr_w2
+    jsr Draw.asr_w2
 
     ldab w0
     addw w1
@@ -402,7 +412,7 @@ asr_w2:
 ; and the text has to be composed before it can be shown. Only rebuilt when
 ; something in it changed, which for this program is once a second.
 ; ------------------------------------------------------------------------------
-ovl_init:
+overlay_init:
     mov pDst, #<OVLSHADOW
     mov pDst+1, #>OVLSHADOW
     ldx #0
@@ -420,15 +430,15 @@ ovl_init:
     inx
     cpx #120
     bne .row
-    jsr ovl_clear
-    jmp ovl_mark_dirty
+    jsr Draw.overlay_clear
+    jmp Draw.overlay_dirty
 
-ovl_mark_dirty:
+overlay_dirty:
     lda #1
     sta ovl_dirty
     rts
 
-ovl_clear:
+overlay_clear:
     lda #0
     ldx #0
 .page:
@@ -450,9 +460,9 @@ ovl_clear:
     bne .tail
     rts
 
-; ovl_begin: decide whether this frame has to rebuild the overlay, and if so
+; overlay_begin: decide whether this frame has to rebuild the overlay, and if so
 ; clear it and lay down the parts that are not an object's business.
-ovl_begin:
+overlay_begin:
     ldx #0                      ; a live room title redraws every frame
 .find:
     txa
@@ -465,26 +475,26 @@ ovl_begin:
     bne .find
     jmp .check
 .yes:
-    jsr ovl_mark_dirty
+    jsr Draw.overlay_dirty
 .check:
     lda seconds                 ; and so does the clock, once a second
     cmp hud_secs
     beq .nochange
     sta hud_secs
-    jsr ovl_mark_dirty
+    jsr Draw.overlay_dirty
 .nochange:
     lda ovl_dirty
     beq .done
-    jsr ovl_clear
-    jsr is_title                ; the title screen carries credits, not a HUD
+    jsr Draw.overlay_clear
+    jsr Room.title              ; the title screen carries credits, not a HUD
     bne .hud
-    jmp title_credits
+    jmp Draw.title_credits
 .hud:
-    jsr hud_draw
+    jsr Draw.hud
 .done:
     rts
 
-ovl_end:
+overlay_end:
     lda ovl_dirty
     bne .blit
     rts
@@ -529,12 +539,12 @@ ovl_end:
 ; letters, 36 a colon, 37 a space - so there is no character translation at
 ; runtime and no font hole to check for.
 ; ------------------------------------------------------------------------------
-    G_COLON = 36
-    G_SPACE = 37
-    G_PLUS = 38
-    G_END = $FF
+    glyph_colon = 36
+    glyph_space = 37
+    glyph_plus = 38
+    glyph_end = $FF
 
-ovl_putc:
+char:
     sta d_ch
     asl
     asl
@@ -542,7 +552,7 @@ ovl_putc:
     tax
     mov d_row, #0
 .row:
-    mov d_bits, font3x5 + x
+    mov d_bits, Draw.font + x
     mov d_n, #0
     tbz d_x, #7, .placed
     tay
@@ -579,34 +589,34 @@ ovl_putc:
     sta d_x
     rts
 
-; ovl_text: print the glyph string at pSrc, starting at (d_x, d_y).
-ovl_text:
+; text: print the glyph string at pSrc, starting at (d_x, d_y).
+text:
     ldy #0
 .ch:
     lda (pSrc), y
-    cmp #G_END
+    cmp #Draw.glyph_end
     beq .done
     sty d_i
-    jsr ovl_putc
+    jsr Draw.char
     ldy d_i
     iny
     bne .ch
 .done:
     rts
 
-; ovl_str: A/X = string address, then print it.
-ovl_str:
+; string: A/X = string address, then print it.
+string:
     sta pSrc
     stx pSrc+1
-    jmp ovl_text
+    jmp Draw.text
 
-; ovl_byte: print A as two decimal digits.
+; byte: print A as two decimal digits.
 ;
-; The units digit is parked in t7, NOT in d_ch: ovl_putc's first instruction is
+; The units digit is parked in t7, NOT in d_ch: char's first instruction is
 ; `sta d_ch`, so anything left there is gone by the time the first digit has
 ; been drawn. That cost a clock reading of 00:00 that every unit test agreed
 ; with, because the tests read `seconds` and not the pixels.
-ovl_byte:
+byte:
     ldx #0
 .tens:
     cmp #10
@@ -617,41 +627,41 @@ ovl_byte:
 .units:
     sta t7
     txa
-    jsr ovl_putc
+    jsr Draw.char
     lda t7
-    jmp ovl_putc
+    jmp Draw.char
 
 ; ------------------------------------------------------------------------------
 ; The HUD, in the 32 columns to the right of the 128-wide playfield. The cart
 ; has no HUD at all - it draws the clock over the room for thirty frames when a
 ; room starts - so this is the port using space the original did not have.
 ; ------------------------------------------------------------------------------
-hud_draw:
+hud:
     mov d_x, #132
     mov d_y, #4
-    lda #<str_time
-    ldx #>str_time
-    jsr ovl_str
+    lda #<Draw.str_time
+    ldx #>Draw.str_time
+    jsr Draw.string
 
     mov d_x, #130
     mov d_y, #11
     lda minutes
-    jsr ovl_byte
-    lda #G_COLON
-    jsr ovl_putc
+    jsr Draw.byte
+    lda #Draw.glyph_colon
+    jsr Draw.char
     lda seconds
-    jsr ovl_byte
+    jsr Draw.byte
 
     mov d_x, #132
     mov d_y, #22
-    lda #<str_dead
-    ldx #>str_dead
-    jsr ovl_str
+    lda #<Draw.str_dead
+    ldx #>Draw.str_dead
+    jsr Draw.string
 
     mov d_x, #138
     mov d_y, #29
     lda deaths
-    jmp ovl_byte
+    jmp Draw.byte
 
 ; ------------------------------------------------------------------------------
 ; title_credits: the cart's three prints on the title screen.
@@ -665,31 +675,31 @@ hud_draw:
 title_credits:
     mov d_x, #58
     mov d_y, #80
-    lda #<str_xc
-    ldx #>str_xc
-    jsr ovl_str
+    lda #<Draw.str_xc
+    ldx #>Draw.str_xc
+    jsr Draw.string
 
     mov d_x, #42
     mov d_y, #96
-    lda #<str_thorson
-    ldx #>str_thorson
-    jsr ovl_str
+    lda #<Draw.str_thorson
+    ldx #>Draw.str_thorson
+    jsr Draw.string
 
     mov d_x, #46
     mov d_y, #102
-    lda #<str_berry
-    ldx #>str_berry
-    jmp ovl_str
+    lda #<Draw.str_berry
+    ldx #>Draw.str_berry
+    jmp Draw.string
 
 ; ------------------------------------------------------------------------------
-; draw_room_title: the cart prints "old site" for room (3,1), "summit" for the
+; room_title: the cart prints "old site" for room (3,1), "summit" for the
 ; last room, and (level+1)*100 .. " m" for everything else. The multiply by 100
 ; is not one: the last two digits are always "00", so only level+1 is printed.
 ;
 ; The cart draws a black panel behind the text with rectfill; the overlay has
 ; one colour and cannot, so the text sits directly over the room.
 ; ------------------------------------------------------------------------------
-draw_room_title:
+room_title:
     cbeq level, #11, .oldsite
     cmp #30
     beq .summit
@@ -698,50 +708,50 @@ draw_room_title:
     mov d_y, #62
     lda level
     add #1
-    jsr ovl_byte
+    jsr Draw.byte
     lda #0
-    jsr ovl_putc
+    jsr Draw.char
     lda #0
-    jsr ovl_putc
-    lda #G_SPACE
-    jsr ovl_putc
+    jsr Draw.char
+    lda #Draw.glyph_space
+    jsr Draw.char
     lda #22                     ; 'M'
-    jmp ovl_putc
+    jmp Draw.char
 
 .oldsite:
     mov d_x, #48
     mov d_y, #62
-    lda #<str_oldsite
-    ldx #>str_oldsite
-    jmp ovl_str
+    lda #<Draw.str_oldsite
+    ldx #>Draw.str_oldsite
+    jmp Draw.string
 
 .summit:
     mov d_x, #52
     mov d_y, #62
-    lda #<str_summit
-    ldx #>str_summit
-    jmp ovl_str
+    lda #<Draw.str_summit
+    ldx #>Draw.str_summit
+    jmp Draw.string
 
 str_time:
-    #d8 29, 18, 22, 14, G_END            ; TIME
+    #d8 29, 18, 22, 14, Draw.glyph_end            ; TIME
 str_dead:
-    #d8 13, 14, 10, 13, G_END            ; DEAD
+    #d8 13, 14, 10, 13, Draw.glyph_end            ; DEAD
 str_oldsite:
-    #d8 24, 21, 13, G_SPACE, 28, 18, 29, 14, G_END   ; OLD SITE
+    #d8 24, 21, 13, Draw.glyph_space, 28, 18, 29, 14, Draw.glyph_end   ; OLD SITE
 str_summit:
-    #d8 28, 30, 22, 22, 18, 29, G_END      ; SUMMIT
+    #d8 28, 30, 22, 22, 18, 29, Draw.glyph_end      ; SUMMIT
 str_xc:
-    #d8 33, 38, 12, G_END               ; X+C
+    #d8 33, 38, 12, Draw.glyph_end               ; X+C
 str_thorson:
-    #d8 22, 10, 29, 29, G_SPACE, 29, 17, 24, 27, 28, 24, 23, G_END   ; MATT THORSON
+    #d8 22, 10, 29, 29, Draw.glyph_space, 29, 17, 24, 27, 28, 24, 23, Draw.glyph_end   ; MATT THORSON
 str_berry:
-    #d8 23, 24, 14, 21, G_SPACE, 11, 14, 27, 27, 34, G_END         ; NOEL BERRY
+    #d8 23, 24, 14, 21, Draw.glyph_space, 11, 14, 27, 27, 34, Draw.glyph_end         ; NOEL BERRY
 
 ; ------------------------------------------------------------------------------
 ; The font: 3 pixels wide in a 4-pixel cell, 5 rows, bit 0 leftmost - which is
 ; the overlay's own bit order, so a row is a literal picture of itself.
 ; ------------------------------------------------------------------------------
-font3x5:
+font:
     #d8 %010, %101, %101, %101, %010      ; 0
     #d8 %010, %011, %010, %010, %111      ; 1
     #d8 %011, %100, %010, %001, %111      ; 2
@@ -781,3 +791,4 @@ font3x5:
     #d8 %000, %010, %000, %010, %000      ; :
     #d8 %000, %000, %000, %000, %000      ; space
     #d8 %000, %010, %111, %010, %000      ; +
+end

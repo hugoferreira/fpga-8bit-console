@@ -9,7 +9,11 @@
 ; Everything here is called from Objects.step_x/step_y, so nothing here may
 ; touch t0, t1 or t2 - those hold the step and the loop counter of the caller.
 ; ------------------------------------------------------------------------------
-
+namespace Collision
+    export solid
+    export ice
+    export box
+    export spikes
 ; ------------------------------------------------------------------------------
 ; is_solid / is_ice: the object at pObj, offset by c_ox/c_oy. Returns A = 0 for
 ; clear, non-zero for hit; the Z flag is the answer.
@@ -19,50 +23,44 @@
 ; than stubbed - dead code would be counted by the corpus metrics as if it were
 ; real. They come back with the types, in stage 2.
 ; ------------------------------------------------------------------------------
-is_solid:
+solid:
     mov c_mask, #FLAG_SOLID
-    jsr obj_box
-    jmp tile_flag_at
-
-is_ice:
+    jsr Collision.box
+    jmp Collision.flags
+ice:
     mov c_mask, #FLAG_ICE
-    jsr obj_box
-    jmp tile_flag_at
-
+    jsr Collision.box
+    jmp Collision.flags
 ; ------------------------------------------------------------------------------
 ; obj_box: c_x/c_y/c_w/c_h = the object's hitbox, displaced by c_ox/c_oy.
 ; spikes_at wants the same box, so it is a routine rather than a prologue.
 ; Clobbers A, Y.
 ; ------------------------------------------------------------------------------
-obj_box:
+box:
     lda [pObj + CelesteObject.core.x]
     mov y, offset CelesteObject.core.hitbox.x
     clc
     adc (pObj), y
     add c_ox
     sta c_x
-
     lda [pObj + CelesteObject.core.y]
     mov y, offset CelesteObject.core.hitbox.y
     clc
     adc (pObj), y
     add c_oy
     sta c_y
-
     lda [pObj + CelesteObject.core.hitbox.w]
     sta c_w
     lda [pObj + CelesteObject.core.hitbox.h]
     sta c_h
     rts
-
 ; ------------------------------------------------------------------------------
 ; tile_flag_at: is any tile overlapping the box c_x,c_y,c_w,c_h flagged c_mask?
 ; Returns A/Z. Clobbers A, X, Y, t3..t5, c_i, c_j, c_i1, c_j1.
 ; ------------------------------------------------------------------------------
-tile_flag_at:
-    jsr box_tiles
+flags:
+    jsr Collision.tiles
     bcc .miss                   ; the box does not touch the room at all
-
     lda c_j
     sta t3
 .row:
@@ -98,7 +96,6 @@ tile_flag_at:
     rts
 .hit:
     rts
-
 ; ------------------------------------------------------------------------------
 ; box_tiles: turn the pixel box in c_x/c_y/c_w/c_h into the inclusive tile range
 ; c_i..c_i1, c_j..c_j1, clamped to the room. Carry clear if the box misses the
@@ -109,20 +106,19 @@ tile_flag_at:
 ; sign handling. flr() on a negative pixel coordinate is the whole reason this
 ; is not just three shifts.
 ; ------------------------------------------------------------------------------
-box_tiles:
+tiles:
     lda c_x                     ; i0 = max(0, x >> 3)
-    jsr floor8
+    jsr Collision.floor
     bpl .i0
     lda #0
 .i0:
     sta c_i
-
     lda c_x                     ; i1 = min(15, (x + w - 1) >> 3)
     add c_w
     bvs .i1max                  ; signed overflow: off the right edge
     sub #1
     bmi .miss                   ; the whole box is left of the room
-    jsr floor8
+    jsr Collision.floor
     cmp #16
     bcc .i1
 .i1max:
@@ -131,20 +127,18 @@ box_tiles:
     sta c_i1
     cmp c_i
     bcc .miss
-
     lda c_y                     ; and the same vertically
-    jsr floor8
+    jsr Collision.floor
     bpl .j0
     lda #0
 .j0:
     sta c_j
-
     lda c_y
     add c_h
     bvs .j1max
     sub #1
     bmi .miss
-    jsr floor8
+    jsr Collision.floor
     cmp #16
     bcc .j1
 .j1max:
@@ -153,18 +147,16 @@ box_tiles:
     sta c_j1
     cmp c_j
     bcc .miss
-
     sec
     rts
 .miss:
     clc
     rts
-
 ; ------------------------------------------------------------------------------
 ; floor8: A = A >> 3, arithmetic, so that a negative pixel coordinate floors
 ; the way Lua's flr() does rather than truncating toward zero. Clobbers A.
 ; ------------------------------------------------------------------------------
-floor8:
+floor:
     cmp #$80                    ; carry = the sign bit
     ror
     cmp #$80
@@ -172,7 +164,6 @@ floor8:
     cmp #$80
     ror
     rts
-
 ; ------------------------------------------------------------------------------
 ; spikes_at: the cart's spikes_at for the player's box, using the player's own
 ; speed signs. Four tile ids, each with its own edge test - which is the
@@ -181,10 +172,9 @@ floor8:
 ;
 ; Returns A/Z. Clobbers A, X, Y, t3..t7 and the c_* box.
 ; ------------------------------------------------------------------------------
-spikes_at:
-    jsr box_tiles
+spikes:
+    jsr Collision.tiles
     bcc .miss
-
     lda c_j
     sta t3
 .row:
@@ -203,15 +193,15 @@ spikes_at:
     lda [room_tiles + RoomTileBuffer.cells[y]]
     ldx #0
 .which:
-    cmp spike_tile, x
+    cmp Collision.ids, x
     beq .found
     inx
     cpx #4
     bne .which
     jmp .next
 .found:
-    mov pFn, spike_test_lo + x
-    lda spike_test_hi, x
+    mov pFn, Collision.lo + x
+    lda Collision.hi, x
     sta pFn+1
     jsr Objects.dispatch
     bne .hit
@@ -230,16 +220,15 @@ spikes_at:
     lda #0
 .hit:
     rts
-
-spike_tile:
+ids:
     #d8 TILE_SPIKE_D, TILE_SPIKE_U, TILE_SPIKE_R, TILE_SPIKE_L
-spike_test_lo:
-    #d8 (spike_down)[7:0], (spike_up)[7:0], (spike_right)[7:0], (spike_left)[7:0]
-spike_test_hi:
-    #d8 (spike_down)[15:8], (spike_up)[15:8], (spike_right)[15:8], (spike_left)[15:8]
-
+lo:
+    data u8 low(down), low(up), low(right), low(left)
+hi:
+    data u8 high(down), high(up), high(right), high(left)
 ; tile 17, pointing down: ((y+h-1)%8 >= 6 or y+h == j*8+8) and yspd >= 0
-spike_down:
+proc down using console6502 naked
+begin
     mov y, offset CelesteObject.core.speed_y.integer
     lda (pObj), y
     bmi .no
@@ -263,9 +252,10 @@ spike_down:
 .yes:
     lda #1
     rts
-
+end
 ; tile 27, pointing up: y%8 <= 2 and yspd <= 0
-spike_up:
+proc up using console6502 naked
+begin
     mov y, offset CelesteObject.core.speed_y.integer
     lda (pObj), y
     bmi .maybe
@@ -284,9 +274,10 @@ spike_up:
 .yes:
     lda #1
     rts
-
+end
 ; tile 43, pointing right: x%8 <= 2 and xspd <= 0
-spike_right:
+proc right using console6502 naked
+begin
     mov y, offset CelesteObject.core.speed_x.integer
     lda (pObj), y
     bmi .maybe
@@ -305,9 +296,10 @@ spike_right:
 .yes:
     lda #1
     rts
-
+end
 ; tile 59, pointing left: ((x+w-1)%8 >= 6 or x+w == i*8+8) and xspd >= 0
-spike_left:
+proc left using console6502 naked
+begin
     mov y, offset CelesteObject.core.speed_x.integer
     lda (pObj), y
     bmi .no
@@ -331,3 +323,5 @@ spike_left:
 .yes:
     lda #1
     rts
+end
+end

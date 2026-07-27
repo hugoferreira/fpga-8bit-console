@@ -376,7 +376,7 @@ begin
     lda t1                      ; is_solid(step, 0)
     sta c_ox
     mov c_oy, #0
-    jsr is_solid
+    jsr Collision.solid
     bne .blocked
 
     mov y, offset CelesteObject.core.x ; inlay-exception: variable update operand t1
@@ -425,7 +425,7 @@ begin
     mov c_ox, #0
     lda t1
     sta c_oy
-    jsr is_solid
+    jsr Collision.solid
     bne .blocked
 
     mov y, offset CelesteObject.core.y ; inlay-exception: variable update operand t1

@@ -212,7 +212,7 @@ begin
     lda CL_W, x                  ; the whole cloud is ONE entry: the compositor
     sta [video + VideoRegisters.repeat]                 ; repeats the fetched row across its cells
     lda #Gfx.solid
-    jsr stage_sprite
+    jsr Draw.sprite
     ldx t6
     inx
     cpx #Fx.cloud_count
@@ -237,7 +237,7 @@ begin
     sub camera_y
     sta t5
     lda #Gfx.dot
-    jsr stage_sprite
+    jsr Draw.sprite
     ldx t6
     inx
     cpx #Fx.particle_count

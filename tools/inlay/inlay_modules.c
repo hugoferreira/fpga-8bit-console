@@ -193,6 +193,7 @@ static LaDiagnosticCode append_source_line(
         ++line_start;
     }
     line_length = (la_u16)(line_end - line_start);
+    if (line_length == 0) return LA_OK;
     if ((la_u32)*output_length + line_length + 1 >
         limits->max_source_bytes) {
         return module_fail(diagnostics, LA_ERR_MODULE_SOURCE_CAPACITY,

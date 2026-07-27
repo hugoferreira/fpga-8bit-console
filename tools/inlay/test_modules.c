@@ -152,7 +152,6 @@ static void test_comment_compaction(void)
         "raw \"escaped \\\"; still quoted\" ; tail\n";
     static const char expected[] =
         "alpha\n"
-        "\n"
         "#include \"semi;colon.asm\"\n"
         "raw \"escaped \\\"; still quoted\"\n";
     Fixture fixture;
@@ -178,8 +177,8 @@ static void test_comment_compaction(void)
           "comments and indentation compact outside quoted strings");
     memset(&origin, 0, sizeof(origin));
     expanded.input.origin(expanded.input.context, 2, &origin);
-    check(origin.source_id == 7 && origin.line == 2,
-          "comment-only line retains origin");
+    check(origin.source_id == 7 && origin.line == 3,
+          "compacted line retains original source line");
     free(workspace.data);
 
     limits = la_default_module_limits();

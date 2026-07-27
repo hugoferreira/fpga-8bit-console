@@ -38,6 +38,6 @@ reset = Platform.reset
 main_loop = Game.frame
 
 #bank vec
-    #d8 (reset)[7:0], (reset)[15:8]                 ; NMI
-    #d8 (reset)[7:0], (reset)[15:8]                 ; RESET
-    #d8 (reset)[7:0], (reset)[15:8]                 ; IRQ
+    data u8 low(Platform.reset), high(Platform.reset) ; NMI
+    data u8 low(Platform.reset), high(Platform.reset) ; RESET
+    data u8 low(Platform.reset), high(Platform.reset) ; IRQ

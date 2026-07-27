@@ -14,9 +14,9 @@ namespace Game
 ; volatile state.
 proc run using console6502
 begin
-    jsr room_init
-    jsr ovl_init
-    jsr sound_init
+    jsr Room.init
+    jsr Draw.overlay_init
+    jsr Audio.init
     jsr Fx.init
     jsr Objects.clear
 
@@ -53,7 +53,7 @@ begin
     jsr Platform.wait_frame     ; so one game frame spans two display frames
     jsr Platform.sample_input
     jsr Game.update
-    jsr draw_frame
+    jsr Draw.frame
     ret
 end
 
@@ -67,9 +67,9 @@ begin
     sta start_game_flash
     mov max_djump, #1
     lda #MUS_TITLE
-    jsr music_play
+    jsr Audio.music
     lda #0                      ; slot 0 is the title room, level 31
-    jmp load_room
+    jmp Room.load
 end
 
 ; Inputs: none. Returns: by tail transfer. Frame locals: none. Clobbers: A.
@@ -82,9 +82,9 @@ begin
     sta music_timer
     sta start_game
     lda #MUS_CLIMB
-    jsr music_play
+    jsr Audio.music
     lda #1                      ; slot 1 is the first playing room
-    jmp load_room
+    jmp Room.load
 end
 
 ; Inputs: none. Returns: none. Frame locals: none. Clobbers: A, X, Y and
@@ -107,7 +107,7 @@ begin
     dec music_timer
     bne .nomusictimer
     lda #MUS_ORB
-    jsr music_play
+    jsr Audio.music
 .nomusictimer:
 
     lda sfx_timer
@@ -148,7 +148,7 @@ begin
     dec delay_restart
     bne .objects
     mov will_restart, #0
-    jsr restart_room
+    jsr Room.restart
     ret
 
 .objects:
@@ -160,7 +160,7 @@ end
 ; Inputs: none. Returns: none. Frame locals: none. Clobbers: A.
 proc title_tick using console6502
 begin
-    jsr is_title
+    jsr Room.title
     beq .title
     ret
 .title:
@@ -168,11 +168,11 @@ begin
     bne .flashing
 
     tbz btn, #BTN_JUMP|BTN_DASH, .done
-    jsr music_stop
+    jsr Audio.stop
     mov start_game_flash, #50
     mov start_game, #1
     lda #38
-    jmp sfx_play
+    jmp Audio.sfx
 
 .flashing:
     dec start_game_flash

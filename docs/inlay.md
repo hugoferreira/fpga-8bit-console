@@ -536,12 +536,13 @@ formatting belongs to the platform shell.
 The default module profile reserves up to 64 modules, 32,767 flattened bytes,
 4,096 flattened lines and include depth 32. The Celeste host profile raises
 the byte/line limits to 65,534 and 12,000. The module expander removes
-semicolon comments outside quoted strings and trims insignificant leading
-indentation and trailing whitespace before charging source capacity, while
-retaining one source-mapped newline per input line. Celeste can therefore keep
-its checked-in commentary without weakening the bounded model. Its current
-expanded input uses 65,191 bytes, 4,275 lines and depth 2; the module workspace
-reservation is 117,848 bytes.
+semicolon comments outside quoted strings, omits blank/comment-only lines and
+trims insignificant leading indentation and trailing whitespace before
+charging source capacity. Its explicit origin table still maps every retained
+line to the original module and line. Celeste can therefore keep checked-in
+commentary without weakening the bounded model. Current expanded-input
+measurements are recorded with each completed migration phase below; the
+module workspace reservation is 117,848 bytes.
 
 The installed cc65 compiler successfully compiles the same core and ca65
 assembles its output. This is a portability smoke test, not a claim that the
@@ -705,6 +706,22 @@ animation procedures. The scratch remains deliberately physical because those
 values live across several calls and tail transfers; it is not a hidden
 virtual value or a short-lived frame local.
 
+`Collision`, `Room`, `Draw` and `Audio` complete the scoped gameplay surface.
+Collision exports solid/ice/box/spike queries while keeping tile-range and
+direction tests private. Room exports initialization, title detection,
+loading, transition/restart and camera services. Draw exports frame, sprite,
+object, hair, overlay-lifecycle and room-title services while its font, glyph,
+HUD and palette machinery remains private. Audio exports upload, direct and
+guarded SFX, music, fade and stop services. Cross-module call sites use these
+qualified names; the old global helper labels are absent.
+
+The completed subsystem migration expands to 65,394 significant bytes across
+3,519 retained lines and 14 namespaces. Blank and comment-only source lines do
+not consume that bounded flattened capacity, but every retained line keeps its
+original module/line mapping. The resulting image is unchanged from Phase 9:
+65,536 bytes with SHA-256
+`e57a8ea4112c6f16086d6a618254214c453d464d4de9ce19bfa03ac608f53da6`.
+
 The old direct customasm corpus lives only at
 `tests/inlay/reference/celeste-customasm/` as the immutable Phase-A baseline.
 Phase B intentionally changes instruction bytes, so acceptance is based on
@@ -769,6 +786,22 @@ create exactly the drift this frontend is intended to eliminate.
 
 The checked-in Celeste port keeps residual raw target sequences visible where
 the adopted typed and custom operations do not preserve their register, flag,
-volatility or displacement contracts. Each mechanically confusable exception
-is documented at its offset materialisation; final task 10.6 audits the
-remaining target-specific sequences as subsystem namespaces are completed.
+volatility or displacement contracts. The completed audit has four bounded
+categories:
+
+- 129 dynamic `(pObj|pOth),y` accesses whose runtime-selected displacement
+  cannot be represented by a compile-time typed field path;
+- 21 offset materialisations with an inline `inlay-exception`: three
+  pre-decrement flag observations, six complemented target masks, two
+  following-flag dependencies, three target-owned masks, six variable update
+  operands and one wrapping add/mask update;
+- four raw high-byte slices for the fixed numeric object-pool base and eight
+  low/high slices in the opaque generated room pointer table;
+- target-bound physical aliases for non-accumulator MMIO transfers,
+  page-strided bulk buffers, write-only overlay blits and structure-of-arrays
+  effect storage.
+
+Conformance freezes those exception counts, rejects any newly eligible legacy
+field sequence and rejects raw procedure-address slicing elsewhere. Spike
+dispatch and reset-vector addresses now use semantic `low(...)`/`high(...)`
+procedure declarations.

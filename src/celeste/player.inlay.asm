@@ -95,8 +95,8 @@ begin
     lda #0                      ; spikes collide
     sta c_ox
     sta c_oy
-    jsr obj_box
-    jsr spikes_at
+    jsr Collision.box
+    jsr Collision.spikes
     beq .nospike
     jmp Player.kill
 .nospike:
@@ -108,11 +108,11 @@ begin
 .notbottom:
     mov c_ox, #0
     mov c_oy, #1
-    jsr is_solid
+    jsr Collision.solid
     sta Player.ground
     mov c_ox, #0
     mov c_oy, #1
-    jsr is_ice
+    jsr Collision.ice
     sta Player.ice
     lda Player.ground              ; landing smoke
     beq .nosmoke
@@ -188,7 +188,7 @@ begin
     cmp max_djump
     bcs .gracedone
     lda #54
-    jsr psfx
+    jsr Audio.guarded_sfx
     lda max_djump
     sta [pObj + CelesteObject.payload.player.dash_jumps]
     jmp .gracedone
@@ -377,12 +377,12 @@ begin
     beq .fall
     sta c_ox
     mov c_oy, #0
-    jsr is_solid
+    jsr Collision.solid
     beq .fall
     lda Player.input
     sta c_ox
     mov c_oy, #0
-    jsr is_ice
+    jsr Collision.ice
     bne .fall
     mov Player.maxfall, #<Player.fall_slide
     mov Player.maxfall+1, #>Player.fall_slide
@@ -431,7 +431,7 @@ begin
     lda [pObj + CelesteObject.payload.player.grace]
     beq .walljump
     lda #1                      ; normal jump
-    jsr psfx
+    jsr Audio.guarded_sfx
     lda #0
     sta [pObj + CelesteObject.payload.player.jump_buffer]
     sta [pObj + CelesteObject.payload.player.grace]
@@ -453,19 +453,19 @@ begin
 .walljump:                      ; wall_dir = is_solid(-3,0) and -1 or is_solid(3,0) and 1 or 0
     mov c_ox, #$FD
     mov c_oy, #0
-    jsr is_solid
+    jsr Collision.solid
     beq .wallright
     mov Player.wall, #$FF
     jmp .havewall
 .wallright:
     mov c_ox, #3
     mov c_oy, #0
-    jsr is_solid
+    jsr Collision.solid
     beq .dash
     mov Player.wall, #1
 .havewall:
     lda #2
-    jsr psfx
+    jsr Audio.guarded_sfx
     lda #0
     sta [pObj + CelesteObject.payload.player.jump_buffer]
     lda #<Player.jump_speed
@@ -498,7 +498,7 @@ begin
     add Player.wall
     sta c_ox                    ; wall_dir * 3
     mov c_oy, #0
-    jsr is_ice
+    jsr Collision.ice
     bne .dash
     lda [pObj + CelesteObject.core.x]
     add Player.wall
@@ -519,7 +519,7 @@ begin
     lda [pObj + CelesteObject.payload.player.dash_jumps]
     bne .dodash
     lda #9                      ; out of dashes: a puff and a raspberry
-    jsr psfx
+    jsr Audio.guarded_sfx
     lda [pObj + CelesteObject.core.x]
     pha
     mov y, offset CelesteObject.core.y
@@ -607,7 +607,7 @@ begin
     jsr Player.set_speed_y_signed
 .dashdone:
     lda #3
-    jsr psfx
+    jsr Audio.guarded_sfx
     mov freeze, #2
     mov shake, #6
     mov y, offset CelesteObject.core.speed_x                 ; dash_target = 2 * sign(spd), dash_accel = 1.5
@@ -685,7 +685,7 @@ begin
     lda Player.input                 ; airborne: 5 against a wall, 3 otherwise
     sta c_ox
     mov c_oy, #0
-    jsr is_solid
+    jsr Collision.solid
     beq .air
     lda #5
     jmp .setspr
@@ -721,7 +721,7 @@ begin
     bpl .stay
     cmp #$FC
     bcs .stay
-    jsr next_room
+    jsr Room.next
     rts
 .stay:
     lda [pObj + CelesteObject.payload.player.player_bits]
@@ -780,17 +780,17 @@ end
 proc create_hair using console6502 naked
     self : ptr CelesteObject in pObj
 begin
-    jmp player_hair_create_impl
+    jmp Draw.hair_create
 end
 proc set_hair_color using console6502 naked
     dash_jumps : u8 in a
 begin
-    jmp player_hair_color_impl
+    jmp Draw.hair_color
 end
 proc draw_hair using console6502 naked
     self : ptr CelesteObject in pObj
 begin
-    jmp player_hair_draw_impl
+    jmp Draw.hair_draw
 end
 ; Player.kill. The cart carries on updating the player it just destroyed - Lua
 ; keeps the table alive - and this port returns instead. Nothing in stage 1 can
@@ -801,7 +801,7 @@ proc kill using console6502
 begin
     mov sfx_timer, #12
     lda #0
-    jsr sfx_play
+    jsr Audio.sfx
     inc deaths
     mov shake, #10
     jsr Objects.destroy
@@ -835,7 +835,7 @@ begin
     lda [pObj + CelesteObject.payload.player.dash_jumps]
     jsr Player.set_hair_color
     jsr Player.draw_hair
-    jmp draw_obj_sprite
+    jmp Draw.object
 ; player_spawn - the cart's three-state entry animation.
 end
 end
@@ -849,7 +849,7 @@ proc init using console6502
     self : ptr CelesteObject in pObj
 begin
     lda #4
-    jsr sfx_play
+    jsr Audio.sfx
     lda #3
     sta [pObj + CelesteObject.core.sprite]
     lda [pObj + CelesteObject.core.x]
@@ -953,7 +953,7 @@ begin
     pla
     jsr Objects.spawn_smoke
     lda #5
-    jmp sfx_play
+    jmp Audio.sfx
 .landing:
     dec [pObj + CelesteObject.payload.player.delay]
     pha
@@ -979,7 +979,7 @@ begin
     lda max_djump
     jsr Player.set_hair_color
     jsr Player.draw_hair
-    jmp draw_obj_sprite
+    jmp Draw.object
 ; smoke
 end
 end
@@ -1054,7 +1054,7 @@ end
 proc draw using console6502
     self : ptr CelesteObject in pObj
 begin
-    jmp draw_obj_sprite
+    jmp Draw.object
 ; room_title. The cart does all of this in draw(), including the state changes,
 ; so the port does too - it is the only object whose update is nil.
 end
@@ -1085,7 +1085,7 @@ begin
     cmp #<(-30)
     bcc .gone
 .show:
-    jsr draw_room_title
+    jsr Draw.room_title
 .done:
     rts
 .gone:

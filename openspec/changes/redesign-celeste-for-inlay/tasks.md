@@ -79,12 +79,12 @@
 
 ## 10. Scope remaining subsystems
 
-- [ ] 10.1 Move collision entry points and private geometry helpers under `Collision`
-- [ ] 10.2 Move room loading, camera, transition and title helpers under `Room`
-- [ ] 10.3 Move sprite, tile, overlay and text drawing APIs under `Draw`
-- [ ] 10.4 Move PSG upload, channel allocation, SFX and music controls under `Audio`
-- [ ] 10.5 Remove residual unqualified implementation constants and global helper labels from production modules
-- [ ] 10.6 Audit and document every remaining raw target sequence that cannot use an adopted typed/custom operation
+- [x] 10.1 Move collision entry points and private geometry helpers under `Collision`
+- [x] 10.2 Move room loading, camera, transition and title helpers under `Room`
+- [x] 10.3 Move sprite, tile, overlay and text drawing APIs under `Draw`
+- [x] 10.4 Move PSG upload, channel allocation, SFX and music controls under `Audio`
+- [x] 10.5 Remove residual unqualified implementation constants and global helper labels from production modules
+- [x] 10.6 Audit and document every remaining raw target sequence that cannot use an adopted typed/custom operation
 
 ## 11. Final regression and measurements
 

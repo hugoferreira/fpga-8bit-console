@@ -787,7 +787,7 @@ def check_platform_game_design() -> None:
         "jsr Platform.wait_frame",
         "jsr Platform.sample_input",
         "jsr Game.update",
-        "jsr draw_frame",
+        "jsr Draw.frame",
     ):
         if service not in game:
             raise AssertionError(f"Game.frame lost required service: {service}")
@@ -798,7 +798,7 @@ def check_platform_game_design() -> None:
     if main.count("main_loop = Game.frame") != 1:
         raise AssertionError("main debug frame binding must name Game.frame")
     permitted = re.compile(
-        r"^(?:#include |include |#bank |#addr |#d8 |"
+        r"^(?:#include |include |#bank |#addr |#d8 |data u8 |"
         r"reset = |main_loop = )"
     )
     for number, line in enumerate(main.splitlines(), 1):
@@ -956,9 +956,9 @@ def check_object_kind_design() -> set[str]:
         "jmp Player.animation",
         "input = $50",
         "wall = $5F",
-        "jmp player_hair_create_impl",
-        "jmp player_hair_color_impl",
-        "jmp player_hair_draw_impl",
+        "jmp Draw.hair_create",
+        "jmp Draw.hair_color",
+        "jmp Draw.hair_draw",
     }
     missing = sorted(item for item in required if item not in text)
     if missing:
@@ -977,11 +977,163 @@ def check_object_kind_design() -> set[str]:
     return lifecycle
 
 
+def check_remaining_subsystem_design() -> None:
+    manifests = {
+        "collide.inlay.asm": (
+            "Collision",
+            {"solid", "ice", "box", "spikes"},
+            {
+                "solid", "ice", "box", "flags", "tiles", "floor", "spikes",
+                "ids", "lo", "hi",
+            },
+            {"down", "up", "right", "left"},
+        ),
+        "room.inlay.asm": (
+            "Room",
+            {"init", "title", "load", "next", "restart", "camera"},
+            {
+                "init", "title", "load", "next", "cue_level", "cue_music",
+                "restart", "camera",
+            },
+            set(),
+        ),
+        "draw.inlay.asm": (
+            "Draw",
+            {
+                "frame", "sprite", "object", "hair_create", "hair_color",
+                "hair_draw", "overlay_init", "overlay_dirty", "room_title",
+            },
+            {
+                "frame", "palette", "palette_slots", "sprite", "object",
+                "position", "hair_create", "hair_color", "hair_palette",
+                "hair_draw", "hair_chase", "asr_w1", "asr_w2",
+                "overlay_init", "overlay_dirty", "overlay_clear",
+                "overlay_begin", "overlay_end", "char", "text", "string",
+                "byte", "hud", "title_credits", "room_title", "str_time",
+                "str_dead", "str_oldsite", "str_summit", "str_xc",
+                "str_thorson", "str_berry", "font",
+            },
+            set(),
+        ),
+        "sound.inlay.asm": (
+            "Audio",
+            {"init", "sfx", "guarded_sfx", "music", "fade", "stop"},
+            {
+                "init", "sfx", "channel_bits", "guarded_sfx", "music",
+                "fade", "stop",
+            },
+            set(),
+        ),
+    }
+    for filename, manifest in manifests.items():
+        namespace, expected_exports, expected_labels, expected_procs = manifest
+        text = (CELESTE_DIR / filename).read_text(encoding="ascii")
+        if text.count(f"namespace {namespace}\n") != 1:
+            raise AssertionError(
+                f"{filename}: expected one {namespace} namespace"
+            )
+        exports = set(re.findall(
+            r"^\s*export ([a-z_]+)$", text, re.MULTILINE
+        ))
+        labels = set(re.findall(
+            r"^([a-z_][a-z0-9_]*):$", text, re.MULTILINE
+        ))
+        procedures = set(re.findall(
+            r"^proc ([a-z_]+) using console6502(?: naked)?$",
+            text,
+            re.MULTILINE,
+        ))
+        if exports != expected_exports:
+            raise AssertionError(
+                f"{namespace} export manifest changed: "
+                f"expected {sorted(expected_exports)}, got {sorted(exports)}"
+            )
+        if labels != expected_labels:
+            raise AssertionError(
+                f"{namespace} label manifest changed: "
+                f"expected {sorted(expected_labels)}, got {sorted(labels)}"
+            )
+        if procedures != expected_procs:
+            raise AssertionError(
+                f"{namespace} procedure manifest changed: "
+                f"expected {sorted(expected_procs)}, "
+                f"got {sorted(procedures)}"
+            )
+
+    collision = (CELESTE_DIR / "collide.inlay.asm").read_text(
+        encoding="ascii"
+    )
+    for declaration in (
+        "data u8 low(down), low(up), low(right), low(left)",
+        "data u8 high(down), high(up), high(right), high(left)",
+    ):
+        if collision.count(declaration) != 1:
+            raise AssertionError(
+                "Collision dispatch data lost semantic procedure addresses"
+            )
+
+    production = "\n".join(
+        path.read_text(encoding="ascii")
+        for path in sorted(CELESTE_DIR.glob("*.inlay.asm"))
+    )
+    required_qualified_calls = {
+        "Collision.solid", "Collision.ice", "Collision.box",
+        "Collision.spikes", "Room.init", "Room.title", "Room.load",
+        "Room.next", "Room.restart", "Room.camera", "Draw.frame",
+        "Draw.sprite", "Draw.object", "Draw.hair_create", "Draw.hair_color",
+        "Draw.hair_draw", "Draw.overlay_init", "Draw.overlay_dirty",
+        "Draw.room_title", "Audio.init", "Audio.sfx", "Audio.guarded_sfx",
+        "Audio.music", "Audio.fade", "Audio.stop",
+    }
+    missing = sorted(
+        name for name in required_qualified_calls if name not in production
+    )
+    if missing:
+        raise AssertionError(
+            f"remaining subsystem qualified-call manifest changed: {missing}"
+        )
+
+    expected_exceptions = {
+        "branch observes pre-decrement value": 3,
+        "complemented target constant": 6,
+        "following flags feed control flow": 2,
+        "mask constant remains target-owned": 3,
+        "variable update operand t0": 4,
+        "variable update operand t1": 2,
+        "wrapping add-and-mask update": 1,
+    }
+    exception_reasons = re.findall(
+        r"inlay-exception: ([^\n]+)", production
+    )
+    actual_exceptions = {
+        reason: exception_reasons.count(reason)
+        for reason in set(exception_reasons)
+    }
+    if actual_exceptions != expected_exceptions:
+        raise AssertionError(
+            "Celeste raw-sequence exception audit changed: "
+            f"expected {expected_exceptions}, got {actual_exceptions}"
+        )
+
+    raw_slices = {
+        path.name: len(re.findall(r"\([^)]*\)\[(?:7:0|15:8)\]", text))
+        for path in sorted(CELESTE_DIR.glob("*.inlay.asm"))
+        for text in [path.read_text(encoding="ascii")]
+        if re.search(r"\([^)]*\)\[(?:7:0|15:8)\]", text)
+    }
+    if raw_slices != {"obj.inlay.asm": 4, "rooms.inlay.asm": 8}:
+        raise AssertionError(
+            "raw target address-slice audit changed: "
+            f"expected obj=4 and rooms=8, got {raw_slices}"
+        )
+
+
 def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
     production_files = check_celeste_source_boundary()
     check_platform_game_design()
     check_objects_design()
     lifecycle_names = check_object_kind_design()
+    check_remaining_subsystem_design()
     module_texts = [
         path.read_text(encoding="ascii")
         for path in production_files
