@@ -173,6 +173,15 @@ stored PICO-8 exports **before** writing RTL. This catches mis-recoveries
 (the saw's 0.653 precedent) while they cost minutes. The model then
 doubles as the per-stage gate: RTL output must equal the model exactly.
 
+The model is also the pre-RTL sizing instrument: a `probe()` hook at
+every load-bearing intermediate feeds `tools/psg_width_report.py`,
+which renders the full deterministic matrix (byte-verified while
+instrumented), reports observed ranges per site, and derives exhaustive
+analytic bounds for the wave layer and amplitude ladder. Candidate
+hardware forms - narrower widths, shift-add decompositions, service
+sharing - are validated model-side under the same byte gate before any
+SystemVerilog exists.
+
 ### 2. Phase representation: keep 24 bits, evaluate at the binary's widths
 
 The oscillator keeps its 24-bit phase registers (the state layout and the
@@ -196,11 +205,25 @@ occupancy, not new datapath.
 
 ### 4. One amplitude stage on the product service
 
-`G = tz(3a/2)` is two adds; `G*z` fits the existing 24x10 m-service
-(G <= 378); `tz(x/3072)` is a sign-managed shift through the established
-magnitude pattern (`wi_neg` precedent). The 254-scale, the 1317 constant
-and the noise gain concept all retire. Per the measurement law this is
-service-shaped work (products), not operand-mux-shaped.
+`G = tz(3a/2)` is two adds; `tz(x/3072)` is a sign-managed shift through
+the established magnitude pattern (`wi_neg` precedent). The 254-scale,
+the 1317 constant and the noise gain concept all retire. Per the
+measurement law this is service-shaped work (products), not
+operand-mux-shaped.
+
+**Sizing correction (tools/psg_width_report.py, 2026-07-27):** the
+original "G <= 378 fits the 24x10 m-service" figure assumed the old
+8-bit 254-scale amplitude. The adopted ladder reaches a = 2240 (volume
+1792, instrument sevenths, then the detune boost tz(5a/4)), so
+**G <= 3360 - 13 signed bits** - and the oracle matrix observes that
+maximum. z spans +/-24,576 (wavetable; built-ins +/-18,432), giving an
+analytic product bound of +/-82.6M = **28 signed bits** (observed
++/-66.1M). The amplitude stage therefore needs a 13x16 product - z can
+ride the service's wide port but G does not fit a 10-bit port; task 2.3
+widens or stages the service accordingly. Same report, for later
+stages: blend accumulator 22 bits, soft-add excess product 29 bits
+observed, wavetable lerp accumulator 25 bits, slide fine-path
+reciprocal product 57 bits, dq up to 65,024 (17 bits, phaser mode 2).
 
 ### 5. Waveforms compute; the wave ROM retires
 

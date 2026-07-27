@@ -45,6 +45,12 @@ NOTE_DX = [523, 554, 587, 622, 659, 698,
            740, 784, 831, 880, 932, 984, 1046]
 
 
+def probe(site: str, value: int) -> None:
+    """Range-observation hook at the pipeline's load-bearing intermediates.
+    tools/psg_width_report.py swaps in a recorder to derive minimal RTL
+    widths; the default no-op keeps the reference path pure."""
+
+
 def tz(a: int, d: int) -> int:
     """Signed integer division truncated toward zero."""
     q = abs(a) // d
@@ -78,7 +84,10 @@ def dx_for_note_fine(p_1616: int) -> int:
     chromatic = s % 12
     blended = ((0x10000 - frac) * NOTE_DX[chromatic]
                + frac * NOTE_DX[chromatic + 1])
-    dp = (blended * 0x2F8DF18F) >> 44
+    probe("pinc.blend", blended)
+    recip = blended * 0x2F8DF18F
+    probe("pinc.recip", recip)
+    dp = recip >> 44
     return dp >> (3 - octave) if octave < 3 else dp << (octave - 3)
 
 
@@ -141,7 +150,9 @@ def custom_wave(table: list[int], x: int) -> int:
     f = x & 1023
     w0 = table[i] << CUSTOM_SHIFT
     w1 = table[(i + 1) & 63] << CUSTOM_SHIFT
-    return (w0 * 1024 + (w1 - w0) * f) >> 10
+    acc = w0 * 1024 + (w1 - w0) * f
+    probe("wave.lerp_acc", acc)
+    return acc >> 10
 
 
 def wave_pair(w: int, p: int, q0: int, mode: int, alt: bool = False) -> int:
@@ -171,7 +182,9 @@ def wave_pair(w: int, p: int, q0: int, mode: int, alt: bool = False) -> int:
 
 
 def scale(g: int, z: int) -> int:
-    return tz(g * z, 3072)
+    prod = g * z
+    probe("scale.prod", prod)
+    return tz(prod, 3072)
 
 
 # --- SFX record parsing ------------------------------------------------------
@@ -248,6 +261,7 @@ class OscState:
                 else:
                     z = wave_pair(self.wave, self.p, self.q0,
                                   self.mode, self.alt)
+                probe(f"wave.z.w{self.wave}", z)
                 out.append(scale(self.g, z))
                 self.p = u16(self.p + self.dp)
                 self.q0 = (self.q0 + self.dq) & 0x1FFFF
@@ -355,6 +369,9 @@ def calc_tick_state(sfx: Sfx, pos: int, prev: OscState,
     if st.mode > 0 and st.wave <= 5:
         a = tz(5 * a, 4)
     st.g = tz(3 * a, 2)
+    probe("amp.G", st.g)
+    probe("pinc.dp", st.dp)
+    probe("pinc.dq", st.dq)
     if st.g == 0:
         # A zero-amplitude tick is not an inaudible running oscillator:
         # the next nonzero tick starts from the canonical phase again
@@ -498,6 +515,9 @@ def calc_tick_custom(sfx: Sfx, get_sfx, pos: int, prev: OscState,
             a = tz(5 * a, 4)
         st.g = tz(3 * a, 2)
 
+    probe("amp.G", st.g)
+    probe("pinc.dp", st.dp)
+    probe("pinc.dq", st.dq)
     if st.g == 0:
         st.p, st.q0 = 0, 0
     else:
@@ -512,10 +532,15 @@ SOFT_TH = 24576
 
 def soft_add(a: int, b: int) -> int:
     s = a + b
+    probe("mix.sum", s)
     if s >= SOFT_TH:
-        return SOFT_TH + tz((s - SOFT_TH) * 52429, 1 << 18)
+        excess = (s - SOFT_TH) * 52429
+        probe("mix.excess_prod", excess)
+        return SOFT_TH + tz(excess, 1 << 18)
     if s <= -SOFT_TH:
-        return -SOFT_TH - tz((-SOFT_TH - s) * 52429, 1 << 18)
+        excess = (-SOFT_TH - s) * 52429
+        probe("mix.excess_prod", excess)
+        return -SOFT_TH - tz(excess, 1 << 18)
     return s
 
 
@@ -541,7 +566,9 @@ def damp_step(y: int, x: int, level: int) -> int:
     applies to the whole blend tz((x + (2^d-1)y)/2^d), not to a
     difference-form step (that one stalls at |y| = 1)."""
     d = 1 << level
-    return tz(x + (d - 1) * y, d)
+    acc = x + (d - 1) * y
+    probe("damp.acc", acc)
+    return tz(acc, d)
 
 
 class ChannelVoice:
@@ -572,9 +599,10 @@ class ChannelVoice:
         new_samples = cur.render(TICK_SAMPLES)
         old_samples = old.render(BLEND_SAMPLES)
         for i in range(BLEND_SAMPLES):
-            new_samples[i] = tz(
-                i * new_samples[i] + (BLEND_SAMPLES - i) * old_samples[i],
-                BLEND_SAMPLES)
+            acc = (i * new_samples[i]
+                   + (BLEND_SAMPLES - i) * old_samples[i])
+            probe("blend.acc", acc)
+            new_samples[i] = tz(acc, BLEND_SAMPLES)
         if self.sfx.dampen:
             y = self.damp_y
             for i in range(TICK_SAMPLES):
@@ -593,8 +621,9 @@ class ChannelVoice:
         if self.sfx.reverb:
             tap = (self.rpos + 4 + 2 * (self.sfx.reverb == 1)) & 7
             for i in range(TICK_SAMPLES):
-                new_samples[i] = tz(
-                    4 * new_samples[i] + 2 * self.ring[tap][i], 4)
+                acc = 4 * new_samples[i] + 2 * self.ring[tap][i]
+                probe("reverb.acc", acc)
+                new_samples[i] = tz(acc, 4)
         self.ring[self.rpos] = list(new_samples)
         self.rpos = (self.rpos + 1) & 7
         return new_samples
