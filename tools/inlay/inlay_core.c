@@ -4197,6 +4197,18 @@ static int la_parse_typed_operation(LaContext *ctx,
     } else if ((la_u16)(end - cursor) >= 4 &&
                memcmp(cursor, "cmp ", 4) == 0) {
         operation = LA_TARGET_OP_CMP8_OVERLAY_DISP;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "stx ", 4) == 0) {
+        operation = LA_TARGET_OP_STOREX_OVERLAY_DISP;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "sty ", 4) == 0) {
+        operation = LA_TARGET_OP_STOREY_OVERLAY_DISP;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "and ", 4) == 0) {
+        operation = LA_TARGET_OP_AND8A_OVERLAY_DISP;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "ora ", 4) == 0) {
+        operation = LA_TARGET_OP_ORA8A_OVERLAY_DISP;
     } else {
         return 0;
     }
@@ -4265,12 +4277,17 @@ static int la_parse_typed_operation(LaContext *ctx,
                 ctx, root_start, root_length, path_start,
                 (la_u16)(close - path_start), line, &field_index, &offset,
                 &index, &stride, &count) != LA_OK) return -1;
-        if ((!is_overlay &&
-             !la_equal_text(index.data, index.length, "x")) ||
-            (is_overlay &&
-             !la_equal_text(index.data, index.length, "y"))) {
+        if (!is_overlay) {
+            if (!la_equal_text(index.data, index.length, "x")) {
+                la_fail(ctx, LA_ERR_INDEX_LOCATION, line, 1, index.length,
+                        index, la_slice("x", 1), 0, 0);
+                return -1;
+            }
+        } else if (!la_equal_text(index.data, index.length, "x") &&
+                   !la_equal_text(index.data, index.length, "y")) {
+            /* Absolute indexed addressing accepts either physical index. */
             la_fail(ctx, LA_ERR_INDEX_LOCATION, line, 1, index.length,
-                    index, la_slice(is_overlay ? "y" : "x", 1), 0, 0);
+                    index, la_slice("x or y", 6), 0, 0);
             return -1;
         }
         if ((!is_overlay &&
@@ -4355,14 +4372,21 @@ static int la_parse_typed_operation(LaContext *ctx,
     event->aux = la_slice("", 0);
     event->aux2 = la_slice("", 0);
     event->property = (LaPropertyKind)0;
-    if (operation == LA_TARGET_OP_CMP8_OVERLAY_DISP) {
-        /* Accumulator compare is registered only against a non-indexed fixed
-           overlay field; other memory compares stay raw and reviewed. */
+    if (operation == LA_TARGET_OP_CMP8_OVERLAY_DISP ||
+        operation == LA_TARGET_OP_STOREX_OVERLAY_DISP ||
+        operation == LA_TARGET_OP_STOREY_OVERLAY_DISP ||
+        operation == LA_TARGET_OP_AND8A_OVERLAY_DISP ||
+        operation == LA_TARGET_OP_ORA8A_OVERLAY_DISP) {
+        /* Accumulator compare/logic and physical-register stores are
+           registered only against a non-indexed fixed overlay field; the
+           pointer-indirect and indexed variants stay raw and reviewed. */
+        int sets_flags;
         if (!is_overlay || indexed) {
             la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
                     (la_u16)(end - start),
                     la_slice(start, (la_u16)(end - start)),
-                    la_slice("fixed-overlay accumulator compare", 33), 0, 0);
+                    la_slice("fixed-overlay accumulator or register op", 40),
+                    0, 0);
             return -1;
         }
         if (!ctx->target->overlay_byte_operations) {
@@ -4372,10 +4396,17 @@ static int la_parse_typed_operation(LaContext *ctx,
                     la_slice("static overlay byte access", 26), 0, 0);
             return -1;
         }
-        event->operation = LA_TARGET_OP_CMP8_OVERLAY_DISP;
+        /* stx/sty leave the flags untouched; cmp/and/ora update N and Z. */
+        sets_flags = operation != LA_TARGET_OP_STOREX_OVERLAY_DISP &&
+                     operation != LA_TARGET_OP_STOREY_OVERLAY_DISP;
+        event->operation = operation;
         event->access_width = 1;
         event->scratch = la_slice("", 0);
-        event->clobbers = la_slice("flags", 5);
+        if (sets_flags) {
+            event->clobbers = la_slice("flags", 5);
+        } else {
+            event->clobbers = la_slice("", 0);
+        }
         event->volatility = ctx->overlays[overlay_index].volatile_access ?
             LA_ACCESS_VOLATILE : LA_ACCESS_NONVOLATILE;
     } else if (is_overlay) {
@@ -4799,12 +4830,13 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
     cursor = la_trim_left(close + 1, end);
     immediate = 0;
     if (needs_immediate) {
-        if (cursor >= end || *cursor++ != ',') {
-            la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                    la_slice("mask update requires #VALUE", 27),
-                    la_slice("", 0), 0, 0);
-            return -1;
+        if (cursor >= end || *cursor != ',') {
+            /* No immediate operand: this is an accumulator logic read
+               (and/ora [overlay + field]), not a mask read-modify-write.
+               Let the byte operand parser handle it. */
+            return 0;
         }
+        ++cursor;
         cursor = la_trim_left(cursor, end);
         if (cursor >= end || *cursor++ != '#') {
             la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,

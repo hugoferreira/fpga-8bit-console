@@ -150,11 +150,11 @@ sprite:
     bmi .drop
     cpy #120
     bcs .drop
-    stx SPR_INDEX
+    stx [video + VideoRegisters.sprite_index]
     sta [video + VideoRegisters.sprite_base]
     lda t4
     sta [video + VideoRegisters.sprite_x]
-    sty SPR_Y
+    sty [video + VideoRegisters.sprite_y]
     lda t3
     sta [video + VideoRegisters.sprite_flags]               ; the write commits the staged entry
     inc nspr

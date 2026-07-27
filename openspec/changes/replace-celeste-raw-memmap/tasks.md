@@ -33,8 +33,8 @@
 
 - [x] 4.1 Add semantic `address DESTINATION, OVERLAY.field` resolution and target events
 - [x] 4.2 Add console6502 address-materialization lowering with exact relocation and clobber fixtures
-- [ ] 4.3 Extend fixed-overlay byte load/store to every evidenced accumulator and physical-index form
-- [ ] 4.4 Add registered fixed-overlay `mov` forms and reject unsupported memory-to-memory combinations
+- [x] 4.3 Extend fixed-overlay byte load/store to every evidenced accumulator and physical-index form
+- [x] 4.4 Add registered fixed-overlay `mov` forms and reject unsupported memory-to-memory combinations
 - [x] 4.5 Add accumulator compare and the evidenced compare/test-and-branch overlay forms with exact flag contracts
 - [x] 4.6 Add fixed-overlay `inc`, `dec`, `and` and `ora` RMW events with volatility metadata
 - [x] 4.7 Support explicit page-view arrays and unit-stride indexed access without hidden scratch
@@ -52,7 +52,7 @@
 ## 6. Migrate Celeste ownership by subsystem
 
 - [x] 6.1 Convert `memmap.inlay.asm` from raw `#include` to semantic inclusion after replayable modules provide sufficient capacity
-- [ ] 6.2 Migrate video and PSG operands to `VideoRegisters` and `PsgRegisters` overlays
+- [x] 6.2 Migrate video and PSG operands to `VideoRegisters` and `PsgRegisters` overlays
 - [ ] 6.3 Migrate persistent clock, room, input, restart, audio and HUD state to the `GameState` overlay
 - [ ] 6.4 Move input masks to `Platform.Input` and music/fade values to `Audio`
 - [ ] 6.5 Move room geometry, camera limits and tile identifiers to `Room`

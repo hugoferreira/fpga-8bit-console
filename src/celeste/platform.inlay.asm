@@ -10,6 +10,14 @@ namespace Platform
     export reset
     export wait_frame
     export sample_input
+    namespace Input
+        left = $01
+        right = $02
+        up = $04
+        down = $08
+        jump = $10
+        dash = $20
+    end
 
 ; Inputs: reset machine state. Returns: never; transfers to Game.run.
 ; Frame locals: none. Clobbers: A, X, Y, pSrc, t0, t1 and hardware upload
@@ -30,7 +38,7 @@ proc wait_frame using console6502
 begin
     lda [video + VideoRegisters.frame]
 .wait:
-    cmp SPR_FRAME
+    cmp [video + VideoRegisters.frame]
     beq .wait
     ret
 end
@@ -52,7 +60,7 @@ begin
     ldx #15
 .entry:
     lda Gfx.draw_palette, x
-    sta SPR_DPAL, x
+    sta [video + VideoRegisters.draw_palette[x]]
     dex
     bpl .entry
     ret

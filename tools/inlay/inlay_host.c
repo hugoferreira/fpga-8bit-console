@@ -886,6 +886,22 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
                 (int)event->owner.length, event->owner.data,
                 (int)event->path.length, event->path.data);
         return 1;
+    case LA_TARGET_OP_STOREX_OVERLAY_DISP:
+    case LA_TARGET_OP_STOREY_OVERLAY_DISP:
+    case LA_TARGET_OP_AND8A_OVERLAY_DISP:
+    case LA_TARGET_OP_ORA8A_OVERLAY_DISP:
+        if (!begin_line(output, event->span, "overlay-operation")) return 0;
+        fprintf(output->assembly, "    %s %.*s + %u",
+                event->operation == LA_TARGET_OP_STOREX_OVERLAY_DISP ? "stx" :
+                event->operation == LA_TARGET_OP_STOREY_OVERLAY_DISP ? "sty" :
+                event->operation == LA_TARGET_OP_AND8A_OVERLAY_DISP ? "and" :
+                    "ora",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value);
+        fprintf(output->assembly, " ; inlay overlay %.*s.%.*s\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
+        return 1;
     case LA_TARGET_OP_INC8_OVERLAY_ABS:
     case LA_TARGET_OP_DEC8_OVERLAY_ABS:
         if (!begin_line(output, event->span, "overlay-update")) return 0;

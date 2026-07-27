@@ -253,8 +253,9 @@ static int test_event(void *context, const LaEvent *event)
             }
         } else if (event->operation == LA_TARGET_OP_LOAD8_OVERLAY_INDEXED ||
                    event->operation == LA_TARGET_OP_STORE8_OVERLAY_INDEXED) {
-            check(event->index.length == 1 && event->index.data[0] == 'y',
-                  "indexed overlay reports physical Y");
+            check(event->index.length == 1 &&
+                  (event->index.data[0] == 'y' || event->index.data[0] == 'x'),
+                  "indexed overlay reports a physical index");
             check(event->stride == 1,
                   "indexed overlay reports unit stride");
             check(event->volatility == LA_ACCESS_VOLATILE,
@@ -624,12 +625,19 @@ static void test_typed_word_transfers(void)
         0, limits, &events, &diagnostic, &stats, &target);
     check(result == LA_ERR_UNSUPPORTED_OPERATION,
           "target may reject typed byte updates");
-    expect_error(
+    /* Absolute indexed overlay access accepts either physical index. */
+    result = compile_source(
         "struct Registers\nchannels : u8[4]\nend\n"
         "overlay regs : Registers at REGS volatile\n"
         "lda [regs + Registers.channels[x]]\n",
+        0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, "indexed overlay accepts physical X");
+    expect_error(
+        "struct Registers\nchannels : u8[4]\nend\n"
+        "overlay regs : Registers at REGS volatile\n"
+        "lda [regs + Registers.channels[a]]\n",
         limits, LA_ERR_INDEX_LOCATION,
-        "indexed overlay requires physical Y");
+        "indexed overlay rejects a non-index register");
     expect_error(
         "struct Pair\nlo : u8\nhi : u8\nend\n"
         "struct Registers\nchannels : Pair[4]\nend\n"
@@ -1350,9 +1358,9 @@ static void test_layout_variants(void)
                  limits, LA_ERR_OVERLAY_ALIGNMENT,
                  "misaligned numeric overlay rejected");
     expect_error("struct A\nx : u8[2]\nend\n"
-                 "overlay v : A at RAM\nlda [v + A.x[x]]\n",
+                 "overlay v : A at RAM\nlda [v + A.x[a]]\n",
                  limits, LA_ERR_INDEX_LOCATION,
-                 "indexed overlay requires target index");
+                 "indexed overlay rejects a non-index register");
     expect_error("struct A\nx : u16\nend\n"
                  "overlay v : A at RAM\nlda [v + A.x]\n",
                  limits, LA_ERR_ACCESS_WIDTH,

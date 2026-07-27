@@ -69,7 +69,7 @@ sfx:
     beq .none                   ; music owns every channel: drop the sound
 
     lda [psg + PsgRegisters.status]
-    ora PSG_MUSMASK
+    ora [psg + PsgRegisters.music_mask]
     sta t0
     ldy #0
 .find:
@@ -86,7 +86,7 @@ sfx:
     sta nextch
     tay
     lda Audio.channel_bits, y
-    and PSG_MUSMASK
+    and [psg + PsgRegisters.music_mask]
     bne .steal
 .go:
     txa
@@ -123,7 +123,7 @@ music:
 ; music_fade: A = pattern (or MUS_STOP), X = fade length in 16 ms units.
 ; Clobbers A.
 fade:
-    stx PSG_FADE
+    stx [psg + PsgRegisters.fade]
     sta [psg + PsgRegisters.music]
     rts
 
