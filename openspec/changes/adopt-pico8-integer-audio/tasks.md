@@ -2,22 +2,29 @@
 
 ## 1. The reference model (formulas proven before any RTL)
 
-- [ ] 1.1 Build a Python model of the binary's oscillator core from
+- [x] 1.1 Build a Python model of the binary's oscillator core from
       pico8-psg-re.md: 16-bit p, 17-bit q0 with the per-mode dq derivation
       and `u16(q0 << m)` read, all eight wave functions, `scale(z) =
       tz(G*z/3072)` / noise 2048, `G = tz(3a/2)`, `tz(a*iv/256)` volume
-      composition (deterministic single-voice core LANDED as
-      tools/psg_binary_model.py, byte-exact on 24/24 cases; detune modes,
-      phaser, custom voices, multi-voice and music flow remain)
+      composition (COMPLETE as tools/psg_binary_model.py: waves, effects,
+      detune/buzz/dampen/reverb, meta-instruments, the eight-leaf mix
+      tree and the pattern-chain music flow; noise excluded at the
+      shared-RNG boundary per task 4.2)
 - [ ] 1.2 Instruction-verify the still-unchecked formulas against
       pico8.x86_64.asm (tri_raw constants, saw, fades, vibrato, slide fine
       path, the 64-sample blend, noise hold/interp) the way scale/organ/
       drop/volume were verified; record each fingerprint in design.md
-- [ ] 1.3 Render the deterministic oracle cases through the model and
+- [x] 1.3 Render the deterministic oracle cases through the model and
       require byte-equality against the stored PICO-8 exports; adjudicate
       any mismatch as a notes bug before proceeding (the 0.653 precedent)
-- [ ] 1.4 Freeze the model as the per-stage gate: RTL stages must equal
-      the model exactly on the cases their formulas touch
+      (48/48 byte-exact via the durable `psg_binary_model.py sweep`
+      harness; every adjudication recorded in design.md's milestone
+      blocks)
+- [x] 1.4 Freeze the model as the per-stage gate: RTL stages must equal
+      the model exactly on the cases their formulas touch (the sweep
+      subcommand is the gate's executable form; level-2 dampen/reverb and
+      the dampen-reverb order are recorded open in design.md pending the
+      task-5.1 probe additions)
 
 ## 2. Wave core in RTL
 

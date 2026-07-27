@@ -8,19 +8,29 @@ The model is the gate for that change: RTL stages must match it exactly,
 and the model itself must match the stored PICO-8 exports byte-for-byte
 on deterministic cases (task 1.3).
 
-Scope: deterministic paths (waves 0-5 and 8, effects 0-7, the per-tick
-64-sample crossfade, single-voice soft_add mixing). Noise and phaser are
-excluded pending their own verification tasks; noise is sequence-inexact
-in principle (shared RNG).
+Scope: every deterministic path - waves 0-5, the comb-free phaser core
+(7), the wavetable voice (8), effects 0-7, the detune/buzz families, the
+dampen one-pole and the reverb history comb, meta-instruments, the
+per-tick 64-sample crossfade, the eight-leaf soft_add tree and the
+pattern-chain music flow. Only noise stays out: its samples consume the
+binary's shared RNG, so the sequence is inexact in principle.
 
 Usage:
-  psg_binary_model.py render <case.bin> --ticks N [--sfx N] --out out.wav
-  psg_binary_model.py compare <case.bin> --ticks N <reference.wav>
+  psg_binary_model.py render <case.bin> --ticks N --out out.wav
+  psg_binary_model.py compare <case.bin> <reference.wav> --ticks N
+  psg_binary_model.py sweep [--only NAME ...]
+
+`render`/`compare` run the full music player (pattern 0 launch, the real
+export path). `sweep` is the durable regression harness: it drives every
+deterministic case from the oracle matrix's results.json through
+render_case and requires byte-equality against the stored reference,
+aligned by the export's constant lead-in (shift search 0..220).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import struct
 import sys
 import wave
@@ -495,33 +505,6 @@ def calc_tick_custom(sfx: Sfx, get_sfx, pos: int, prev: OscState,
     return st
 
 
-def render_voice(sfx: Sfx, ticks: int, get_sfx=None) -> list[int]:
-    """_mix_sfx_tick: per tick, render new state, blend 64 samples of old.
-
-    The eight-slot history comb the RE notes describe for waveform 7 (and
-    reverb) is deliberately ABSENT: the wave-7-phaser export matches the
-    comb-free stream byte-for-byte across all 5,696 samples, so the ring is
-    empty throughout the export path - the comb belongs to live playback,
-    a stage the export renderer (and therefore every oracle reference)
-    never runs. This is a documented model boundary alongside the shared
-    RNG; the phaser's export-visible identity is the triangle core with
-    its 254/256-detuned secondary."""
-    out: list[int] = []
-    cur = OscState()                          # silent pre-trigger state
-    ins = InsState()
-    for pos in range(ticks):
-        old = cur.copy()
-        cur = calc_tick_state(sfx, pos, cur, ins, get_sfx)
-        new_samples = cur.render(TICK_SAMPLES)
-        old_samples = old.render(BLEND_SAMPLES)
-        for i in range(BLEND_SAMPLES):
-            new_samples[i] = tz(
-                i * new_samples[i] + (BLEND_SAMPLES - i) * old_samples[i],
-                BLEND_SAMPLES)
-        out.extend(new_samples)
-    return out
-
-
 # --- mixing and output ---------------------------------------------------
 
 SOFT_TH = 24576
@@ -550,23 +533,126 @@ def mix_tree(leaves: list[list[int]]) -> list[int]:
     return out
 
 
-def mix_single(voice: list[int]) -> list[int]:
-    """A lone voice through the tree: three soft_adds against zeros."""
-    return [soft_add(soft_add(soft_add(v, 0), 0), 0) for v in voice]
+def damp_step(y: int, x: int, level: int) -> int:
+    """DAMPEN: the per-sample one-pole toward the oscillator value.
+    Pinned by filter-dampen-1's exact settle (0, 4031, 6046, 7054 toward
+    +/-8062, stuck one unit short by truncation) and by
+    filter-dampen-impulse's decay, which reaches zero - so the truncation
+    applies to the whole blend tz((x + (2^d-1)y)/2^d), not to a
+    difference-form step (that one stalls at |y| = 1)."""
+    d = 1 << level
+    return tz(x + (d - 1) * y, d)
+
+
+class ChannelVoice:
+    """One music slot: oscillator + instrument state, a dampen one-pole
+    and the eight-slot history ring (the reverb comb, per voice)."""
+
+    def __init__(self):
+        self.sfx: Sfx | None = None
+        self.origin = 0
+        self.osc = OscState()
+        self.ins = InsState()
+        self.damp_y = 0
+        self.ring = [[0] * TICK_SAMPLES for _ in range(8)]
+        self.rpos = 0
+
+    def launch(self, sfx: Sfx, tick: int):
+        self.sfx = sfx
+        self.origin = tick
+        self.ins = InsState()
+
+    def tick(self, pos: int, get_sfx) -> list[int]:
+        if self.sfx is None:
+            return [0] * TICK_SAMPLES
+        old = self.osc.copy()
+        self.osc = calc_tick_state(self.sfx, pos - self.origin, self.osc,
+                                   self.ins, get_sfx)
+        cur = self.osc
+        new_samples = cur.render(TICK_SAMPLES)
+        old_samples = old.render(BLEND_SAMPLES)
+        for i in range(BLEND_SAMPLES):
+            new_samples[i] = tz(
+                i * new_samples[i] + (BLEND_SAMPLES - i) * old_samples[i],
+                BLEND_SAMPLES)
+        if self.sfx.dampen:
+            y = self.damp_y
+            for i in range(TICK_SAMPLES):
+                y = damp_step(y, new_samples[i], self.sfx.dampen)
+                new_samples[i] = y
+            self.damp_y = y
+        # REVERB: the per-voice history-ring comb, enabled by the reverb
+        # digit: tap two slots back (366 samples) at level 1, four (732)
+        # at level 2; y = tz((4y + 2h)/4) with the post-comb tick written
+        # back (feedback: the measured 1/2, 1/4, ... train). The ring runs
+        # ONLY under the reverb digit - that is what reconciles the
+        # wave-7-phaser export matching the comb-free stream on all 5,696
+        # samples (its case has reverb 0) with the RE notes' description
+        # of the comb. The phaser's export identity stays the triangle
+        # core with its 254/256 secondary.
+        if self.sfx.reverb:
+            tap = (self.rpos + 4 + 2 * (self.sfx.reverb == 1)) & 7
+            for i in range(TICK_SAMPLES):
+                new_samples[i] = tz(
+                    4 * new_samples[i] + 2 * self.ring[tap][i], 4)
+        self.ring[self.rpos] = list(new_samples)
+        self.rpos = (self.rpos + 1) & 7
+        return new_samples
+
+
+def pattern_ticks(bin_path: Path, pat: int) -> int:
+    """The pattern's length in ticks: the left-most launched non-looping
+    channel's speed times its playable rows (length-only or 32)."""
+    blob = bin_path.read_bytes()
+    for c in range(4):
+        b = blob[4 * pat + c]
+        if b & 0x40:
+            continue
+        sfx = load_sfx(bin_path, b & 0x3F)
+        if sfx.loop_start < sfx.loop_end:
+            continue                      # looping channels cannot pace
+        rows = (min(sfx.loop_start, 32)
+                if sfx.loop_start > 0 and sfx.loop_end == 0 else 32)
+        return sfx.speed * rows
+    return 32                             # all-looping fallback
 
 
 def render_case(bin_path: Path, ticks: int) -> list[int]:
-    """Music-launch pattern 0: each enabled channel c plays its SFX on
-    music slot 4+c, i.e. tree leaves 4..7."""
+    """The music player: launch pattern 0's channels on slots 4..7,
+    advance patterns by the song clock, follow the stop flag."""
     blob = bin_path.read_bytes()
-    leaves: list[list[int]] = [[] for _ in range(8)]
-    for c in range(4):
-        b = blob[c]
-        if not (b & 0x40):
-            leaves[4 + c] = render_voice(
-                load_sfx(bin_path, b & 0x3F), ticks,
-                get_sfx=lambda i: load_sfx(bin_path, i))
-    return mix_tree(leaves)
+    voices = [ChannelVoice() for _ in range(4)]
+    get_sfx = lambda i: load_sfx(bin_path, i)
+    out: list[int] = []
+    pat = 0
+    pat_start = 0
+    pat_len = None
+    playing = False
+    for tick in range(ticks):
+        if pat_len is None:
+            for c in range(4):
+                b = blob[4 * pat + c]
+                if not (b & 0x40):
+                    voices[c].launch(get_sfx(b & 0x3F), tick)
+                else:
+                    voices[c].sfx = None
+            pat_len = pattern_ticks(bin_path, pat)
+            pat_start = tick
+            playing = True
+        leaves = [[0] * TICK_SAMPLES] * 4 + [
+            voices[c].tick(tick, get_sfx) for c in range(4)]
+        out.extend(mix_tree(leaves))
+        if playing and tick - pat_start + 1 >= pat_len:
+            stop = bool(blob[4 * pat + 2] & 0x80)
+            if stop or pat >= 63:
+                playing = False
+                for v in voices:
+                    v.sfx = None
+                pat_len = 10 ** 9        # no further pattern loads
+            else:
+                pat += 1
+                pat_len = None
+    return out
 
 
 def write_wav(path: Path, samples: list[int]) -> None:
@@ -584,18 +670,92 @@ def read_wav(path: Path) -> list[int]:
         return list(struct.unpack(f"<{n}h", w.readframes(n)))
 
 
+def first_nonzero(xs: list[int]) -> int | None:
+    for i, v in enumerate(xs):
+        if v:
+            return i
+    return None
+
+
+def aligned_diff(model: list[int], ref: list[int], max_shift: int = 220):
+    """Best alignment of ref[shift:] against model[0:] over shift 0..max.
+
+    Every export carries a constant per-case lead-in (8..160 samples), so
+    the onset-derived shift is tried first and the full scan only runs on a
+    mismatch. Returns (shift, mismatches, overlap, first_diff_indices)."""
+    cands = list(range(max_shift + 1))
+    mo, ro = first_nonzero(model), first_nonzero(ref)
+    if mo is not None and ro is not None and 0 <= ro - mo <= max_shift:
+        cands.remove(ro - mo)
+        cands.insert(0, ro - mo)
+    best = None
+    for s in cands:
+        n = min(len(ref) - s, len(model))
+        if n <= 0:
+            continue
+        bad = [i for i in range(n) if model[i] != ref[s + i]]
+        if best is None or len(bad) < best[1]:
+            best = (s, len(bad), n, bad[:8])
+        if not bad:
+            break
+    return best
+
+
+def run_sweep(results_path: Path, cases_dir: Path, ref_dir: Path,
+              only: list[str], max_shift: int) -> int:
+    matrix = json.loads(results_path.read_text())["cases"]
+    failed = []
+    ran = skipped = 0
+    for case in matrix:
+        name = case["name"]
+        if only and name not in only:
+            continue
+        if case["stochastic"]:
+            skipped += 1
+            print(f"{name:44s} SKIP (stochastic: shared-RNG boundary)")
+            continue
+        model = render_case(cases_dir / case["audio"], case["expected_ticks"])
+        ref = read_wav(ref_dir / f"{name}.wav")
+        s, mism, n, first = aligned_diff(model, ref, max_shift)
+        ran += 1
+        if mism == 0:
+            print(f"{name:44s} BYTE-EXACT  shift={s:3d} overlap={n}")
+        else:
+            failed.append(name)
+            print(f"{name:44s} DIFF        shift={s:3d} overlap={n} "
+                  f"mismatches={mism}")
+            for i in first:
+                print(f"    [{i:5d}] model {model[i]:7d}  ref {ref[s + i]:7d}"
+                      f"  (tick {i // 183}, sample {i % 183})")
+    print(f"\n{ran - len(failed)}/{ran} byte-exact, {skipped} stochastic "
+          f"skipped" + (f"; FAILED: {', '.join(failed)}" if failed else ""))
+    return 1 if failed else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["render", "compare"])
-    ap.add_argument("bin", type=Path)
+    ap.add_argument("mode", choices=["render", "compare", "sweep"])
+    ap.add_argument("bin", type=Path, nargs="?")
     ap.add_argument("reference", type=Path, nargs="?")
-    ap.add_argument("--ticks", type=int, required=True)
-    ap.add_argument("--sfx", type=int, default=0)
+    ap.add_argument("--ticks", type=int)
     ap.add_argument("--out", type=Path)
+    ap.add_argument("--max-shift", type=int, default=220)
+    ap.add_argument("--only", nargs="*", default=[])
+    ap.add_argument("--oracle", type=Path,
+                    default=Path("build/psg_oracle"),
+                    help="oracle root: cases/ plus area-final/{reference,"
+                         "results.json}")
     args = ap.parse_args()
 
-    sfx = load_sfx(args.bin, args.sfx)
-    samples = mix_single(render_voice(sfx, args.ticks))
+    if args.mode == "sweep":
+        return run_sweep(args.oracle / "area-final" / "results.json",
+                         args.oracle / "cases",
+                         args.oracle / "area-final" / "reference",
+                         args.only, args.max_shift)
+
+    if args.bin is None or args.ticks is None:
+        ap.error(f"{args.mode} requires <case.bin> and --ticks")
+    samples = render_case(args.bin, args.ticks)
 
     if args.mode == "render":
         write_wav(args.out or Path("model.wav"), samples)
@@ -603,14 +763,13 @@ def main() -> int:
         return 0
 
     ref = read_wav(args.reference)
-    n = min(len(ref), len(samples))
-    diffs = [(i, samples[i], ref[i]) for i in range(n) if samples[i] != ref[i]]
+    s, mism, n, first = aligned_diff(samples, ref, args.max_shift)
     print(f"model {len(samples)} vs reference {len(ref)} samples; "
-          f"{len(diffs)} differ")
-    if diffs:
-        for i, m, r in diffs[:8]:
-            print(f"  [{i:5d}] model {m:7d}  ref {r:7d}  (tick {i // 183}, "
-                  f"sample {i % 183})")
+          f"shift {s}, overlap {n}, {mism} differ")
+    if mism:
+        for i in first:
+            print(f"  [{i:5d}] model {samples[i]:7d}  ref {ref[s + i]:7d}  "
+                  f"(tick {i // 183}, sample {i % 183})")
         return 1
     print("BYTE-EXACT")
     return 0

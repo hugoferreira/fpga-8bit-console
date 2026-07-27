@@ -99,8 +99,40 @@ Decoded and confirmed on the way:
   rate; the RTL list of adoption fixes grows: 109/110 -> 254/256,
   bass-rule inversion, 1317-composition -> tz(a*iv/7)).
 
-Remaining model scope: pattern-chain (music flow), dampen, reverb -
-then the reference re-capture. Noise stays at the RNG boundary.
+**Fourth milestone: 48/48 - the deterministic model is complete**,
+adding dampen, reverb and the pattern-chain music flow, and landing the
+regression harness as a durable subcommand (`psg_binary_model.py
+sweep`: every deterministic case of the oracle matrix rendered through
+the music player and byte-compared onset-aligned; the two noise cases
+skip at the shared-RNG boundary). Decoded and confirmed:
+
+- DAMPEN is the per-sample one-pole `y = tz((x + (2^d - 1)*y) / 2^d)`
+  with d the filter digit (level 1: /2). The truncation applies to the
+  whole blend, not to a difference-form step: `y += tz((x-y)/2^d)`
+  reproduces the identical onset settle (0, 4031, 6046, 7054 toward
+  +/-8062, stuck one short at 8061) but stalls at |y| = 1 on decay,
+  while filter-dampen-impulse's export decays to exactly zero - the
+  discriminating case (one-unit mismatches from tick 1, sample 4).
+- REVERB confirmed on the first run, exactly as decoded: the per-voice
+  eight-slot history ring, tap `(rpos+4+2*(level==1)) & 7` - 366
+  samples back at level 1, 732 at level 2 - comb `y = tz((4y+2h)/4)`,
+  post-comb write-back. The ring runs only under the reverb digit,
+  which closes the phaser reconciliation: wave-7's export is comb-free
+  because its case carries reverb 0, not because the comb is unreal.
+- The pattern-chain song clock: pace = the left-most launched
+  non-looping channel (speed x its length-only-or-32 rows), stop =
+  pattern byte2 bit7, voices persist their OscState across pattern
+  switches.
+
+Recorded as open rather than guessed closed: no current case exercises
+dampen level 2 (the /4, 3y form) or reverb level 2 (the 732-sample
+tap), and none combines dampen with reverb, so their relative order
+(model: dampen, then reverb) is untested. The re-capture (task 5.1)
+should add filter-dampen-2 (filt 144), filter-reverb-2 (filt 48) and a
+combined probe (filt 96) to pin all three.
+
+Noise stays at the RNG boundary; the model's remaining work is the
+reference re-capture and gate flip (section 5), then the RTL phases.
 
 Constraints inherited from `reduce-psg-ice40-area`, which pauses at its
 6,199-cell / 15-EBR checkpoint until this change lands: the 15-EBR
