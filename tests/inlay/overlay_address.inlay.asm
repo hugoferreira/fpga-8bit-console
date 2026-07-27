@@ -19,6 +19,7 @@ location cursor : ptr TileMap at $10
 overlay tile_map : TileMap at TILE_RAM
 overlay header : HeaderView at OBJECT_RAM
 overlay game : GameState at $0030
+overlay video : HeaderView at $4000 volatile
 
 static_assert TileMap.attributes.offset == 512
 static_assert HeaderView.flags.offset == 17
@@ -37,6 +38,7 @@ start:
     dec [game + GameState.frames]
     and [game + GameState.flags], #$fe
     ora [game + GameState.flags], #1
+    cmp [video + HeaderView.flags]
     rts
 
 TILE_RAM = $f000

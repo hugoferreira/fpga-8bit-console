@@ -47,6 +47,7 @@ typedef struct {
     int saw_overlay_and;
     int saw_overlay_or;
     int saw_overlay_volatile_increment;
+    int saw_overlay_compare;
 } TestEvents;
 
 typedef struct {
@@ -295,6 +296,14 @@ static int test_event(void *context, const LaEvent *event)
             } else {
                 events->saw_overlay_or = 1;
             }
+        } else if (event->operation == LA_TARGET_OP_CMP8_OVERLAY_DISP) {
+            check(event->access_width == 1,
+                  "overlay compare reports one-unit width");
+            check(event->volatility == LA_ACCESS_VOLATILE,
+                  "MMIO overlay compare reports volatile access");
+            check(event->value == 13,
+                  "overlay compare reports field displacement");
+            events->saw_overlay_compare = 1;
         } else if (event->operation ==
                    LA_TARGET_OP_ADDRESS_OVERLAY_FIELD) {
             check(event->access_width == 2,
@@ -400,6 +409,12 @@ static void test_typed_word_transfers(void)
         "and [game + GameState.flags], #$fe\n"
         "ora [game + GameState.flags], #1\n"
         "inc [video + GameState.frames]\n";
+    static const char overlay_cmp_source[] =
+        "struct V\n"
+        "    frame : u8 at 13\n"
+        "end\n"
+        "overlay video : V at $4000 volatile\n"
+        "cmp [video + V.frame]\n";
     LaLimits limits;
     TestEvents events;
     TestDiagnostic diagnostic;
@@ -446,11 +461,21 @@ static void test_typed_word_transfers(void)
     check(events.saw_overlay_or, "overlay mask-or event emitted");
     check(events.saw_overlay_volatile_increment,
           "volatile overlay increment event emitted");
+    result = compile_source(
+        overlay_cmp_source, 0, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, "fixed-overlay accumulator compare compiles");
+    check(stats.operations == 1, "overlay compare operation is counted");
+    check(events.saw_overlay_compare, "overlay compare event emitted");
     expect_error(
         "struct GameState\nframes : u8 at 0\nend\n"
         "inc [missing + GameState.frames]\n",
         limits, LA_ERR_LOCATION_TYPE,
         "overlay update with unknown base rejected");
+    expect_error(
+        "struct R packed\nx : u8\nend\nlocation p : ptr R\n"
+        "proc go naked\nself : ptr R in p\nbegin\ncmp [self + R.x]\nret\nend\n",
+        limits, LA_ERR_UNSUPPORTED_OPERATION,
+        "pointer accumulator compare rejected");
     expect_error(
         "struct TileMap packed\npatterns : u8[512]\nend\n"
         "location byte_dest : u8 at $10\n"

@@ -4194,6 +4194,9 @@ static int la_parse_typed_operation(LaContext *ctx,
     } else if ((la_u16)(end - cursor) >= 4 &&
                memcmp(cursor, "sta ", 4) == 0) {
         operation = LA_TARGET_OP_STORE8_PTR_DISP;
+    } else if ((la_u16)(end - cursor) >= 4 &&
+               memcmp(cursor, "cmp ", 4) == 0) {
+        operation = LA_TARGET_OP_CMP8_OVERLAY_DISP;
     } else {
         return 0;
     }
@@ -4338,7 +4341,30 @@ static int la_parse_typed_operation(LaContext *ctx,
     event->aux = la_slice("", 0);
     event->aux2 = la_slice("", 0);
     event->property = (LaPropertyKind)0;
-    if (is_overlay) {
+    if (operation == LA_TARGET_OP_CMP8_OVERLAY_DISP) {
+        /* Accumulator compare is registered only against a non-indexed fixed
+           overlay field; other memory compares stay raw and reviewed. */
+        if (!is_overlay || indexed) {
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
+                    (la_u16)(end - start),
+                    la_slice(start, (la_u16)(end - start)),
+                    la_slice("fixed-overlay accumulator compare", 33), 0, 0);
+            return -1;
+        }
+        if (!ctx->target->overlay_byte_operations) {
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
+                    (la_u16)(end - start),
+                    la_slice(start, (la_u16)(end - start)),
+                    la_slice("static overlay byte access", 26), 0, 0);
+            return -1;
+        }
+        event->operation = LA_TARGET_OP_CMP8_OVERLAY_DISP;
+        event->access_width = 1;
+        event->scratch = la_slice("", 0);
+        event->clobbers = la_slice("flags", 5);
+        event->volatility = ctx->overlays[overlay_index].volatile_access ?
+            LA_ACCESS_VOLATILE : LA_ACCESS_NONVOLATILE;
+    } else if (is_overlay) {
         if (!ctx->target->overlay_byte_operations) {
             la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
                     (la_u16)(end - start),

@@ -867,6 +867,15 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
         fprintf(output->assembly, "    cmp #%ld\n",
                 (long)event->signed_value);
         return 1;
+    case LA_TARGET_OP_CMP8_OVERLAY_DISP:
+        if (!begin_line(output, event->span, "overlay-compare")) return 0;
+        fprintf(output->assembly, "    cmp %.*s + %u",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value);
+        fprintf(output->assembly, " ; inlay compare %.*s.%.*s\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
+        return 1;
     case LA_TARGET_OP_INC8_OVERLAY_ABS:
     case LA_TARGET_OP_DEC8_OVERLAY_ABS:
         if (!begin_line(output, event->span, "overlay-update")) return 0;

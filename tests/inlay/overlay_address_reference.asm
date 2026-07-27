@@ -30,4 +30,7 @@ start:
     lda $39
     ora #$01
     sta $39
+; Fixed-overlay accumulator compare against volatile MMIO: video is $4000
+; (HeaderView.flags +17 = $4011); cmp reads memory and sets flags only.
+    cmp $4011
     rts

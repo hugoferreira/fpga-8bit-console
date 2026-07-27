@@ -538,6 +538,7 @@ def check_overlay_address_fixture(first: Path, second: Path) -> None:
         "dec $0030 + 0",
         "and #254",
         "ora #1",
+        "cmp $4000 + 17",
     ):
         if required not in generated:
             raise AssertionError(
