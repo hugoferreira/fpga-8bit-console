@@ -102,6 +102,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic        sample_en;
   logic [7:0]  scnt;
   logic        tick_en;
+  // pre_tick fires one sample before tick_en (task 3.0): the tick program
+  // EVALUATES during the preceding sample interval into the inactive bank,
+  // and the boundary edge itself only flips spar_bank. That hands the tick
+  // microprogram a full sample interval instead of sharing the boundary
+  // sample's 1,275 clocks with synthesis. A CPU write landing inside the
+  // pre-run window is observed one tick evaluation later than before -
+  // accepted deliberately, see design section 3.
+  logic        pre_tick;
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -109,16 +117,21 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       sample_en <= 0;
       scnt <= 0;
       tick_en <= 0;
+      pre_tick <= 0;
     end else begin
       tick_en <= 0;
+      pre_tick <= 0;
       if (!divd[27]) begin             // divacc >= CLK_HZ - 22050
         divd <= divd - $signed({1'b0, DIV_DOWN});
         sample_en <= 1;
         if (scnt == 8'd182) begin
           scnt <= 0;
           tick_en <= 1;
-        end else
+        end else begin
           scnt <= scnt + 1;
+          if (scnt == 8'd181)
+            pre_tick <= 1;
+        end
       end else begin
         divd <= divd + 28'sd22050;
         sample_en <= 0;
@@ -468,6 +481,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   end
   logic        walk_tick;            // this pass was started by a tick
   logic        tickpend;
+  // Pre-run publication handshake: a completed tick pass stages its bank
+  // (bank_ready) and the boundary performs the flip. flip_pend covers the
+  // collision where a trigger pass was in flight at pre_tick and the tick
+  // pass is still running when the boundary arrives - it then flips late at
+  // its own V_ST completion rather than holding the tick a whole period.
+  logic        bank_ready, flip_pend;
   logic [5:0]  scan_p;
   logic [7:0]  note_lo;
   logic [5:0]  arp_p;
@@ -828,6 +847,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       c <= 0;
       walk_tick <= 0;
       tickpend <= 0;
+      bank_ready <= 0;
+      flip_pend <= 0;
       trig_req <= 0;
       clr_tog <= 0;
       mus_playing <= 0;
@@ -887,6 +908,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           && !(w_lps < seq_q) && m_busy)
         $error("T_NL pattern-length product blocked by a busy m service");
 `endif
+      // Boundary publication for the pre-run tick pass: the evaluation ran
+      // during the preceding sample interval, so the tick edge itself only
+      // flips the staged bank. No bank_ready means a trigger pass collided
+      // with pre_tick and the tick pass has not finished; V_ST then flips
+      // late via flip_pend. Placed before the state case deliberately: when
+      // the pass completes on the boundary edge itself, V_ST's textually
+      // later assignments win and the flip happens once, immediately.
+      if (tick_en) begin
+        if (bank_ready) begin
+          spar_bank <= ~spar_bank;
+          bank_ready <= 0;
+        end else if (tickpend || (walk_tick && sst != S_IDLE))
+          flip_pend <= 1;
+      end
       if (!walk_frozen)
       case (sst)
         // One pass over the slots in order, servicing any pending trigger and,
@@ -895,7 +930,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // register file into the working copy, the K_/T_/I_ states work on that
         // copy exactly as they did on `name[c]`, and V_ST writes it back.
         S_IDLE: begin
-          if (mus_launch) begin
+          // While a staged publication awaits its boundary, hold new work: a
+          // pass dispatched now would rewrite the staged bank and publish it
+          // immediately, leaking the tick results before the boundary. The
+          // hold is at most one sample, the same wait trigger work already
+          // tolerated under the old coincident deferral.
+          if (bank_ready) begin
+          end else if (mus_launch) begin
             mus_launch <= 0;
             sst <= ML_STOP;
           end else if (trig_req != 0 || tickpend) begin
@@ -947,7 +988,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             vcnt <= 0;
             if (c == VW'(NV-1)) begin
               c <= 0;
-              spar_bank <= ~spar_bank;
+              // A trigger pass publishes at once, as before. The tick pass
+              // stages its bank for the boundary flip - unless the boundary
+              // already passed (trigger collision at pre_tick), where it
+              // flips immediately rather than holding the tick a period.
+              if (!walk_tick)
+                spar_bank <= ~spar_bank;
+              else if (tick_en | flip_pend) begin
+                spar_bank <= ~spar_bank;
+                flip_pend <= 0;
+              end else
+                bank_ready <= 1;
               sst <= W_MUS;
             end else begin
               c <= c + 1;
@@ -1379,7 +1430,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       endcase
 
       // ---- tick: queue the walk, step the music fade ------------------
-      if (tick_en) begin
+      // Queued at pre_tick, one sample before the boundary: the walk
+      // evaluates during the preceding interval and only the bank flip
+      // remains on the tick edge. The fade steps here too, so the walk
+      // reads the same post-step mus_gain sequence as before.
+      if (pre_tick) begin
         tickpend <= 1;
         if (fade_dir != 2'd0) begin
           if ({1'b0, fade_acc} + {4'b0, fade_step} >= 17'h10000) begin
@@ -2228,20 +2283,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [9:0]  rev_ttl;
   logic signed [15:0] dry16;
   logic        dry_valid;
-  logic        sample_pending;
 
-  // A sequencer tick and a sample boundary coincide every 183 samples. The
-  // old split memories exposed later slots' new parameters to that same sample
-  // while earlier slots still used the old set. With atomic banking, evaluate
-  // the tick first and start synthesis on its complete-bank commit edge.
-  // walk_frozen then holds pattern-flow/trigger work until that sample is
-  // finished, preserving the old pattern's boundary sample atomically too.
-  wire tick_publish = sample_pending
-                    && sst == V_ST
-                    && vcnt == 4'(VREC - 1)
-                    && c == VW'(NV - 1)
-                    && walk_tick
-                    && !walk_frozen;
+  // A sequencer tick and a sample boundary coincide every 183 samples. Under
+  // the pre-run (task 3.0) the tick program evaluated during the PRECEDING
+  // sample interval and the boundary edge flipped the staged bank, so the
+  // boundary sample starts immediately like any other and reads the
+  // just-flipped parameters. The old tick-first deferral (sample_pending /
+  // tick_publish) is gone: the tick program no longer shares the boundary
+  // sample's 1,275-clock budget with synthesis.
 
 
   always_ff @(posedge clk) begin
@@ -2258,7 +2307,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       rev_lvl <= 0;
       rev_ttl <= 0;
       dry_valid <= 0;
-      sample_pending <= 0;
       // Datapath and streamed voice fields deliberately have no reset mux.
       // state_m supplies every s_* field before PWORK; each product/blend
       // register is committed before its count or phase consumes it; and the
@@ -2326,16 +2374,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         endcase
       end
 
-      if (sample_en && tick_en) begin
-        // The tick engine publishes before this sample is rendered.
-        sample_pending <= 1;
-      end else if (sample_en) begin
-        prun <= 1;
-        pc_ch <= 0;
-        pph <= 0;
-        rev_max <= 0;
-      end else if (tick_publish) begin
-        sample_pending <= 0;
+      if (sample_en) begin
         prun <= 1;
         pc_ch <= 0;
         pph <= 0;

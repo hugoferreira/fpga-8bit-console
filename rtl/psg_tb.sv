@@ -48,7 +48,8 @@ module psg_tb;
   int tick_job_clocks = 0;
   int max_tick_job_clocks = 0;
   bit tick_job_active = 0;
-  bit tick_last_bank = 0;
+  bit tick_busy_at_pretick = 0;
+  int late_flips = 0;
 
   // Hardware-deadline accounting, independent of host runtime. A job is complete
   // only after all eight slot visits and the three post-walk soft-add levels
@@ -61,7 +62,8 @@ module psg_tb;
       tick_job_clocks = 0;
       max_tick_job_clocks = 0;
       tick_job_active = 0;
-      tick_last_bank = 0;
+      tick_busy_at_pretick = 0;
+      late_flips = 0;
     end else if (dut.sample_en) begin
       if (sample_job_active) begin
         $display("  FAIL: synthesis job exceeded the sample deadline");
@@ -79,24 +81,29 @@ module psg_tb;
     end
 
     if (!reset) begin
-      if (dut.tick_en) begin
+      // Pre-run accounting (task 3.0): the tick program evaluates between
+      // pre_tick and the boundary; completion is bank_ready. Reaching the
+      // boundary without it is legitimate only when a pass was already in
+      // flight at pre_tick (V_ST then flips late); from an idle walk it
+      // means the tick program no longer fits one sample interval.
+      if (dut.pre_tick) begin
         tick_job_clocks = 0;
         tick_job_active = 1;
-        tick_last_bank = dut.spar_bank;
+        // S_IDLE is the first enumerator of sst_t, so its ordinal is 0.
+        tick_busy_at_pretick = (dut.sst != 0);
       end else if (tick_job_active) begin
         tick_job_clocks++;
-        // walk_tick distinguishes the tick pass from a trigger pass that was
-        // already in flight when tick_en arrived.
-        if (dut.spar_bank != tick_last_bank) begin
-          tick_last_bank = dut.spar_bank;
-          if (dut.walk_tick) begin
-            if (tick_job_clocks > max_tick_job_clocks)
-              max_tick_job_clocks = tick_job_clocks;
-            tick_job_active = 0;
+        if (dut.bank_ready) begin
+          if (tick_job_clocks > max_tick_job_clocks)
+            max_tick_job_clocks = tick_job_clocks;
+          tick_job_active = 0;
+        end else if (dut.tick_en) begin
+          if (tick_busy_at_pretick)
+            late_flips++;
+          else begin
+            $display("  FAIL: tick pre-run missed its boundary from an idle walk");
+            errors++;
           end
-        end else if (dut.sample_en) begin
-          $display("  FAIL: tick parameters missed the following sample");
-          errors++;
           tick_job_active = 0;
         end
       end
@@ -867,10 +874,12 @@ module psg_tb;
              max_sample_job_clocks);
     check(max_sample_job_clocks > 0 && max_sample_job_clocks < 1275,
           "all slot and mix work completes before the next sample");
-    $display("  tick publication: worst %0d clocks after tick_en",
-             max_tick_job_clocks);
+    $display("  tick pre-run: worst %0d / %0d clocks after pre_tick, %0d late flips",
+             max_tick_job_clocks, CLKHZ / 22050, late_flips);
     check(max_tick_job_clocks > 0,
-          "each tick publishes before the following sample");
+          "each tick evaluation stages its bank before the boundary");
+    check(late_flips == 0,
+          "no boundary flip was delayed by a colliding trigger pass");
 
     if (errors == 0)
       $display("ALL TESTS PASSED");

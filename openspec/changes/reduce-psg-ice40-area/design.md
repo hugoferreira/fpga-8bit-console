@@ -198,6 +198,47 @@ partially updated voice set.
   home; until then any control table is LUT-ROM and counts against its
   stage.
 
+#### Pre-run implementation result (task 3.0)
+
+`pre_tick` fires one sample before `tick_en` (scnt == 181) and queues the
+walk plus the fade step; the boundary edge itself only flips the staged
+bank. A completed tick pass raises `bank_ready` instead of flipping;
+`tick_en` performs the flip. Two corners are handled explicitly: a pass
+that completes on the boundary edge itself flips immediately (the V_ST
+arm is textually after the boundary handler, so its assignment wins), and
+a trigger pass in flight at `pre_tick` delays the tick pass past the
+boundary, where `flip_pend` makes it publish at its own V_ST completion
+rather than holding the tick a whole period. S_IDLE holds new dispatches
+while a publication is staged, so a trigger pass cannot rewrite and
+immediately publish the staged bank. The old coincident-boundary deferral
+(`sample_pending`/`tick_publish`) is deleted; every sample now starts on
+its own `sample_en`, and the tick program stopped sharing the boundary
+sample's budget.
+
+What this buys, stated precisely: evaluation and publication are now
+DECOUPLED, and the evaluation window is a constant choice rather than an
+architectural bound. Each interval still contains one sample render
+(~558 clocks of walk freeze), so at pre_tick = 181 the tick program's
+growth margin is ~116 clocks - the same arithmetic as the old coincident
+bound. The difference is that moving the constant earlier (178 gives four
+intervals, and so on) scales the window in whole sample intervals under
+the identical bank_ready/flip_pend handshake, at the cost of widening the
+accepted CPU-write observability window by the same number of samples.
+The boundary sample's own deadline also fell from 1,159 to 558 clocks,
+so sample-side serialization (4.3 and later) and tick-side microcode
+growth no longer compete for one interval.
+
+Gates: mapped 5,501 LUT4s (-7), 1,002 carries, 15 EBRs; seed-1 placed
+**6,369 cells (-2)**, routed 40.68 MHz. The complete 50-case matrix has
+zero diagnostics and every WAV is byte-identical to the serial-fold
+renders - no oracle launch lands inside a pre-run window, and outside CPU
+writes the pre-run is render-exact by construction (mutations sit between
+the same two renders as before). psg_tb's tick instrumentation now
+measures pre_tick-to-bank_ready completion and counts late flips: worst
+observed completion 1,159 of the 1,275-clock interval (558 freeze + the
+601-clock tick pass), zero late flips, and no register-timing case
+required re-baselining.
+
 ### 4. Share sample arithmetic through one service
 
 The current RTL contains four separately registered shift/add engines for

@@ -24,10 +24,13 @@
 
 ## 3. Tick microengine
 
-- [ ] 3.0 Decide the tick pre-run (evaluate at scnt == 181 into the inactive
-      bank, publish at the boundary) and re-baseline psg_tb's register-timing
-      cases; without it the microprogram has ~116 spare clocks, with it a
-      full sample (design 3, staging constraints)
+- [x] 3.0 Decide the tick pre-run (evaluate at scnt == 181 into the inactive
+      bank, publish at the boundary), decoupling evaluation from
+      publication; the window now scales in whole sample intervals via the
+      pre_tick constant (landed: bank_ready/flip_pend handshake, placed
+      6,369 (-2), 50/50 byte-identical, worst pre-run 1,159/1,275, zero
+      late flips, no TB case re-baseline needed; design 3, pre-run
+      implementation result)
 - [ ] 3.1 Implement the narrow micro-PC, flags, data register and single-site
       accumulator/store contract for tick-rate voice work
 - [ ] 3.2 Move record load/store, trigger metadata, row progression and pattern
