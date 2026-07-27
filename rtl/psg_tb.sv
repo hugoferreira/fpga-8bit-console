@@ -16,15 +16,11 @@
 `timescale 1ns/1ps
 
 module psg_tb;
-  // Use a compact declared clock for fast structural tests while retaining
-  // enough margin for the current synth/mix walk. This is a testbench choice,
-  // not a hardware or Verilator-host budget. The export oracle separately
-  // renders at the board architecture's 112.5 MHz derived PSG clock.
-  // The serialized oscillator/crossfade walk takes 496 clocks for all eight
-  // slots. Exercise the same clock-to-audio relationship as hardware with
-  // margin for that architectural pass; this is not a Verilator-host budget.
-  localparam CLKHZ = 32'd12_127_500;       // exactly 550 clocks / sample
-  localparam CLKS_PER_TICK = 550 * 183;
+  // Exercise the board's actual divide-by-four PSG clock. Test runtime is not
+  // a synthesis constraint: only declared-clock cycles between sample_en
+  // pulses matter, and the hardware provides at least 1275 of them.
+  localparam CLKHZ = 32'd28_125_000;
+  localparam CLKS_PER_TICK = 233_418;  // floor(CLKHZ * 183 / 22050)
 
   bit clk = 0;
   always #5 clk = ~clk;
@@ -46,6 +42,66 @@ module psg_tb;
   dsigma dsig(.clk(clk), .reset(reset), .pcm(ds_pcm), .out(ds_out));
 
   int errors = 0;
+  int sample_job_clocks = 0;
+  int max_sample_job_clocks = 0;
+  bit sample_job_active = 0;
+  int tick_job_clocks = 0;
+  int max_tick_job_clocks = 0;
+  bit tick_job_active = 0;
+  bit tick_last_bank = 0;
+
+  // Hardware-deadline accounting, independent of host runtime. A job is complete
+  // only after all eight slot visits and the three post-walk soft-add levels
+  // have produced dry_valid; reaching another sample_en first is an overrun.
+  always @(negedge clk) begin
+    if (reset) begin
+      sample_job_clocks = 0;
+      max_sample_job_clocks = 0;
+      sample_job_active = 0;
+      tick_job_clocks = 0;
+      max_tick_job_clocks = 0;
+      tick_job_active = 0;
+      tick_last_bank = 0;
+    end else if (dut.sample_en) begin
+      if (sample_job_active) begin
+        $display("  FAIL: synthesis job exceeded the sample deadline");
+        errors++;
+      end
+      sample_job_clocks = 0;
+      sample_job_active = 1;
+    end else if (sample_job_active) begin
+      sample_job_clocks++;
+      if (!dut.prun && dut.mxs == 0 && dut.dry_valid) begin
+        if (sample_job_clocks > max_sample_job_clocks)
+          max_sample_job_clocks = sample_job_clocks;
+        sample_job_active = 0;
+      end
+    end
+
+    if (!reset) begin
+      if (dut.tick_en) begin
+        tick_job_clocks = 0;
+        tick_job_active = 1;
+        tick_last_bank = dut.spar_bank;
+      end else if (tick_job_active) begin
+        tick_job_clocks++;
+        // walk_tick distinguishes the tick pass from a trigger pass that was
+        // already in flight when tick_en arrived.
+        if (dut.spar_bank != tick_last_bank) begin
+          tick_last_bank = dut.spar_bank;
+          if (dut.walk_tick) begin
+            if (tick_job_clocks > max_tick_job_clocks)
+              max_tick_job_clocks = tick_job_clocks;
+            tick_job_active = 0;
+          end
+        end else if (dut.sample_en) begin
+          $display("  FAIL: tick parameters missed the following sample");
+          errors++;
+          tick_job_active = 0;
+        end
+      end
+    end
+  end
 
   task wr(input [7:0] a, input [7:0] d);
     @(negedge clk);
@@ -145,33 +201,47 @@ module psg_tb;
     img[p * 4 + 3] = b3;
   endtask
 
-  // The instrument playhead's row moved into the PSG's BRAM record, so it is no
-  // longer an addressable `ins_row[v]`. Word 5 of slot v holds
+  // The instrument playhead's row moved into the PSG's scheduled state store,
+  // so it is no longer an addressable `ins_row[v]`. Word 5 of slot v holds
   // {ins_vol, ins_wave, ins_row, ins_id, bf_damp} - mirror of psg.sv's vpack(),
   // which is the definition to re-check if this ever stops matching. The record
   // is written back at the end of each visit, so it is current between walks.
   function automatic logic [4:0] ins_row_of(input int v);
-    ins_row_of = dut.vmem[v * 16 + 5][9:5];
+    ins_row_of = dut.state_m[v * 32 + 5][9:5];
   endfunction
 
-  // State that moved into the PSG's synthesis register files. These mirror
-  // psg.sv's spar/sosc packing - if a peek ever stops matching, that packing is
-  // the definition. The records are written back at the end of each visit, so
-  // they are current whenever the walk is not mid-slot.
+  // State in the PSG's unified store. The active sounding bank begins at word
+  // 24 or 28, while oscillator words begin at 10.
   function automatic logic [23:0] eff_inc_of(input int v);
-    eff_inc_of = {dut.spar_m[v*16+1][7:0], dut.spar_m[v*16+0]};
+    int b;
+    begin
+      b = v * 32 + (dut.spar_bank ? 28 : 24);
+      eff_inc_of = {dut.state_m[b+1][7:0], dut.state_m[b+0]};
+    end
   endfunction
   function automatic logic [23:0] phase2_of(input int v);
-    phase2_of = {dut.sosc_m[v*16+3][7:0], dut.sosc_m[v*16+2]};
+    phase2_of = {dut.state_m[v*32+13][7:0], dut.state_m[v*32+12]};
   endfunction
   function automatic logic snd_wt_of(input int v);
-    snd_wt_of = dut.spar_m[v*16+1][11];
+    int b;
+    begin
+      b = v * 32 + (dut.spar_bank ? 28 : 24);
+      snd_wt_of = dut.state_m[b+1][11];
+    end
   endfunction
   function automatic logic [7:0] eff_vol_of(input int v);
-    eff_vol_of = dut.spar_m[v*16+3][7:0];
+    int b;
+    begin
+      b = v * 32 + (dut.spar_bank ? 28 : 24);
+      eff_vol_of = dut.state_m[b+3][7:0];
+    end
   endfunction
   function automatic logic [1:0] ch_damp_of(input int v);
-    ch_damp_of = dut.spar_m[v*16+2][13:12];
+    int b;
+    begin
+      b = v * 32 + (dut.spar_bank ? 28 : 24);
+      ch_damp_of = dut.state_m[b+2][13:12];
+    end
   endfunction
 
   task check(input bit cond, input string what);
@@ -792,6 +862,15 @@ module psg_tb;
     ticks(1);
     check(ch_damp_of(3) == 2'd0, "filter byte 224 decodes dampen 0");
     wr(8'h13, 8'h80);
+
+    $display("  synthesis deadline: worst %0d / 1275 clocks",
+             max_sample_job_clocks);
+    check(max_sample_job_clocks > 0 && max_sample_job_clocks < 1275,
+          "all slot and mix work completes before the next sample");
+    $display("  tick publication: worst %0d clocks after tick_en",
+             max_tick_job_clocks);
+    check(max_tick_job_clocks > 0,
+          "each tick publishes before the following sample");
 
     if (errors == 0)
       $display("ALL TESTS PASSED");

@@ -4,6 +4,9 @@ virtual sample rate, so they are independent of the system clock):
 
   rtl/psg_pitch.hex  64 x 24-bit phase increments, 2^24 * f(p) / 22050
   rtl/psg_waves.hex  8 waves x 256 x signed 8-bit, exact PICO-8 shapes
+  rtl/psg_waves_compact.hex
+                     triangle, tilted saw, saw and organ only; square and
+                     pulse are exact threshold functions in RTL
   rtl/psg_noise.hex  64 x unsigned 8-bit, noise gain per key (1.0 = 256)
                      (slots 6/7 zero: noise is an LFSR, phaser is summed
                      from two triangle reads)
@@ -56,6 +59,12 @@ with open("rtl/psg_pitch.hex", "w") as f:
 
 with open("rtl/psg_waves.hex", "w") as f:
     for w in range(8):
+        for i in range(256):
+            s = max(-127, min(127, round(wave(w, i / 256.0) * 254.0)))
+            f.write(f"{s & 0xFF:02x}\n")
+
+with open("rtl/psg_waves_compact.hex", "w") as f:
+    for w in (0, 1, 2, 5):
         for i in range(256):
             s = max(-127, min(127, round(wave(w, i / 256.0) * 254.0)))
             f.write(f"{s & 0xFF:02x}\n")

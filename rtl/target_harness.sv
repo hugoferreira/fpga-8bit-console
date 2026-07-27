@@ -16,13 +16,11 @@
  *
  * Two clock pins, not one
  * ----------------------
- * The console derives everything from one PLL (rtl/clocks.sv): psgclk is the
- * undivided 112.5 MHz, and the chip runs at /32. Here they are separate INPUT
+ * The console derives everything from one PLL (rtl/clocks.sv): psgclk is
+ * 112.5/4 = 28.125 MHz, and the chip runs at /32. Here they are separate INPUT
  * pins so nextpnr reports an Fmax per domain, which is the question each
- * subsystem actually has - "does the PSG close at the rate clocks.sv drives
- * it" is not answerable from a single blended number. Feeding both from one
- * pin instead would report the minimum across the whole design and attribute
- * it to nothing.
+ * subsystem actually has. Feeding both from one pin instead would report the
+ * minimum across the whole design and attribute it to nothing.
  *
  * Not a functional target
  * -----------------------
@@ -41,7 +39,7 @@
 
 module target_harness (
     input  logic       clk,       // chip clock (CPU, PPU, arbiter, DMA)
-    input  logic       psgclk,    // PSG clock; the undivided PLL on hardware
+    input  logic       psgclk,    // PSG clock; 28.125 MHz on iCE40 hardware
     input  logic       rst,
     input  logic [7:0] buttons,
     output logic       probe
@@ -80,7 +78,7 @@ module target_harness (
     // when it is a pin-budget one.
     /* verilator lint_off PINCONNECTEMPTY */
     chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE("palette565.bin"),
-           .CLK_HZ(32'd112_500_000), .REVERB(1),
+           .CLK_HZ(32'd28_125_000), .REVERB(1),
            .HAS_PPU(HAS_PPU), .HAS_PSG(HAS_PSG),
            .RAM_ADDR_BITS(RAM_ADDR_BITS))
       chip0 (

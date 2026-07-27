@@ -27,13 +27,15 @@ TRANSITION_TOLERANCE = {
     "correlation_min": 0.999,
     "nrmse_max": 0.03,
 }
-COMPOSITE_TOLERANCE = {
+DROP_TOLERANCE = {
     **DETERMINISTIC_TOLERANCE,
-    # Repeated control boundaries accumulate a small fitted phase residual.
-    # Their one-boundary assumptions are covered separately by the stricter
-    # isolation probes, so retain the 0.99 correlation floor and allow only
-    # the measured half-percent NRMSE margin here.
-    "nrmse_max": 0.105,
+    "correlation_min": 0.995,
+    "nrmse_max": 0.08,
+}
+SECONDARY_TOLERANCE = {
+    **TRANSITION_TOLERANCE,
+    "fitted_gain_min": 0.99,
+    "fitted_gain_max": 1.01,
 }
 STOCHASTIC_TOLERANCE = {
     "duration_samples": 0,
@@ -51,8 +53,15 @@ def tolerance(case: dict) -> dict:
     if (case["name"].startswith("transition-")
             or case["name"] == "pattern-chain"):
         return dict(TRANSITION_TOLERANCE)
-    if case["name"] in {"effect-1-slide", "sfx-instrument"}:
-        return dict(COMPOSITE_TOLERANCE)
+    if (case["name"] == "effect-1-slide"
+            or case["name"].startswith("sfx-instrument")):
+        return dict(TRANSITION_TOLERANCE)
+    if case["name"] in {"effect-3-drop", "effect-drop-once"}:
+        return dict(DROP_TOLERANCE)
+    if (case["name"] == "waveform-instrument"
+            or case["name"] in {"filter-detune-1", "filter-detune-low",
+                                "filter-detune-high"}):
+        return dict(SECONDARY_TOLERANCE)
     return dict(DETERMINISTIC_TOLERANCE)
 
 

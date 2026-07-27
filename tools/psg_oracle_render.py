@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CLK = 112_500_000
+DEFAULT_CLK = 28_125_000
 
 
 def build(clock_hz: int, build_dir: Path, jobs: int) -> Path:

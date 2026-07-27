@@ -28,10 +28,23 @@ static double    CLK_HZ = 3506580.0;
 static const int RATE   = 22050;          // the PSG's virtual sample rate
 
 static Vpsg* dut;
+static long capture_divacc = 0;
+static long capture_dec = 0;
+static bool capture_strobe = false;
 
 static void tick() {
     dut->clk = 0; dut->eval();
     dut->clk = 1; dut->eval();
+    // Mirror the RTL divider from reset onward, including register uploads.
+    // Starting this accumulator only when capture begins makes its phase depend
+    // on CLK_HZ because the DUT has already executed ~9k upload clocks.
+    if (dut->reset) {
+        capture_divacc = 0;
+        capture_strobe = false;
+    } else {
+        capture_strobe = capture_divacc >= capture_dec;
+        capture_divacc += capture_strobe ? -capture_dec : RATE;
+    }
 }
 
 // NOTE: `rw` is wired to the bus's mem_write in chip.sv, so rw HIGH is a
@@ -77,6 +90,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--clk") && i + 1 < argc) CLK_HZ = atof(argv[++i]);
     }
     if (!audio) { fprintf(stderr, "need --audio <4608-byte image>\n"); return 1; }
+    capture_dec = (long)CLK_HZ - RATE;
 
     std::vector<uint8_t> img(4608, 0);
     FILE* f = fopen(audio, "rb");
@@ -96,6 +110,16 @@ int main(int argc, char** argv) {
     wr(0x01, 0x31);
     for (size_t i = 0; i < img.size(); i++) wr(0x02, img[i]);
 
+    // Loading is setup, not emulated game time. Re-establish a canonical
+    // sample/tick phase after it so the 9,216 upload clocks cannot move effect
+    // boundaries when CLK_HZ changes. reset intentionally does not clear aram.
+    dut->reset = 1;
+    for (int i = 0; i < 16; i++) tick();
+    dut->reset = 0;
+    for (int i = 0; i < 16; i++) tick();
+    do tick(); while (!capture_strobe);
+    tick();  // leave sample_en low, with scnt at the export's phase
+
     wr(0x21, (uint8_t)mask);
     if (music >= 0) wr(0x20, (uint8_t)music);
     if (sfx >= 0)   wr(0x10, (uint8_t)sfx);
@@ -107,24 +131,24 @@ int main(int argc, char** argv) {
     const long want = samples >= 0 ? samples : (long)(seconds * RATE);
     pcm.reserve((size_t)want + 16);
     int lo = 32767, hi = -32768;
+    bool capture_primed = false;
 
     // Sample on the chip's own divider, not on round(CLK_HZ/RATE) clocks.
-    // The RTL derives 22050 Hz with a Bresenham accumulator, so a fixed clock
-    // count does not land on the same instants - it drifts, duplicating and
-    // dropping samples. That made the *same* audio at two different CLK_HZ
-    // compare as a >100% per-sample error while RMS stayed within 1%, which
-    // reads exactly like a synthesis bug and is not one. Mirroring the
-    // accumulator makes the captured stream independent of CLK_HZ, which is
-    // what lets a faster clock (needed once a voice costs more clocks) be
-    // A/B'd against a slower one at all.
-    const long DEC = (long)CLK_HZ - RATE;
-    long divacc = 0;
+    // capture_divacc has mirrored the DUT since reset, so upload duration
+    // cannot introduce a clock-dependent phase offset.
     const auto started = std::chrono::steady_clock::now();
     while ((long)pcm.size() < want) {
         tick();
-        const bool strobe = (divacc >= DEC);
-        divacc += strobe ? -DEC : RATE;
-        if (strobe) {
+        if (capture_strobe) {
+            // The export stream begins with the first fully settled sample
+            // after launch. The strobe immediately following the register
+            // writes still belongs to launch setup; retaining it shifts every
+            // oracle WAV by one and makes periodic wavetable alignment choose
+            // the adjacent (worse) correlation peak.
+            if (!capture_primed) {
+                capture_primed = true;
+                continue;
+            }
             // Captured at the strobe, so this is the previous walk's fully
             // settled output rather than one being accumulated right now.
             int16_t s = (int16_t)dut->pcm;

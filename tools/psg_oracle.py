@@ -254,6 +254,25 @@ def probes() -> list[Probe]:
             16,
         ))
 
+    # Pairwise and three-way custom-instrument boundaries distinguish a
+    # genuinely compound state handoff from any one already-covered field.
+    # These deliberately keep the outer note fixed.
+    for name, target in (
+        ("pitch-volume", note(36, 0, 3)),
+        ("pitch-waveform", note(36, 3, 7)),
+        ("volume-waveform", note(24, 3, 3)),
+        ("pitch-volume-waveform", note(36, 3, 3)),
+    ):
+        out.append(Probe(
+            f"sfx-instrument-{name}",
+            f"held SFX instrument with simultaneous {name} boundary",
+            {0: sfx([note(24, 0, 7)] * 8 + [target] * 8,
+                    speed=1, length=16),
+             8: constant(30, 0, 7, custom=True, length=16)},
+            [([8, None, None, None], False, False, True)],
+            16,
+        ))
+
     ramp = [max(-128, min(127, i * 4 - 128)) for i in range(64)]
     out.append(Probe(
         "waveform-instrument", "64-sample ramp waveform instrument",

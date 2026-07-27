@@ -13,12 +13,12 @@
 // record: loop rows [start,end) when start < end; when end = 0 and
 // start > 0, start is the SFX length in rows; else 32 rows and stop.
 //
-// Synthesis: 8 waveforms (six exact shapes from a generated wave ROM,
-// pitched sample-and-hold LFSR noise, dual-oscillator phaser) and all 8
-// note effects evaluated per tick (slide, vibrato, drop, fade in/out,
-// fast/slow arpeggio). Channels are serialized through one datapath
-// between samples; the mix clips PICO-8-style (one full-volume triangle
-// = half scale).
+// Synthesis: 8 waveforms (four non-trivial shapes from a generated wave
+// ROM, exact square/pulse phase thresholds, pitched sample-and-hold LFSR
+// noise and dual-oscillator phaser) and all 8 note effects evaluated per
+// tick (slide, vibrato, drop, fade in/out, fast/slow arpeggio). Channels
+// are serialized through one datapath between samples; the mix clips
+// PICO-8-style (one full-volume triangle = half scale).
 //
 // A note with bit 15 set plays through a custom instrument: SFX 0-7,
 // picked by the note's waveform field, runs as a second playhead on the
@@ -69,7 +69,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [7:0] aram[0:4607];
   logic [15:0] wraddr;
 
-  logic signed [7:0] wrom[0:2047];   // 8 waves x 256, exact PICO-8 shapes
+  // Four non-trivial 256-sample shapes. Square and pulse are exact phase
+  // thresholds below; noise and phaser have their own synthesis paths.
+  logic signed [7:0] wrom[0:1023];
   // Noise gain per key: PICO-8's noise amplitude rises with pitch and this
   // chip's sample-and-hold is flat, so the slope is restored from a table.
   // 1.0 = 256. See tools/gen_psg_tables.py.
@@ -77,7 +79,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [23:0] pinc[0:63];           // 2^24 * f(pitch) / 22050
   logic [15:0] recip[0:255];         // 65536 / speed
   initial begin
-    $readmemh("./rtl/psg_waves.hex", wrom);
+    $readmemh("./rtl/psg_waves_compact.hex", wrom);
     $readmemh("./rtl/psg_pitch.hex", pinc);
     $readmemh("./rtl/psg_noise.hex", nz_gain);
     $readmemh("./rtl/psg_recip.hex", recip);
@@ -216,18 +218,42 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // is set, both of which are flops that reset to 0, and a trigger runs
   // T_FL..T_LD which writes every field the note path can reach before it is
   // read. The one field that would be dangerous, `ins_on`, is written by T_FL.
-  localparam int VREC = 10;                    // 16-bit words actually used
-  localparam int VSTR = 16;                    // stride, padded to a power of 2
-  localparam int VADR = VW + 4;
-  logic [15:0] vmem[0:NV*VSTR-1];
-  logic [VADR-1:0] vraddr, vwaddr;
-  logic [15:0] vwdata, vq;
-  logic        vwe;
+  localparam int TREC = 10;                    // tick/note words per slot
+  localparam int SPAR = 4;                     // sounding parameter words
+  localparam int SOSC = 14;                    // oscillator-state words
+  localparam int VREC = TREC + SPAR;           // tick load/store visit
+  localparam int VSTR = 32;                    // all records for one slot
+  localparam int VADR = VW + 5;
+  localparam logic [4:0] V_TICK = 5'd0;
+  localparam logic [4:0] V_OSC  = 5'd10;
+  localparam logic [4:0] V_PAR0 = 5'd24;
+  localparam logic [4:0] V_PAR1 = 5'd28;
+  localparam int PLOSC = REALTIME_PREVIEW ? 7  : SOSC;
+  localparam int PWORK = REALTIME_PREVIEW ? 12 : 19;
+  localparam int PFOLD = REALTIME_PREVIEW ? 23 : 61;
+  localparam int PSTOR = REALTIME_PREVIEW ? 16 : 52;
+  localparam int PLAST = REALTIME_PREVIEW ? 23 : 65;
+
+  // One 256x16 scheduled store holds every per-slot record:
+  //
+  //   word  0.. 9  tick/note state
+  //   word 10..23  oscillator state
+  //   word 24..27  sounding parameter bank 0
+  //   word 28..31  sounding parameter bank 1
+  //
+  // Eight slots x 32 words is exactly one iCE40 EBR. The sequencer writes the
+  // inactive parameter bank and flips spar_bank only after the complete
+  // eight-slot walk, so synthesis never observes a partly published tick.
+  logic [15:0] state_m[0:NV*VSTR-1];
+  logic [VADR-1:0] state_ra, state_wa;
+  logic [15:0] state_wd, state_q;
+  logic        state_we, spar_bank;
+  logic [15:0] vwdata;
   logic [3:0]  vcnt;                           // word within the record
+  logic [6:0]  pph;                            // sample micro-phase
   // Simulation determinism, and a free BRAM init on iCE40. Without it iverilog
   // starts the record at X and the X leaks through the packing.
-  initial for (int i = 0; i < NV * VSTR; i++) vmem[i] = 16'h0000;
-  // The note record's memory is instantiated below, next to seq_frozen.
+  initial for (int i = 0; i < NV * VSTR; i++) state_m[i] = 16'h0000;
 
   // The working copy: the record of the slot the walk is visiting.
   logic [7:0]  w_fcnt, w_tcnt;
@@ -269,46 +295,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   end
 
   // ------------------------------------------------------------------
-  // Per-slot synthesis state: two more BRAM register files
+  // Per-slot synthesis state: working copies of the scheduled store
   // ------------------------------------------------------------------
-  // The remaining per-slot state splits by who writes it, and that split is
-  // what decides the port structure:
-  //
-  //   spar  45 bits - what the note sounds LIKE. The sequencer produces it
-  //                   once per tick; the synthesis walk only reads it. That is
-  //                   a plain producer/consumer, so it maps onto an
-  //                   SB_RAM40_4K's independent write and read ports with no
-  //                   arbitration at all.
-  //   sosc  201 bits - oscillator state plus the preceding tick's phase and
-  //                    parameters for PICO-8's 64-sample transition render.
-  //                    The synthesis walk reads AND writes it, and nothing
-  //                    else touches it, so it is a single-owner memory.
-  //
-  // Both are padded to a 16-word stride. That is not laziness about packing:
-  // yosys will not spend a 4096-bit block RAM on a few hundred bits, so a
-  // tightly packed 48-word memory stays in LUTs and the whole exercise buys
-  // nothing. Padding to 128 x 16 = 2048 bits is what makes it infer, and block
-  // RAM is the resource this design has spare (17 of 32 before this).
-  localparam int SPAR = 4;                     // words of parameters
-  localparam int SOSC = 14;                    // words of oscillator state
-  logic [15:0] spar_m[0:NV*16-1];
-  logic [15:0] sosc_m[0:NV*16-1];
-  logic [VADR-1:0] spar_wa, spar_ra, sosc_wa, sosc_ra;
-  logic [15:0] spar_wd, spar_q, sosc_wd, sosc_q;
-  logic        spar_we, sosc_we;
-  initial for (int i = 0; i < NV*16; i++) begin
-    spar_m[i] = 16'h0000;
-    sosc_m[i] = 16'h0000;
-  end
-  always_ff @(posedge clk) begin
-    if (spar_we) spar_m[spar_wa] <= spar_wd;
-    spar_q <= spar_m[spar_ra];
-    if (sosc_we) sosc_m[sosc_wa] <= sosc_wd;
-    sosc_q <= sosc_m[sosc_ra];
-  end
+  logic [15:0] spar_wd, sosc_wd;
 
   // The sequencer's working copy of the parameters: what it is building for the
-  // slot it is visiting, published to spar_m when the visit ends.
+  // slot it is visiting, published to the inactive bank when the visit ends.
   logic [23:0] w_eff_inc;
   logic [2:0]  w_snd_wave;
   logic        w_snd_wt;
@@ -318,14 +310,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [1:0]  w_ch_det, w_ch_rev, w_ch_damp;
   logic [7:0]  w_eff_vol;
 
-  // The synthesis walk's working copy: parameters loaded from spar_m,
-  // oscillator state loaded from sosc_m and written back.
+  // The synthesis walk's working copy: parameters and oscillator state loaded
+  // serially from state_m, with the oscillator words written back in place.
   logic [23:0] s_eff_inc;
   logic [2:0]  s_snd_wave;
   logic        s_snd_wt;
   logic [2:0]  s_snd_id;
   logic [5:0]  s_snd_pitch;
   logic        s_pitch_direct;
+  logic        s_slide_effect;
+  logic        s_compound_direct;
   logic        s_drop_effect;
   logic        s_trigger_tag;
   logic        s_ch_noiz, s_ch_buzz;
@@ -339,13 +333,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic signed [15:0] s_noise_lp;
   // PICO-8 keeps a copy of the preceding oscillator state at every synthesis
   // tick and blends its continuation into the first 64 new samples. These
-  // fields live in sosc_m's previously unused padded words, so retaining them
-  // costs no additional EBR.
+  // fields live in the oscillator portion of state_m.
   logic [23:0] s_old_phase, s_old_inc, s_last_inc;
   logic [7:0]  s_old_vol, s_last_vol;
   logic [2:0]  s_old_wave, s_last_wave;
   logic [5:0]  s_last_pitch;
   logic        s_last_trigger;
+  logic        s_last_slide;
   logic        s_fx_phase_entry;
   logic [6:0]  s_ramp;              // 0 idle; 1..64 means blend position 0..63
   // The wavetable's base address in audio RAM, recomputed rather than stored:
@@ -355,7 +349,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
   // Per-slot filter state: bf_* comes from the played SFX's filter byte at
   // trigger and lives in the sequencer's record; ch_* is that folded together
-  // with the instrument's and lives in spar_m.
+  // with the instrument's and lives in the active parameter bank.
 
   logic [NV-1:0] trig_req;
   logic [NV-1:0] clr_tog;   // toggled to ask the synth walk to reset lp/brown
@@ -422,27 +416,27 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
   logic [VW-1:0] c;                  // voice being processed
 
-  // Record addressing. The stride is padded to 16 so the address is a plain
-  // concatenation {slot, word} rather than a multiply by 10 in the address
-  // path; the six unused words per slot cost nothing, since one SB_RAM40_4K
-  // holds 256 words and eight slots need 128 of them either way.
-  assign vraddr = {c, vcnt};
-  assign vwaddr = {c, vcnt};
-
-  // The parameter record is published on the same cycles as the note record,
-  // through a different memory's write port, so it costs no extra states. V_ST
-  // is the sequencer's single exit point, which makes the publish atomic: the
-  // synthesis walk never sees a note's new pitch against its old waveform.
-  assign spar_wa = {c, vcnt};
-  // spar_we is driven with vwe, below seq_frozen's declaration.
+  // V_ST first stores the ten tick words, then the four sounding words into
+  // the inactive bank. The active bank does not move until every slot has
+  // completed that sequence.
   always_comb begin
-    case (vcnt)
+    case (vcnt - 4'(TREC))
       4'd0:    spar_wd = w_eff_inc[15:0];
       4'd1:    spar_wd = {1'b0, w_snd_id, w_snd_wt, w_snd_wave,
                           w_eff_inc[23:16]};
       4'd2:    spar_wd = {2'b0, w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz,
                           w_ch_noiz, w_snd_pitch};
-      default: spar_wd = {5'b0,
+      default: spar_wd = {3'b0,
+                          (w_cur_fx == 3'd1
+                           || (w_ins_on && !w_ins_wt
+                               && (w_cur_fx == 3'd0
+                                   || w_cur_fx == 3'd3)
+                               && w_ins_fx == 3'd1)),
+                          (w_ins_on && !w_ins_wt
+                           && (w_cur_fx == 3'd0 || w_cur_fx == 3'd3)
+                           && (w_ins_fx == 3'd0
+                               || w_ins_fx == 3'd4
+                               || w_ins_fx == 3'd5)),
                           ((!w_ins_on && w_cur_fx == 3'd3)
                            || (w_ins_on && !w_ins_wt
                                && (w_cur_fx == 3'd0
@@ -465,12 +459,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                           w_eff_vol};
     endcase
   end
-  // vwe is driven below, once seq_frozen exists - iverilog rejects use before
-  // declaration, which is what kept this testbench from building before.
   logic        walk_tick;            // this pass was started by a tick
   logic        tickpend;
   logic [5:0]  scan_p;
-  logic [7:0]  note_lo, ins_note_lo;
+  logic [7:0]  note_lo;
   logic [5:0]  arp_p;
 
   wire [12:0] ch_base  = 13'd256 + {1'b0, sfx_id[c], 6'b0} + {5'b0, sfx_id[c], 2'b0};
@@ -508,22 +500,24 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [7:0]  seq_q;
   logic        syn_rd, replay;
   logic [12:0] syn_addr;
+  logic        prun;
   wire         seq_frozen = syn_rd | replay;
-  // A store only advances when the walk does, so a borrowed audio-RAM cycle
-  // cannot leave a half-written record behind.
-  assign vwe    = (sst == V_ST) && !seq_frozen;
-  assign spar_we = (sst == V_ST) && (vcnt < 4'(SPAR)) && !seq_frozen;
-
+  // A sample owns the scheduled state store for its complete bounded walk.
+  // Tick-first ordering gives the 120 Hz microprogram an uncontested port on
+  // the boundary where its result matters; ordinary trigger work can wait one
+  // sample without changing any sample-visible state. One replay cycle restores
+  // a synchronous V_LD word displaced when a sample began mid-trigger.
+  logic        state_replay;
+  wire         state_sample_read = prun && pph < 7'(PLOSC + SPAR);
+  wire         state_sample_we = prun
+                               && pph >= 7'(PSTOR)
+                               && pph <= 7'(PLAST);
+  wire         walk_frozen = seq_frozen | prun | state_replay;
   always_ff @(posedge clk) begin
-    if (vwe) vmem[vwaddr] <= vwdata;
-    // The read must stall with the FSM. V_LD unpacks word vcnt-1 out of vq, so
-    // vq has to hold the value addressed on the previous ADVANCING cycle - but
-    // the walk freezes whenever the synthesiser borrows the audio-RAM port, and
-    // an unconditional read would keep fetching word vcnt during the stall and
-    // then unpack it as if it were word vcnt-1. That corrupted one word of the
-    // record every time a wavetable voice was sounding, which showed up as an
-    // instrument id of 0 - every wavetable playing SFX 0's bytes.
-    if (!seq_frozen) vq <= vmem[vraddr];
+    if (reset)
+      state_replay <= 0;
+    else
+      state_replay <= prun;
   end
   wire  [12:0] aram_addr  = syn_rd ? syn_addr : replay ? last_addr : seq_addr;
 
@@ -645,7 +639,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [5:0]  pinc_addr;
   logic [23:0] pinc_q;
   logic [15:0] recip_q;
-  logic [23:0] base_r, prev_r, arp_r, slide_r;
+  logic [23:0] base_r, prev_r, arp_r;
   logic [5:0] slide_addr;
   wire signed [8:0] arp_raw =
       e_insfx ? ($signed({3'b0, w_cur_pitch}) + $signed({3'b0, arp_p}) - 9'sd24)
@@ -686,13 +680,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // 120 times a second - about 240 clocks in a tick.
   // ------------------------------------------------------------------
   logic [23:0] m_a;
-  logic [32:0] m_p;                  // {accumulator[24:0], multiplier[7:0]}
+  logic [34:0] m_p;                  // accumulator plus 8/10-bit multiplier
   logic [3:0]  m_cnt;
+  logic        m_wide;
   // Reset contract: m_cnt and the micro-PC are validity/control state and
   // reset to idle.  m_a/m_p and the working results below are datapath:
   // every one is overwritten by the six-op program before it is observed.
-  wire  [25:0] m_sum = {1'b0, m_p[32:8]} + (m_p[0] ? {2'b0, m_a} : 26'd0);
+  wire  [24:0] m_acc = m_wide ? m_p[34:10] : m_p[32:8];
+  wire  [25:0] m_sum = {1'b0, m_acc} + (m_p[0] ? {2'b0, m_a} : 26'd0);
   wire  [31:0] m_res = m_p[31:0];
+  wire  [33:0] m_res_wide = m_p[33:0];
   wire         m_busy = (m_cnt != 0);
 
   // Effect microinstruction contract (xs is the micro-PC):
@@ -703,8 +700,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Products retain the original truncation points: 24-bit effects use
   // m_res[31:8], and volumes use m_res[15:8].
   logic [3:0]  xs;
-  logic [7:0]  u_r, vol_r, pvol_r, fxv_r;
-  logic [23:0] fxi_r;
+  logic [7:0]  u_r, vol_r, pvol_r;
 
   // PICO-8's vibrato multiplier is
   //   [128,129,130,129,128,127,126,127]
@@ -790,7 +786,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   always_comb begin
     fxi_next = base_inc;
     case (e_fx)
-      3'd1: fxi_next = slide_r;
+      3'd1: fxi_next = arp_r;
       // PICO-8 multiplies its integer `dp`, then the FPGA phase convention
       // expands that result by eight bits.  Multiplying base_inc directly is
       // otherwise subtly more precise and accumulates audible phase drift.
@@ -828,7 +824,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       ptick_tgt <= 0;
       scan_p <= 0;
       note_lo <= 0;
-      ins_note_lo <= 0;
       arp_p <= 0;
       fade_dir <= 0;
       fade_acc <= 0;
@@ -850,20 +845,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // field before K_ADV, and playing/trig_req validity gates the parameter
       // fields until T_/K_FX has produced them.
       vcnt <= 0;
+      spar_bank <= 0;
       for (int i = 0; i < 3; i++)
         pb[i] <= 0;
-      m_cnt <= 0;
       xs <= 0;
     end else begin
-      // Shared multiplier: shift-add, one iteration per clock. Runs even
-      // while the FSM is frozen for a borrowed audio-RAM cycle; K_FX below
-      // starts it and only advances when it is idle.
-      if (m_cnt != 0) begin
-        m_p   <= {m_sum, m_p[7:1]};
-        m_cnt <= m_cnt - 1;
-      end
-
-      if (!seq_frozen)
+      if (!walk_frozen)
       case (sst)
         // One pass over the slots in order, servicing any pending trigger and,
         // when the pass was started by a tick, advancing the row. Each visit is
@@ -883,23 +870,31 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           end
         end
 
-        // ---- record load: word vcnt-1 has landed in vq ----------------
+        // ---- record load: word vcnt-1 has landed in state_q -----------
         // The read is synchronous, so the data for the address issued at vcnt
         // arrives at vcnt+1. That one cycle of skew is the whole reason this
         // infers as block RAM instead of the LUT muxes it replaces.
         V_LD: begin
           case (vcnt)
-            4'd1: {w_tcnt, w_fcnt} <= vq;
-            4'd2: {w_lps, w_sp} <= vq;
-            4'd3: {w_ins_wt, w_ins_on, w_play_len, w_lpe} <= vq;
-            4'd4: {w_ins_bass, w_cur_wave, w_prev_pitch, w_cur_pitch} <= vq;
+            4'd1: {w_tcnt, w_fcnt} <= state_q;
+            4'd2: {w_lps, w_sp} <= state_q;
+            4'd3: {w_ins_wt, w_ins_on, w_play_len, w_lpe} <= state_q;
+            4'd4: {w_ins_bass, w_cur_wave, w_prev_pitch, w_cur_pitch} <= state_q;
             4'd5: {w_ins_done, w_bf_rev, w_bf_det, w_bf_buzz, w_bf_noiz,
-                   w_prev_vol, w_cur_fx, w_cur_vol} <= vq;
-            4'd6: {w_ins_vol, w_ins_wave, w_ins_row, w_ins_id, w_bf_damp} <= vq;
-            4'd7: {w_ins_tcnt, w_ins_fcnt} <= vq;
-            4'd8: {w_ins_lps, w_ins_sp} <= vq;
-            4'd9: {w_ins_pitch, w_ins_lpe} <= vq[13:0];
-            4'd10: {w_ins_prev_vol, w_ins_fx, w_ins_prev_pitch} <= vq[11:0];
+                   w_prev_vol, w_cur_fx, w_cur_vol} <= state_q;
+            4'd6: {w_ins_vol, w_ins_wave, w_ins_row, w_ins_id, w_bf_damp}
+                    <= state_q;
+            4'd7: {w_ins_tcnt, w_ins_fcnt} <= state_q;
+            4'd8: {w_ins_lps, w_ins_sp} <= state_q;
+            4'd9: {w_ins_pitch, w_ins_lpe} <= state_q[13:0];
+            4'd10: {w_ins_prev_vol, w_ins_fx, w_ins_prev_pitch}
+                     <= state_q[11:0];
+            4'd11: w_eff_inc[15:0] <= state_q;
+            4'd12: {w_snd_id, w_snd_wt, w_snd_wave, w_eff_inc[23:16]}
+                     <= state_q[14:0];
+            4'd13: {w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz, w_ch_noiz,
+                     w_snd_pitch} <= state_q[13:0];
+            4'd14: w_eff_vol <= state_q[7:0];
             default: ;
           endcase
           if (vcnt == 4'(VREC)) begin
@@ -915,6 +910,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             vcnt <= 0;
             if (c == VW'(NV-1)) begin
               c <= 0;
+              spar_bank <= ~spar_bank;
               sst <= W_MUS;
             end else begin
               c <= c + 1;
@@ -1153,12 +1149,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         end
         I_NL: sst <= I_NH;
         I_NH: begin
-          ins_note_lo <= seq_q;
+          note_lo <= seq_q;
           sst <= I_LD;
         end
         I_LD: begin
-          w_ins_pitch <= ins_note_lo[5:0];
-          w_ins_wave  <= {seq_q[0], ins_note_lo[7:6]};
+          w_ins_pitch <= note_lo[5:0];
+          w_ins_wave  <= {seq_q[0], note_lo[7:6]};
           w_ins_vol   <= seq_q[3:1];
           w_ins_fx    <= seq_q[6:4];
           sst <= K_ARP;
@@ -1185,8 +1181,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             4'd1: u_r    <= p8;
             4'd3: vol_r  <= ins_use ? (w_ins_done ? 8'd0 : p8) : vol_direct;
             4'd4: pvol_r <= ins_use ? p8 : pvol_direct;
-            4'd5: fxi_r  <= fxi_next;
-            4'd6: fxv_r  <= fxv_next;
+            // arp_r and vol_r are dead after their respective effect
+            // calculations, so they become the publication result slots.
+            4'd5: arp_r  <= fxi_next;
+            4'd6: vol_r  <= fxv_next;
             default: ;
           endcase
           if (xs == 4'd2 && e_fx == 3'd1) begin
@@ -1199,8 +1197,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           end else if (xs == 4'd7) begin
               xs <= 0;
               w_eff_inc <= (w_ins_on && w_ins_wt && w_ins_bass)
-                              ? {1'b0, fxi_r[23:1]} : fxi_r;
-              w_eff_vol <= is_mus(c) ? p8 : fxv_r;
+                              ? {1'b0, arp_r[23:1]} : arp_r;
+              w_eff_vol <= is_mus(c) ? p8 : vol_r;
               w_snd_wave <= ins_use ? w_ins_wave
                            : (w_ins_on && w_ins_wt) ? 3'd0 : w_cur_wave;
               w_snd_wt   <= w_ins_on & w_ins_wt;
@@ -1208,9 +1206,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               w_snd_pitch <= e_pitch;
               sst <= K_ROT;
           end else begin
-            m_a   <= mul_a;
-            m_p   <= {25'b0, mul_b};
-            m_cnt <= 4'd8;
             xs    <= xs + 1;
           end
         end
@@ -1220,24 +1215,18 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           // integer-note increments using the fractional 16.16 pitch. Our row
           // fraction is Q8, so retain those eight useful fractional bits and
           // borrow a second synchronous table read.
-          slide_r <= pinc_q;
+          arp_r <= pinc_q;
           sst <= K_SLP2;
         end
         K_SLP2: begin
           // pinc_q is the upper semitone. Reuse the iterative multiplier for
           // (upper-lower)*fraction; this trades 8 clocks for the combinational
           // fine-pitch network PICO-8's software implementation can afford.
-          m_a   <= pinc_q - slide_r;
-          m_p   <= {25'b0, slp_frac};
-          m_cnt <= 4'd8;
           sst   <= K_SLPM;
         end
         K_SLPM: if (!m_busy) begin
-          slide_r <= slide_r + p24;
+          arp_r <= arp_r + p24;
           // Resume after micro-op 2 by starting its current-volume product.
-          m_a   <= 24'd1317;
-          m_p   <= {25'b0, {2'b0, vmul}};
-          m_cnt <= 4'd8;
           xs    <= 4'd3;
           sst   <= K_FX;
         end
@@ -1446,40 +1435,33 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // ------------------------------------------------------------------
   logic [14:0] lfsr;
   logic [VW-1:0] pc_ch;
-  // A slot's visit is deliberately long and serial. It loads thirteen state
-  // words, renders the new and old oscillator continuations through one wave
-  // port, runs their two sample×volume products through one multiplier, then
-  // runs the 6-bit blend weight through one more shift-add sequence. Even at
-  // 62 clocks per slot, all eight voices consume under 10% of the 5102 clocks
-  // available per sample at the architectural 112.5 MHz PSG clock.
+  // A slot's visit is deliberately long and serial. It loads the oscillator
+  // words followed by the active four-word parameter bank, renders the new and
+  // old continuations through one wave port, runs both sample×volume products
+  // through one multiplier, then runs the 6-bit blend weight through one more
+  // shift-add sequence. The derived PSG clock is 28.125 MHz, giving at least
+  // 1275 clocks per sample. The complete eight-slot walk remains below 550.
   // The interactive simulator can select the compact schedule that preceded
   // the old-state crossfade renderer. It keeps live audio at the simulator's
   // intentionally lowered chip clock; hardware and oracle builds use the full
   // schedule below. REALTIME_PREVIEW is a constant, so the unused schedule is
   // removed during lowering rather than becoming runtime selection logic.
-  localparam int PWORK = REALTIME_PREVIEW ? 7  : 15;
-  localparam int PFOLD = REALTIME_PREVIEW ? 18 : 57;
-  localparam int PSTOR = REALTIME_PREVIEW ? 11 : 48;
-  localparam int PLAST = REALTIME_PREVIEW ? 18 : 61;
-  logic [5:0]  pph;
-  logic        prun;
-  logic signed [7:0] wq, smp_a, smp_b, old_smp;
+  logic signed [7:0] wq, wrom_q, smp_a, smp_b, old_smp;
   logic signed [7:0] wt_p1, wt_q1;
-  logic signed [18:0] wi_acc, wi_d;
-  logic [9:0] wi_f, wt_pf, wt_qf;
-  logic [3:0] wi_cnt;
-  logic wi_qsel;
-  logic [10:0] wrom_addr;
+  logic [9:0] wt_pf, wt_qf;
+  logic wi_neg;
+  logic [2:0] wsel;
+  logic [2:0] wsel_q;
+  logic [7:0] wph;
+  logic [7:0] wph_q;
+  logic [1:0] wbank;
+  logic [9:0] wrom_addr;
   logic [NV-1:0] clr_ack;              // pairs with the sequencer's clr_tog
 
   // Record streaming for the synthesis walk. Reads are issued on the load
   // cycles and land one cycle later; the oscillator write-back runs on the
   // store cycles, addressing word pph-PSTOR.
-  wire [3:0] s_stw = 4'(pph - 6'(PSTOR));
-  assign sosc_ra = {pc_ch, (pph < 6'(SOSC)) ? pph[3:0] : 4'd0};
-  assign spar_ra = {pc_ch, (pph < 6'(SPAR)) ? pph[3:0] : 4'd0};
-  assign sosc_wa = {pc_ch, s_stw};
-  assign sosc_we = prun && (pph >= 6'(PSTOR));
+  wire [3:0] s_stw = 4'(pph - 7'(PSTOR));
   always_comb begin
     if (REALTIME_PREVIEW) begin
       case (s_stw)
@@ -1507,7 +1489,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         4'd10:   sosc_wd = {s_last_pitch[4:0], s_last_wave,
                             s_last_inc[23:16]};
         4'd11:   sosc_wd = s_last_inc[15:0];
-        4'd12:   sosc_wd = {2'b0, s_fx_phase_entry, s_last_trigger,
+        4'd12:   sosc_wd = {1'b0, s_last_slide, s_fx_phase_entry,
+                            s_last_trigger,
                             s_last_pitch[5],
                             s_old_wave, s_last_vol};
         default: sosc_wd = s_noise_lp;
@@ -1515,34 +1498,125 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     end
   end
 
-  wire [2:0] wbank = (s_snd_wave == 3'd7) ? 3'd0 : s_snd_wave;
-  wire [2:0] old_wbank = (s_old_wave == 3'd7) ? 3'd0 : s_old_wave;
-  always_comb begin
-    if (pph == 6'(PWORK + 1))
-      wrom_addr = {wbank, s_phase2[23:16]};        // second voice
-    else if (pph == 6'(PWORK + 2))
-      wrom_addr = {old_wbank, s_old_phase[23:16]}; // old-state continuation
+  // Map the tick engine's streaming index onto its discontiguous record. The
+  // bank is an explicit argument so simulators include it in combinational
+  // sensitivity (some do not look through a function's free variables).
+  function automatic logic [4:0] tick_state_word(
+      input logic [3:0] n, input logic bank);
+    if (n < 4'(TREC))
+      tick_state_word = V_TICK + 5'(n);
+    else if (n < 4'(VREC))
+      tick_state_word = (bank ? V_PAR1 : V_PAR0)
+                        + 5'(n - 4'(TREC));
     else
-      wrom_addr = {wbank, s_phase[23:16]};         // main voice
+      tick_state_word = V_TICK;
+  endfunction
+
+  wire state_tick_we = (sst == V_ST) && !walk_frozen;
+  logic [3:0] tick_issue;
+  always_comb begin
+    // Normal V_LD issues word n while consuming word n-1. If a sample stole
+    // the port, replay n-1 once, then normal addressing resumes on the cycle
+    // that consumes it.
+    tick_issue = vcnt;
+    if (state_replay && sst == V_LD && vcnt != 0)
+      tick_issue = vcnt - 1'b1;
+
+    state_ra = {c, tick_state_word(tick_issue, spar_bank)};
+    if (state_sample_read) begin
+      if (pph < 7'(PLOSC))
+        state_ra = {pc_ch, V_OSC + 5'(pph)};
+      else if (pph < 7'(PLOSC + SPAR))
+        state_ra = {pc_ch, (spar_bank ? V_PAR1 : V_PAR0)
+                           + 5'(pph - 7'(PLOSC))};
+      else
+        state_ra = {pc_ch, V_OSC};
+    end
+
+    // Sample write-back has absolute priority. The tick engine is frozen for
+    // the complete sample walk, so these owners never contend in practice;
+    // retaining explicit priority makes that port contract structural.
+    state_we = state_sample_we | state_tick_we;
+    if (state_sample_we) begin
+      state_wa = {pc_ch, V_OSC + 5'(s_stw)};
+      state_wd = sosc_wd;
+    end else begin
+      state_wa = {c, (vcnt < 4'(TREC))
+                       ? V_TICK + 5'(vcnt)
+                       : (spar_bank ? V_PAR0 : V_PAR1)
+                         + 5'(vcnt - 4'(TREC))};
+      state_wd = (vcnt < 4'(TREC)) ? vwdata : spar_wd;
+    end
   end
-  always_ff @(posedge clk)
-    wq <= wrom[wrom_addr];
+
+  // Exactly one synchronous read site and one write site: this is the shape
+  // expected to lower to a single SB_RAM40_4K simple-dual-port instance.
+  always_ff @(posedge clk) begin
+    if (state_we)
+      state_m[state_wa] <= state_wd;
+    state_q <= state_m[state_ra];
+  end
+
+  always_comb begin
+    wsel = s_snd_wave;
+    wph = s_phase[23:16];
+    if (pph == 7'(PWORK + 1))
+      wph = s_phase2[23:16];        // second voice
+    else if (pph == 7'(PWORK + 2)) begin
+      wsel = s_old_wave;
+      wph = s_old_phase[23:16];     // old-state continuation
+    end
+
+    case (wsel)
+      3'd1:   wbank = 2'd1;
+      3'd2:   wbank = 2'd2;
+      3'd5:   wbank = 2'd3;
+      default: wbank = 2'd0;        // triangle, including phaser wave 7
+    endcase
+    wrom_addr = {wbank, wph};
+  end
+  always_ff @(posedge clk) begin
+    wrom_q <= wrom[wrom_addr];
+    wsel_q <= wsel;
+    wph_q <= wph;
+  end
+  always_comb begin
+    case (wsel_q)
+      3'd3:   wq = (wph_q < 8'h80) ? -8'sd64 : 8'sd64;
+      3'd4:   wq = (wph_q < 8'hb0) ? -8'sd64 : 8'sd64;
+      3'd6:   wq = 8'sd0;
+      default: wq = wrom_q;
+    endcase
+  end
 
   // Second voice: phaser preset (~109/110) on wave 7, else the detune ratio
   wire [23:0] einc = s_eff_inc;
-  wire [16:0] det_dq_round = {1'b0, einc[23:8]} + 17'd255;
-  wire [16:0] det_dq_wide =
-      {1'b0, einc[23:8]} - {8'b0, det_dq_round[16:8]};
   // PICO-8 keeps a 17-bit secondary phase and computes DETUNE-1's increment
   // as trunc(dp * 255 / 256).  The FPGA phase has eight additional fractional
-  // bits, so the exact mapping is the truncated 16-bit result followed by
-  // eight zeroes; no pitch-dependent residual belongs in those low bits.
-  wire [23:0] det_dq = {det_dq_wide[15:0], 8'b0};
+  // bits. ceil(dp/256) is subtracted on a second phase-ALU clock, retaining
+  // the exact truncated 16-bit result followed by eight zeroes.
+  wire [8:0] det_ceil =
+      {1'b0, einc[23:16]} + 9'(|einc[15:8]);
+  // The deliberately compact simulator preview still uses its original
+  // single-cycle secondary increment. REALTIME_PREVIEW is a parameter, so
+  // this complete network is removed from hardware and oracle builds.
+  wire [16:0] preview_det_round = {1'b0, einc[23:8]} + 17'd255;
+  wire [16:0] preview_det_wide =
+      {1'b0, einc[23:8]} - {8'b0, preview_det_round[16:8]};
+  wire [23:0] preview_v2inc =
+      s_snd_wt ? einc :
+      (s_snd_wave == 3'd7) ? (einc - {7'b0, einc[23:7]}
+                                        - {10'b0, einc[23:10]}
+                                        - {12'b0, einc[23:12]}) :
+      (s_ch_det == 2'd1)   ? {preview_det_wide[15:0], 8'b0} :
+      (s_ch_det == 2'd2)   ? {einc[22:0], 1'b0} :
+                                  24'd0;
   wire pitch_transition = playing[pc_ch] && !s_snd_wt
                         && s_pitch_direct
                         && s_eff_inc != s_last_inc
                         && s_last_vol != 0
-                        && s_snd_wave == s_last_wave
+                        && (s_snd_wave == s_last_wave
+                            || s_compound_direct)
                         && s_snd_pitch != s_last_pitch;
   wire trigger_transition = playing[pc_ch]
                           && s_trigger_tag != s_last_trigger;
@@ -1551,20 +1625,100 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                              || s_eff_inc != s_last_inc
                              || s_eff_vol != s_last_vol
                              || s_snd_wave != s_last_wave);
-  wire [23:0] v2inc =
-      s_snd_wt ? einc :
-      // Phaser: the second oscillator runs at 109/110 of the first, which is
-      // what produces the beat. 109/110 = 0.9909091; the previous shift pair
-      // gave 0.9902344, a 7.4% error in the BEAT rate (4.30 Hz instead of 4.00
-      // at A440). Three shifts land on 0.9909668 - 0.6% - for one more adder.
-      // Reference: zepto-8 synth.cpp INST_PHASER, via jtothebell/fake-08.
-      (s_snd_wave == 3'd7) ? (einc - {7'b0, einc[23:7]}
-                                        - {10'b0, einc[23:10]}
-                                        - {12'b0, einc[23:12]}) :
-      (s_ch_det == 2'd1)   ? det_dq :
-      (s_ch_det == 2'd2)   ? {einc[22:0], 1'b0} :
-                                  24'd0;
   wire v2_on = s_snd_wt || (s_snd_wave == 3'd7) || (s_ch_det != 0);
+
+  // Transition phase corrections used to be five independent 24-bit
+  // expressions feeding s_phase, alongside separate current, secondary and
+  // old-phase adders. The sample schedule has idle clocks, so select one phase
+  // operation before a single add/sub datapath and execute the two-term
+  // corrections over two clocks.
+  localparam logic [2:0] PH_ADV       = 3'd0;
+  localparam logic [2:0] PH_OLD_SUB   = 3'd1;
+  localparam logic [2:0] PH_OLD_ADD   = 3'd2;
+  localparam logic [2:0] PH_HOLD      = 3'd3;
+  localparam logic [2:0] PH_NEW2      = 3'd4;
+  logic [2:0] phase_op;
+  always_comb begin
+    phase_op = PH_ADV;
+    if (transition_change) begin
+      if (s_slide_effect && s_eff_inc != s_last_inc
+          && s_last_vol != 0 && s_snd_wave == s_last_wave
+          && !trigger_transition)
+        phase_op = PH_OLD_SUB;
+      else if (pitch_transition && s_compound_direct
+               && s_snd_wave != s_last_wave && !trigger_transition)
+        phase_op = PH_OLD_SUB;
+      else if (pitch_transition && s_last_slide && !trigger_transition)
+        phase_op = PH_OLD_ADD;
+      else if (pitch_transition && !trigger_transition && !s_last_slide)
+        phase_op = PH_HOLD;
+      else if (s_drop_effect && s_eff_inc != s_last_inc
+               && s_last_vol != 0 && s_snd_wave == s_last_wave
+               && !trigger_transition)
+        phase_op = s_fx_phase_entry ? PH_OLD_SUB : PH_NEW2;
+    end
+  end
+
+  logic [23:0] phase_alu_a, phase_alu_b;
+  logic phase_alu_sub;
+  always_comb begin
+    phase_alu_a = s_phase;
+    phase_alu_b = einc;
+    phase_alu_sub = 1'b0;
+    case (pph)
+      7'(PWORK): begin
+        case (phase_op)
+          PH_OLD_SUB: phase_alu_b = {s_last_inc[22:0], 1'b0};
+          PH_OLD_ADD: phase_alu_b = s_eff_inc;
+          PH_NEW2:    phase_alu_b = {s_eff_inc[22:0], 1'b0};
+          default: ;
+        endcase
+      end
+      7'(PWORK + 1): begin
+        if (!s_snd_wt && phase_op == PH_OLD_SUB) begin
+          phase_alu_b = s_eff_inc;
+          phase_alu_sub = 1'b1;
+        end else if (!s_snd_wt && phase_op == PH_OLD_ADD)
+          phase_alu_b = s_last_inc;
+      end
+      7'(PWORK + 5): begin
+        phase_alu_a = s_old_phase;
+        phase_alu_b = s_old_inc;
+      end
+      7'(PWORK + 6): begin
+        phase_alu_a = s_phase2;
+        if (s_snd_wt)
+          phase_alu_b = einc;
+        else if (s_snd_wave == 3'd7)
+          phase_alu_b = einc;
+        else if (s_ch_det == 2'd1)
+          phase_alu_b = {einc[23:8], 8'b0};
+        else
+          phase_alu_b = {einc[22:0], 1'b0};
+      end
+      7'(PWORK + 7): begin
+        phase_alu_a = s_phase2;
+        phase_alu_sub = 1'b1;
+        phase_alu_b = (s_snd_wave == 3'd7)
+                        ? {7'b0, einc[23:7]}
+                        : {7'b0, det_ceil, 8'b0};
+      end
+      7'(PWORK + 8): begin
+        phase_alu_a = s_phase2;
+        phase_alu_b = {10'b0, einc[23:10]};
+        phase_alu_sub = 1'b1;
+      end
+      7'(PWORK + 9): begin
+        phase_alu_a = s_phase2;
+        phase_alu_b = {12'b0, einc[23:12]};
+        phase_alu_sub = 1'b1;
+      end
+      default: ;
+    endcase
+  end
+  wire [23:0] phase_alu_y =
+      phase_alu_sub ? (phase_alu_a - phase_alu_b)
+                    : (phase_alu_a + phase_alu_b);
 
   // Wavetable instruments read their 64 samples out of audio RAM, one
   // borrowed read per voice per sample (the sequencer FSM freezes for it).
@@ -1572,18 +1726,18 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     syn_rd   = 1'b0;
     syn_addr = 13'd0;
     if (prun && s_snd_wt && playing[pc_ch]) begin
-      if (pph == 6'(PWORK)) begin
+      if (pph == 7'(PWORK)) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb + {7'b0, s_phase[23:18]};
-      end else if (!REALTIME_PREVIEW && pph == 6'(PWORK + 1)) begin
+      end else if (!REALTIME_PREVIEW && pph == 7'(PWORK + 1)) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb
                  + {7'b0, s_phase[23:18] + 6'd1};
-      end else if (pph == 6'(PWORK + (REALTIME_PREVIEW ? 1 : 2))
+      end else if (pph == 7'(PWORK + (REALTIME_PREVIEW ? 1 : 2))
                    && v2_on) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb + {7'b0, s_phase2[23:18]};
-      end else if (!REALTIME_PREVIEW && pph == 6'(PWORK + 3)
+      end else if (!REALTIME_PREVIEW && pph == 7'(PWORK + 3)
                    && v2_on) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb
@@ -1606,24 +1760,32 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire signed [8:0] det_sum =
       $signed({smp_a[7], smp_a}) + $signed({{2{smp_b[7]}}, smp_b[7:1]});
   // The built-in waveform tables are already calibrated to PICO-8's combined
-  // oscillator level.  A DETUNE secondary therefore needs the recovered
-  // 13/16 pre-mix normalisation, not an unnormalised +1/2 voice.
+  // oscillator level. A DETUNE secondary needs 5/6 pre-mix normalisation, not
+  // an unnormalised +1/2 voice. 53/64 is the nearest cheap shift-only form and
+  // keeps the three pitch guards within one percent of the exported level.
   wire signed [10:0] det_norm =
       $signed({{2{det_sum[8]}}, det_sum})
       - ($signed({{2{det_sum[8]}}, det_sum}) >>> 3)
-      - ($signed({{2{det_sum[8]}}, det_sum}) >>> 4);
+      - ($signed({{2{det_sum[8]}}, det_sum}) >>> 5)
+      - ($signed({{2{det_sum[8]}}, det_sum}) >>> 6);
   wire signed [7:0] det_clip =
       det_norm > 11'sd127 ? 8'sd127
     : det_norm < -11'sd127 ? -8'sd127 : det_norm[7:0];
   wire signed [7:0] det_raw_clip =
       det_sum > 9'sd127 ? 8'sd127
     : det_sum < -9'sd127 ? -8'sd127 : det_sum[7:0];
-  wire signed [18:0] wi_add =
-      wi_f[0] ? (wi_acc + wi_d) : wi_acc;
   wire signed [8:0] wt_pd =
       $signed({wt_p1[7], wt_p1}) - $signed({smp_a[7], smp_a});
   wire signed [8:0] wt_qd =
       $signed({wt_q1[7], wt_q1}) - $signed({smp_b[7], smp_b});
+  // Signed arithmetic right shift rounds a negative fractional delta down.
+  // The shared multiplier works on magnitudes, so add one when any discarded
+  // fractional bit is set before reapplying a negative sign.
+  wire [8:0] wi_mag_floor = m_res_wide[18:10];
+  wire [8:0] wi_mag_ceil = wi_mag_floor + 9'(|m_res_wide[9:0]);
+  wire signed [9:0] wi_delta =
+      wi_neg ? -$signed({1'b0, wi_mag_ceil})
+             :  $signed({1'b0, wi_mag_floor});
 
   // nz_hold * nz_gain[key] / 256, saturated. The gain runs 87/256 at the
   // bottom of the range to 222/256 at the top; it used to be a flat 192/256
@@ -1707,7 +1869,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // position this multiply has been in, so the reasoning is worth recording.
   //
   // A single-cycle array version cost 346 LC and nextpnr named it as the
-  // critical path (prun -> n_res). The hardware-derived sample deadline has
+  // critical path (prun -> product accumulator). The hardware-derived sample deadline has
   // ample slack, so the multiplier is serial and its iterations are hidden
   // under the record
   // write-back rather than added to the visit: the store phase does not depend
@@ -1733,9 +1895,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Custom waveforms add two signed table results before oscillator scaling,
   // so their exact range is wider than one sample byte. Keep that ninth bit
   // through the same eight-cycle sample-by-volume multiply. Their expanded
-  // table values use PICO-8's 7/8 oscillator scale before volume.
+  // table values use PICO-8's approximately 8/9 oscillator scale before
+  // volume. 57/64 is the nearest one-add shift-only form.
   wire signed [8:0] wt_mix = det_sum;
-  wire signed [8:0] wt_scaled = wt_mix - (wt_mix >>> 3);
+  wire signed [8:0] wt_scaled =
+      wt_mix - (wt_mix >>> 3) + (wt_mix >>> 6);
   wire [8:0] n_mag9 =
       s_snd_wt
         ? (wt_scaled[8] ? 9'(-wt_scaled) : 9'(wt_scaled))
@@ -1744,28 +1908,124 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // resolution anywhere in the chip: a note at PICO-8 volume 1 has eff_vol 36,
   // so (127*36)>>8 = 17 levels - 4.2 bits. Two thirds of NEMO's title music is
   // volume 1 or 2. Keeping the low half makes those 12.2 and 13.2 bits.
-  logic [16:0] n_res;
-  // {accumulator, multiplier}: one add-and-shift per clock, 8 of them.
-  logic [8:0] nm_a;
-  logic [3:0]  nm_cnt;
-  wire [9:0] nm_sum = {1'b0, n_res[16:8]}
-                    + (n_res[0] ? {1'b0, nm_a} : 10'd0);
+  // The tick and sample schedules cannot overlap, so sample x volume and the
+  // transition blend also use the effect engine's 24x8 shift-add service.
+  // Padding the 6-bit blend weight to eight bits costs two otherwise idle
+  // cycles and leaves one accumulator, counter, adder and result write site
+  // for all three product families.
   wire signed [16:0] nm_signed =
-      mx_neg ? -$signed(n_res) : $signed(n_res);
+      mx_neg ? -$signed(m_res[16:0]) : $signed(m_res[16:0]);
   wire signed [16:0] nm_noise_scaled = nm_signed + (nm_signed >>> 1);
   logic signed [16:0] mx_new, mx_old, mx_prod;
   wire signed [16:0] blend_diff = mx_new - mx_old;
   wire [15:0] blend_mag = blend_diff[16] ? 16'(-blend_diff) : 16'(blend_diff);
   wire [5:0] blend_pos = s_ramp[5:0] - 6'd1;
-  // Six serialized shift-add steps form |new-old| * blend_pos. Division by
-  // 64 is then a wiring shift; applying the saved sign reproduces signed
-  // truncation toward zero without a divider.
-  logic [15:0] bl_a;
-  logic [22:0] bl_p;
-  logic [2:0]  bl_cnt;
-  wire [17:0] bl_sum = {1'b0, bl_p[22:6]}
-                     + (bl_p[0] ? {2'b0, bl_a} : 18'd0);
-  wire [21:0] bl_res = bl_p[21:0];
+  // The shared service forms |new-old| * blend_pos. Division by 64 is then a
+  // wiring shift; applying the saved sign reproduces signed truncation toward
+  // zero without a divider.
+  wire [21:0] bl_res = m_res[21:0];
+
+  // One physical request mux and one sequential write site make the effect
+  // multiplier a PSG-wide service. A sample walk freezes the tick sequencer;
+  // any product launched on the sample boundary finishes well before the
+  // first sample request at PWORK+2/PWORK+4.
+  logic        mul_start;
+  logic [23:0] mul_start_a;
+  logic [9:0]  mul_start_b;
+  logic        mul_start_wide;
+  always_comb begin
+    mul_start      = 1'b0;
+    mul_start_a    = 24'd0;
+    mul_start_b    = 10'd0;
+    mul_start_wide = 1'b0;
+    if (prun && !m_busy) begin
+      if (REALTIME_PREVIEW) begin
+        if (pph == 7'(PWORK + 2)) begin
+          mul_start   = 1'b1;
+          mul_start_a = {15'b0, n_mag9};
+          mul_start_b = s_eff_vol;
+        end
+      end else begin
+        case (pph)
+          7'(PWORK + 4): begin
+            mul_start = 1'b1;
+            if (s_snd_wt) begin
+              mul_start_a = {15'b0,
+                             wt_pd[8] ? 9'(-wt_pd) : 9'(wt_pd)};
+              mul_start_b = wt_pf;
+              mul_start_wide = 1'b1;
+            end else begin
+              mul_start_a = {15'b0, n_mag9};
+              mul_start_b = {2'b0, s_eff_vol};
+            end
+          end
+          7'(PWORK + 13): if (!s_snd_wt) begin
+            mul_start   = 1'b1;
+            mul_start_a = {15'b0,
+                           old_smp[7]
+                             ? ((old_smp == -8'sd128) ? 9'd127
+                                                     : 9'(-old_smp))
+                             : {1'b0, old_smp}};
+            mul_start_b = s_old_vol;
+          end
+          7'(PWORK + 23): if (!s_snd_wt && s_ramp != 0) begin
+            mul_start   = 1'b1;
+            mul_start_a = {8'b0, blend_mag};
+            mul_start_b = {2'b0, blend_pos};
+          end
+          7'(PWORK + 15): if (s_snd_wt) begin
+            mul_start   = 1'b1;
+            mul_start_a = {15'b0,
+                           wt_qd[8] ? 9'(-wt_qd) : 9'(wt_qd)};
+            mul_start_b = wt_qf;
+            mul_start_wide = 1'b1;
+          end
+          7'(PWORK + 27): if (s_snd_wt) begin
+            mul_start   = 1'b1;
+            mul_start_a = {15'b0, n_mag9};
+            mul_start_b = {2'b0, s_eff_vol};
+          end
+          default: ;
+        endcase
+      end
+    end else if (!walk_frozen) begin
+      case (sst)
+        K_FX: if (!m_busy && xs != 4'd7
+                  && !(xs == 4'd2 && e_fx == 3'd1)) begin
+          mul_start   = 1'b1;
+          mul_start_a = mul_a;
+          mul_start_b = {2'b0, mul_b};
+        end
+        K_SLP2: if (!m_busy) begin
+          mul_start   = 1'b1;
+          mul_start_a = pinc_q - arp_r;
+          mul_start_b = {2'b0, slp_frac};
+        end
+        K_SLPM: if (!m_busy) begin
+          mul_start   = 1'b1;
+          mul_start_a = 24'd1317;
+          mul_start_b = {4'b0, vmul};
+        end
+        default: ;
+      endcase
+    end
+  end
+
+  always_ff @(posedge clk) begin
+    if (reset)
+      m_cnt <= 0;
+    else if (m_cnt != 0) begin
+      m_p   <= m_wide ? {m_sum, m_p[9:1]}
+                      : {2'b0, m_sum, m_p[7:1]};
+      m_cnt <= m_cnt - 1;
+    end else if (mul_start) begin
+      m_a    <= mul_start_a;
+      m_p    <= {25'b0, mul_start_b};
+      m_wide <= mul_start_wide;
+      m_cnt  <= mul_start_wide ? 4'd10 : 4'd8;
+    end
+  end
+
   wire signed [16:0] mix_prod =
       REALTIME_PREVIEW
         ? ((s_snd_wave == 3'd6) ? nm_noise_scaled : nm_signed)
@@ -1847,6 +2107,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [9:0]  rev_ttl;
   logic signed [15:0] dry16;
   logic        dry_valid;
+  logic        sample_pending;
+
+  // A sequencer tick and a sample boundary coincide every 183 samples. The
+  // old split memories exposed later slots' new parameters to that same sample
+  // while earlier slots still used the old set. With atomic banking, evaluate
+  // the tick first and start synthesis on its complete-bank commit edge.
+  // walk_frozen then holds pattern-flow/trigger work until that sample is
+  // finished, preserving the old pattern's boundary sample atomically too.
+  wire tick_publish = sample_pending
+                    && sst == V_ST
+                    && vcnt == 4'(VREC - 1)
+                    && c == VW'(NV - 1)
+                    && walk_tick
+                    && !walk_frozen;
 
   // Level 1 happens inside the walk, levels 2 and 3 after it, all on this one
   // unit - the tree is seven soft_adds spread over time, not seven instances.
@@ -1865,77 +2139,18 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       prun <= 0;
       pc_ch <= 0;
       pph <= 0;
-      smp_a <= 0;
-      smp_b <= 0;
-      old_smp <= 0;
-      wt_p1 <= 0;
-      wt_q1 <= 0;
-      wi_acc <= 0;
-      wi_d <= 0;
-      wi_f <= 0;
-      wt_pf <= 0;
-      wt_qf <= 0;
-      wi_cnt <= 0;
-      wi_qsel <= 0;
       clr_ack <= 0;
-      n_res <= 0;
-      nm_a <= 0;
-      nm_cnt <= 0;
-      bl_a <= 0;
-      bl_p <= 0;
-      bl_cnt <= 0;
-      mx_neg <= 0;
-      mx_new <= 0;
-      mx_old <= 0;
-      mx_prod <= 0;
-      mx_play <= 0;
-      mx_aud <= 0;
-      mx_lp <= 0;
-      mx_rev <= 0;
-      mx_damp <= 0;
-      sa_hold <= 0;
-      for (int i = 0; i < 4; i++) l1[i] <= 0;
-      l2a <= 0;
-      l2b <= 0;
       mxs <= 0;
       rev_max <= 0;
       rev_lvl <= 0;
       rev_ttl <= 0;
-      dry16 <= 0;
       dry_valid <= 0;
-      // The oscillator state lives in sosc_m and cannot be reset per slot. It
-      // does not need to be: a slot's phase only advances while `playing`, and
-      // a trigger clears lp/brown through clr_tog, so nothing stale is audible.
-      s_phase <= 0;
-      s_phase2 <= 0;
-      s_nz_hold <= 0;
-      s_nz_ph <= 0;
-      s_brown <= 0;
-      s_lp <= 0;
-      s_noise_lp <= 0;
-      s_old_phase <= 0;
-      s_old_inc <= 0;
-      s_old_vol <= 0;
-      s_old_wave <= 0;
-      s_last_inc <= 0;
-      s_last_vol <= 0;
-      s_last_wave <= 0;
-      s_last_pitch <= 0;
-      s_last_trigger <= 0;
-      s_fx_phase_entry <= 0;
-      s_ramp <= 0;
-      s_eff_inc <= 0;
-      s_snd_wave <= 0;
-      s_snd_wt <= 0;
-      s_snd_id <= 0;
-      s_snd_pitch <= 0;
-      s_drop_effect <= 0;
-      s_ch_noiz <= 0;
-      s_ch_buzz <= 0;
-      s_ch_det <= 0;
-      s_ch_rev <= 0;
-      s_ch_damp <= 0;
-      s_eff_vol <= 0;
+      sample_pending <= 0;
+      // Datapath and streamed voice fields deliberately have no reset mux.
+      // state_m supplies every s_* field before PWORK; each product/blend
+      // register is committed before its count or phase consumes it; and the
+      // mix leaves are overwritten in voice order before mxs starts. Only the
+      // validity/count controls above require a defined reset value.
     end else begin
       dry_valid <= 0;
 
@@ -1957,11 +2172,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             rev_ttl <= rev_ttl - 1;
           else
             rev_lvl <= 0;
-        end
+          end
         default: ;
       endcase
 
-      if (sample_en) begin
+      if (sample_en && tick_en) begin
+        // The tick engine publishes before this sample is rendered.
+        sample_pending <= 1;
+      end else if (sample_en) begin
+        prun <= 1;
+        pc_ch <= 0;
+        pph <= 0;
+        rev_max <= 0;
+      end else if (tick_publish) begin
+        sample_pending <= 0;
         prun <= 1;
         pc_ch <= 0;
         pph <= 0;
@@ -1969,77 +2193,52 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       end else if (prun) begin
         // ---- record load: word pph-1 has landed ----------------------
         case (pph)
-          6'd1: s_phase[15:0] <= sosc_q;
-          6'd2: {s_nz_hold, s_phase[23:16]} <= sosc_q;
-          6'd3: s_phase2[15:0] <= sosc_q;
-          6'd4: {s_nz_ph, s_phase2[23:16]} <= sosc_q[11:0];
-          6'd5: s_brown <= sosc_q[12:0];
-          6'd6: s_lp <= sosc_q;
-          6'd7: if (REALTIME_PREVIEW)
-                   s_noise_lp <= sosc_q;
+          7'd1: s_phase[15:0] <= state_q;
+          7'd2: {s_nz_hold, s_phase[23:16]} <= state_q;
+          7'd3: s_phase2[15:0] <= state_q;
+          7'd4: {s_nz_ph, s_phase2[23:16]} <= state_q[11:0];
+          7'd5: s_brown <= state_q[12:0];
+          7'd6: s_lp <= state_q;
+          7'd7: if (REALTIME_PREVIEW)
+                   s_noise_lp <= state_q;
                 else
-                   s_old_phase[15:0] <= sosc_q;
-          6'd8: if (!REALTIME_PREVIEW)
-                   {s_ramp, s_old_phase[23:16]} <= {sosc_q[15:9],
-                                                    sosc_q[7:0]};
-          6'd9: if (!REALTIME_PREVIEW) s_old_inc[15:0] <= sosc_q;
-          6'd10: if (!REALTIME_PREVIEW)
-                    {s_old_vol, s_old_inc[23:16]} <= sosc_q;
-          6'd11: if (!REALTIME_PREVIEW)
+                   s_old_phase[15:0] <= state_q;
+          7'd8: if (!REALTIME_PREVIEW)
+                   {s_ramp, s_old_phase[23:16]} <= {state_q[15:9],
+                                                    state_q[7:0]};
+          7'd9: if (!REALTIME_PREVIEW) s_old_inc[15:0] <= state_q;
+          7'd10: if (!REALTIME_PREVIEW)
+                    {s_old_vol, s_old_inc[23:16]} <= state_q;
+          7'd11: if (!REALTIME_PREVIEW)
                     {s_last_pitch[4:0], s_last_wave,
-                     s_last_inc[23:16]} <= sosc_q;
-          6'd12: if (!REALTIME_PREVIEW) s_last_inc[15:0] <= sosc_q;
-          6'd13: if (!REALTIME_PREVIEW) begin
-                    s_fx_phase_entry <= sosc_q[13];
-                    s_last_trigger <= sosc_q[12];
+                     s_last_inc[23:16]} <= state_q;
+          7'd12: if (!REALTIME_PREVIEW) s_last_inc[15:0] <= state_q;
+          7'd13: if (!REALTIME_PREVIEW) begin
+                    s_last_slide <= state_q[14];
+                    s_fx_phase_entry <= state_q[13];
+                    s_last_trigger <= state_q[12];
                     {s_last_pitch[5], s_old_wave,
-                     s_last_vol} <= sosc_q[11:0];
+                     s_last_vol} <= state_q[11:0];
                   end
-          6'd14: if (!REALTIME_PREVIEW) s_noise_lp <= sosc_q;
+          7'd14: if (!REALTIME_PREVIEW) s_noise_lp <= state_q;
           default: ;
         endcase
         case (pph)
-          6'd1: s_eff_inc[15:0] <= spar_q;
-          6'd2: {s_snd_id, s_snd_wt, s_snd_wave, s_eff_inc[23:16]} <= spar_q[14:0];
-          6'd3: {s_ch_damp, s_ch_rev, s_ch_det, s_ch_buzz, s_ch_noiz,
-                 s_snd_pitch} <= spar_q[13:0];
-          6'd4: {s_drop_effect, s_trigger_tag, s_pitch_direct,
-                 s_eff_vol} <= spar_q[10:0];
+          7'(PLOSC + 1):
+            s_eff_inc[15:0] <= state_q;
+          7'(PLOSC + 2):
+            {s_snd_id, s_snd_wt, s_snd_wave, s_eff_inc[23:16]}
+              <= state_q[14:0];
+          7'(PLOSC + 3):
+            {s_ch_damp, s_ch_rev, s_ch_det, s_ch_buzz, s_ch_noiz,
+             s_snd_pitch} <= state_q[13:0];
+          7'(PLOSC + 4):
+            {s_slide_effect, s_compound_direct, s_drop_effect,
+             s_trigger_tag, s_pitch_direct, s_eff_vol} <= state_q[12:0];
           default: ;
         endcase
 
-        // Sample x volume, one add-and-shift per clock. Runs underneath the
-        // record write-back, so it costs the visit nothing but the two clocks
-        // that PLAST was extended by.
-        if (nm_cnt != 0) begin
-          n_res  <= {nm_sum, n_res[7:1]};
-          nm_cnt <= nm_cnt - 1;
-        end
-        if (bl_cnt != 0) begin
-          bl_p <= {bl_sum, bl_p[5:1]};
-          bl_cnt <= bl_cnt - 1;
-        end
-        if (wi_cnt != 0) begin
-          wi_acc <= wi_add;
-          wi_d <= wi_d <<< 1;
-          wi_f <= wi_f >> 1;
-          wi_cnt <= wi_cnt - 1;
-          if (wi_cnt == 1) begin
-            if (!wi_qsel) begin
-              smp_a <= 8'(wi_add >>> 10);
-              wi_acc <= $signed({smp_b[7], smp_b, 10'b0});
-              wi_d <= {{10{wt_qd[8]}}, wt_qd};
-              wi_f <= wt_qf;
-              wi_cnt <= 4'd10;
-              wi_qsel <= 1;
-            end else begin
-              smp_b <= 8'(wi_add >>> 10);
-              wi_qsel <= 0;
-            end
-          end
-        end
-
-        if (pph == 6'(PLAST)) begin
+        if (pph == 7'(PLAST)) begin
           pph <= 0;
           if (pc_ch == VW'(NV-1)) begin
             prun <= 0;
@@ -2051,7 +2250,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
         if (REALTIME_PREVIEW) begin
           case (pph)
-            6'(PWORK): begin
+            7'(PWORK): begin
               lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
               if (playing[pc_ch] && s_eff_vol != 0) begin
                 s_phase <= s_phase + einc;
@@ -2075,19 +2274,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                 s_noise_lp <= 0;
               end
             end
-            6'(PWORK + 1): begin
+            7'(PWORK + 1): begin
               // The secondary synchronous read observes q during this cycle.
               // Advance it at the edge only after that address has captured
               // the same pre-advance sample state as p captured at PWORK.
               if (playing[pc_ch] && s_eff_vol != 0 && v2_on)
-                s_phase2 <= s_phase2 + v2inc;
+                s_phase2 <= s_phase2 + preview_v2inc;
               smp_a <= s_snd_wt ? $signed(seq_q) : wq;
             end
-            6'(PWORK + 2): begin
+            7'(PWORK + 2): begin
               smp_b <= s_snd_wt ? $signed(seq_q) : wq;
-              nm_a   <= n_mag9;
-              n_res  <= {9'b0, s_eff_vol};
-              nm_cnt <= 4'd8;
               mx_neg  <= s_snd_wt ? wt_mix[8] : samp_d[7];
               mx_play <= playing[pc_ch];
               mx_aud  <= playing[pc_ch]
@@ -2097,7 +2293,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               mx_rev  <= s_ch_rev;
               mx_damp <= s_ch_damp;
             end
-            6'(PFOLD): begin
+            7'(PFOLD): begin
               if (pc_ch[0] == 1'b0)
                 sa_hold <= mix_leaf;
               else
@@ -2109,7 +2305,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           endcase
         end else begin
         case (pph)
-          6'(PWORK): begin               // advance phase(s), issue main read
+          7'(PWORK): begin               // advance phase(s), issue main read
             // One step per voice per sample. This used to free-run on the
             // system clock, which tied the noise sequence to how many clocks
             // the per-voice pipeline happened to take - so shortening the
@@ -2123,9 +2319,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             // fade-in rows: their silent first ticks freeze phase rather than
             // free-running it.
             if (playing[pc_ch] && s_eff_vol != 0) begin
-              if (!s_snd_wt)
-                s_phase <= s_phase + einc;
-              else begin
+              if (!s_snd_wt) begin
+                if (phase_op != PH_HOLD)
+                  s_phase <= phase_alu_y;
+              end else begin
                 wt_pf <= s_phase[17:8];
                 wt_qf <= s_phase2[17:8];
               end
@@ -2156,21 +2353,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               s_old_vol <= s_last_vol;
               s_old_wave <= s_last_wave;
               s_ramp <= 7'd1;
-              // PICO-8's newly calculated oscillator state emits its first
-              // changed-pitch sample at the preceding phase. The copied old
-              // state advances independently for the ramp, while the new
-              // stream consumes its new increment starting with the following
-              // sample. Without this hold, every pitch boundary leaves the
-              // new continuation one sample ahead after the crossfade.
-              if (pitch_transition && !trigger_transition)
-                s_phase <= s_phase;
-              else if (s_drop_effect && !s_fx_phase_entry
-                       && s_eff_inc != s_last_inc && s_last_vol != 0
-                       && s_snd_wave == s_last_wave
-                       && !trigger_transition) begin
-                s_phase <= s_phase + {s_eff_inc[22:0], 1'b0};
-                s_fx_phase_entry <= 1;
-              end
               // A zero-amplitude state is not merely an inaudible running
               // oscillator in PICO-8: the next nonzero state starts from the
               // canonical phase again.  Repeated speed-2 fade-in rows export
@@ -2180,6 +2362,29 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                 s_phase2 <= 0;
               end
             end
+            // a trigger asked for this channel's filter state to be reset
+            if (clr_tog[pc_ch] != clr_ack[pc_ch]) begin
+              clr_ack[pc_ch] <= clr_tog[pc_ch];
+              s_lp <= 0;
+              s_brown <= 0;
+              s_noise_lp <= 0;
+            end
+          end
+          7'(PWORK + 1): begin           // main-voice sample
+            // Keep q's synchronous ROM address on the pre-advance phase,
+            // matching PICO-8's render-then-advance oscillator ordering.
+            if (playing[pc_ch] && s_eff_vol != 0 && s_snd_wt)
+              s_phase <= phase_alu_y;
+            else if (playing[pc_ch] && s_eff_vol != 0
+                     && (phase_op == PH_OLD_SUB || phase_op == PH_OLD_ADD))
+              s_phase <= phase_alu_y;
+            smp_a <= s_snd_wt ? $signed(seq_q) : wq;
+          end
+          7'(PWORK + 2): begin           // second voice
+            if (s_snd_wt)
+              wt_p1 <= $signed(seq_q);
+            else
+              smp_b <= wq;
             s_last_inc <= s_eff_inc;
             // A pattern handoff publishes zero volume while music itself is
             // still active. Preserve only that last audible field across the
@@ -2190,60 +2395,29 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             s_last_wave <= s_snd_wave;
             s_last_pitch <= s_snd_pitch;
             s_last_trigger <= s_trigger_tag;
+            s_last_slide <= s_slide_effect;
+            if (transition_change && s_drop_effect
+                && s_eff_inc != s_last_inc && s_last_vol != 0
+                && s_snd_wave == s_last_wave && !trigger_transition)
+              s_fx_phase_entry <= 1;
             if (trigger_transition || s_pitch_direct)
               s_fx_phase_entry <= 0;
-            // a trigger asked for this channel's filter state to be reset
-            if (clr_tog[pc_ch] != clr_ack[pc_ch]) begin
-              clr_ack[pc_ch] <= clr_tog[pc_ch];
-              s_lp <= 0;
-              s_brown <= 0;
-              s_noise_lp <= 0;
-            end
           end
-          6'(PWORK + 1): begin           // main-voice sample
-            // Keep q's synchronous ROM address on the pre-advance phase,
-            // matching PICO-8's render-then-advance oscillator ordering.
-            if (playing[pc_ch] && s_eff_vol != 0 && v2_on && !s_snd_wt)
-              s_phase2 <= s_phase2 + v2inc;
-            if (playing[pc_ch] && s_eff_vol != 0 && s_snd_wt)
-              s_phase <= s_phase + einc;
-            smp_a <= s_snd_wt ? $signed(seq_q) : wq;
-          end
-          6'(PWORK + 2): begin           // second voice
-            if (s_snd_wt)
-              wt_p1 <= $signed(seq_q);
-            else
-              smp_b <= wq;
-          end
-          6'(PWORK + 3): begin           // preceding-state waveform sample
+          7'(PWORK + 3): begin           // preceding-state waveform sample
             if (s_snd_wt) begin
               smp_b <= $signed(seq_q);
-              if (playing[pc_ch] && s_eff_vol != 0 && v2_on)
-                s_phase2 <= s_phase2 + v2inc;
             end else
               old_smp <= wq;
           end
-          6'(PWORK + 4): begin
+          7'(PWORK + 4): begin
             if (s_snd_wt) begin
               // PICO-8 interpolates its 64 signed wavetable samples with ten
-              // fractional phase bits. Serialize p and then q through one
-              // shift-add interpolator; twenty clocks are still well inside
-              // the long hardware visit and halve the arithmetic state.
+              // fractional phase bits. The PSG-wide product service evaluates
+              // p and then q; wi_neg reapplies arithmetic-shift rounding.
               wt_q1 <= $signed(seq_q);
-              wi_acc <= $signed({smp_a[7], smp_a, 10'b0});
-              wi_d <= {{10{wt_pd[8]}}, wt_pd};
-              wi_f <= wt_pf;
-              wi_cnt <= 4'd10;
-              wi_qsel <= 0;
+              wi_neg <= wt_pd[8];
             end else begin
-              // The old continuation advances independently for exactly the
-              // samples in which it participates in the transition.
-              if (s_ramp != 0 && s_old_vol != 0)
-                s_old_phase <= s_old_phase + s_old_inc;
               // First serialized product: new oscillator sample × new volume.
-              nm_a   <= n_mag9;
-              n_res  <= {9'b0, s_eff_vol};
-              nm_cnt <= 4'd8;
               mx_neg  <= samp_d[7];
               mx_play <= playing[pc_ch];
               // Audible unless this music slot has a foreground effect.
@@ -2254,24 +2428,56 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               mx_damp <= s_ch_damp;
             end
           end
-          6'(PWORK + 13): begin
+          7'(PWORK + 15): begin
+            if (s_snd_wt) begin
+              smp_a <= 8'($signed({smp_a[7], smp_a}) + wi_delta);
+              wi_neg <= wt_qd[8];
+            end
+          end
+          7'(PWORK + 5): begin
+            // The old waveform read has captured the pre-advance phase.
+            if (!s_snd_wt && s_ramp != 0 && s_old_vol != 0)
+              s_old_phase <= phase_alu_y;
+            // Commit the built-in path's one-pole state before oscillator
+            // word 5 is written back. Waiting until PFOLD stored the preceding
+            // value four clocks earlier, so DAMPEN restarted at its first
+            // half-step on every sample.
+            if (!s_snd_wt && mx_play && mx_damp != 0)
+              s_lp <= mx_lp;
+          end
+          7'(PWORK + 6): begin
+            // All secondary waveform reads have captured the pre-advance
+            // phase. Wavetable and DETUNE-2 finish here; DETUNE-1 and phaser
+            // continue through the same ALU below.
+            if (playing[pc_ch] && s_eff_vol != 0 && v2_on)
+              s_phase2 <= phase_alu_y;
+          end
+          7'(PWORK + 7): begin
+            if (playing[pc_ch] && s_eff_vol != 0
+                && (s_snd_wave == 3'd7
+                    || (!s_snd_wt && s_ch_det == 2'd1)))
+              s_phase2 <= phase_alu_y;
+          end
+          7'(PWORK + 8), 7'(PWORK + 9): begin
+            // Phaser's 109/110 approximation is
+            // x - (x>>7) - (x>>10) - (x>>12), accumulated serially.
+            if (playing[pc_ch] && s_eff_vol != 0
+                && !s_snd_wt && s_snd_wave == 3'd7)
+              s_phase2 <= phase_alu_y;
+          end
+          7'(PWORK + 13): begin
             if (!s_snd_wt) begin
               mx_new <= (s_snd_wave == 3'd6) ? nm_noise_scaled : nm_signed;
               // Second serialized product: old continuation × old volume.
-              nm_a   <= old_smp[7]
-                          ? ((old_smp == -8'sd128) ? 9'd127
-                                                  : 9'(-old_smp))
-                          : {1'b0, old_smp};
-              n_res  <= {9'b0, s_old_vol};
-              nm_cnt <= 4'd8;
               mx_neg <= old_smp[7];
             end
           end
-          6'(PWORK + 25): begin
+          7'(PWORK + 26): begin
+            if (s_snd_wt)
+              smp_b <= 8'($signed({smp_b[7], smp_b}) + wi_delta);
+          end
+          7'(PWORK + 27): begin
             if (s_snd_wt) begin
-              nm_a   <= n_mag9;
-              n_res  <= {9'b0, s_eff_vol};
-              nm_cnt <= 4'd8;
               mx_neg  <= wt_mix[8];
               mx_play <= playing[pc_ch];
               mx_aud  <= playing[pc_ch]
@@ -2281,28 +2487,28 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               mx_damp <= s_ch_damp;
             end
           end
-          6'(PWORK + 22): begin
-            if (!s_snd_wt)
-              mx_old <= mx_neg ? -$signed(n_res) : $signed(n_res);
+          7'(PWORK + 28): begin
+            if (s_snd_wt && mx_play && mx_damp != 0)
+              s_lp <= mx_lp;
           end
-          6'(PWORK + 23): begin
+          7'(PWORK + 22): begin
+            if (!s_snd_wt)
+              mx_old <= nm_signed;
+          end
+          7'(PWORK + 23): begin
             // A zero ramp bypasses the blend entirely. Otherwise start the
             // 16×6 difference product on the same serialized principle.
             if (!s_snd_wt && s_ramp == 0) begin
               mx_prod <= mx_new;
-            end else if (!s_snd_wt) begin
-              bl_a <= blend_mag;
-              bl_p <= {17'b0, blend_pos};
-              bl_cnt <= 3'd6;
             end
           end
-          6'(PWORK + 34): begin
+          7'(PWORK + 36): begin
             if (s_snd_wt) begin
               mx_new <= nm_signed;
               mx_prod <= nm_signed;
             end
           end
-          6'(PWORK + 30): begin
+          7'(PWORK + 32): begin
             if (!s_snd_wt && s_ramp != 0) begin
               mx_prod <= blend_diff[16]
                            ? (mx_old - $signed({1'b0, bl_res[21:6]}))
@@ -2310,7 +2516,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               s_ramp <= (s_ramp == 7'd64) ? 7'd0 : s_ramp + 7'd1;
             end
           end
-          6'(PFOLD): begin               // fold into the tree
+          7'(PFOLD): begin               // fold into the tree
             // Level 1: hold the even slot's leaf, combine it with the odd one.
             // mix_leaf is zero for a slot that is running but suppressed, which
             // is deliberate - the tree's zero leaves are part of the function.
@@ -2319,9 +2525,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             else
               l1[pc_ch[2:1]] <= sa_r;
             if (mx_aud && mx_rev > rev_max) rev_max <= mx_rev;
-            // the dampen state is the only thing this stage writes back, and it
-            // is written for every RUNNING slot, audible or not
-            if (mx_play && mx_damp != 0) s_lp <= mx_lp;
           end
           default: ;
         endcase

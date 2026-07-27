@@ -1,21 +1,17 @@
 /*
  * Synthesis target: the PSG alone.
  *
- * Answers the question that motivated the whole split: does the audio chip
- * close at the rate rtl/clocks.sv drives it? It does not. Measured at seed 1:
+ * Answers the question that motivated the whole split: what area and Fmax does
+ * the audio chip have at the rate rtl/clocks.sv actually drives it? The PLL is
+ * 112.5 MHz, but the PSG receives its divide-by-four output:
  *
- *     6772 of 7680 logic cells (88%), 16 of 32 BRAM, Fmax 28.24 MHz
- *     critical path  prun -> n_res   (the reciprocal / divide path)
+ *     psgclk = 28.125 MHz, CLK_HZ = 28,125,000
  *
- * against the undivided 112.5 MHz PLL that clocks.sv assigns to psgclk. A 4x
- * miss on committed RTL, which no target in this repo could report before -
- * the only thing the build knew how to assemble was a whole chip that does not
- * fit, and therefore never reached a timing report at all. This closes
- * refactor-psg-voice-pool task 2.2a1 ("112.5 MHz is unproven on an HX8K").
- *
- * The fix - pipelining the reciprocal path nextpnr names - belongs to that
- * change, behind its render comparison. Do NOT "fix" it by editing clocks.sv:
- * every PSG rate derives from that clock.
+ * The old target passed 112,500,000 even after clocks.sv gained PSGDIV=4. That
+ * did not change the physical clock constraint, but it did make the PSG's
+ * fractional sample divider and all clock-count evidence describe a different
+ * circuit from the shipping top. Keep this constant paired with top.sv's
+ * PSG_CLK_HZ whenever the divider changes.
  *
  *
  * WHY THIS ONE DOES NOT GO THROUGH chip.sv
@@ -77,7 +73,7 @@ module target_psg (
     // does for pcm and dout - makes it place and makes the number wrong, by
     // keeping alive logic the console trims. Match the shipping top, always.
     /* verilator lint_off PINCONNECTEMPTY */
-    psg #(.CLK_HZ(32'd112_500_000), .REVERB(1)) psg0 (
+    psg #(.CLK_HZ(32'd28_125_000), .REVERB(1)) psg0 (
         .clk(psgclk), .reset(rst),
         .cs(cs), .rw(rw), .addr(addr), .di(di),
         .dout(dout), .pcm(pcm), .dbg()

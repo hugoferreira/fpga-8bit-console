@@ -55,13 +55,28 @@ def main() -> int:
         pattern = next(c for c in cases if c["name"] == "pattern-chain")
         check(psg_oracle_matrix.tolerance(pattern) == gate,
               "pattern handoff carries the tightened transition gate")
-        for composite_name in ("effect-1-slide", "sfx-instrument"):
+        for composite_name in ("effect-1-slide", "sfx-instrument",
+                               "sfx-instrument-pitch-waveform"):
             composite = next(c for c in cases
                              if c["name"] == composite_name)
             composite_gate = psg_oracle_matrix.tolerance(composite)
-            check(composite_gate["correlation_min"] == 0.99
-                  and composite_gate["nrmse_max"] == 0.105,
-                  f"{composite_name}: bounded composite gate")
+            check(composite_gate["correlation_min"] == 0.999
+                  and composite_gate["nrmse_max"] == 0.03,
+                  f"{composite_name}: strict transition gate")
+        for drop_name in ("effect-3-drop", "effect-drop-once"):
+            drop = next(c for c in cases if c["name"] == drop_name)
+            drop_gate = psg_oracle_matrix.tolerance(drop)
+            check(drop_gate["correlation_min"] == 0.995
+                  and drop_gate["nrmse_max"] == 0.08,
+                  f"{drop_name}: strict drop gate")
+        for secondary_name in ("filter-detune-high", "waveform-instrument"):
+            secondary = next(c for c in cases
+                             if c["name"] == secondary_name)
+            secondary_gate = psg_oracle_matrix.tolerance(secondary)
+            check(secondary_gate["fitted_gain_min"] == 0.99
+                  and secondary_gate["fitted_gain_max"] == 1.01
+                  and secondary_gate["nrmse_max"] == 0.03,
+                  f"{secondary_name}: strict secondary-oscillator gate")
         impulse = next(c for c in cases
                        if c["name"] == "filter-reverb-impulse")
         check(impulse["alignment_max_shift"] == 256,
