@@ -276,6 +276,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [VADR-1:0] state_ra, state_wa;
   logic [15:0] state_wd, state_q;
   logic        state_we, spar_bank;
+  // this trigger pass writes the bank a tick pass already staged
+  logic        join_stage;
   logic [15:0] vwdata;
   logic [3:0]  vcnt;                           // word within the record
   logic [6:0]  pph;                            // sample micro-phase
@@ -373,6 +375,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [16:0] old_q0;
   logic [1:0]  old_mode_r, last_mode_r;
   logic        old_alt_r, last_alt_r;
+  // The reverb digit is oscillator state too (`hmode = state[0x5c]`), so
+  // the copied old continuation combs at the level the PREVIOUS tick
+  // asked for while the new block combs at the current one.
+  logic [1:0]  old_rev_r, last_rev_r;
   logic [6:0]  bl_cnt;               // samples since this voice's copy
   // The wavetable's base address in audio RAM, recomputed rather than stored:
   // 256 + id * 68 is two shifts and an add, against 13 bits per slot of state
@@ -991,6 +997,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // fields until T_/K_FX has produced them.
       vcnt <= 0;
       spar_bank <= 0;
+      join_stage <= 0;
       xs <= 0;
     end else begin
       // Deferred pattern-length capture: T_NL launched w_sp * pat_rows on the
@@ -1019,10 +1026,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // the pass completes on the boundary edge itself, V_ST's textually
       // later assignments win and the flip happens once, immediately.
       if (tick_en_d) begin
-        if (bank_ready) begin
+        // A joined trigger pass writes the SAME staged bank, so flipping
+        // mid-pass would publish it half-updated: defer to its own V_ST.
+        if (bank_ready && !(join_stage && sst != S_IDLE)) begin
           spar_bank <= ~spar_bank;
           bank_ready <= 0;
-        end else if (tickpend || (walk_tick && sst != S_IDLE))
+        end else if (tickpend || ((walk_tick || join_stage) && sst != S_IDLE))
           flip_pend <= 1;
         // Class-1 deferred stops become audible from the boundary sample
         // (the delayed grid).
@@ -1045,19 +1054,32 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // register file into the working copy, the K_/T_/I_ states work on that
         // copy exactly as they did on `name[c]`, and V_ST writes it back.
         S_IDLE: begin
-          // While a staged publication awaits its boundary, hold new work: a
-          // pass dispatched now would rewrite the staged bank and publish it
-          // immediately, leaking the tick results before the boundary. The
-          // hold is at most one sample, the same wait trigger work already
-          // tolerated under the old coincident deferral.
-          if (bank_ready) begin
+          // While a staged publication awaits its boundary, hold new TICK
+          // work: a tick pass dispatched now would rewrite the staged bank
+          // and publish it immediately, leaking its results early.
+          //
+          // A trigger pass is different, and the music pattern advance is
+          // exactly why. W_MUS sets the next pattern's trig_req at the end
+          // of the tick pass that staged the bank, so holding the trigger
+          // until the boundary pushed the new pattern's parameters one
+          // sample PAST it: the boundary sample rendered silence (class-2
+          // stop) and the pattern started a sample late. Instead the
+          // trigger pass JOINS the staged bank - it writes the same
+          // inactive words, skipped slots copy from the staged bank
+          // rather than the active one, and the boundary flip publishes
+          // the tick and its triggers together. Only a plain trigger
+          // pass may join: a CPU music() launch stops slots outside the
+          // bank and still waits for the boundary, as before.
+          if (bank_ready && (trig_req == 0 || mus_launch)) begin
           end else if (mus_launch) begin
             mus_launch <= 0;
             ml_cpu <= 1;
             sst <= ML_STOP;
           end else if (trig_req != 0 || tickpend) begin
-            walk_tick <= tickpend;
-            tickpend <= 0;
+            walk_tick <= tickpend && !bank_ready;
+            join_stage <= bank_ready;
+            if (!bank_ready)
+              tickpend <= 0;
             c <= 0;
             vcnt <= 0;
             sst <= V_LD;
@@ -1099,12 +1121,19 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             vcnt <= 0;
             if (c == VW'(NV-1)) begin
               c <= 0;
-              // A trigger pass publishes at once, as before. The tick
-              // pass stages its bank for the delayed boundary flip -
-              // unless that flip already passed (trigger collision at
-              // pre_tick), where it flips immediately rather than
-              // holding the tick a period.
-              if (!walk_tick)
+              // A standalone trigger pass publishes at once, as before.
+              // A JOINED trigger pass leaves the bank staged: its words
+              // are already in the same inactive bank the boundary is
+              // about to flip (unless the boundary went past while it
+              // ran, which flip_pend records).
+              join_stage <= 0;
+              if (join_stage) begin
+                if (flip_pend) begin
+                  spar_bank <= ~spar_bank;
+                  flip_pend <= 0;
+                  bank_ready <= 0;
+                end
+              end else if (!walk_tick)
                 spar_bank <= ~spar_bank;
               else if (tick_en_d | flip_pend) begin
                 spar_bank <= ~spar_bank;
@@ -1793,7 +1822,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         4'd7:    sosc_wd = {bl_cnt, old_q0[16:8]};
         4'd8:    sosc_wd = s_old_inc[15:0];
         4'd9:    sosc_wd = {s_old_G[7:0], s_old_inc[23:16]};
-        4'd10:   sosc_wd = {5'b0, s_last_wave, s_last_inc[23:16]};
+        4'd10:   sosc_wd = {1'b0, old_rev_r, last_rev_r,
+                            s_last_wave, s_last_inc[23:16]};
         4'd11:   sosc_wd = s_last_inc[15:0];
         4'd12:   sosc_wd = {1'b0, old_alt_r, last_alt_r,
                             last_mode_r, s_old_wave, s_last_G[7:0]};
@@ -1835,6 +1865,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // pattern, generalized).
   wire [4:0] par_act = spar_bank ? V_PAR1 : V_PAR0;   // active bank base
   wire [4:0] par_ina = spar_bank ? V_PAR0 : V_PAR1;   // inactive (publish)
+  // A skipped slot re-publishes its ACTIVE words - except in a joined
+  // trigger pass, where the staged (inactive) bank already holds the tick
+  // results for that slot and copying the active bank would revert them.
+  wire [4:0] par_cpy = join_stage ? par_ina : par_act;
   logic       eng_rd;
   logic [4:0] eng_word;
   always_comb begin
@@ -1857,13 +1891,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               eng_word = e_insfx ? 5'd8 : 5'd2;
               eng_rd = state_replay;
             end
-      // The skipped-slot copy reads the ACTIVE sounding words.
-      K_ROT: eng_word = par_act;
-      PC0:   eng_word = state_replay ? par_act : par_act + 5'd1;
-      PC1:   eng_word = state_replay ? par_act + 5'd1 : par_act + 5'd2;
-      PC2:   eng_word = state_replay ? par_act + 5'd2 : par_act + 5'd3;
+      // The skipped-slot copy reads the ACTIVE sounding words (the
+      // STAGED ones in a joined trigger pass - see par_cpy).
+      K_ROT: eng_word = par_cpy;
+      PC0:   eng_word = state_replay ? par_cpy : par_cpy + 5'd1;
+      PC1:   eng_word = state_replay ? par_cpy + 5'd1 : par_cpy + 5'd2;
+      PC2:   eng_word = state_replay ? par_cpy + 5'd2 : par_cpy + 5'd3;
       PC3:   begin
-               eng_word = par_act + 5'd3;
+               eng_word = par_cpy + 5'd3;
                eng_rd = state_replay;
              end
       default: eng_rd = 1'b0;
@@ -2321,39 +2356,53 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                             : {2'b0, gz_q3acc[33:19]};
   wire signed [16:0] mx_old_eff =
       s_snd_wt ? ((s_old_G == 13'd0) ? 17'sd0 : mx_new) : mx_old;
+  // COMB: tz((2x + h)/2) (the study's narrowed accumulator). It sits
+  // INSIDE each block's render, not after the crossfade, and each block
+  // combs at its OWN state's level - the reverb digit is oscillator
+  // state, so the copied old continuation carries the level the previous
+  // tick asked for. filter-reverb-onset/-level convict the
+  // after-the-blend order: it diverges on exactly the 64 crossfade
+  // samples of every switching tick, by the half tap the old
+  // continuation must not receive. With h=0 (no ring, or an empty one)
+  // the comb is the identity, so the datapath is uniform.
+  logic signed [15:0] ring_q;         // new-level tap (0 without a ring)
+  logic signed [15:0] ring_q_old;     // old-level tap
+  wire signed [18:0] cmbn_acc = {mx_new[16], mx_new, 1'b0}
+                              + {{3{ring_q[15]}}, ring_q};
+  wire signed [18:0] cmbn_tz = cmbn_acc + (cmbn_acc[18] ? 19'sd1 : 19'sd0);
+  wire signed [16:0] cmb_new = (s_ch_rev != 2'd0) ? cmbn_tz[17:1]
+                                                  : mx_new;
+  wire signed [18:0] cmbo_acc = {mx_old_eff[16], mx_old_eff, 1'b0}
+                              + {{3{ring_q_old[15]}}, ring_q_old};
+  wire signed [18:0] cmbo_tz = cmbo_acc + (cmbo_acc[18] ? 19'sd1 : 19'sd0);
+  wire signed [16:0] cmb_old = (old_rev_r != 2'd0) ? cmbo_tz[17:1]
+                                                   : mx_old_eff;
   wire signed [17:0] blend_diff =
-      {mx_new[16], mx_new} - {mx_old_eff[16], mx_old_eff};
+      {cmb_new[16], cmb_new} - {cmb_old[16], cmb_old};
   wire [16:0] blend_mag = blend_diff[17] ? 17'(-blend_diff)
                                          : 17'(blend_diff);
   wire signed [23:0] bl_p = blend_diff[17]
                               ? -$signed({1'b0, bl_res})
                               :  $signed({1'b0, bl_res});
-  wire signed [23:0] bl_acc = {{1{mx_old_eff[16]}}, mx_old_eff, 6'b0}
+  wire signed [23:0] bl_acc = {{1{cmb_old[16]}}, cmb_old, 6'b0}
                             + bl_p;
   wire signed [23:0] bl_acc_tz =
       bl_acc + (bl_acc[23] ? 24'sd63 : 24'sd0);
-  // COMB: tz((2x + h)/2) (the study's narrowed accumulator) - with h=0
-  // this is the identity, so the datapath is uniform whether or not a
-  // ring is built or the digit set. Then DAMPEN: the blend-form
-  // one-pole y = tz((x + (2^d - 1)y)/2^d). The ring stores the final
-  // post-dampen sample through a WRAPPING int16 cell (captured; a
-  // saturating or wider cell is a different answer).
-  logic signed [15:0] ring_q;         // tap data (zero without a ring)
-  wire signed [18:0] cmb_acc = {mx_prod[16], mx_prod, 1'b0}
-                             + {{3{ring_q[15]}}, ring_q};
-  wire signed [18:0] cmb_tz = cmb_acc + (cmb_acc[18] ? 19'sd1 : 19'sd0);
-  wire signed [16:0] cmb_y = (s_ch_rev != 2'd0) ? cmb_tz[17:1]
-                                                : mx_prod;
+  // DAMPEN runs once, on the blended stream, with the current digit:
+  // the blend-form one-pole y = tz((x + (2^d - 1)y)/2^d). The ring
+  // stores the final post-comb, post-dampen sample through a WRAPPING
+  // int16 cell (captured; a saturating or wider cell is a different
+  // answer).
   wire signed [18:0] dmp_mul = (s_ch_damp == 2'd1)
                                  ? {{2{s_lp[16]}}, s_lp}
                                  : ({s_lp, 2'b0} - {{2{s_lp[16]}}, s_lp});
-  wire signed [18:0] dmp_acc = {{2{cmb_y[16]}}, cmb_y} + dmp_mul;
+  wire signed [18:0] dmp_acc = {{2{mx_prod[16]}}, mx_prod} + dmp_mul;
   wire signed [18:0] dmp_tz =
       dmp_acc + (dmp_acc[18] ? ((s_ch_damp == 2'd1) ? 19'sd1 : 19'sd3)
                              : 19'sd0);
   wire signed [16:0] dmp_y = (s_ch_damp == 2'd1) ? dmp_tz[17:1]
                                                  : dmp_tz[18:2];
-  wire signed [16:0] filt_y = (s_ch_damp != 2'd0) ? dmp_y : cmb_y;
+  wire signed [16:0] filt_y = (s_ch_damp != 2'd0) ? dmp_y : mx_prod;
   // The shared service forms |new-old| * blend_pos; dividing by 64 is a
   // wiring shift and the saved sign reproduces truncation toward zero.
   wire [22:0] bl_res = m_res[22:0];
@@ -2653,20 +2702,32 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   generate
   if (REVERB) begin : g_ring
     logic [15:0] ringm[0:NV * 732 - 1];
+    logic [15:0] ring_rd;
     initial for (int i = 0; i < NV * 732; i++) ringm[i] = 16'd0;
+    // Both blocks tap the same ring at their own lookback, so the two
+    // reads are sequenced onto ONE port: the new level at +70, the old
+    // at +71, both landing before the blend product launches at +75.
+    // Level 2's tap is the write cell itself; the write stays at +87,
+    // so it is still read-before-write.
+    wire [1:0] ring_lvl = (pph == 7'(PWORK + 70)) ? s_ch_rev : old_rev_r;
     wire [9:0] ring_tap =
-        (s_ch_rev == 2'd1)
+        (ring_lvl == 2'd1)
           ? ((ring_rp >= 10'd366) ? ring_rp - 10'd366
                                   : ring_rp + 10'd366)
           : ring_rp;
     always_ff @(posedge clk) begin
-      if (prun && pph == 7'(PWORK + 85))
-        ring_q <= $signed(ringm[{4'b0, pc_ch} * 732 + {3'b0, ring_tap}]);
+      if (prun && (pph == 7'(PWORK + 70) || pph == 7'(PWORK + 71)))
+        ring_rd <= ringm[{4'b0, pc_ch} * 732 + {3'b0, ring_tap}];
+      if (prun && pph == 7'(PWORK + 71))
+        ring_q <= $signed(ring_rd);
+      if (prun && pph == 7'(PWORK + 72))
+        ring_q_old <= $signed(ring_rd);
       if (prun && pph == 7'(PWORK + 87) && playing[pc_ch])
         ringm[{4'b0, pc_ch} * 732 + {3'b0, ring_rp}] <= mx_filt[15:0];
     end
   end else begin : g_noring
     always_comb ring_q = 16'sd0;
+    always_comb ring_q_old = 16'sd0;
   end
   endgenerate
 
@@ -2776,7 +2837,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           7'd10: if (!REALTIME_PREVIEW)
                     {s_old_G[7:0], s_old_inc[23:16]} <= state_q;
           7'd11: if (!REALTIME_PREVIEW)
-                    {s_last_wave, s_last_inc[23:16]} <= state_q[10:0];
+                    {old_rev_r, last_rev_r, s_last_wave,
+                     s_last_inc[23:16]} <= state_q[14:0];
           7'd12: if (!REALTIME_PREVIEW) s_last_inc[15:0] <= state_q;
           7'd13: if (!REALTIME_PREVIEW)
                     {old_alt_r, last_alt_r, last_mode_r, s_old_wave,
@@ -2911,10 +2973,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             // copying only when a sounding parameter changes is
             // byte-equivalent - and it starts the window at the voice's
             // own parameter arrival, absorbing trigger-service latency.
+            // The reverb digit counts as a sounding parameter: the two
+            // blocks comb at their own levels, so a level change alone
+            // makes the blend audible (filter-reverb-onset/-level).
             if (playing[pc_ch]
                 && (s_eff_inc != s_last_inc || g_live != s_last_G
                     || s_snd_wave != s_last_wave
                     || s_ch_det != last_mode_r
+                    || s_ch_rev != last_rev_r
                     || s_ch_buzz != last_alt_r)) begin
               bl_cnt <= 7'd0;
               s_old_phase <= s_phase;
@@ -2924,6 +2990,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               s_old_wave <= s_last_wave;
               old_mode_r <= last_mode_r;
               old_alt_r <= last_alt_r;
+              old_rev_r <= last_rev_r;
               // A zero-amplitude tick is not an inaudible running
               // oscillator: the next nonzero tick starts from the
               // canonical phase (speed-2 fade-in rows prove it).
@@ -2963,6 +3030,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             s_last_wave <= s_snd_wave;
             last_mode_r <= s_ch_det;
             last_alt_r <= s_ch_buzz;
+            last_rev_r <= s_ch_rev;
           end
           7'(PWORK + 3): begin           // preceding-state waveform sample
             if (s_snd_wt)
@@ -3074,19 +3142,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                                 : $signed(gz_old_scaled);
           end
           7'(PWORK + 86): begin
-            // The filter stage: comb (tap read landed last cycle),
-            // then dampen; the dampen state advances only when its
-            // digit is set, like the model's damp_y.
+            // The dampen stage, on the already-combed and blended
+            // sample; the dampen state advances only when its digit is
+            // set, like the model's damp_y.
             mx_filt <= filt_y;
             if (s_ch_damp != 2'd0)
               s_lp <= dmp_y;
           end
           7'(PWORK + 84): begin
-            // Blend consume: tz((64*old + i*(new - old)) / 64) - the
-            // truncation is over the WHOLE accumulator (blend.one_multiply
-            // + tzpow), not split across the terms.
+            // Blend consume: tz((64*old + i*(new - old)) / 64) over the
+            // COMBED blocks - the truncation is over the WHOLE
+            // accumulator (blend.one_multiply + tzpow), not split across
+            // the terms.
             if (bl_cnt == 7'd64)
-              mx_prod <= mx_new;
+              mx_prod <= cmb_new;
             else
               mx_prod <= 17'(bl_acc_tz >>> 6);
           end

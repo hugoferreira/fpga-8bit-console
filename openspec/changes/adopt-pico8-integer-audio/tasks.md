@@ -68,6 +68,21 @@
       ring on iCE40 and eight on Gowin behind REVERB (design 8). Two ring
       reads per sample during the 64-sample blend when the levels differ.
       The shared output delay retires
+- [x] 2.5a COMPLETE: the comb moved inside both blocks (`cmb_new` at
+      `s_ch_rev`, `cmb_old` at the new `old_rev_r`, one ring port
+      sequenced at PWORK+70/+71 so a level change costs no second RAM),
+      the reverb digit joined the params-changed copy set, and the
+      PATTERN-ADVANCE slip closed with it. That slip was ONE SAMPLE, not
+      one tick: W_MUS set the next pattern's `trig_req` at the end of the
+      tick pass that had already staged its bank, S_IDLE held the trigger
+      behind `bank_ready` to the boundary, and the boundary sample then
+      rendered silence (the class-2 stop landed while the trigger pass
+      was still queued). A trigger pass now JOINS the staged bank -
+      skipped slots copy through `par_cpy` from the staged words instead
+      of the active ones - so one boundary flip publishes the tick and
+      its triggers together. pattern-chain, filter-reverb-onset and
+      filter-reverb-level are byte-exact; 44/44 non-section-3 cases green
+      (was 41), psg_tb ALL PASS, walk 906/1275, pre-run 2321/2550
 - [ ] 2.6 Mixer rescale: SA_TH -> 24576, exact-scale leaves, retire the
       2x internal scale and the output >>6; dry16 is the final sum
       (bound.mix_never_clips holds under the four-audible invariant)
