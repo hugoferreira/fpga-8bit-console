@@ -65,6 +65,7 @@
 `include "psg_aram.sv"
 `include "psg_mulsvc.sv"
 `include "psg_divsvc.sv"
+`include "psg_state_mem.sv"
 
 module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
              parameter REALTIME_PREVIEW = 0, parameter DBG_PORT = 1)
@@ -233,28 +234,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   localparam int PSTOR = REALTIME_PREVIEW ? 16 : 52;
   localparam int PLAST = REALTIME_PREVIEW ? 23 : 108;
 
-  // One 256x16 scheduled store holds every per-slot record:
-  //
-  //   word  0.. 9  tick/note state
-  //   word 10..23  oscillator state
-  //   word 24..27  sounding parameter bank 0
-  //   word 28..31  sounding parameter bank 1
-  //
-  // Eight slots x 32 words is exactly one iCE40 EBR. The sequencer writes the
+  // The scheduled record store is u_state (rtl/psg_state_mem.sv), which owns
+  // the memory and the two-owner port priority. The sequencer writes the
   // inactive parameter bank and flips spar_bank only after the complete
   // eight-slot walk, so synthesis never observes a partly published tick.
-  logic [15:0] state_m[0:PSG_NV*PSG_VSTR-1];
-  logic [PSG_VADR-1:0] state_ra, state_wa;
-  logic [15:0] state_wd, state_q;
-  logic        state_we, spar_bank;
+  wire  [15:0] state_q;
+  logic        spar_bank;
   // this trigger pass writes the bank a tick pass already staged
   logic        join_stage;
   logic [15:0] vwdata;
   logic [3:0]  vcnt;                           // word within the record
   logic [6:0]  pph;                            // sample micro-phase
-  // Simulation determinism, and a free BRAM init on iCE40. Without it iverilog
-  // starts the record at X and the X leaks through the packing.
-  initial for (int i = 0; i < PSG_NV * PSG_VSTR; i++) state_m[i] = 16'h0000;
 
   // The working copy: the record of the slot the walk is visiting. The
   // counter/loop family (tcnt/fcnt, sp, lps/lpe, play_len, both banks) has
@@ -520,12 +510,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [12:0] syn_addr;
   logic        prun;
   wire         seq_frozen;
-  // A sample owns the scheduled state store for its complete bounded walk.
-  // Tick-first ordering gives the 120 Hz microprogram an uncontested port on
-  // the boundary where its result matters; ordinary trigger work can wait one
-  // sample without changing any sample-visible state. One replay cycle restores
-  // a synchronous V_LD word displaced when a sample began mid-trigger.
-  logic        state_replay;
+  // u_state's export: the sequencer's synchronous read was displaced by a
+  // sample and has to be re-issued.
+  wire         state_replay;
   // The serial soft_add fold engine (datapath in the mixer section below).
   // Declared here because walk_frozen must hold the tick sequencer while the
   // post-walk fold chain still owns the phase ALU and the m service idle slot.
@@ -545,12 +532,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                                && pph < 7'(PSTOR + PLOSC))
                                || state_lp_we;
   wire         walk_frozen = seq_frozen | prun | state_replay | fold_busy;
-  always_ff @(posedge clk) begin
-    if (reset)
-      state_replay <= 0;
-    else
-      state_replay <= prun;
-  end
 
   psg_aram u_aram(
     .clk(clk), .reset(reset),
@@ -2123,24 +2104,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     end
   end
 
-  // ---- the port: fixed priority, sample walk first ---------------------
-  // The tick engine is frozen for the complete sample walk, so these owners
-  // never contend in practice; retaining explicit priority makes that port
-  // contract structural.
-  always_comb begin
-    state_ra = state_sample_read ? wlk_ra : etk_ra;
-    state_we = state_sample_we | etk_we;
-    state_wa = state_sample_we ? wlk_wa : etk_wa;
-    state_wd = state_sample_we ? wlk_wd : etk_wd;
-  end
-
-  // Exactly one synchronous read site and one write site: this is the shape
-  // expected to lower to a single SB_RAM40_4K simple-dual-port instance.
-  always_ff @(posedge clk) begin
-    if (state_we)
-      state_m[state_wa] <= state_wd;
-    state_q <= state_m[state_ra];
-  end
+  // The store, and the fixed sample-walk-first priority between the two
+  // owner bundles above.
+  psg_state_mem u_state(
+    .clk(clk), .reset(reset),
+    .wlk_rd(state_sample_read), .wlk_ra(wlk_ra),
+    .wlk_we(state_sample_we), .wlk_wa(wlk_wa), .wlk_wd(wlk_wd),
+    .etk_ra(etk_ra), .etk_we(etk_we), .etk_wa(etk_wa), .etk_wd(etk_wd),
+    .prun(prun), .state_replay(state_replay), .state_q(state_q));
 
   // ---- the sample walk's control store -------------------------------
   // The hardware schedule is a pure function of pph, so its step decode

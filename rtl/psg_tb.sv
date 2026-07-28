@@ -234,19 +234,24 @@ module psg_tb;
 
   // The instrument playhead's row moved into the PSG's scheduled state store,
   // so it is no longer an addressable `ins_row[v]`. Word 5 of slot v holds
-  // Words per slot in psg.sv's record. It grew from 32 to 64 when the
-  // per-slot arrays moved in; every probe below indexes through it, so
-  // this constant and psg.sv's VSTR must move together.
+  // Words per slot in the PSG's record. It grew from 32 to 64 when the
+  // per-slot arrays moved in; every probe below indexes through it, so this
+  // constant and rtl/psg_common.svh's PSG_VSTR must move together.
+  //
+  // BIND CONVENTION: a probe reads the signal where its OWNER lives. The
+  // store is dut.u_state, so every state_m peek goes through it; signals
+  // that are still top-level interconnect (sample_en, prun, dry_valid,
+  // spar_bank, bank_ready, pre_tick, tick_en) are read off dut directly.
   localparam int VSTR = 64;
 
   // {ins_vol, ins_wave, ins_row, ins_id, bf_damp} - mirror of psg.sv's vpack(),
   // which is the definition to re-check if this ever stops matching. The record
   // is written back at the end of each visit, so it is current between walks.
   function automatic logic [4:0] row_of(input int v);
-    row_of = dut.state_m[v * VSTR + 32][4:0];
+    row_of = dut.u_state.state_m[v * VSTR + 32][4:0];
   endfunction
   function automatic logic [4:0] ins_row_of(input int v);
-    ins_row_of = dut.state_m[v * VSTR + 5][9:5];
+    ins_row_of = dut.u_state.state_m[v * VSTR + 5][9:5];
   endfunction
 
   // State in the PSG's unified store. The active sounding bank begins at word
@@ -255,31 +260,31 @@ module psg_tb;
     int b;
     begin
       b = v * VSTR + (dut.spar_bank ? 28 : 24);
-      eff_inc_of = {dut.state_m[b+1][7:0], dut.state_m[b+0]};
+      eff_inc_of = {dut.u_state.state_m[b+1][7:0], dut.u_state.state_m[b+0]};
     end
   endfunction
   function automatic logic [23:0] phase2_of(input int v);
-    phase2_of = {dut.state_m[v*VSTR+13][7:0], dut.state_m[v*VSTR+12]};
+    phase2_of = {dut.u_state.state_m[v*VSTR+13][7:0], dut.u_state.state_m[v*VSTR+12]};
   endfunction
   function automatic logic snd_wt_of(input int v);
     int b;
     begin
       b = v * VSTR + (dut.spar_bank ? 28 : 24);
-      snd_wt_of = dut.state_m[b+1][11];
+      snd_wt_of = dut.u_state.state_m[b+1][11];
     end
   endfunction
   function automatic logic [11:0] eff_vol_of(input int v);
     int b;
     begin
       b = v * VSTR + (dut.spar_bank ? 28 : 24);
-      eff_vol_of = dut.state_m[b+3][11:0];
+      eff_vol_of = dut.u_state.state_m[b+3][11:0];
     end
   endfunction
   function automatic logic [1:0] ch_damp_of(input int v);
     int b;
     begin
       b = v * VSTR + (dut.spar_bank ? 28 : 24);
-      ch_damp_of = dut.state_m[b+2][13:12];
+      ch_damp_of = dut.u_state.state_m[b+2][13:12];
     end
   endfunction
 
