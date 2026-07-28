@@ -169,7 +169,32 @@
       pre-run 5,052/7,654. The critical path is now tab7's output into
       smp_b, which is the expected cost of putting a block read in the
       wave cone and leaves 11 MHz of margin.
-- [ ] R.6 Next, if more is wanted: the campaign's own goal is 5,500. The
+- [ ] R.6 Per-slot arrays: PRICED, and blocked on a product decision.
+      Collapsing sfx_id and row to single registers (function broken,
+      number only) measures **7,672 -> 7,423, so -249** - far more than
+      the -90 a flop count suggests, because an array's flops share one
+      D net behind per-slot enables, so ALL of them are unpackable AND
+      the read/write decode goes with them.
+      The blocker is not the sequencer: row is entirely visit-scoped
+      (arow, sa_off, seed5, the advance) and sfx_id needs only staging
+      at T_FL, so both fit the V_LD/V_ST working-register pattern that
+      every section-3 family won with, and VSTR 32->64 costs one spare
+      block. It is the OBSERVERS. `dout` answers $10-$17 with the
+      AUDIBLE slot's row/sfx - documented as "the ownership state a cart
+      can actually observe" - and `dbg` exports four channels at once
+      for --psg-trace and tools/p8_music_trace.py. A single-port record
+      cannot serve a four-slot simultaneous read.
+      Three ways out, and the choice is a product one:
+      (a) mirror the four audible slots (44 bits), updated at each
+          slot's V_ST and at ML_L0-L3. Nets about -180. Row stays exact
+          (its advance and the mirror write are the same visit), but
+          when a foreground effect stops mid-tick the reported value
+          lags one tick behind the audible-slot flip.
+      (b) serve $10-$17 from the record through the state port. Exact,
+          but the port is shared with the walk and needs collision
+          handling like the aram replay path.
+      (c) leave them. The design places without this.
+- [ ] R.7 Next, if more is wanted: the campaign's own goal is 5,500. The
       NEW fact since the campaign paused is EBR headroom: REVERB=0 uses
       11 of 32 blocks, where the old ceiling was 15 and `record 32/32
       full` is what priced the per-slot arrays dead. state_m is 8 x 32 x
