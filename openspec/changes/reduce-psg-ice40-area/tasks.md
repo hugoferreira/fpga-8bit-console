@@ -292,3 +292,37 @@
       tables landed - 19 use-before-declare errors predate this stage;
       psg_tb runs under the Verilator invocation in its own header
       (now needs -Wno-PINMISSING for the DBG_PORT-era unconnected dbg).**
+- [x] R.9 The sample schedule becomes a control store (`b1a89dd`):
+      7,456 -> 7,397 (**-59**), 21/32 EBR. The hardware walk's step
+      decode - 22 capture arms, 11 product-request labels, wave-issue
+      contexts, wavetable read windows - reads from a 128x32 one-hot
+      ROM (tools/gen_psg_ctrl.py -> rtl/psg_ctrl.hex) fetched at pph+1.
+      Two shapes measured: parallel-IF built priority chains (+154
+      structural, -46 placed); case (1'b1) over the ctrl bits with
+      (* parallel_case *) - sound because the generator asserts one
+      capture bit per word - is +15 structural, -59 placed. VERDICT ON
+      THE WHOLE DECODE TERRITORY: ~-59 is what the equality fabric was
+      worth; the mass is in data muxes and registers, which a control
+      store cannot reach. The tick-side (sst) decode is smaller still
+      and its next-state is branchy - priced NOT worth building.
+- [x] R.10 Fold-stack width: fstk/fda/fdb/mix_leaf 22 -> 18 bits:
+      7,397 -> 7,385 (**-12** placed, -71 structural - mapping absorbed
+      most of the gate delta this time; kept because the structural
+      metric says it is netlist-real and the change is risk-free).
+      PROOF: a leaf is an int16-wrapped sample; soft_add is contractive
+      toward 32768 (TH + (2*32768-TH)/5 = 32768 exactly), so every
+      stack value is <= |32768| and every raw pair sum <= |65536| -
+      18-bit signed carries both. Oracle 59/59, psg_tb ALL PASS.
+      **Campaign state under the -1000 goal (2026-07-28): 7,646 ->
+      7,385, cumulative -261, every stage byte-identical. The measured
+      evidence says the remaining ~-740 is NOT reachable while every
+      render byte stays fixed: all major families ablation-priced (fx
+      -960 structural bound, wave -1,493, ins -327, old/crossfade -392,
+      noise -66, all over-attributing); both bulk strategies were BUILT
+      and measured (control store -59; identity harvest -190); the
+      selection-eats-arithmetic law held in four independent
+      experiments; and the sum of every remaining mapped idea - service
+      reorder to retire old_smp/old_smpb, tick-side microword, ins
+      decode shavings - is -150..250 optimistic. Anything larger means
+      render-visible trades (crossfade, custom instruments, the noise
+      process), which are product decisions, not area work.**

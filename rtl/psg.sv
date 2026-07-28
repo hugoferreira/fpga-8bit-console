@@ -2894,10 +2894,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         ? (mxs_new ? -$signed({1'b0, m_res[22:7]})
                    :  $signed({1'b0, m_res[22:7]}))
         : {mx_filt[15], mx_filt[15:0]};
-  wire signed [21:0] n_contrib = {{5{mix_prod[16]}}, mix_prod};
+  wire signed [17:0] n_contrib = {mix_prod[16], mix_prod};
   // This slot's leaf in the reduction tree: its sample, or an explicit zero
   // when it is running but not audible.
-  wire signed [21:0] mix_leaf = mx_aud ? n_contrib : 22'sd0;
+  wire signed [17:0] mix_leaf = mx_aud ? n_contrib : 18'sd0;
 
   // ---- PICO-8's pairwise soft_add reduction --------------------------
   // The flat sum with a hard clamp at +-131068 is gone. PICO-8 reduces the
@@ -2956,7 +2956,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // unsigned-concatenation trap does not exist here, but the sign extension
   // below is still load-bearing for exactly that reason.
   localparam signed [22:0] SA_TH = 23'sd24576;    // the binary's, at 1x
-  logic signed [21:0] fstk[0:2];      // S0, S1, S2
+  // 18 bits, not 22: a leaf is an int16-wrapped sample (the ring's
+  // wrap defines the domain), soft_add is contractive toward 32768
+  // (TH + (2*32768 - TH)/5 = 32768 exactly), so every stack value is
+  // <= |32768| and every raw pair sum <= |65536| - 18-bit signed
+  // carries both with a bit to spare.
+  logic signed [17:0] fstk[0:2];      // S0, S1, S2
   logic [2:0]  fsel;                  // active fold: see fda/fdb below
   logic [1:0]  fpend;                 // folds still queued in this chain
   logic        ffin;                  // this chain ends in dry16
@@ -2967,7 +2972,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
   // Fold operand selection: 0/1/2 combine a stack entry with the slot leaf,
   // 3 folds S1 into S0, 4 folds S2 into S1. fda is always the destination.
-  logic signed [21:0] fda, fdb;
+  logic signed [17:0] fda, fdb;
   always_comb begin
     case (fsel)
       3'd0:    begin fda = fstk[0]; fdb = mix_leaf; end
@@ -2988,12 +2993,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   always_comb begin
     fold_a = 24'd0; fold_b = 24'd0; fold_sub = 1'b0; fold_cin = 1'b0;
     case (fmc)
-      4'd1:  begin fold_a = {{2{fda[21]}}, fda};
-                   fold_b = {{2{fdb[21]}}, fdb}; end
-      4'd2:  begin fold_a = {{2{fda[21]}}, fda};
+      4'd1:  begin fold_a = {{6{fda[17]}}, fda};
+                   fold_b = {{6{fdb[17]}}, fdb}; end
+      4'd2:  begin fold_a = {{6{fda[17]}}, fda};
                    fold_b = 24'(SA_TH); fold_sub = 1'b1; end
       4'd3:  begin fold_a = 24'(-SA_TH);
-                   fold_b = {{2{fda[21]}}, fda}; fold_sub = 1'b1; end
+                   fold_b = {{6{fda[17]}}, fda}; fold_sub = 1'b1; end
       4'd4:  begin fold_a = {7'b0, fx_r[17:1]};
                    fold_b = {8'b0, fx_r[17:2]}; end
       4'd5:  begin fold_a = {6'b0, ft2};
@@ -3008,7 +3013,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                    fold_b = {8'b0, ft2[17:2]};
                    fold_cin = (fr_r >= 4'd5); end
       4'd10: begin fold_a = 24'd0;
-                   fold_b = {{2{fda[21]}}, fda}; fold_sub = 1'b1; end
+                   fold_b = {{6{fda[17]}}, fda}; fold_sub = 1'b1; end
       default: ;
     endcase
   end
@@ -3090,7 +3095,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // until the final fold lands in dry16.
       if (fmc != 4'd0) begin
         case (fmc)
-          4'd1:  begin fstk[fdsti] <= phase_alu_y[21:0]; fmc <= 4'd2; end
+          4'd1:  begin fstk[fdsti] <= phase_alu_y[17:0]; fmc <= 4'd2; end
           4'd2:  begin
             f_over <= ~phase_alu_y[23];
             if (!phase_alu_y[23]) fx_r <= phase_alu_y[17:0];
@@ -3105,10 +3110,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           4'd7:  begin fx_r <= phase_alu_y[17:0]; fmc <= 4'd8; end
           4'd8:  begin fr_r <= phase_alu_y[3:0]; fmc <= 4'd9; end
           4'd9:  begin
-            if (f_over | f_under) fstk[fdsti] <= phase_alu_y[21:0];
+            if (f_over | f_under) fstk[fdsti] <= phase_alu_y[17:0];
             fmc <= f_under ? 4'd10 : 4'd11;
           end
-          4'd10: begin fstk[fdsti] <= phase_alu_y[21:0]; fmc <= 4'd11; end
+          4'd10: begin fstk[fdsti] <= phase_alu_y[17:0]; fmc <= 4'd11; end
           default: begin                       // chain step complete
             if (fpend != 2'd0) begin
               fpend <= fpend - 1;
