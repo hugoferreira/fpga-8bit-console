@@ -391,3 +391,13 @@
       in the freeze/replay corner, for -35..55. The pph side only
       worked because the sample walk cannot be frozen: it IS the
       freezer. No positive-EV render-exact move remains mapped.
+      THE CLOSING THEOREM (why every restructure measured ~0 or worse):
+      iCE40 LUT4s absorb selection conditions into arithmetic LUTs for
+      free - a mux-fed add costs what the add costs - so the design's
+      combinational shape networks ARE the minimal encoding of its
+      shape-conditional arithmetic. Anything that moves selection out
+      of the arithmetic (serial operand arms, masked trees, microword
+      tables, aliased defaults) must buy back the selection the LUT4s
+      gave away free. The campaign's real wins were exactly the two
+      things this theorem permits: retiring carry chains (identities,
+      invisible-bound widths) and retiring whole-cell decode fabric.
