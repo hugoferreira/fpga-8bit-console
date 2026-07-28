@@ -247,9 +247,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   localparam logic [4:0] V_PAR1 = 5'd28;
   localparam int PLOSC = REALTIME_PREVIEW ? 7  : SOSC;
   localparam int PWORK = REALTIME_PREVIEW ? 12 : 19;
-  localparam int PFOLD = REALTIME_PREVIEW ? 23 : 69;
+  localparam int PFOLD = REALTIME_PREVIEW ? 23 : 104;
   localparam int PSTOR = REALTIME_PREVIEW ? 16 : 52;
-  localparam int PLAST = REALTIME_PREVIEW ? 23 : 69;
+  localparam int PLAST = REALTIME_PREVIEW ? 23 : 104;
 
   // One 256x16 scheduled store holds every per-slot record:
   //
@@ -734,16 +734,18 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // 120 times a second - about 240 clocks in a tick.
   // ------------------------------------------------------------------
   logic [23:0] m_a;
-  logic [34:0] m_p;                  // accumulator plus 8/10-bit multiplier
+  logic [36:0] m_p;                  // accumulator plus 8/10/12-bit multiplier
   logic [3:0]  m_cnt;
-  logic        m_wide;
+  logic [1:0]  m_mode;               // 0: 8-bit B, 1: 10-bit, 2: 12-bit
   // Reset contract: m_cnt and the micro-PC are validity/control state and
   // reset to idle.  m_a/m_p and the working results below are datapath:
   // every one is overwritten by the six-op program before it is observed.
-  wire  [24:0] m_acc = m_wide ? m_p[34:10] : m_p[32:8];
+  wire  [24:0] m_acc = (m_mode == 2'd2) ? m_p[36:12]
+                     : (m_mode == 2'd1) ? m_p[34:10] : m_p[32:8];
   wire  [25:0] m_sum = {1'b0, m_acc} + (m_p[0] ? {2'b0, m_a} : 26'd0);
   wire  [31:0] m_res = m_p[31:0];
   wire  [33:0] m_res_wide = m_p[33:0];
+  wire  [27:0] m_res12 = m_p[27:0];
   wire         m_busy = (m_cnt != 0);
 
   // Effect microinstruction contract (xs is the micro-PC):
@@ -1770,7 +1772,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         4'd3:    sosc_wd = {1'b0, s_old_G[12:8], s_last_G[12:8],
                             s_nz_ph, s_phase2[16]};
         4'd4:    sosc_wd = {3'b0, s_brown};
-        4'd5:    sosc_wd = s_lp;
+        4'd5:    sosc_wd = 16'd0;         // dampen state: task 2.5
         4'd6:    sosc_wd = s_old_phase[15:0];
         4'd7:    sosc_wd = {s_ramp, 1'b0, s_old_phase[23:16]};
         4'd8:    sosc_wd = s_old_inc[15:0];
@@ -1984,9 +1986,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     tzs = (v + (v[17] ? $signed((18'sd1 <<< k) - 18'sd1) : 18'sd0)) >>> k;
   endfunction
 
+  // The cone is two REGISTERED stages so the reciprocal CSD networks do
+  // not sit on the same path as the ramp arithmetic (routed Fmax fell
+  // to 25 MHz single-cycle): stage 1 forms every linear piece and the
+  // reciprocal operands; stage 2 runs the reciprocals and composes.
+  // Captures shift one phase later (main +2, secondary +3, old +4).
   // tri_raw: 3x - 49152, mirrored above 0x8000; +/-49152. 3x reaches
-  // 196,605, so the intermediate carries 19 unsigned bits before the
-  // signed fold narrows it.
+  // 196,605, so the intermediate carries 19 unsigned bits.
   wire [18:0] tri3x = {3'b0, wx_r} + {2'b0, wx_r, 1'b0};
   wire signed [19:0] tri_w =
       wx_r[15] ? (20'sd147456 - $signed({1'b0, tri3x}))
@@ -2002,11 +2008,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [30:0] t24572 = ({15'b0, tramp} << 14) + ({15'b0, tramp} << 13)
                      - ({15'b0, tramp} << 2);
   wire [18:0] t_pre = tilt_hi ? t24572[30:12] : {1'b0, t24572[30:13]};
-  wire [37:0] t_p7  = 38'(t_pre) * 38'd149797;
-  wire [37:0] t_p15 = 38'(t_pre) * 38'd279621;
-  wire [14:0] t_div = tilt_tail ? t_pre[14:0]
-                    : tilt_hi ? t_p15[36:22] : t_p7[34:20];
-  wire signed [17:0] tilt_v = $signed({3'b0, t_div}) - 18'sd12286;
   // saw: tz((x - 32768)/4); saw_alt folds in the half-rate copy.
   wire signed [15:0] saw_sx = $signed({~wx_r[15], wx_r[14:0]});
   wire signed [17:0] saw_v = tzs({{2{saw_sx[15]}}, saw_sx}, 2'd2);
@@ -2016,37 +2017,74 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [15:0] sq_th = (wsel_r == 3'd3) ? (walt_r ? 16'h9800 : 16'h8000)
                                        : (walt_r ? 16'hC800 : 16'hB000);
   wire signed [17:0] sq_v = (wx_r < sq_th) ? -18'sd6143 : 18'sd6143;
-  // organ: two linear pieces, then half-slope ramps through recip3.
+  // organ linear pieces; the half-slope ramp waits for stage 2's recip3.
   wire [14:0] org_ramp = wx_r[14] ? 15'(16'd0 - wx_r) : wx_r[14:0];
-  wire [33:0] org_p = 34'(org_ramp) * 34'd174763;
-  wire signed [17:0] organ_v =
-      !wx_r[15] ? (!wx_r[14] ? ($signed({2'b0, wx_r}) - 18'sd8192)
-                             : (18'sd24576 - $signed({2'b0, wx_r})))
-                : ($signed({4'b0, org_p[31:18]}) - 18'sd8192);
-  // tri_alt = skew (the 57344 tilt) + 3 * tz(tri_raw/4).
+  wire signed [17:0] org_lin =
+      !wx_r[14] ? ($signed({2'b0, wx_r}) - 18'sd8192)
+                : (18'sd24576 - $signed({2'b0, wx_r}));
   wire signed [17:0] tri4 = tzs(tri_v, 2'd2);
-  wire signed [17:0] tri_alt_v = tilt_v + tri4 + (tri4 <<< 1);
-  // wave-5 buzz secondary: the half-amplitude square on q.
   wire signed [17:0] org_alt_sec = wx_r[15] ? 18'sd3071 : -18'sd3071;
+
+  // The stage-1 value for every non-reciprocal shape, selected here so
+  // stage 2 keeps only the divide cones and the final compose.
+  logic signed [17:0] z_lin;
+  always_comb begin
+    case (wsel_r)
+      3'd0:    z_lin = tri_v;              // alt adds the skew in stage 2
+      3'd7:    z_lin = tri_v;
+      3'd2:    z_lin = walt_r ? saw_alt_v : saw_v;
+      3'd3, 3'd4: z_lin = sq_v;
+      3'd5:    z_lin = (walt_r && wsec_r) ? org_alt_sec : org_lin;
+      default: z_lin = 18'sd0;             // wave 6: its own path
+    endcase
+  end
+
+  logic signed [17:0] z_lin_r;
+  logic [18:0] t_pre_r;
+  logic        tilt_hi_r, tilt_tail_r, org_hi_r;
+  logic [14:0] org_ramp_r;
+  logic signed [17:0] tri4_r;
+  logic [2:0]  wsel_r2;
+  logic        wsec_r2, walt_r2;
+  always_ff @(posedge clk) begin
+    z_lin_r <= z_lin;
+    t_pre_r <= t_pre;
+    tilt_hi_r <= tilt_hi;
+    tilt_tail_r <= tilt_tail;
+    org_hi_r <= wx_r[15];
+    org_ramp_r <= org_ramp;
+    tri4_r <= tri4;
+    wsel_r2 <= wsel_r;
+    wsec_r2 <= wsec_r;
+    walt_r2 <= walt_r;
+  end
+
+  // Stage 2: the reciprocal cones and the composition.
+  wire [37:0] t_p7  = 38'(t_pre_r) * 38'd149797;
+  wire [37:0] t_p15 = 38'(t_pre_r) * 38'd279621;
+  wire [14:0] t_div = tilt_tail_r ? t_pre_r[14:0]
+                    : tilt_hi_r ? t_p15[36:22] : t_p7[34:20];
+  wire signed [17:0] tilt_v2 = $signed({3'b0, t_div}) - 18'sd12286;
+  wire [33:0] org_p = 34'(org_ramp_r) * 34'd174763;
+  wire signed [17:0] org_div = $signed({4'b0, org_p[31:18]}) - 18'sd8192;
+  wire signed [17:0] tri_alt_v = tilt_v2 + tri4_r + (tri4_r <<< 1);
 
   logic signed [17:0] z_prim;
   always_comb begin
-    case (wsel_r)
-      3'd0:    z_prim = walt_r ? tri_alt_v : tri_v;
-      3'd7:    z_prim = tri_v;
-      3'd1:    z_prim = tilt_v;
-      3'd2:    z_prim = walt_r ? saw_alt_v : saw_v;
-      3'd3, 3'd4: z_prim = sq_v;
-      3'd5:    z_prim = (walt_r && wsec_r) ? org_alt_sec : organ_v;
-      default: z_prim = 18'sd0;      // wave 6: noise has its own path
+    case (wsel_r2)
+      3'd0:    z_prim = walt_r2 ? tri_alt_v : z_lin_r;
+      3'd1:    z_prim = tilt_v2;
+      3'd5:    z_prim = (org_hi_r && !(walt_r2 && wsec_r2))
+                          ? org_div : z_lin_r;
+      default: z_prim = z_lin_r;
     endcase
   end
   // wave_pair's composition scaling: the triangle core (waves 0 and 7)
   // carries /4 main and /8 secondary; every other shape adds tz(sec/2).
-  wire tri_core = (wsel_r == 3'd0) || (wsel_r == 3'd7);
+  wire tri_core = (wsel_r2 == 3'd0) || (wsel_r2 == 3'd7);
   wire signed [17:0] z_eval =
-      tri_core ? (wsec_r ? tzs(z_prim, 2'd3) : tzs(z_prim, 2'd2))
-               : (wsec_r ? tzs(z_prim, 2'd1) : z_prim);
+      tri_core ? (wsec_r2 ? tzs(z_prim, 2'd3) : tzs(z_prim, 2'd2))
+               : (wsec_r2 ? tzs(z_prim, 2'd1) : z_prim);
 
   // Second voice: the binary's universal 17-bit q0. Every rendering voice
   // advances q0 by dq = tz(dp*K/256), K selected per wave and detune mode.
@@ -2277,23 +2315,26 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // still renders; only the mixer leaf is zeroed. mx_play (does it run)
   // and mx_aud (is it audible) must stay separate.
   logic        mx_aud;
-  logic [1:0]  mx_rev, mx_damp;
+  logic [1:0]  mx_rev;
   logic        mxs_new, mxs_old;      // saved z signs for the G products
   logic        bl_active;            // the ramp state the blend launch saw
   logic [5:0]  bl_pos_r;             // pre-advance blend position
-  logic [21:0] g_part;                // the pass-1 (|z| x G-hi) partial
+  logic [24:0] g_part;                // the recip3-hi partial
+  logic [16:0] gz_s1_r;               // captured G*z >> 10 for /3
+  // the noise bypass (>>11) is gz_s1_r >> 1: floor of floor.
   logic signed [16:0] mx_new, mx_old, mx_prod;
-  // tz(G*z/3072) lands here when the second limb pass completes: rebuild
-  // the 27-bit magnitude, >>10, then the /3 reciprocal (recip3, proven
-  // to 131,072 - the operand tops out at 80,640).
-  wire [27:0] gz_mag = ({6'b0, g_part} << 7) + {6'b0, m_res[21:0]};
-  wire [35:0] gz_q3p = 36'(gz_mag[26:10]) * 36'd174763;
+  // tz(G*z/3072): ONE 12-bit-B service pass forms the whole product
+  // magnitude (m_res12), then the /3 runs serially as two limb passes
+  // of the reciprocal (174763 = 341*2^9 + 171), replacing the
+  // combinational recip3 network the fabric could not afford. The q3
+  // accumulator closes the >>19.
+  wire [33:0] gz_q3acc = {g_part, 9'b0} + {9'b0, m_res_wide[24:0]};
   wire [16:0] gz_scaled = (!s_snd_wt && s_snd_wave == 3'd6)
-                            ? {1'b0, gz_mag[26:11]}       // noise /2048
-                            : {2'b0, gz_q3p[33:19]};
+                            ? {1'b0, gz_s1_r[16:1]}       // noise /2048
+                            : {2'b0, gz_q3acc[33:19]};
   wire [16:0] gz_old_scaled = (s_old_wave == 3'd6)
-                            ? {1'b0, gz_mag[26:11]}
-                            : {2'b0, gz_q3p[33:19]};
+                            ? {1'b0, gz_s1_r[16:1]}
+                            : {2'b0, gz_q3acc[33:19]};
   wire signed [17:0] blend_diff = {mx_new[16], mx_new} - {mx_old[16], mx_old};
   wire [16:0] blend_mag = blend_diff[17] ? 17'(-blend_diff)
                                          : 17'(blend_diff);
@@ -2307,13 +2348,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // first sample request at PWORK+2/PWORK+4.
   logic        mul_start;
   logic [23:0] mul_start_a;
-  logic [9:0]  mul_start_b;
-  logic        mul_start_wide;
+  logic [11:0] mul_start_b;
+  logic [1:0]  mul_start_mode;
   always_comb begin
     mul_start      = 1'b0;
     mul_start_a    = 24'd0;
-    mul_start_b    = 10'd0;
-    mul_start_wide = 1'b0;
+    mul_start_b    = 12'd0;
+    mul_start_mode = 2'd0;
     if (prun && !m_busy) begin
       if (REALTIME_PREVIEW) begin
         if (pph == 7'(PWORK + 2)) begin
@@ -2334,49 +2375,75 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             if (s_snd_wt) begin
               mul_start_a = {15'b0,
                              wt_pd[8] ? 9'(-wt_pd) : 9'(wt_pd)};
-              mul_start_b = wt_pf;
-              mul_start_wide = 1'b1;
+              mul_start_b = {2'b0, wt_pf};
+              mul_start_mode = 2'd1;
             end else begin
+              // ONE 12-bit G pass: |z| x G on the widened B port.
               mul_start_a = {6'b0, zn_mag};
-              mul_start_b = {4'b0, g_live[12:7]};
+              mul_start_b = 12'(g_live);
+              mul_start_mode = 2'd2;
             end
           end
-          7'(PWORK + 13): if (!s_snd_wt) begin
+          // /3 limb passes: m_res12 is the whole G*z magnitude.
+          7'(PWORK + 17): if (!s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {6'b0, zn_mag};
-            mul_start_b = {3'b0, g_live[6:0]};
+            mul_start_a = {7'b0, m_res12[26:10]};
+            mul_start_b = 12'd341;
+            mul_start_mode = 2'd1;
           end
-          7'(PWORK + 22): if (!s_snd_wt) begin
+          7'(PWORK + 28): if (!s_snd_wt) begin
+            mul_start   = 1'b1;
+            mul_start_a = {7'b0, gz_s1_r};
+            mul_start_b = 12'd171;
+            mul_start_mode = 2'd1;
+          end
+          7'(PWORK + 39): if (!s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = {6'b0, zo_mag};
-            mul_start_b = {4'b0, s_old_G[12:7]};
+            mul_start_b = 12'(s_old_G);
+            mul_start_mode = 2'd2;
           end
-          7'(PWORK + 31): if (!s_snd_wt) begin
+          7'(PWORK + 52): if (!s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {6'b0, zo_mag};
-            mul_start_b = {3'b0, s_old_G[6:0]};
+            mul_start_a = {7'b0, m_res12[26:10]};
+            mul_start_b = 12'd341;
+            mul_start_mode = 2'd1;
           end
-          7'(PWORK + 40): if (!s_snd_wt && bl_active) begin
+          7'(PWORK + 63): if (!s_snd_wt) begin
+            mul_start   = 1'b1;
+            mul_start_a = {7'b0, gz_s1_r};
+            mul_start_b = 12'd171;
+            mul_start_mode = 2'd1;
+          end
+          7'(PWORK + 75): if (!s_snd_wt && bl_active) begin
             mul_start   = 1'b1;
             mul_start_a = {7'b0, blend_mag};
-            mul_start_b = {4'b0, bl_pos_r};
+            mul_start_b = {6'b0, bl_pos_r};
           end
           7'(PWORK + 15): if (s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = {15'b0,
                            wt_qd[8] ? 9'(-wt_qd) : 9'(wt_qd)};
-            mul_start_b = wt_qf;
-            mul_start_wide = 1'b1;
+            mul_start_b = {2'b0, wt_qf};
+            mul_start_mode = 2'd1;
           end
           7'(PWORK + 27): if (s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = {6'b0, zn_mag};
-            mul_start_b = {4'b0, g_live[12:7]};
+            mul_start_b = 12'(g_live);
+            mul_start_mode = 2'd2;
           end
-          7'(PWORK + 36): if (s_snd_wt) begin
+          7'(PWORK + 40): if (s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {6'b0, zn_mag};
-            mul_start_b = {3'b0, g_live[6:0]};
+            mul_start_a = {7'b0, m_res12[26:10]};
+            mul_start_b = 12'd341;
+            mul_start_mode = 2'd1;
+          end
+          7'(PWORK + 51): if (s_snd_wt) begin
+            mul_start   = 1'b1;
+            mul_start_a = {7'b0, gz_s1_r};
+            mul_start_b = 12'd171;
+            mul_start_mode = 2'd1;
           end
           default: ;
         endcase
@@ -2418,14 +2485,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     if (reset)
       m_cnt <= 0;
     else if (m_cnt != 0) begin
-      m_p   <= m_wide ? {m_sum, m_p[9:1]}
-                      : {2'b0, m_sum, m_p[7:1]};
+      m_p   <= (m_mode == 2'd2) ? {m_sum, m_p[11:1]}
+             : (m_mode == 2'd1) ? {2'b0, m_sum, m_p[9:1]}
+                                : {4'b0, m_sum, m_p[7:1]};
       m_cnt <= m_cnt - 1;
     end else if (mul_start) begin
       m_a    <= mul_start_a;
       m_p    <= {25'b0, mul_start_b};
-      m_wide <= mul_start_wide;
-      m_cnt  <= mul_start_wide ? 4'd10 : 4'd8;
+      m_mode <= mul_start_mode;
+      m_cnt  <= (mul_start_mode == 2'd2) ? 4'd12
+              : (mul_start_mode == 2'd1) ? 4'd10 : 4'd8;
     end
   end
 
@@ -2666,7 +2735,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                   s_phase2[23:16] <= {7'b0, state_q[0]};
                 end
           7'd5: s_brown <= state_q[12:0];
-          7'd6: s_lp <= state_q;
           7'd7: if (REALTIME_PREVIEW)
                    s_noise_lp <= state_q;
                 else
@@ -2759,7 +2827,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                          & ~(is_mus(pc_ch)
                              & playing[{1'b0, pc_ch[1:0]}]);
               mx_rev  <= s_ch_rev;
-              mx_damp <= s_ch_damp;
             end
             7'(PFOLD): begin
               if (pc_ch[0] == 1'b0)
@@ -2852,13 +2919,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             else if (playing[pc_ch] && s_eff_a != 0
                      && (phase_op == PH_OLD_SUB || phase_op == PH_OLD_ADD))
               s_phase <= pha_y;
-            smp_a <= s_snd_wt ? 18'($signed(seq_q)) : z_eval;
+            if (s_snd_wt)
+              smp_a <= 18'($signed(seq_q));
           end
           7'(PWORK + 2): begin           // second voice
             if (s_snd_wt)
               wt_p1 <= $signed(seq_q);
             else
-              smp_b <= z_eval;
+              smp_a <= z_eval;           // main z, one stage later
             s_last_inc <= s_eff_inc;
             // A pattern handoff publishes zero volume while music itself is
             // still active. Preserve only that last audible field across the
@@ -2878,12 +2946,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               s_fx_phase_entry <= 0;
           end
           7'(PWORK + 3): begin           // preceding-state waveform sample
-            if (s_snd_wt) begin
+            if (s_snd_wt)
               smp_b <= 18'($signed(seq_q));
-            end else
-              old_smp <= z_eval;
+            else
+              smp_b <= z_eval;           // secondary z
           end
           7'(PWORK + 4): begin
+            if (!s_snd_wt)
+              old_smp <= z_eval;         // old-continuation z
             if (s_snd_wt) begin
               // PICO-8 interpolates its 64 signed wavetable samples with ten
               // fractional phase bits. The PSG-wide product service evaluates
@@ -2899,7 +2969,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               mx_aud  <= playing[pc_ch]
                          & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
               mx_rev  <= s_ch_rev;
-              mx_damp <= s_ch_damp;
             end
           end
           7'(PWORK + 15): begin
@@ -2924,17 +2993,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             if (playing[pc_ch] && s_eff_a != 0)
               s_phase2 <= {7'b0, 17'(s_phase2[16:0] + dq17)};
           end
-          7'(PWORK + 13): begin
-            // First limb pass complete: hold it while the second runs.
-            if (!s_snd_wt)
-              g_part <= m_res[21:0];
-          end
-          7'(PWORK + 22): begin
-            // Both new-voice passes done: tz(G*z/3072) (or the noise
-            // >>11) with the saved sign; the old voice's first pass
-            // launches this cycle.
+          7'(PWORK + 17): begin
+            // The G pass is done: capture the >>10 for the second /3
+            // limb and the >>11 for the noise bypass while the first
+            // limb launches.
             if (!s_snd_wt) begin
-              mx_new <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
+              gz_s1_r <= m_res12[26:10];
               mxs_old <= z_old_c[17];
             end
           end
@@ -2949,23 +3013,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               mx_aud  <= playing[pc_ch]
                          & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
               mx_rev  <= s_ch_rev;
-              mx_damp <= s_ch_damp;
             end
           end
-          7'(PWORK + 31): begin
+          7'(PWORK + 28): begin
             if (!s_snd_wt)
-              g_part <= m_res[21:0];
-          end
-          7'(PWORK + 36): begin
-            if (s_snd_wt)
-              g_part <= m_res[21:0];
+              g_part <= m_res_wide[24:0];       // recip3-hi
           end
           7'(PWORK + 39): begin
-            // The ramp must advance BEFORE its state word's store slot
-            // (word 7 stores at the very next edge), so it steps here
-            // with the launch operand captured pre-advance; the +40
-            // launch and +49 consume read the captures.
+            // The ramp must advance BEFORE its state word's store slot,
+            // so it steps here with the launch operands captured; the
+            // +75 launch and +84 consume read the captures. The /3-lo
+            // result is also live this cycle: consume mx_new while the
+            // old voice's G pass launches.
             if (!s_snd_wt) begin
+              mx_new <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
               bl_active <= (s_ramp != 0);
               bl_pos_r  <= s_ramp[5:0] - 6'd1;
               if (s_ramp != 0)
@@ -2973,21 +3034,35 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             end
           end
           7'(PWORK + 40): begin
-            if (!s_snd_wt)
-              mx_old <= mxs_old ? -$signed(gz_old_scaled)
-                                : $signed(gz_old_scaled);
+            if (s_snd_wt)
+              gz_s1_r <= m_res12[26:10];
           end
-          7'(PWORK + 45): begin
+          7'(PWORK + 51): begin
+            if (s_snd_wt)
+              g_part <= m_res_wide[24:0];
+          end
+          7'(PWORK + 52): begin
+            if (!s_snd_wt)
+              gz_s1_r <= m_res12[26:10];        // old G*z
+          end
+          7'(PWORK + 62): begin
             if (s_snd_wt) begin
               mx_new <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
               mx_prod <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
             end
           end
-          7'(PWORK + 49): begin
+          7'(PWORK + 63): begin
+            if (!s_snd_wt)
+              g_part <= m_res_wide[24:0];       // old recip3-hi
+          end
+          7'(PWORK + 74): begin
+            if (!s_snd_wt)
+              mx_old <= mxs_old ? -$signed(gz_old_scaled)
+                                : $signed(gz_old_scaled);
+          end
+          7'(PWORK + 84): begin
             // Blend consume: mx_old +/- |new-old|*i/64 with truncation
-            // toward zero via the saved difference sign; bl_active is
-            // the ramp state the launch saw (the ramp itself advanced
-            // at +40, before its store slot).
+            // toward zero via the saved difference sign.
             if (!s_snd_wt) begin
               if (!bl_active)
                 mx_prod <= mx_new;
