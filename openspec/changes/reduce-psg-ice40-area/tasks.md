@@ -259,3 +259,36 @@
       identity above may also have more to give: t_pre's /7 could use a
       k=6 split (9h, one add instead of two) for six more blocks, and
       the same shape applies anywhere a constant divisor survives.
+- [x] R.8 Identity bundle: 7,646 -> 7,456 placed (**-190**), structural
+      14,398 -> 14,331 (-67, CARRY -70), Fmax 38.13 -> 38.54, oracle
+      59/59 byte-identical, psg_tb ALL PASS (pre-run 5,022/7,654).
+      Three sub-stages, landed as ONE bundle because each alone is
+      inside the ~60-cell mapping-noise floor (R.6d):
+      (a) input-abs: the m service strips signs itself (one 24-bit
+      negate at m_a's load); requesters pass raw signed values and the
+      six per-source magnitude networks (zn/zo/blend/vl/slp/wt) retire.
+      Consumer-side sign application STAYS - tz semantics scale in the
+      magnitude domain, so a signed-product service would change floors.
+      (b) the 24572 chain retires: 24572 = 3*8192 - 4 gives
+      floor(24572r/2^13) = 3r - ceil(r/2048) (and /2^12 = 6r - ceil
+      (r/1024)) exactly over the ramp, so tilt's two 31-bit adds become
+      an 18-bit x3 and a 19-bit subtract. Triangle folds BEFORE its x3
+      (3x-49152 and 147456-3x are both 3*(x-16384); the fold is an XOR
+      plus carry-in). The two x3s canNOT merge: the buzz triangle
+      consumes BOTH chains in one evaluation - measured, not assumed.
+      (c) stage-2's three recombine trees (73h/17h/85h) become ONE
+      masked-shift adder with per-shape enables, and the two closing
+      subtractors share (the consuming shapes are wsel-exclusive).
+      All identities proven exhaustively over the 16-bit domain BEFORE
+      the RTL was touched (scratchpad prove_wave.py).
+      **Measured lessons this stage adds to R.6d: (1) R.6b confirmed by
+      implementation - sfx_id-to-record was BUILT and measured +23
+      structural / -39 placed = the wash the pricing predicted; reverted.
+      (2) Placed can beat structural: -67 structural mapped to -190
+      placed - the retired wide adders were entangled with unpackable
+      staging, so packing recovered ~3x the gate delta. The structural
+      metric JUDGES a change is real; it does not bound the placed win.
+      (3) make test-psg (iverilog) has NOT built since the reciprocal
+      tables landed - 19 use-before-declare errors predate this stage;
+      psg_tb runs under the Verilator invocation in its own header
+      (now needs -Wno-PINMISSING for the DBG_PORT-era unconnected dbg).**

@@ -869,11 +869,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // unit only ever has to do unsigned work.
   wire signed [12:0] vl_d   = $signed({1'b0, vol_r}) - $signed({1'b0, pvol_r});
   wire               vl_neg = vl_d[12];
-  wire [11:0]        vl_mag = vl_neg ? 12'(-vl_d) : 12'(vl_d);
   wire signed [6:0]  slp_d = $signed({1'b0, e_pitch})
                             - $signed({1'b0, e_prevp});
   wire               slp_neg = slp_d[6];
-  wire [5:0]         slp_mag = slp_neg ? 6'(-slp_d) : 6'(slp_d);
   // The slide's pitch is 16.16, not Q8 (3.2). p_1616 = ps + tz(t*D, d)
   // with D the signed semitone delta, and the whole quotient splits as
   // (q1 << 16) + tz((r1 << 16), d) over the divider's own remainder -
@@ -940,12 +938,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [11:0] fxv_next;
 
   // Operands for the product started at step xs
-  logic [23:0] mul_a;
+  logic signed [24:0] mul_a;
   logic [11:0] mul_b;
   logic [1:0]  mul_md;
   logic        mul_go;               // this step actually has operands
   always_comb begin
-    mul_a = 24'd0;
+    mul_a = 25'sd0;
     mul_b = 12'd0;
     mul_md = 2'd0;
     mul_go = 1'b0;
@@ -954,7 +952,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       4'd1: if (e_fx == 3'd1) begin
               // |semitone delta| * t: the numerator of the slide's exact
               // pitch quotient, not a Q8 fraction to scale by.
-              mul_a = {18'b0, slp_mag};
+              mul_a = 25'(slp_d);
               mul_b = {4'b0, eff_fcnt};
               mul_go = 1'b1;
             end
@@ -964,11 +962,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // identity tz((d-t)a_s + t*a0, d) = a_s + tz(t*(a0-a_s), d), which
       // needs one product and one divide instead of two of each.
       4'd5: case (e_fx)
-              3'd1: begin mul_a = {12'b0, vl_mag}; mul_b = {4'b0, eff_fcnt};
+              3'd1: begin mul_a = 25'(vl_d); mul_b = {4'b0, eff_fcnt};
                           mul_go = 1'b1; end
-              3'd4: begin mul_a = {12'b0, vol_r};  mul_b = {4'b0, eff_fcnt};
+              3'd4: begin mul_a = {13'b0, vol_r};  mul_b = {4'b0, eff_fcnt};
                           mul_go = 1'b1; end
-              3'd5: begin mul_a = {12'b0, vol_r};
+              3'd5: begin mul_a = {13'b0, vol_r};
                           mul_b = eff_rem;
                           mul_go = 1'b1; end
               default: ;
@@ -978,21 +976,21 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // that order, and the outer note supplies the multiplicand only
       // when the instrument row is the one carrying the effect.
       4'd8: if (ins_use) begin
-              mul_a = e_insfx ? {13'b0, w_cur_vol, 8'b0} : {12'b0, vol_r};
+              mul_a = e_insfx ? {14'b0, w_cur_vol, 8'b0} : {13'b0, vol_r};
               mul_b = e_insfx ? {8'b0, vol_r[11:8]} : {9'b0, w_ins_vol};
               mul_go = 1'b1;
             end
-      4'd10: begin mul_a = {12'b0, a_post};
+      4'd10: begin mul_a = {13'b0, a_post};
                    mul_b = {4'b0, mus_gain} + 12'd1; mul_md = 2'd1;
                    mul_go = 1'b1; end
       4'd4: case (e_fx)
-              3'd2: begin mul_a = base_inc; mul_b = {10'b0, lfo_mag};
+              3'd2: begin mul_a = {1'b0, base_inc}; mul_b = {10'b0, lfo_mag};
                           mul_go = 1'b1; end
               // DROP (3.1): tz(dp * (d - t), d) on the binary's INTEGER
               // dp, which is base_inc's [20:8] - multiplying the 24-bit
               // increment instead would divide on a finer grid than the
               // binary's and drift.
-              3'd3: begin mul_a = {11'b0, base_inc[20:8]};
+              3'd3: begin mul_a = {12'b0, base_inc[20:8]};
                           mul_b = eff_rem;
                           mul_go = 1'b1; end
               default: ;
@@ -2277,21 +2275,34 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Captures shift one phase later (main +2, secondary +3, old +4).
   // tri_raw: 3x - 49152, mirrored above 0x8000; +/-49152. 3x reaches
   // 196,605, so the intermediate carries 19 unsigned bits.
-  wire [18:0] tri3x = {3'b0, wx_r} + {2'b0, wx_r, 1'b0};
-  wire signed [19:0] tri_w =
-      wx_r[15] ? (20'sd147456 - $signed({1'b0, tri3x}))
-               : ($signed({1'b0, tri3x}) - 20'sd49152);
-  wire signed [17:0] tri_v = tri_w[17:0];
-  // tilt ramp: 24572*x = (x<<14)+(x<<13)-(x<<2) (csd.tilt_two_adds); the
-  // wave-1 buzz break is 61440 (>>12 + recip15), else 57344 (>>13 +
+  // Triangle folds BEFORE the x3: 3x - 49152 and 147456 - 3x are both
+  // 3*(x - 16384) with the fold's sign pushed inside the multiply
+  // (exhaustively proven, scratchpad prove_wave.py), and the fold is an
+  // XOR with the sign plus a carry-in - one subtract where the fold
+  // used to need two 20-bit mux arms after the x3.
+  wire signed [16:0] tri_u =
+      $signed({1'b0, wx_r ^ {16{wx_r[15]}}}) - 17'sd16384
+      + $signed({16'b0, wx_r[15]});
+  wire signed [17:0] tri_v = {tri_u[16], tri_u} + {tri_u, 1'b0};
+  // The wave-1 buzz break is 61440 (>>12 + recip15), else 57344 (>>13 +
   // recip7); the tails are the pure shifts. tri_alt's skew is the 57344
-  // form, selected because tilt_hi needs wave 1.
+  // form, selected because tilt_hi needs wave 1. (The x3 here cannot
+  // merge with the triangle's: the buzz triangle consumes BOTH chains
+  // in the same evaluation.)
   wire tilt_hi = (wsel_r == 3'd1) && walt_r;
   wire tilt_tail = tilt_hi ? (wx_r >= 16'd61440) : (wx_r >= 16'd57344);
   wire [15:0] tramp = tilt_tail ? (16'd65535 - wx_r) : wx_r;
-  wire [30:0] t24572 = ({15'b0, tramp} << 14) + ({15'b0, tramp} << 13)
-                     - ({15'b0, tramp} << 2);
-  wire [18:0] t_pre = tilt_hi ? t24572[30:12] : {1'b0, t24572[30:13]};
+  // The 24572 chain retires: 24572 = 3*8192 - 4 gives, exactly over the
+  // whole ramp (prove_wave.py),
+  //   floor(24572 r / 2^13) = 3r - ceil(r/2048)
+  //   floor(24572 r / 2^12) = 6r - ceil(r/1024)
+  // so t_pre is 3r (or its double) minus a small ceiling term - an
+  // 18-bit add and a 19-bit subtract instead of two 31-bit adds.
+  wire [17:0] t_m3 = {2'b0, tramp} + {1'b0, tramp, 1'b0};
+  wire [6:0] t_ceil = tilt_hi ? 7'(({1'b0, tramp} + 17'd1023) >> 10)
+                              : 7'(({1'b0, tramp} + 17'd2047) >> 11);
+  wire [18:0] t_pre = (tilt_hi ? {t_m3, 1'b0} : {1'b0, t_m3})
+                    - {12'b0, t_ceil};
   // The tilt reciprocals take the organ's shape. 512h = 7*73h + h and
   // 256h = 15*17h + h, so
   //   t/7  = 73h + (h + l)/7    with h = t>>9, l = t[8:0]
@@ -2366,27 +2377,39 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     walt_r2 <= walt_r;
   end
 
-  // Stage 2: the reciprocal cones and the composition.
-  wire [15:0] t_q7  = {t_h7_r, 6'b0} + {3'b0, t_h7_r, 3'b0} + {6'b0, t_h7_r}
-                    + {8'b0, t7_q};
-  wire [15:0] t_q15 = {1'b0, t_h15_r, 4'b0} + {5'b0, t_h15_r}
-                    + {9'b0, t15_q};
-  wire [14:0] t_div = tilt_tail_r ? t_pre_r
-                    : tilt_hi_r ? t_q15[14:0] : t_q7[14:0];
-  wire signed [17:0] tilt_v2 = $signed({3'b0, t_div}) - 18'sd12286;
-  wire [14:0] org_85 = {org_h_r, 6'b0} + {2'b0, org_h_r, 4'b0}
-                     + {4'b0, org_h_r, 2'b0} + {7'b0, org_h_r};
-  wire signed [17:0] org_div =
-      $signed({3'b0, org_85 + {7'b0, org3_q}}) - 18'sd8192;
-  wire signed [17:0] tri_alt_v = tilt_v2 + tri4_r + (tri4_r <<< 1);
+  // Stage 2: ONE masked-shift recombine serves all three split
+  // identities - the consuming shapes are wsel-exclusive per
+  // evaluation: 73h = h<<6 + h<<3 + h (tilt lo), 17h = h<<4 + h
+  // (tilt hi), 85h = h<<6 + h<<4 + h<<2 + h (organ), plus the table
+  // remainder; one shared subtract then closes tz with the shape's
+  // offset. Three add trees and two subtractors become one of each.
+  wire org_ctx = (wsel_r2 == 3'd5);
+  wire [10:0] rc_h = org_ctx ? {3'b0, org_h_r}
+                   : tilt_hi_r ? t_h15_r : {1'b0, t_h7_r};
+  wire [7:0] rc_q = org_ctx ? org3_q
+                  : tilt_hi_r ? {1'b0, t15_q} : {1'b0, t7_q};
+  wire rc_e6 = !tilt_hi_r || org_ctx;
+  wire rc_e4 = tilt_hi_r || org_ctx;
+  wire rc_e3 = !tilt_hi_r && !org_ctx;
+  wire rc_e2 = org_ctx;
+  wire [16:0] rc = (rc_e6 ? {rc_h, 6'b0} : 17'd0)
+                 + (rc_e4 ? {2'b0, rc_h, 4'b0} : 17'd0)
+                 + (rc_e3 ? {3'b0, rc_h, 3'b0} : 17'd0)
+                 + (rc_e2 ? {4'b0, rc_h, 2'b0} : 17'd0)
+                 + {6'b0, rc_h}
+                 + {9'b0, rc_q};
+  wire [14:0] t_div = (tilt_tail_r && !org_ctx) ? t_pre_r : rc[14:0];
+  wire signed [17:0] div_out = $signed({3'b0, t_div})
+                             - (org_ctx ? 18'sd8192 : 18'sd12286);
+  wire signed [17:0] tri_alt_v = div_out + tri4_r + (tri4_r <<< 1);
 
   logic signed [17:0] z_prim;
   always_comb begin
     case (wsel_r2)
       3'd0:    z_prim = walt_r2 ? tri_alt_v : z_lin_r;
-      3'd1:    z_prim = tilt_v2;
+      3'd1:    z_prim = div_out;
       3'd5:    z_prim = (org_hi_r && !(walt_r2 && wsec_r2))
-                          ? org_div : z_lin_r;
+                          ? div_out : z_lin_r;
       default: z_prim = z_lin_r;
     endcase
   end
@@ -2578,8 +2601,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [12:0] g_a = g_boost ? ({1'b0, s_eff_a} + {3'b0, s_eff_a[11:2]})
                             : {1'b0, s_eff_a};
   wire [12:0] g_live = g_a + {1'b0, g_a[12:1]};
-  wire [17:0] zn_mag = z_new_c[17] ? 18'(-z_new_c) : 18'(z_new_c);
-  wire [17:0] zo_mag = z_old_c[17] ? 18'(-z_old_c) : 18'(z_old_c);
 
   logic        mx_play;
   logic signed [16:0] mx_filt;        // post-comb, post-dampen sample
@@ -2631,8 +2652,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                                                    : mx_old_eff;
   wire signed [17:0] blend_diff =
       {cmb_new[16], cmb_new} - {cmb_old[16], cmb_old};
-  wire [16:0] blend_mag = blend_diff[17] ? 17'(-blend_diff)
-                                         : 17'(blend_diff);
   wire signed [23:0] bl_p = blend_diff[17]
                               ? -$signed({1'b0, bl_res})
                               :  $signed({1'b0, bl_res});
@@ -2664,19 +2683,19 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // any product launched on the sample boundary finishes well before the
   // first sample request at PWORK+2/PWORK+4.
   logic        mul_start;
-  logic [23:0] mul_start_a;
+  logic signed [24:0] mul_start_a;
   logic [11:0] mul_start_b;
   logic [1:0]  mul_start_mode;
   always_comb begin
     mul_start      = 1'b0;
-    mul_start_a    = 24'd0;
+    mul_start_a    = 25'sd0;
     mul_start_b    = 12'd0;
     mul_start_mode = 2'd0;
     if (prun && !m_busy) begin
       if (REALTIME_PREVIEW) begin
         if (pph == 7'(PWORK + 2)) begin
           mul_start   = 1'b1;
-          mul_start_a = {6'b0, zn_mag};
+          mul_start_a = 25'(z_new_c);
           mul_start_b = {2'b0, s_eff_a[11:4]};
         end
       end else begin
@@ -2690,13 +2709,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           7'(PWORK + 4): begin
             mul_start = 1'b1;
             if (s_snd_wt) begin
-              mul_start_a = {15'b0,
-                             wt_pd[8] ? 9'(-wt_pd) : 9'(wt_pd)};
+              mul_start_a = 25'(wt_pd);
               mul_start_b = {2'b0, wt_pf};
               mul_start_mode = 2'd1;
             end else begin
               // ONE 12-bit G pass: |z| x G on the widened B port.
-              mul_start_a = {6'b0, zn_mag};
+              mul_start_a = 25'(z_new_c);
               mul_start_b = 12'(g_live);
               mul_start_mode = 2'd2;
             end
@@ -2704,61 +2722,60 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           // /3 limb passes: m_res12 is the whole G*z magnitude.
           7'(PWORK + 17): if (!s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {7'b0, m_res12[26:10]};
+            mul_start_a = {8'b0, m_res12[26:10]};
             mul_start_b = 12'd341;
             mul_start_mode = 2'd1;
           end
           7'(PWORK + 28): if (!s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {7'b0, gz_s1_r};
+            mul_start_a = {8'b0, gz_s1_r};
             mul_start_b = 12'd171;
             mul_start_mode = 2'd1;
           end
           7'(PWORK + 39): if (!s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {6'b0, zo_mag};
+            mul_start_a = 25'(z_old_c);
             mul_start_b = 12'(s_old_G);
             mul_start_mode = 2'd2;
           end
           7'(PWORK + 52): if (!s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {7'b0, m_res12[26:10]};
+            mul_start_a = {8'b0, m_res12[26:10]};
             mul_start_b = 12'd341;
             mul_start_mode = 2'd1;
           end
           7'(PWORK + 63): if (!s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {7'b0, gz_s1_r};
+            mul_start_a = {8'b0, gz_s1_r};
             mul_start_b = 12'd171;
             mul_start_mode = 2'd1;
           end
           7'(PWORK + 75): if (bl_cnt != 7'd64) begin
             mul_start   = 1'b1;
-            mul_start_a = {7'b0, blend_mag};
+            mul_start_a = 25'(blend_diff);
             mul_start_b = {6'b0, bl_cnt[5:0]};
           end
           7'(PWORK + 15): if (s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {15'b0,
-                           wt_qd[8] ? 9'(-wt_qd) : 9'(wt_qd)};
+            mul_start_a = 25'(wt_qd);
             mul_start_b = {2'b0, wt_qf};
             mul_start_mode = 2'd1;
           end
           7'(PWORK + 27): if (s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {6'b0, zn_mag};
+            mul_start_a = 25'(z_new_c);
             mul_start_b = 12'(g_live);
             mul_start_mode = 2'd2;
           end
           7'(PWORK + 40): if (s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {7'b0, m_res12[26:10]};
+            mul_start_a = {8'b0, m_res12[26:10]};
             mul_start_b = 12'd341;
             mul_start_mode = 2'd1;
           end
           7'(PWORK + 51): if (s_snd_wt) begin
             mul_start   = 1'b1;
-            mul_start_a = {7'b0, gz_s1_r};
+            mul_start_a = {8'b0, gz_s1_r};
             mul_start_b = 12'd171;
             mul_start_mode = 2'd1;
           end
@@ -2780,13 +2797,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // The affine multiply, one 12-bit pass each side of the split.
         K_SL3: if (!m_busy) begin
           mul_start   = 1'b1;
-          mul_start_a = {8'b0, sl_frac};
+          mul_start_a = {9'b0, sl_frac};
           mul_start_b = crom_q[11:0];
           mul_start_mode = 2'd2;
         end
         K_SL6: if (!m_busy) begin
           mul_start   = 1'b1;
-          mul_start_a = {8'b0, sl_frac};
+          mul_start_a = {9'b0, sl_frac};
           mul_start_b = {3'b0, sl_bhi};
           mul_start_mode = 2'd2;
         end
@@ -2797,7 +2814,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // the simulation-only check below guards that schedule fact.
         T_NL: if (launched[c] && !tch_seen && !(acc[7:0] < seq_q)) begin
           mul_start   = 1'b1;
-          mul_start_a = {16'b0, wrd[7:0]};       // speed, staged at T_LS
+          mul_start_a = {17'b0, wrd[7:0]};       // speed, staged at T_LS
           mul_start_b = {4'b0, pat_rows};
         end
         default: ;
@@ -2814,7 +2831,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                                 : {4'b0, m_sum, m_p[7:1]};
       m_cnt <= m_cnt - 1;
     end else if (mul_start) begin
-      m_a    <= mul_start_a;
+      // The one place signs are stripped: requesters pass raw signed
+      // values and keep their own saved sign for the consume step, so
+      // the per-source magnitude networks retire. Truncation points are
+      // unchanged - the product is formed and scaled in the magnitude
+      // domain exactly as before.
+      m_a    <= mul_start_a[24] ? (24'd0 - mul_start_a[23:0])
+                                : mul_start_a[23:0];
       m_p    <= {25'b0, mul_start_b};
       m_mode <= mul_start_mode;
       m_cnt  <= (mul_start_mode == 2'd2) ? 4'd12
