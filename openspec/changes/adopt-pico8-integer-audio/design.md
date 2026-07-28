@@ -381,6 +381,45 @@ exploit - so further capacity has to come from the other blocks:
   bits (the filter byte's bit 0, the loop fields' high bits) total 256 of
   36,864 - 0.7%, and it has to read back verbatim regardless.
 
+**Borrowed precedents (`psg_buffers.py borrow`).** Both relocations above
+are the standard answer among sound chips of the era, which is worth
+recording because it makes the architecture the conservative choice
+rather than a novel one:
+
+- **Paula (Amiga)** owns no sample memory at all. Its whole audio side is
+  392 bits of per-channel registers - pointer, length, period, volume,
+  and a two-stage buffer (`AUDxDAT` -> `audbuf` -> `smpbuf`) - with
+  samples fetched by DMA from chip RAM, and four channels time-multiplexed
+  through one datapath ("Audio state machines HW are time-multiplexed to
+  save resource"). That is the aram lever, already built and shipped in
+  1985. The double buffer is the part worth copying outright: a fetched
+  word and an in-use word per voice is what makes a shared-bus fetch safe
+  when the sample clock cannot wait. (The implementation consulted is
+  GPL v3 - the idea travels, the code does not.)
+- **The SNES S-DSP** does the same for the structure we cannot compress:
+  its echo delay line lives in APU RAM at a programmable base with a
+  programmable length, not in the chip.
+- Relocating either is **fidelity-neutral by construction** -
+  `depth.flat_732_exact` already proves the model cannot distinguish one
+  732-entry buffer from another, only its depth and its cell - and the
+  traffic is small: all eight rings cost 430 accesses per voice-tick
+  (183 tap + 64 continuation tap + 183 write), 18.8 per sample, ~829 KB/s
+  worst case and **zero** for the shipped corpus. With both relocations
+  the audio storage leaves EBR entirely: 3 blocks, with unconditional
+  eight-ring exactness.
+- The hard requirement it inherits: Paula steals a *guaranteed* DMA slot,
+  so its fetch can never be late. Our gate is byte-exactness, where a
+  late fetch is a wrong sample rather than a glitch, so the subsystem
+  must reserve the bandwidth rather than usually have it.
+- Refused, with reasons: the OPN/JT12 trick of rotating voice state
+  through a shift register needs 11,712 flip-flops for one ring against
+  the HX8K's 7,680 logic cells - iCE40 has no LUT-RAM or SRL, so the EBR
+  is its only dense store. Paula's volume-by-PWM and its per-channel
+  delta-sigma with no digital sum are both incompatible with a gate that
+  demands `tz(G*z/3072)` and the exact nonlinear soft_add tree; the
+  no-multiplier goal they serve is already met by the proven CSD and
+  serial-service forms.
+
 Constraints inherited from `reduce-psg-ice40-area`, which pauses at its
 6,199-cell / 15-EBR checkpoint until this change lands: the 15-EBR
 ceiling, the 1,275-clock sample budget (pre-run depth is a free constant),

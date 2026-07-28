@@ -31,6 +31,9 @@ Sections:
   count  - how many rings a replica needs, from the concurrently
            advancing playback states
   corpus - what the shipped carts actually ask for
+  levers - what else can be freed, and what each one unlocks
+  borrow - storage strategies from other sound chips (Paula, S-DSP,
+           OPN-style rotating state), priced for THIS fabric
   fit    - block cost per target against the measured EBR census, and the
            verdict per build
   synth  - the block-cost claims re-measured through yosys (slow)
@@ -56,6 +59,7 @@ REFS = Path("build/psg_oracle/adopt-exact/reference")
 SCRATCH = Path("build/psg_buffers")   # synthesis probes only
 
 TICK = M.TICK_SAMPLES                       # 183 samples per tick
+BLEND = M.BLEND_SAMPLES                     # 64-sample crossfade
 LOOKBACK = {1: 2 * TICK, 2: 4 * TICK}       # 366 / 732 samples
 
 # iCE40 EBR: one 4 Kbit block, four legal aspect ratios. Gowin GW2AR-18C
@@ -818,9 +822,106 @@ def sec_levers() -> None:
          "keeps reverb on one voice - which is every cart in the corpus")
 
 
+# --- borrow: storage strategies from other sound chips, priced here --------
+
+def sec_borrow() -> None:
+    print("borrow: what other sound chips do about storage, priced for this "
+          "fabric")
+    note("Paula (Amiga, nonarkitten/amiga_replacement_project/paula/Paula.v): "
+         "four channels time-multiplexed through ONE datapath - 'Audio state "
+         "machines HW are time-multiplexed to save resource' - and it owns "
+         "NO sample memory. Its largest audio array is 4 x 16 bits; the "
+         "whole audio side is "
+         f"{4 * (16 + 16 + 7 + 16 + 7 + 16 + 8 + 3 + 9)} bits of per-channel "
+         "registers. Samples arrive by DMA from chip RAM through a two-stage "
+         "buffer (AUDxDAT -> audbuf -> smpbuf) so bus jitter never reaches "
+         "the sample clock. GPL v3: the idea travels, the code does not")
+    note("S-DSP (SNES) is the same move for the part we care about: its echo "
+         "delay line lives in APU RAM at a programmable base (ESA) with a "
+         "programmable length (EDL), not in the chip. That is exactly our "
+         "reverb ring - the one structure we cannot compress and cannot fit")
+
+    # What relocation would cost in traffic. The ring is 1 tap read + 1 write
+    # per sample per voice, plus the crossfade's second tap on the 64
+    # continuation samples when the old state's level differs (sixth
+    # milestone). Bytes are 2 per access at the proven 16-bit cell.
+    per_voice_tick = TICK + BLEND + TICK
+    voices = 8
+    per_tick = voices * per_voice_tick * 2
+    per_sec = per_tick * 12049 // 100
+    acc_per_sample = voices * per_voice_tick / TICK
+    report("borrow.ring_traffic_is_small", acc_per_sample < 1275 / 10,
+           f"relocating all 8 rings costs {per_voice_tick} accesses per "
+           f"voice-tick ({TICK} tap + {BLEND} continuation tap + {TICK} "
+           f"write) = {acc_per_sample:.1f} accesses per sample, "
+           f"{per_sec:,d} B/s worst case - {acc_per_sample / 1275:.1%} of "
+           "the PSG's own 1,275-clock sample budget. The PSG side is free; "
+           "the shared bus is the only question")
+    note("and it is zero for the shipped corpus: no cart in it enables a "
+         "reverb digit, so the ring is never read and never written")
+    note("relocation is fidelity-NEUTRAL by construction - depth.flat_732 "
+         "already proves the model cannot tell one 732-entry buffer from "
+         "another, only its depth and cell. Every other lever trades "
+         "fidelity or area; this one trades storage for bandwidth")
+
+    # The obvious alternative, refuted with the device's own numbers.
+    ffs = LOOKBACK[2] * 16
+    report("borrow.shift_register_refuted", ffs > 7680,
+           f"the JT12/OPN trick - rotate per-voice state through a shift "
+           f"register instead of an addressed RAM, which suits a fabric with "
+           f"LUT shift registers - needs {ffs:,d} flip-flops for ONE ring "
+           f"against the HX8K's 7,680 logic cells ({ffs / 7680:.1f}x the "
+           "whole device). iCE40 has no LUT-RAM or SRL primitive; the EBR is "
+           "the only dense store on this part")
+    note("Paula's volume-by-PWM (a 6-bit counter compared against the volume "
+         "register, no multiplier at all) and its channel-per-delta-sigma "
+         "output with no digital sum are both refused here for the same "
+         "reason: our gate is byte-exactness against tz(G*z/3072) and the "
+         "nonlinear soft_add tree, so the mix must be formed digitally and "
+         "exactly. The no-multiplier GOAL is already met by other means - "
+         "psg_hw_forms proves every product as CSD adder networks or serial "
+         "service passes, because this fabric has no DSP either")
+    note("what Paula confirms rather than teaches: one datapath shared "
+         "across voices (our m-service and visit schedule already do this) "
+         "and a delta-sigma output stage (rtl/dsigma.sv). The genuinely new "
+         "idea is the double buffer - a fetched word and an in-use word per "
+         "voice - which is what makes a shared-bus fetch safe when the "
+         "sample clock cannot wait")
+
+    got = ebr_census()
+    if got is None:
+        return
+    census, stamp = got
+    ring = blocks(LOOKBACK[2], 16, ICE40)
+    base = sum(census.values()) - census.get("wrom", 0) \
+        - census.get("revbuf", 0)
+    print()
+    print("  what the two relocations do to the tier ladder:")
+    for label, tables, rings in (
+            ("EBR-resident (today's plan)", base, 1),
+            ("ring in main RAM", base, 0),
+            ("aram in main RAM", base - census.get("aram", 0), 1),
+            ("both, all 8 rings exact",
+             base - census.get("aram", 0), 0)):
+        cost = tables + rings * ring
+        print(f"    {label:32s} {cost:2d} blocks  "
+              f"{'fits' if cost <= 15 else 'OVER'}")
+    note("the bottom row is the Paula/S-DSP architecture: the audio chip "
+         "keeps registers and tables, the CART IMAGE and the DELAY LINE live "
+         "in the memory the CPU already has, and unconditional eight-ring "
+         "exactness lands on iCE40 with blocks to spare. It needs the "
+         "register map to change and a reserved bus slot to exist - both "
+         "owned by add-memory-subsystem, both stated non-goals here")
+    note("the one hard requirement it inherits from Paula: a GUARANTEED "
+         "slot. Paula steals a fixed DMA slot per channel per scanline, so "
+         "its fetch can never be late. Our gate is byte-exactness, where a "
+         "late fetch is a WRONG sample rather than a glitch - so the "
+         "subsystem must reserve the bandwidth, not merely usually have it")
+
+
 SECTIONS = {"layout": sec_layout, "entry": sec_entry, "depth": sec_depth,
             "count": sec_count, "corpus": sec_corpus, "levers": sec_levers,
-            "fit": sec_fit, "synth": sec_synth}
+            "borrow": sec_borrow, "fit": sec_fit, "synth": sec_synth}
 
 
 def main() -> int:
