@@ -63,6 +63,8 @@
 // explicitly alongside psg.sv stays harmless.
 `include "psg_timing.sv"
 `include "psg_aram.sv"
+`include "psg_mulsvc.sv"
+`include "psg_divsvc.sv"
 
 module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
              parameter REALTIME_PREVIEW = 0, parameter DBG_PORT = 1)
@@ -719,30 +721,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // transposes with the note and vice versa.
 
   // ------------------------------------------------------------------
-  // Shared multiplier. Every product the effect unit needs is (24-bit
-  // magnitude x 8-bit unsigned), so one shift-add unit serves them all:
-  // 8 iterations of a 26-bit add, versus the ~1500 LUTs the parallel
-  // array multipliers cost. An evaluation runs six of them, 4 channels
-  // 120 times a second - about 240 clocks in a tick.
+  // The shared services: one multiplier, one divider, both in their own
+  // modules (u_mul, u_div). Requesters keep their request selection; these
+  // are the response wires the consume steps read.
   // ------------------------------------------------------------------
-  // 21 bits, not 24: the widest |A| any arm supplies is base_inc,
-  // whose pitch-table ceiling is 0x1CE0 << 8 = 1,892,352 < 2^21; the
-  // signed arms peak at 18 bits. The accumulator and product register
-  // narrow with it (products peak at 22 bits real, 33 structural).
-  logic [20:0] m_a;
-  logic [33:0] m_p;                  // accumulator plus 8/10/12-bit multiplier
-  logic [3:0]  m_cnt;
-  logic [1:0]  m_mode;               // 0: 8-bit B, 1: 10-bit, 2: 12-bit
-  // Reset contract: m_cnt and the micro-PC are validity/control state and
-  // reset to idle.  m_a/m_p and the working results below are datapath:
-  // every one is overwritten by the six-op program before it is observed.
-  wire  [21:0] m_acc = (m_mode == 2'd2) ? m_p[33:12]
-                     : (m_mode == 2'd1) ? m_p[31:10] : m_p[29:8];
-  wire  [22:0] m_sum = {1'b0, m_acc} + (m_p[0] ? {2'b0, m_a} : 23'd0);
-  wire  [31:0] m_res = m_p[31:0];
-  wire  [33:0] m_res_wide = m_p[33:0];
-  wire  [27:0] m_res12 = m_p[27:0];
-  wire         m_busy = (m_cnt != 0);
+  wire  [31:0] m_res;
+  wire  [33:0] m_res_wide;
+  wire  [27:0] m_res12;
+  wire         m_busy;
 
   // Effect microinstruction contract (xs is the micro-PC):
   //   0 row fraction, 1 current volume, 2 previous volume,
@@ -757,43 +743,19 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // a fixed 252/256 = 0.984375 of exact on every effect path.
   logic [11:0] vol_r, pvol_r;
 
+  // The divider's request comes from the sequencer alone, so there is no
+  // merge to make: div_start / div_n / div_d go straight to u_div.
   wire         div_start;
-  // ------------------------------------------------------------------
-  // Exact truncated division (3.2a). The effect recurrences divide by
-  // the SFX speed, and recip[s] = round(65536/s) is not exact truncated
-  // division. One restoring divider serves them: a 24-bit dividend
-  // field over an 8-bit divisor, 24 shift-subtract steps, the partial
-  // remainder held in the top byte. It is its own unit rather than a
-  // mode on the multiply service so a divide can overlap the next
-  // product - the 9-bit compare-subtract is cheaper than muxing the
-  // 26-bit accumulator's shift direction either way.
-  // ------------------------------------------------------------------
-  logic [31:0] d_p;                  // {remainder[7:0], dividend/quotient}
-  logic [7:0]  d_d;
-  logic [4:0]  d_cnt;
-  // rem < d holds from rem = 0, so the shifted partial is 9 bits and the
-  // restored remainder is always back under a byte.
-  wire  [8:0]  d_rsh = {d_p[31:24], d_p[23]};
-  wire  [9:0]  d_sub = {1'b0, d_rsh} - {2'b0, d_d};
-  wire         d_fit = !d_sub[9];
-  wire  [23:0] d_res = d_p[23:0];
-  wire  [7:0]  d_rem = d_p[31:24];
-  wire         d_busy = (d_cnt != 0);
   logic [23:0] div_n;
   logic [7:0]  div_d;
+  wire  [23:0] d_res;
+  wire  [7:0]  d_rem;
+  wire         d_busy;
 
-  always_ff @(posedge clk) begin
-    if (reset)
-      d_cnt <= 0;
-    else if (d_cnt != 0) begin
-      d_p   <= {(d_fit ? d_sub[7:0] : d_rsh[7:0]), d_p[22:0], d_fit};
-      d_cnt <= d_cnt - 5'd1;
-    end else if (div_start) begin
-      d_p   <= {8'b0, div_n};
-      d_d   <= div_d;
-      d_cnt <= 5'd24;
-    end
-  end
+  psg_divsvc u_div(
+    .clk(clk), .reset(reset),
+    .div_start(div_start), .div_n(div_n), .div_d(div_d),
+    .d_res(d_res), .d_rem(d_rem), .d_busy(d_busy));
 
   // PICO-8's vibrato multiplier is
   //   [128,129,130,129,128,127,126,127]
@@ -2871,28 +2833,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     $fatal(1, "psg: both multiply requesters asserted in the same cycle");
 `endif
 
-  always_ff @(posedge clk) begin
-    if (reset)
-      m_cnt <= 0;
-    else if (m_cnt != 0) begin
-      m_p   <= (m_mode == 2'd2) ? {m_sum, m_p[11:1]}
-             : (m_mode == 2'd1) ? {2'b0, m_sum, m_p[9:1]}
-                                : {4'b0, m_sum, m_p[7:1]};
-      m_cnt <= m_cnt - 1;
-    end else if (mul_start) begin
-      // The one place signs are stripped: requesters pass raw signed
-      // values and keep their own saved sign for the consume step, so
-      // the per-source magnitude networks retire. Truncation points are
-      // unchanged - the product is formed and scaled in the magnitude
-      // domain exactly as before.
-      m_a    <= mul_start_a[24] ? (21'd0 - mul_start_a[20:0])
-                                : mul_start_a[20:0];
-      m_p    <= {22'b0, mul_start_b};
-      m_mode <= mul_start_mode;
-      m_cnt  <= (mul_start_mode == 2'd2) ? 4'd12
-              : (mul_start_mode == 2'd1) ? 4'd10 : 4'd8;
-    end
-  end
+  psg_mulsvc u_mul(
+    .clk(clk), .reset(reset),
+    .mul_start(mul_start), .mul_start_a(mul_start_a),
+    .mul_start_b(mul_start_b), .mul_start_mode(mul_start_mode),
+    .m_res(m_res), .m_res_wide(m_res_wide), .m_res12(m_res12),
+    .m_busy(m_busy));
 
   // The mixer consumes the STORED cell value: the binary keeps one
   // int16 block per voice, so the wrap the ring applies is what the
