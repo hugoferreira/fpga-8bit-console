@@ -2213,6 +2213,38 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     state_q <= state_m[state_ra];
   end
 
+  // ---- the sample walk's control store -------------------------------
+  // The hardware schedule is a pure function of pph, so its step decode
+  // is a ROM, not an equality fabric: 128 x 32 one-hot control words
+  // (two spare EBRs), read at pph+1 so ctrl_q is registered exactly
+  // when its step executes. tools/gen_psg_ctrl.py writes the image and
+  // documents the bit layout; the CTRL_* names here must match it.
+  // At most one capture bit and one MUL_SEL value are set per word -
+  // the generator asserts it - which is what lets the former case tree
+  // run as parallel ifs. The preview flavour keeps its own case tree
+  // and comparisons untouched; ctrl_q reads as zero there.
+  localparam int CTRL_W0 = 0,  CTRL_W1 = 1,  CTRL_W2 = 2,  CTRL_W3 = 3;
+  localparam int CTRL_W4 = 4,  CTRL_W5 = 5,  CTRL_W6 = 6,  CTRL_W15 = 7;
+  localparam int CTRL_W17 = 8, CTRL_W26 = 9, CTRL_W27 = 10, CTRL_W28 = 11;
+  localparam int CTRL_W39 = 12, CTRL_W40 = 13, CTRL_W51 = 14;
+  localparam int CTRL_W52 = 15, CTRL_W62 = 16, CTRL_W63 = 17;
+  localparam int CTRL_W74 = 18, CTRL_W84 = 19, CTRL_W86 = 20;
+  localparam int CTRL_FOLD = 21, CTRL_ISEC = 22, CTRL_IOM = 23;
+  localparam int CTRL_IOS = 24, CTRL_DQO = 25;
+  localparam int CTRL_SYNA = 30, CTRL_SYNB = 31;
+  logic [31:0] ctrl_q;
+  generate
+  if (!REALTIME_PREVIEW) begin : g_ctrl
+    (* ram_style = "block" *) logic [31:0] ctrl_rom[0:127];
+    initial $readmemh("./rtl/psg_ctrl.hex", ctrl_rom);
+    wire [6:0] pph_nxt = (!prun || pph == 7'(PLAST)) ? 7'd0 : pph + 7'd1;
+    always_ff @(posedge clk) ctrl_q <= ctrl_rom[pph_nxt];
+  end else begin : g_no_ctrl
+    always_comb ctrl_q = 32'b0;
+  end
+  endgenerate
+  wire [3:0] ctrl_mul = ctrl_q[29:26];
+
   // ---- the computed wave layer (adoption 2.2) ------------------------
   // One evaluation pipe serves the three per-visit reads: main (issued at
   // PWORK, captured +1), secondary q view (issued +1, captured +2), old
@@ -2220,23 +2252,29 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // issue; the cone evaluates during the following cycle. Every constant
   // multiply is a proven reciprocal form (psg_hw_forms) - yosys lowers
   // them to the priced CSD adder networks; the fabric has no DSP.
+  wire iss_sec = REALTIME_PREVIEW ? (pph == 7'(PWORK + 1))
+                                  : ctrl_q[CTRL_ISEC];
+  wire iss_om  = REALTIME_PREVIEW ? (pph == 7'(PWORK + 2))
+                                  : ctrl_q[CTRL_IOM];
+  wire iss_os  = REALTIME_PREVIEW ? (pph == 7'(PWORK + 3))
+                                  : ctrl_q[CTRL_IOS];
   always_comb begin
     wsel = s_snd_wave;
     wx = s_phase[23:8];
     wsec = 1'b0;
-    if (pph == 7'(PWORK + 1)) begin
+    if (iss_sec) begin
       wx = q16;                     // second voice (q0 view)
       wsec = 1'b1;
-    end else if (pph == 7'(PWORK + 2)) begin
+    end else if (iss_om) begin
       wsel = s_old_wave;
       wx = s_old_phase[23:8];       // old-state continuation, primary
-    end else if (pph == 7'(PWORK + 3)) begin
+    end else if (iss_os) begin
       wsel = s_old_wave;
       wx = q16;                     // old-state secondary (old q view)
       wsec = 1'b1;
     end
   end
-  wire w_old_ctx = (pph == 7'(PWORK + 2)) || (pph == 7'(PWORK + 3));
+  wire w_old_ctx = iss_om || iss_os;
   always_ff @(posedge clk) begin
     wx_r <= wx;
     wsel_r <= wsel;
@@ -2430,7 +2468,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // The one dq network serves both phase contexts: the live voice at
   // PWORK+6 and the old continuation at PWORK+5 (its wave/mode/dp are
   // the previous tick's, carried in the old fields).
-  wire dq_old_ctx = (pph == 7'(PWORK + 5));
+  wire dq_old_ctx = REALTIME_PREVIEW ? (pph == 7'(PWORK + 5))
+                                     : ctrl_q[CTRL_DQO];
   wire [2:0] dq_wave = dq_old_ctx ? s_old_wave : s_snd_wave;
   wire [1:0] dq_mode = dq_old_ctx ? old_mode_r : s_ch_det;
   wire [23:0] dp24 = {8'b0, dq_old_ctx ? s_old_inc[23:8] : einc[23:8]};
@@ -2460,7 +2499,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // triangle and phaser whose secondary reads u16(q0) unshifted (the
   // model's wave_pair). The preview schedule keeps its original 24-bit
   // second phase, so its view is the old [23:8] window.
-  wire q_old_ctx = (pph == 7'(PWORK + 3)) && !s_snd_wt;
+  wire q_old_ctx = iss_os && !s_snd_wt;
   wire [2:0] qv_wave = q_old_ctx ? s_old_wave : s_snd_wave;
   wire [1:0] qv_mode = q_old_ctx ? old_mode_r : s_ch_det;
   wire [15:0] qv_lo = q_old_ctx ? old_q0[15:0] : s_phase2[15:0];
@@ -2503,7 +2542,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   always_comb begin
     pha_a = s_phase;
     pha_b = einc;
-    if (pph == 7'(PWORK + 5)) begin
+    if (dq_old_ctx) begin
       pha_a = s_old_phase;
       pha_b = s_old_inc;
     end
@@ -2524,18 +2563,18 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     syn_rd   = 1'b0;
     syn_addr = 13'd0;
     if (prun && s_snd_wt && playing[pc_ch]) begin
-      if (pph == 7'(PWORK)) begin
+      if (REALTIME_PREVIEW ? (pph == 7'(PWORK)) : ctrl_q[CTRL_SYNA]) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb + {7'b0, s_phase[23:18]};
-      end else if (!REALTIME_PREVIEW && pph == 7'(PWORK + 1)) begin
+      end else if (!REALTIME_PREVIEW && ctrl_q[CTRL_SYNB]) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb
                  + {7'b0, s_phase[23:18] + 6'd1};
-      end else if (pph == 7'(PWORK + (REALTIME_PREVIEW ? 1 : 2))
+      end else if ((REALTIME_PREVIEW ? (pph == 7'(PWORK + 1)) : iss_om)
                    && v2_on) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb + {7'b0, q16[15:10]};
-      end else if (!REALTIME_PREVIEW && pph == 7'(PWORK + 3)
+      end else if (!REALTIME_PREVIEW && iss_os
                    && v2_on) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb
@@ -2705,8 +2744,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // step. New voice at +4/+13 (consumed +22), old continuation at
         // +22/+31 (consumed +40), blend at +40 (consumed +49); the
         // wavetable path lerps first and takes its G passes at +27/+36.
-        case (pph)
-          7'(PWORK + 4): begin
+        // The step association lives in the control store's MUL_SEL
+        // field (tools/gen_psg_ctrl.py) - the arm ids below match it.
+        case (ctrl_mul)
+          4'd1: begin
             mul_start = 1'b1;
             if (s_snd_wt) begin
               mul_start_a = 25'(wt_pd);
@@ -2720,60 +2761,60 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             end
           end
           // /3 limb passes: m_res12 is the whole G*z magnitude.
-          7'(PWORK + 17): if (!s_snd_wt) begin
+          4'd3: if (!s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = {8'b0, m_res12[26:10]};
             mul_start_b = 12'd341;
             mul_start_mode = 2'd1;
           end
-          7'(PWORK + 28): if (!s_snd_wt) begin
+          4'd5: if (!s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = {8'b0, gz_s1_r};
             mul_start_b = 12'd171;
             mul_start_mode = 2'd1;
           end
-          7'(PWORK + 39): if (!s_snd_wt) begin
+          4'd6: if (!s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = 25'(z_old_c);
             mul_start_b = 12'(s_old_G);
             mul_start_mode = 2'd2;
           end
-          7'(PWORK + 52): if (!s_snd_wt) begin
+          4'd9: if (!s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = {8'b0, m_res12[26:10]};
             mul_start_b = 12'd341;
             mul_start_mode = 2'd1;
           end
-          7'(PWORK + 63): if (!s_snd_wt) begin
+          4'd10: if (!s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = {8'b0, gz_s1_r};
             mul_start_b = 12'd171;
             mul_start_mode = 2'd1;
           end
-          7'(PWORK + 75): if (bl_cnt != 7'd64) begin
+          4'd11: if (bl_cnt != 7'd64) begin
             mul_start   = 1'b1;
             mul_start_a = 25'(blend_diff);
             mul_start_b = {6'b0, bl_cnt[5:0]};
           end
-          7'(PWORK + 15): if (s_snd_wt) begin
+          4'd2: if (s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = 25'(wt_qd);
             mul_start_b = {2'b0, wt_qf};
             mul_start_mode = 2'd1;
           end
-          7'(PWORK + 27): if (s_snd_wt) begin
+          4'd4: if (s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = 25'(z_new_c);
             mul_start_b = 12'(g_live);
             mul_start_mode = 2'd2;
           end
-          7'(PWORK + 40): if (s_snd_wt) begin
+          4'd7: if (s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = {8'b0, m_res12[26:10]};
             mul_start_b = 12'd341;
             mul_start_mode = 2'd1;
           end
-          7'(PWORK + 51): if (s_snd_wt) begin
+          4'd8: if (s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = {8'b0, gz_s1_r};
             mul_start_b = 12'd171;
@@ -3211,8 +3252,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             default: ;
           endcase
         end else begin
-        case (pph)
-          7'(PWORK): begin               // advance phase(s), issue main read
+        // Step decode rides the control store; the case is over the
+        // one-hot bits themselves, declared parallel so the arms map
+        // as a flat pmux. The generator asserts one capture bit per
+        // word - that invariant is what the attribute states, and a
+        // hand-edited hex that broke it would diverge sim vs synth.
+        (* parallel_case *)
+        case (1'b1)
+          ctrl_q[CTRL_W0]: begin               // advance phase(s), issue main read
             // One step per voice per sample. This used to free-run on the
             // system clock, which tied the noise sequence to how many clocks
             // the per-voice pipeline happened to take - so shortening the
@@ -3290,7 +3337,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               s_noise_lp <= 0;
             end
           end
-          7'(PWORK + 1): begin           // main-voice sample
+          ctrl_q[CTRL_W1]: begin           // main-voice sample
             // Keep q's synchronous ROM address on the pre-advance phase,
             // matching PICO-8's render-then-advance oscillator ordering.
             if (playing[pc_ch] && s_eff_a != 0 && s_snd_wt)
@@ -3298,7 +3345,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             if (s_snd_wt)
               smp_a <= 18'($signed(seq_q));
           end
-          7'(PWORK + 2): begin           // second voice
+          ctrl_q[CTRL_W2]: begin           // second voice
             if (s_snd_wt)
               wt_p1 <= $signed(seq_q);
             else
@@ -3314,13 +3361,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             last_alt_r <= s_ch_buzz;
             last_rev_r <= s_ch_rev;
           end
-          7'(PWORK + 3): begin           // preceding-state waveform sample
+          ctrl_q[CTRL_W3]: begin           // preceding-state waveform sample
             if (s_snd_wt)
               smp_b <= 18'($signed(seq_q));
             else
               smp_b <= z_eval;           // secondary z
           end
-          7'(PWORK + 4): begin
+          ctrl_q[CTRL_W4]: begin
             if (!s_snd_wt)
               old_smp <= z_eval;         // old main z
             if (s_snd_wt) begin
@@ -3339,13 +3386,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                          & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
             end
           end
-          7'(PWORK + 15): begin
+          ctrl_q[CTRL_W15]: begin
             if (s_snd_wt) begin
               smp_a <= wt_z;
               wi_neg <= wt_qd[8];
             end
           end
-          7'(PWORK + 5): begin
+          ctrl_q[CTRL_W5]: begin
             // The old waveform read has captured the pre-advance phase.
             // The dq network serves the OLD context this cycle.
             if (!s_snd_wt) begin
@@ -3356,7 +3403,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               end
             end
           end
-          7'(PWORK + 6): begin
+          ctrl_q[CTRL_W6]: begin
             // All secondary waveform reads have captured the pre-advance
             // phase. The universal q0 advances for EVERY rendering voice -
             // the binary's `q0 = (q0 + dq) & 0x1ffff` - on a dedicated
@@ -3367,7 +3414,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             if (playing[pc_ch] && s_eff_a != 0)
               s_phase2 <= {7'b0, 17'(s_phase2[16:0] + dq17)};
           end
-          7'(PWORK + 17): begin
+          ctrl_q[CTRL_W17]: begin
             // The G pass is done: capture the >>10 for the second /3
             // limb and the >>11 for the noise bypass while the first
             // limb launches.
@@ -3376,11 +3423,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               mxs_old <= z_old_c[17];
             end
           end
-          7'(PWORK + 26): begin
+          ctrl_q[CTRL_W26]: begin
             if (s_snd_wt)
               smp_b <= wt_z;
           end
-          7'(PWORK + 27): begin
+          ctrl_q[CTRL_W27]: begin
             if (s_snd_wt) begin
               mxs_new <= z_new_c[17];
               mx_play <= playing[pc_ch];
@@ -3388,42 +3435,42 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                          & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
             end
           end
-          7'(PWORK + 28): begin
+          ctrl_q[CTRL_W28]: begin
             if (!s_snd_wt)
               g_part <= m_res_wide[24:0];       // recip3-hi
           end
-          7'(PWORK + 39): begin
+          ctrl_q[CTRL_W39]: begin
             // The /3-lo result is live: consume mx_new while the old
             // voice's G pass launches.
             if (!s_snd_wt)
               mx_new <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
           end
-          7'(PWORK + 40): begin
+          ctrl_q[CTRL_W40]: begin
             if (s_snd_wt)
               gz_s1_r <= m_res12[26:10];
           end
-          7'(PWORK + 51): begin
+          ctrl_q[CTRL_W51]: begin
             if (s_snd_wt)
               g_part <= m_res_wide[24:0];
           end
-          7'(PWORK + 52): begin
+          ctrl_q[CTRL_W52]: begin
             if (!s_snd_wt)
               gz_s1_r <= m_res12[26:10];        // old G*z
           end
-          7'(PWORK + 62): begin
+          ctrl_q[CTRL_W62]: begin
             if (s_snd_wt)
               mx_new <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
           end
-          7'(PWORK + 63): begin
+          ctrl_q[CTRL_W63]: begin
             if (!s_snd_wt)
               g_part <= m_res_wide[24:0];       // old recip3-hi
           end
-          7'(PWORK + 74): begin
+          ctrl_q[CTRL_W74]: begin
             if (!s_snd_wt)
               mx_old <= mxs_old ? -$signed(gz_old_scaled)
                                 : $signed(gz_old_scaled);
           end
-          7'(PWORK + 86): begin
+          ctrl_q[CTRL_W86]: begin
             // The dampen stage, on the already-combed and blended
             // sample; the dampen state advances only when its digit is
             // set, like the model's damp_y.
@@ -3431,7 +3478,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             if (s_ch_damp != 2'd0)
               s_lp <= dmp_y;
           end
-          7'(PWORK + 84): begin
+          ctrl_q[CTRL_W84]: begin
             // Blend consume: tz((64*old + i*(new - old)) / 64) over the
             // COMBED blocks - the truncation is over the WHOLE
             // accumulator (blend.one_multiply + tzpow), not split across
@@ -3441,7 +3488,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             else
               mx_prod <= 17'(bl_acc_tz >>> 6);
           end
-          7'(PFOLD): begin               // fold into the tree
+          ctrl_q[CTRL_FOLD]: begin               // fold into the tree
             // An even slot's leaf waits on the stack; an odd slot's launches
             // the fold chain (one fold, or the queued multi-fold steps after
             // slots 3 and 7). mix_leaf is zero for a slot that is running but
