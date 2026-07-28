@@ -38,6 +38,14 @@ function automatic logic [PSG_VW-1:0] aud_sl(input logic [1:0] ch,
   aud_sl = play[{1'b0, ch}] ? {1'b0, ch} : {1'b1, ch};
 endfunction
 
+// tz(v / 2^k): the proven biased arithmetic shift (psg_hw_forms tzpow).
+// Shared because both the wave layer's composition scaling and the walk's
+// wavetable lerp close their truncation with it.
+function automatic logic signed [17:0] tzs(
+    input logic signed [17:0] v, input logic [1:0] k);
+  tzs = (v + (v[17] ? $signed((18'sd1 <<< k) - 18'sd1) : 18'sd0)) >>> k;
+endfunction
+
 // ---- the scheduled record store's layout ----------------------------
 //   word  0.. 9  tick/note state
 //   word 10..23  oscillator state
