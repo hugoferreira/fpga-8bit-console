@@ -38,6 +38,15 @@ function automatic logic [PSG_VW-1:0] aud_sl(input logic [1:0] ch,
   aud_sl = play[{1'b0, ch}] ? {1'b0, ch} : {1'b1, ch};
 endfunction
 
+// An SFX record's base byte address in audio RAM: 256 + n*68, as two shifts
+// and an add. Every consumer recomputes it from its own id rather than
+// storing it: 13 bits per slot of state plus the mux to read them costs more
+// than the adders. Shared because the sequencer addresses records by channel
+// and instrument id, and the walk addresses wavetables by sound id.
+function automatic logic [12:0] rec_base(input logic [5:0] n);
+  rec_base = 13'd256 + {1'b0, n, 6'b0} + {5'b0, n, 2'b0};
+endfunction
+
 // tz(v / 2^k): the proven biased arithmetic shift (psg_hw_forms tzpow).
 // Shared because both the wave layer's composition scaling and the walk's
 // wavetable lerp close their truncation with it.
