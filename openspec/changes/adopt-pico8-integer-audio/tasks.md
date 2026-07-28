@@ -78,6 +78,13 @@
       semantics); model-exact per tick
 - [ ] 3.2 Adopt the slide including its fine path; retire the extra
       8-fractional-bit increment extension it replaces
+- [ ] 3.2a With 3.1/3.2 the row-progress reciprocal has no consumer:
+      `recip[s] = round(65536/s)` is not exact truncated division
+      (2,538/32,640 (t,d) pairs differ - psg_buffers levers) and the
+      adopted forms need exact `tz(N, d)` on a 30-bit numerator. Replace
+      it with a restoring divide on the existing serial adder (three
+      divides per voice-tick = 0.3% of the tick budget) and retire the
+      recip EBR; record the block against the ring budget
 - [ ] 3.3 Adopt vibrato and arpeggio recurrences; model-exact per tick
 - [ ] 3.4 Verify the 64-sample crossfade against the binary's
       `tz((i*new + (64-i)*old)/64)` under the new operand forms

@@ -311,6 +311,42 @@ cell width:
   36 (past the HX8K device). On the Gowin GW2AR-18C the whole
   unconditional eight-ring form is ~13 of 46 BSRAM.
 
+**The remaining levers (`psg_buffers.py levers`), in value order.** The
+ring is now information-theoretically minimal - a delay line of 16-bit
+free variables, each read after a fixed lag, with no redundancy to
+exploit - so further capacity has to come from the other blocks:
+
+- **aram, 9 of the 15 blocks, is the only lever that changes a tier.** It
+  is a copy of cart memory the CPU already holds, and PICO-8 itself reads
+  the live image rather than a copy. Worst-case traffic if the PSG read
+  main memory instead is 576 B/tick (eight voices taking note, header,
+  instrument row and a 64-byte wavetable) = 69 KB/s, about 2% of a
+  one-byte-per-clock memory. Bandwidth is not the obstacle; the register
+  map is, and that is a stated non-goal here - `add-memory-subsystem`
+  owns it. With aram out, **four** exact rings fit in 14 blocks.
+- **recip, 1 block, is already being retired by this change.**
+  `recip[s] = round(65536/s)` with a `>>8` product is not exact truncated
+  division - it differs on 2,538 of 32,640 (t,d) pairs - and the adopted
+  slide and fades need exact `tz(N, d)` on a 30-bit numerator anyway. The
+  replacement is a restoring divide on the existing serial adder: three
+  divides per voice-tick is 720 clocks against the tick's 233,325, or
+  0.3%. Trading an EBR for adder cycles on the binding resource is the
+  same trade the hybrid wave ROM already took.
+- **Ring count via a pool, with the exposure measured.** A pool allocated
+  when a reverb digit arrives differs from the binary's unconditional
+  write only after a reverb SFX starts on a slot that had none, and
+  `build/psg_buffers/reverb-onset.bin` measures that: the peak error per
+  732-sample lap is 8,044 / 4,022 / 2,011 / 1,005 counts - the missing
+  echo, halving every lap, below one LSB after ~13 laps (0.44 s). Sticky
+  per-slot ownership removes even that for any cart that keeps reverb on
+  one voice. This is what bounds the value of the second capture.
+- **Level-1-only capacity** is 2 blocks per ring instead of 3, exact for
+  every case except `filter-reverb-2`.
+- Not levers: `crom` is the microcode/constants home rather than a pure
+  table, `state_m`'s eight slot records are all required, and aram's dead
+  bits (the filter byte's bit 0, the loop fields' high bits) total 256 of
+  36,864 - 0.7%, and it has to read back verbatim regardless.
+
 Constraints inherited from `reduce-psg-ice40-area`, which pauses at its
 6,199-cell / 15-EBR checkpoint until this change lands: the 15-EBR
 ceiling, the 1,275-clock sample budget (pre-run depth is a free constant),

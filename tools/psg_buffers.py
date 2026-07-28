@@ -257,13 +257,17 @@ def witness_path(**kw) -> tuple[Path, int]:
     return p, img[256 + 68 + 65] * 32
 
 
-def render_witness(factory):
+def render_witness_at(path: Path, ticks: int, factory):
     prev, M.make_history = M.make_history, factory
     try:
-        p, ticks = witness_path()
-        return M.render_case(p, ticks)
+        return M.render_case(path, ticks)
     finally:
         M.make_history = prev
+
+
+def render_witness(factory):
+    p, ticks = witness_path()
+    return render_witness_at(p, ticks, factory)
 
 
 def observe(factory, images) -> dict[str, tuple[int, int]]:
@@ -695,9 +699,128 @@ def sec_synth() -> None:
                f"{lut[-1] if lut else 0} LUT4 for the lane muxing")
 
 
+# --- levers: what else can be freed, and what each unlocks -----------------
+
+def onset_image(speed: int = 1) -> tuple[Path, int]:
+    """Two patterns on one slot: a loud reverb-FREE SFX, then a
+    reverb-2 SFX on the same voice. Under the binary's unconditional
+    write the second SFX's comb taps history the first one wrote; under a
+    ring POOL allocated at arm time it taps silence. This is the only
+    place the two readings differ, so it measures the exposure."""
+    img = bytearray(4608)
+    img[0:4] = bytes([1, 0x40, 0x40, 0x40])       # pattern 0 -> SFX 1
+    img[4:8] = bytes([2, 0x40, 0xC0, 0x40])       # pattern 1 -> SFX 2, stop
+    for idx, filt in ((1, 0), (2, 6 << 3)):       # SFX 2 carries reverb 2
+        rec = 256 + 68 * idx
+        for r in range(32):
+            img[rec + 2 * r] = 24 + (r & 1)       # two alternating pitches
+            img[rec + 2 * r + 1] = 7 << 1         # full volume, wave 0
+        img[rec + 64] = filt
+        img[rec + 65] = speed
+    WITNESS.mkdir(parents=True, exist_ok=True)
+    p = WITNESS / "reverb-onset.bin"
+    p.write_bytes(bytes(img))
+    return p, 64 * speed
+
+
+def sec_levers() -> None:
+    print("levers: what else is available, and what each one unlocks")
+    census = ebr_census()
+    if census is None:
+        note("build/targets/psg.json absent (make synth-psg) - skipped")
+        return
+    ring = blocks(LOOKBACK[2], 16, ICE40)
+    ceiling = 15
+    base = sum(census.values()) - census.get("wrom", 0) \
+        - census.get("revbuf", 0)
+
+    # 1. recip: a rounded reciprocal the adoption retires anyway.
+    bad = tot = worst = 0
+    for d in range(1, 256):
+        r = min(0xFFFF, round(65536 / d))
+        for t in range(d):
+            tot += 1
+            if (r * t) >> 8 != (t * 256) // d:
+                bad += 1
+                worst = max(worst, abs(((r * t) >> 8) - (t * 256) // d))
+    num = 255 * (63 << 16)
+    report("levers.recip_is_approximate", bad > 0,
+           f"recip[s] = round(65536/s) with a >>8 product differs from exact "
+           f"truncated division on {bad:,d}/{tot:,d} (t,d) pairs (max {worst} "
+           "of 256) - the adoption retires the form, so its EBR is in play")
+    note(f"the replacement is exact `tz(N, d)`: N <= {num:,d} "
+         f"({num.bit_length()} bits) over d <= 255, three divides per "
+         f"voice-tick. A restoring divide is {num.bit_length()} cycles on "
+         f"the existing serial adder: {3 * num.bit_length() * 8:,d} clocks "
+         f"per tick against {TICK * 1275:,d} available - 0.3%. Trading "
+         f"{census.get('recip', 0)} EBR for adder cycles on the BINDING "
+         "resource is the same trade the hybrid wave ROM already took")
+
+    # 2. aram: three quarters of the budget, and bandwidth-trivial to move.
+    per_tick = 8 * (2 + 4 + 2 + 64)
+    note(f"aram is {census.get('aram', 0)} of {sum(census.values())} blocks - "
+         f"the only lever that changes a TIER. It is a copy of cart memory "
+         f"the CPU already holds; PICO-8 itself reads the live image. Worst "
+         f"case traffic is {per_tick} B/tick (8 voices x note+header+"
+         f"instrument row+64-byte wavetable) = {per_tick * 12049 // 100:,d} "
+         "B/s, ~2% of a 1 B/clk main memory. Bandwidth is not the obstacle; "
+         "the register map is, and it is a stated non-goal here "
+         "(add-memory-subsystem owns it)")
+
+    print()
+    print("  tier ladder (iCE40, 15-block ceiling):")
+    ladder = [
+        ("today: approximate shared reverb", sum(census.values()), 0),
+        ("adoption only (wrom + revbuf out)", base, 0),
+        ("  + 1 exact ring", base, 1),
+        ("  + recip retired, 1 ring", base - census.get("recip", 0), 1),
+        ("  + recip retired, 2 rings", base - census.get("recip", 0), 2),
+        ("  + aram relocated, 4 rings",
+         base - census.get("recip", 0) - census.get("aram", 0), 4),
+        ("  + aram relocated, 8 rings",
+         base - census.get("recip", 0) - census.get("aram", 0), 8),
+    ]
+    for label, tables, rings in ladder:
+        cost = tables + rings * ring
+        print(f"    {label:36s} {cost:2d} blocks  "
+              f"{'fits' if cost <= ceiling else 'OVER'}")
+    note("so exactness for one reverb-carrying voice is available now; the "
+         "four music slots need aram out of EBR; eight need that AND more "
+         "budget than the PSG's share of the HX8K. The Tang Nano needs none "
+         "of this - it is 8 BSRAM of 46 there")
+
+    # 3. The pool's exposure, measured rather than assumed.
+    p, ticks = onset_image()
+    full = render_witness_at(p, ticks, M.SlotRing)
+    pool = render_witness_at(p, ticks, LazyRing)
+    diff = [i for i in range(len(full)) if full[i] != pool[i]]
+    if not diff:
+        report("levers.pool_exposure", False,
+               "the onset witness does not separate the two readings")
+        return
+    first = diff[0]
+    laps = []
+    for k in range(4):
+        lo = first + k * LOOKBACK[2]
+        hi = lo + LOOKBACK[2]
+        window = [abs(full[i] - pool[i]) for i in diff if lo <= i < hi]
+        laps.append(max(window) if window else 0)
+    measured("levers.pool_exposure",
+             f"{p}: allocating the ring at arm time instead of writing it "
+             f"always diverges from sample {first} (tick {first // TICK}, "
+             f"the reverb SFX's first), peak per 732-sample lap "
+             f"{laps} counts - the error is the missing echo and it decays "
+             "by half a lap at a time, not a permanent offset")
+    note("that bounds the second capture's value: a K-ring pool is exact "
+         "except for a decaying window after a reverb digit arrives on a "
+         "slot that had none. Sticky per-slot ownership removes even that "
+         "for any cart that keeps reverb on one voice - which is every cart "
+         "in the corpus")
+
+
 SECTIONS = {"layout": sec_layout, "entry": sec_entry, "depth": sec_depth,
-            "count": sec_count, "corpus": sec_corpus, "fit": sec_fit,
-            "synth": sec_synth}
+            "count": sec_count, "corpus": sec_corpus, "levers": sec_levers,
+            "fit": sec_fit, "synth": sec_synth}
 
 
 def main() -> int:
