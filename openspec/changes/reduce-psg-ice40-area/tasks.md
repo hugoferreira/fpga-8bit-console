@@ -381,3 +381,13 @@
       alias there miscounts cycles and was caught before the gates.
       Goal-campaign close-out at 7,216: five landed stages (-430
       cumulative), four refutations with numbers, all render-exact.
+      LAST DOOR, closed by analysis: reusing the pph control store for
+      the tick side's V_LD/V_ST word schedule (19 free rows, sunk ROM
+      costs, fields time-sharing ctrl_q). It fails on freeze-resume:
+      the sample walk owns the ROM address bus mid-tick-step, so
+      ctrl_q is stale exactly when the resumed tick issue needs its
+      word, and the repair (resume priming + a previous-word register
+      threaded through the replay) rebuilds the decode it deletes -
+      in the freeze/replay corner, for -35..55. The pph side only
+      worked because the sample walk cannot be frozen: it IS the
+      freezer. No positive-EV render-exact move remains mapped.
