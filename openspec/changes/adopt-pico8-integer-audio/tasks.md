@@ -95,6 +95,21 @@
 
 - [ ] 3.1 Adopt drop, fade-in, fade-out exactly (idiv-truncation
       semantics); model-exact per tick
+- [x] 3.1a Volume half COMPLETE: 12-bit `a` = vol<<8 through the effect
+      program (vol_r/pvol_r/fxv_next), fade-in/fade-out as the exact
+      quotient and slide as a_s + tz(t*(a0-a_s), d) - the identity that
+      buys one product and one divide where the literal form needs two
+      of each, with the d-1 round-up on a negative delta because tz of a
+      negative quotient is -ceil. a_exact and the x7 publication scale
+      retire; the playhead-instrument fold is pre-scaled by 7 into
+      vol_r so it publishes what it did before. The Q8 row fraction it
+      replaces cost a FIXED 252/256 = 0.984375 on every effect path -
+      that ratio, not the reciprocal's error, was what these cases
+      measured. Closes effect-1-slide, effect-4-fade-in,
+      effect-5-fade-out, effect-slide-once: 48 green (was 44). NOTE
+      a_pub must read a REGISTER: publication spans four cycles a sample
+      walk can freeze, and the synthesis products reuse the m service
+      from PWORK+4, so a live m_res slice reads the walk's arithmetic
 - [ ] 3.2 Adopt the slide including its fine path; retire the extra
       8-fractional-bit increment extension it replaces
 - [ ] 3.2a With 3.1/3.2 the row-progress reciprocal has no consumer:
@@ -104,6 +119,14 @@
       it with a restoring divide on the existing serial adder (three
       divides per voice-tick = 0.3% of the tick budget) and retire the
       recip EBR; record the block against the ring budget
+- [x] 3.2b Divider LANDED: 24 shift-subtract steps over a 24-bit
+      dividend field with the partial remainder in the top byte (rem < d
+      holds from 0, so the shifted partial is 9 bits and the restored
+      remainder is always back under a byte). It is its OWN unit, not a
+      mode on the multiply service - the 9-bit compare-subtract is
+      cheaper than muxing the 26-bit accumulator's shift direction, and
+      a divide can then overlap the next product. The recip table still
+      has the pitch half as a consumer and stays until 3.2
 - [ ] 3.3 Adopt vibrato and arpeggio recurrences; model-exact per tick
 - [ ] 3.4 Verify the 64-sample crossfade against the binary's
       `tz((i*new + (64-i)*old)/64)` under the new operand forms

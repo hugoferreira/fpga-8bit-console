@@ -738,9 +738,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // were a leftover of the phase-increment slide: prev_r had no consumer
   // at all.
   wire [23:0] base_inc = pinc_q;
-  wire [7:0]  vol_direct  = w_ins_done ? 8'd0
-                          : {w_cur_vol, 5'b0} + {3'b0, w_cur_vol, 2'b0};
-  wire [7:0]  pvol_direct = {w_prev_vol, 5'b0} + {3'b0, w_prev_vol, 2'b0};
+  // The binary's amplitude is vol<<8 exactly (a0 in _calculate_osc_state).
+  wire [11:0] vol_direct  = w_ins_done ? 12'd0 : {1'b0, w_cur_vol, 8'b0};
+  wire [11:0] pvol_direct = {1'b0, w_prev_vol, 8'b0};
 
   // The arpeggiating voice contributes arp_p; the other voice still adds
   // its pitch relative to 24, so an arpeggio inside an instrument
@@ -776,7 +776,48 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Products retain the original truncation points: 24-bit effects use
   // m_res[31:8], and volumes use m_res[15:8].
   logic [3:0]  xs;
-  logic [7:0]  u_r, vol_r, pvol_r;
+  logic [7:0]  u_r;
+  // The binary's amplitude is 12-bit `a` = vol<<8 carried through the
+  // effect arithmetic (2.3/3.1). The Q8 row fraction it replaces cost
+  // a fixed 252/256 = 0.984375 of exact on every effect path.
+  logic [11:0] vol_r, pvol_r;
+
+  wire         div_start;
+  // ------------------------------------------------------------------
+  // Exact truncated division (3.2a). The effect recurrences divide by
+  // the SFX speed, and recip[s] = round(65536/s) is not exact truncated
+  // division. One restoring divider serves them: a 24-bit dividend
+  // field over an 8-bit divisor, 24 shift-subtract steps, the partial
+  // remainder held in the top byte. It is its own unit rather than a
+  // mode on the multiply service so a divide can overlap the next
+  // product - the 9-bit compare-subtract is cheaper than muxing the
+  // 26-bit accumulator's shift direction either way.
+  // ------------------------------------------------------------------
+  logic [31:0] d_p;                  // {remainder[7:0], dividend/quotient}
+  logic [7:0]  d_d;
+  logic [4:0]  d_cnt;
+  // rem < d holds from rem = 0, so the shifted partial is 9 bits and the
+  // restored remainder is always back under a byte.
+  wire  [8:0]  d_rsh = {d_p[31:24], d_p[23]};
+  wire  [9:0]  d_sub = {1'b0, d_rsh} - {2'b0, d_d};
+  wire         d_fit = !d_sub[9];
+  wire  [23:0] d_res = d_p[23:0];
+  wire         d_busy = (d_cnt != 0);
+  logic [23:0] div_n;
+  logic [7:0]  div_d;
+
+  always_ff @(posedge clk) begin
+    if (reset)
+      d_cnt <= 0;
+    else if (d_cnt != 0) begin
+      d_p   <= {(d_fit ? d_sub[7:0] : d_rsh[7:0]), d_p[22:0], d_fit};
+      d_cnt <= d_cnt - 5'd1;
+    end else if (div_start) begin
+      d_p   <= {8'b0, div_n};
+      d_d   <= div_d;
+      d_cnt <= 5'd24;
+    end
+  end
 
   // PICO-8's vibrato multiplier is
   //   [128,129,130,129,128,127,126,127]
@@ -797,9 +838,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
   // Signed differences are fed in as magnitude plus sign, so the shared
   // unit only ever has to do unsigned work.
-  wire signed [8:0]  vl_d   = $signed({1'b0, vol_r}) - $signed({1'b0, pvol_r});
-  wire               vl_neg = vl_d[8];
-  wire [7:0]         vl_mag = vl_neg ? 8'(-vl_d) : 8'(vl_d);
+  wire signed [12:0] vl_d   = $signed({1'b0, vol_r}) - $signed({1'b0, pvol_r});
+  wire               vl_neg = vl_d[12];
+  wire [11:0]        vl_mag = vl_neg ? 12'(-vl_d) : 12'(vl_d);
   wire signed [6:0]  slp_d = $signed({1'b0, e_pitch})
                             - $signed({1'b0, e_prevp});
   wire               slp_neg = slp_d[6];
@@ -829,41 +870,66 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [23:0] fxp_res = base_inc + (fxp_neg ? ~fxp_op : fxp_op)
                       + {23'b0, (e_fx == 3'd3) | (lfo_neg & ~vib_cb)};
   logic [23:0] fxi_next;
-  logic [7:0]  fxv_next;
+  logic [11:0] fxv_next;
 
   // Operands for the product started at step xs
   logic [23:0] mul_a;
-  logic [7:0]  mul_b;
+  logic [11:0] mul_b;
+  logic [1:0]  mul_md;
   always_comb begin
     mul_a = 24'd0;
-    mul_b = 8'd0;
+    mul_b = 12'd0;
+    mul_md = 2'd0;
     case (xs)
-      4'd0: begin mul_a = {8'b0, recip_q};     mul_b = eff_fcnt; end
+      4'd0: begin mul_a = {8'b0, recip_q};     mul_b = {4'b0, eff_fcnt}; end
       4'd1: begin
               if (e_fx == 3'd1) begin
                 mul_a = {18'b0, slp_mag};
                 // Step 1 is entered on the cycle that publishes the row
                 // fraction.  Feed the just-completed product directly:
                 // u_r still contains the preceding tick until this edge.
-                mul_b = p8;
+                mul_b = {4'b0, p8};
               end
             end
-      4'd2: begin mul_a = 24'd1317;            mul_b = {2'b0, vmul}; end
-      4'd3: begin mul_a = 24'd1317;            mul_b = {2'b0, pvmul}; end
+      4'd2: begin mul_a = 24'd1317;            mul_b = {6'b0, vmul}; end
+      4'd3: begin mul_a = 24'd1317;            mul_b = {6'b0, pvmul}; end
       4'd4: case (e_fx)
-              3'd2: begin mul_a = base_inc;                  mul_b = {6'b0, lfo_mag}; end
-              3'd3: begin mul_a = base_inc;                  mul_b = u_r; end
+              3'd2: begin mul_a = base_inc;                  mul_b = {10'b0, lfo_mag}; end
+              3'd3: begin mul_a = base_inc;                  mul_b = {4'b0, u_r}; end
               default: ;
             endcase
+      // The volume NUMERATOR (3.1): the binary interpolates in the
+      // amplitude domain and divides by the speed, so these products
+      // feed the divider rather than a Q8 fraction. Slide rides the
+      // identity tz((d-t)a_s + t*a0, d) = a_s + tz(t*(a0-a_s), d), which
+      // needs one product and one divide instead of two of each.
       4'd5: case (e_fx)
-              3'd1: begin mul_a = {16'b0, vl_mag}; mul_b = u_r; end
-              3'd4: begin mul_a = {16'b0, vol_r};  mul_b = u_r; end
-              3'd5: begin mul_a = {16'b0, vol_r};  mul_b = u_r; end
+              3'd1: begin mul_a = {12'b0, vl_mag}; mul_b = {4'b0, eff_fcnt}; end
+              3'd4: begin mul_a = {12'b0, vol_r};  mul_b = {4'b0, eff_fcnt}; end
+              3'd5: begin mul_a = {12'b0, vol_r};
+                          mul_b = {4'b0, eff_sp} - {4'b0, eff_fcnt}; end
               default: ;
             endcase
-      4'd6: begin mul_a = {15'b0, mus_gain} + 24'd1; mul_b = fxv_next; end
+      4'd7: begin mul_a = {12'b0, fxv_next};
+                  mul_b = {4'b0, mus_gain} + 12'd1; mul_md = 2'd1; end
       default: ;
     endcase
+  end
+
+  // Step 6 launches the divide on the product step 5 left in m_res, on
+  // the same cycle the micro-PC advances - so it fires exactly once,
+  // with the product settled.
+  assign div_start = !walk_frozen && sst == K_FX && !m_busy && xs == 4'd6;
+
+  // The divide the volume effect consumes, launched at step 6 on the
+  // product step 5 left in m_res. A negative slide delta truncates the
+  // OTHER way - tz of a negative quotient is -ceil of its magnitude - so
+  // that numerator carries the d-1 round-up.
+  always_comb begin
+    div_d = eff_sp;
+    div_n = (e_fx == 3'd1 && vl_neg)
+              ? m_res[23:0] + {16'b0, eff_sp} - 24'd1
+              : m_res[23:0];
   end
 
   always_comb begin
@@ -877,34 +943,36 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       3'd6, 3'd7: fxi_next = arp_r;
       default: ;
     endcase
+    // The exact quotients (3.1). Fade in/out ARE the quotient; slide
+    // adds its signed correction to the previous row's amplitude.
     fxv_next = vol_r;
     case (e_fx)
-      3'd1: fxv_next = pvol_r + (vl_neg ? ~p8 : p8) + {7'b0, vl_neg};
-      3'd4: fxv_next = p8;
-      3'd5: fxv_next = vol_r - p8;
+      3'd1: fxv_next = pvol_r + (vl_neg ? ~d_res[11:0] : d_res[11:0])
+                     + {11'b0, vl_neg};
+      3'd4: fxv_next = d_res[11:0];
+      3'd5: fxv_next = d_res[11:0];
       default: ;
     endcase
   end
 
   // The publication pack, one inactive sounding word per P_W step. The
   // operands hold across all four cycles: arp_r and vol_r are the effect
-  // program's result slots, p8 is the xs 6 product (the m service is idle
-  // until the next slot's first launch), and everything else is a
-  // register or a cone over registers.
+  // program's result slots, the music fade is the xs 7 product (the m
+  // service is idle until the next slot's first launch), and everything
+  // else is a register or a cone over registers.
   wire [23:0] pub_inc = (w_ins_on && w_ins_wt && w_ins_bass)
                           ? {1'b0, arp_r[23:1]} : arp_r;
-  // The published amplitude (2.3): the binary's 12-bit `a`. Paths with
-  // no volume effect publish vol<<8 exactly; the volume-effect and
-  // playhead-instrument paths still run the old 8-bit calibration and
-  // map on as x7 (0.984x of exact) until section 3 widens the effect
-  // arithmetic under its own byte gates.
-  wire a_exact = !ins_use
-                 && e_fx != 3'd1 && e_fx != 3'd4 && e_fx != 3'd5
-                 && (!is_mus(c) || mus_gain == 8'd255);
-  wire [7:0] a_base8 = is_mus(c) ? p8 : vol_r;
-  wire [11:0] a_pub = a_exact
-                        ? {1'b0, w_cur_vol, 8'b0}
-                        : ({1'b0, a_base8, 3'b0} - {4'b0, a_base8});
+  // The published amplitude (2.3/3.1): the binary's 12-bit `a`, carried
+  // exactly through the effect arithmetic now that the recurrences
+  // divide rather than scale by a Q8 fraction. vol_r is a REGISTER, not
+  // a slice of m_res: publication spans four cycles that a sample walk
+  // can freeze, and the synthesis products reuse the m service from
+  // PWORK+4 - so the music fade lands in vol_r at step 8 rather than
+  // being read live at P_W3. The playhead-instrument path still folds
+  // vol*ivol at the 8-bit calibration and is pre-scaled by 7 into
+  // vol_r, so it publishes what it did before - section 3's instrument
+  // sevenths retire that.
+  wire [11:0] a_pub = vol_r;
   logic [15:0] pub_wd;
   always_comb begin
     case (sst)
@@ -1474,16 +1542,25 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // prefetch at all - it is the table port's idle read.
         K_PF0: sst <= K_FX;
         // Effect evaluation, one microinstruction per completed product.
-        K_FX: if (!m_busy) begin
+        K_FX: if (!m_busy && !(xs == 4'd7 && d_busy)) begin
           if (xs == 0) arp_r <= pinc_q;
           case (xs)
             4'd1: u_r    <= p8;
-            4'd3: vol_r  <= ins_use ? (w_ins_done ? 8'd0 : p8) : vol_direct;
-            4'd4: pvol_r <= ins_use ? p8 : pvol_direct;
+            // The instrument fold is still the 8-bit calibration; scale
+            // it by 7 on the way in so the 12-bit publication is what
+            // the x7 at the publication site used to produce.
+            4'd3: vol_r  <= ins_use
+                              ? (w_ins_done ? 12'd0
+                                            : ({1'b0, p8, 3'b0}
+                                               - {4'b0, p8}))
+                              : vol_direct;
+            4'd4: pvol_r <= ins_use ? ({1'b0, p8, 3'b0} - {4'b0, p8})
+                                    : pvol_direct;
             // arp_r and vol_r are dead after their respective effect
             // calculations, so they become the publication result slots.
             4'd5: arp_r  <= fxi_next;
-            4'd6: vol_r  <= fxv_next;
+            4'd7: vol_r  <= fxv_next;
+            4'd8: if (is_mus(c)) vol_r <= m_res[19:8];
             default: ;
           endcase
           if (xs == 4'd2 && e_fx == 3'd1) begin
@@ -1493,7 +1570,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             // former (incorrect) phase-increment interpolation.
             slide_addr <= slp_int;
             sst <= K_SLP0;
-          end else if (xs == 4'd7) begin
+          end else if (xs == 4'd8) begin
               // Publication runs P_W0..P_W3, writing the four inactive
               // sounding words directly; arp_r, vol_r, the final product
               // and the identity registers hold every operand.
@@ -2515,11 +2592,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       end
     end else if (!walk_frozen) begin
       case (sst)
-        K_FX: if (!m_busy && xs != 4'd7
+        // Step 6 launches the divide, not a product, and step 8 is the
+        // publish handshake: neither takes the multiply service.
+        K_FX: if (!m_busy && !(xs == 4'd7 && d_busy)
+                  && xs != 4'd6 && xs != 4'd8
                   && !(xs == 4'd2 && e_fx == 3'd1)) begin
           mul_start   = 1'b1;
           mul_start_a = mul_a;
-          mul_start_b = {2'b0, mul_b};
+          mul_start_b = mul_b;
+          mul_start_mode = mul_md;
         end
         K_SLP2: if (!m_busy) begin
           mul_start   = 1'b1;
