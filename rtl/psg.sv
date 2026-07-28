@@ -258,9 +258,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   localparam logic [4:0] V_PAR1 = 5'd28;
   localparam int PLOSC = REALTIME_PREVIEW ? 7  : SOSC;
   localparam int PWORK = REALTIME_PREVIEW ? 12 : 19;
-  localparam int PFOLD = REALTIME_PREVIEW ? 23 : 104;
+  localparam int PFOLD = REALTIME_PREVIEW ? 23 : 108;
   localparam int PSTOR = REALTIME_PREVIEW ? 16 : 52;
-  localparam int PLAST = REALTIME_PREVIEW ? 23 : 104;
+  localparam int PLAST = REALTIME_PREVIEW ? 23 : 108;
 
   // One 256x16 scheduled store holds every per-slot record:
   //
@@ -359,7 +359,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic signed [7:0] s_nz_hold;
   logic [3:0]  s_nz_ph;
   logic signed [12:0] s_brown;
-  logic signed [15:0] s_lp;
+  logic signed [16:0] s_lp;
   logic signed [15:0] s_noise_lp;
   // PICO-8 keeps a copy of the preceding oscillator state at every synthesis
   // tick and blends its continuation into the first 64 new samples. These
@@ -555,9 +555,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Exactly the oscillator record: PLAST may extend past the last store
   // (the product chain's tail phases), so the window is bounded by SOSC,
   // not by the visit's end.
-  wire         state_sample_we = prun
+  // The dampen state is produced at +86, far past its word's store
+  // slot, so it writes back through two dedicated late cycles.
+  wire         state_lp_we = prun && !REALTIME_PREVIEW
+                               && (pph == 7'(PWORK + 87)
+                                   || pph == 7'(PWORK + 88));
+  wire         state_sample_we = (prun
                                && pph >= 7'(PSTOR)
-                               && pph < 7'(PSTOR + PLOSC);
+                               && pph < 7'(PSTOR + PLOSC))
+                               || state_lp_we;
   wire         walk_frozen = seq_frozen | prun | state_replay | fold_busy;
   always_ff @(posedge clk) begin
     if (reset)
@@ -1781,8 +1787,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // slices (the low bytes ride words 9 and 12).
         4'd3:    sosc_wd = {1'b0, s_old_G[12:8], s_last_G[12:8],
                             s_nz_ph, s_phase2[16]};
-        4'd4:    sosc_wd = {1'b0, old_mode_r, s_brown};
-        4'd5:    sosc_wd = 16'd0;         // dampen state: task 2.5
+        4'd4:    sosc_wd = {s_lp[16], old_mode_r, s_brown};
+        4'd5:    sosc_wd = s_lp[15:0];
         4'd6:    sosc_wd = s_old_phase[23:8];
         4'd7:    sosc_wd = {bl_cnt, old_q0[16:8]};
         4'd8:    sosc_wd = s_old_inc[15:0];
@@ -1941,7 +1947,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     // the complete sample walk, so these owners never contend in practice;
     // retaining explicit priority makes that port contract structural.
     state_we = state_sample_we | state_tick_we | eng_we;
-    if (state_sample_we) begin
+    if (state_lp_we) begin
+      state_wa = {pc_ch, (pph == 7'(PWORK + 87)) ? V_OSC + 5'd5
+                                                 : V_OSC + 5'd4};
+      state_wd = (pph == 7'(PWORK + 87))
+                   ? s_lp[15:0]
+                   : {s_lp[16], old_mode_r, s_brown};
+    end else if (state_sample_we) begin
       state_wa = {pc_ch, V_OSC + 5'(s_stw)};
       state_wd = sosc_wd;
     end else if (eng_we) begin
@@ -2283,12 +2295,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [17:0] zo_mag = z_old_c[17] ? 18'(-z_old_c) : 18'(z_old_c);
 
   logic        mx_play;
+  logic signed [16:0] mx_filt;        // post-comb, post-dampen sample
+  logic [9:0]  ring_rp;               // global ring position, per sample
   // Whether this slot is HEARD, as opposed to merely running. A music
   // slot is silenced while its channel's foreground effect plays, but it
   // still renders; only the mixer leaf is zeroed. mx_play (does it run)
   // and mx_aud (is it audible) must stay separate.
   logic        mx_aud;
-  logic [1:0]  mx_rev;
   logic        mxs_new, mxs_old;      // saved z signs for the G products
   logic [24:0] g_part;                // the recip3-hi partial
   logic [16:0] gz_s1_r;               // captured G*z >> 10 for /3
@@ -2319,6 +2332,28 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                             + bl_p;
   wire signed [23:0] bl_acc_tz =
       bl_acc + (bl_acc[23] ? 24'sd63 : 24'sd0);
+  // COMB: tz((2x + h)/2) (the study's narrowed accumulator) - with h=0
+  // this is the identity, so the datapath is uniform whether or not a
+  // ring is built or the digit set. Then DAMPEN: the blend-form
+  // one-pole y = tz((x + (2^d - 1)y)/2^d). The ring stores the final
+  // post-dampen sample through a WRAPPING int16 cell (captured; a
+  // saturating or wider cell is a different answer).
+  logic signed [15:0] ring_q;         // tap data (zero without a ring)
+  wire signed [18:0] cmb_acc = {mx_prod[16], mx_prod, 1'b0}
+                             + {{3{ring_q[15]}}, ring_q};
+  wire signed [18:0] cmb_tz = cmb_acc + (cmb_acc[18] ? 19'sd1 : 19'sd0);
+  wire signed [16:0] cmb_y = (s_ch_rev != 2'd0) ? cmb_tz[17:1]
+                                                : mx_prod;
+  wire signed [18:0] dmp_mul = (s_ch_damp == 2'd1)
+                                 ? {{2{s_lp[16]}}, s_lp}
+                                 : ({s_lp, 2'b0} - {{2{s_lp[16]}}, s_lp});
+  wire signed [18:0] dmp_acc = {{2{cmb_y[16]}}, cmb_y} + dmp_mul;
+  wire signed [18:0] dmp_tz =
+      dmp_acc + (dmp_acc[18] ? ((s_ch_damp == 2'd1) ? 19'sd1 : 19'sd3)
+                             : 19'sd0);
+  wire signed [16:0] dmp_y = (s_ch_damp == 2'd1) ? dmp_tz[17:1]
+                                                 : dmp_tz[18:2];
+  wire signed [16:0] filt_y = (s_ch_damp != 2'd0) ? dmp_y : cmb_y;
   // The shared service forms |new-old| * blend_pos; dividing by 64 is a
   // wiring shift and the saved sign reproduces truncation toward zero.
   wire [22:0] bl_res = m_res[22:0];
@@ -2479,11 +2514,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     end
   end
 
+  // The mixer consumes the STORED cell value: the binary keeps one
+  // int16 block per voice, so the wrap the ring applies is what the
+  // tree reads too (the fixpoint ladder convicts unbounded feed).
   wire signed [16:0] mix_prod =
       REALTIME_PREVIEW
         ? (mxs_new ? -$signed({1'b0, m_res[22:7]})
                    :  $signed({1'b0, m_res[22:7]}))
-        : mx_prod;
+        : {mx_filt[15], mx_filt[15:0]};
   wire signed [21:0] n_contrib = {{5{mix_prod[16]}}, mix_prod};
   // This slot's leaf in the reduction tree: its sample, or an explicit zero
   // when it is running but not audible.
@@ -2603,14 +2641,34 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     endcase
   end
 
-  logic [1:0]  rev_max;
-  // The echo has to outlive the note that asked for it, so the level any
-  // playing channel requests is held for a full delay line after the last
-  // request rather than dropping with the channel.
-  logic [1:0]  rev_lvl;
-  logic [9:0]  rev_ttl;
   logic signed [15:0] dry16;
   logic        dry_valid;
+
+  // The per-voice history rings (design 8 / the buffer study): flat
+  // 732 x int16 per slot, written UNCONDITIONALLY every rendered
+  // sample (captured: a slot with no reverb digit still fills its
+  // ring), read at 366 (level 1) or 732 (level 2, read-before-write by
+  // schedule) samples of lookback. Absent rings read zero and the comb
+  // degenerates to the identity.
+  generate
+  if (REVERB) begin : g_ring
+    logic [15:0] ringm[0:NV * 732 - 1];
+    initial for (int i = 0; i < NV * 732; i++) ringm[i] = 16'd0;
+    wire [9:0] ring_tap =
+        (s_ch_rev == 2'd1)
+          ? ((ring_rp >= 10'd366) ? ring_rp - 10'd366
+                                  : ring_rp + 10'd366)
+          : ring_rp;
+    always_ff @(posedge clk) begin
+      if (prun && pph == 7'(PWORK + 85))
+        ring_q <= $signed(ringm[{4'b0, pc_ch} * 732 + {3'b0, ring_tap}]);
+      if (prun && pph == 7'(PWORK + 87) && playing[pc_ch])
+        ringm[{4'b0, pc_ch} * 732 + {3'b0, ring_rp}] <= mx_filt[15:0];
+    end
+  end else begin : g_noring
+    always_comb ring_q = 16'sd0;
+  end
+  endgenerate
 
   // A sequencer tick and a sample boundary coincide every 183 samples. Under
   // the pre-run (task 3.0) the tick program evaluated during the PRECEDING
@@ -2631,9 +2689,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       fmc <= 0;
       fpend <= 0;
       ffin <= 0;
-      rev_max <= 0;
-      rev_lvl <= 0;
-      rev_ttl <= 0;
       dry_valid <= 0;
       // Datapath and streamed voice fields deliberately have no reset mux.
       // state_m supplies every s_* field before PWORK; each product/blend
@@ -2681,15 +2736,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                 ffin <= 0;
                 dry16 <= 16'($signed(fstk[0]));
                 dry_valid <= 1;
-                // hold the requested echo level for one delay line past the
-                // last request, so a note that ends still gets its echo back
-                if (rev_max != 2'd0) begin
-                  rev_lvl <= rev_max;
-                  rev_ttl <= 10'd732;
-                end else if (rev_ttl != 0)
-                  rev_ttl <= rev_ttl - 1;
-                else
-                  rev_lvl <= 0;
               end
             end
           end
@@ -2700,7 +2746,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         prun <= 1;
         pc_ch <= 0;
         pph <= 0;
-        rev_max <= 0;
+        ring_rp <= (ring_rp == 10'd731) ? 10'd0 : ring_rp + 10'd1;
       end else if (prun) begin
         // ---- record load: word pph-1 has landed ----------------------
         case (pph)
@@ -2715,7 +2761,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                   s_nz_ph        <= state_q[4:1];
                   s_phase2[23:16] <= {7'b0, state_q[0]};
                 end
-          7'd5: {old_mode_r, s_brown} <= state_q[14:0];
+          7'd5: if (REALTIME_PREVIEW)
+                  s_brown <= state_q[12:0];
+                else
+                  {s_lp[16], old_mode_r, s_brown} <= state_q;
+          7'd6: if (!REALTIME_PREVIEW) s_lp[15:0] <= state_q;
           7'd7: if (REALTIME_PREVIEW)
                    s_noise_lp <= state_q;
                 else
@@ -2800,7 +2850,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               mx_aud  <= playing[pc_ch]
                          & ~(is_mus(pc_ch)
                              & playing[{1'b0, pc_ch[1:0]}]);
-              mx_rev  <= s_ch_rev;
             end
             7'(PFOLD): begin
               if (pc_ch[0] == 1'b0)
@@ -2814,7 +2863,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                 ffin  <= (pc_ch == 3'd7);
                 fmc   <= 4'd1;
               end
-              if (mx_aud && mx_rev > rev_max) rev_max <= mx_rev;
             end
             default: ;
           endcase
@@ -2939,7 +2987,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               // Audible unless this music slot has a foreground effect.
               mx_aud  <= playing[pc_ch]
                          & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
-              mx_rev  <= s_ch_rev;
             end
           end
           7'(PWORK + 15): begin
@@ -2989,7 +3036,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               mx_play <= playing[pc_ch];
               mx_aud  <= playing[pc_ch]
                          & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
-              mx_rev  <= s_ch_rev;
             end
           end
           7'(PWORK + 28): begin
@@ -3027,6 +3073,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               mx_old <= mxs_old ? -$signed(gz_old_scaled)
                                 : $signed(gz_old_scaled);
           end
+          7'(PWORK + 86): begin
+            // The filter stage: comb (tap read landed last cycle),
+            // then dampen; the dampen state advances only when its
+            // digit is set, like the model's damp_y.
+            mx_filt <= filt_y;
+            if (s_ch_damp != 2'd0)
+              s_lp <= dmp_y;
+          end
           7'(PWORK + 84): begin
             // Blend consume: tz((64*old + i*(new - old)) / 64) - the
             // truncation is over the WHOLE accumulator (blend.one_multiply
@@ -3053,7 +3107,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               ffin  <= (pc_ch == 3'd7);
               fmc   <= 4'd1;
             end
-            if (mx_aud && mx_rev > rev_max) rev_max <= mx_rev;
           end
           default: ;
         endcase
@@ -3062,66 +3115,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     end
   end
 
-  // Output stage: direct, or a shared feed-forward reverb echo (2/4-tick
-  // delay at the strongest level any active channel requested)
-  generate
-  if (REVERB) begin : g_reverb
-    // Ten signed bits in units of 64 PCM counts preserve the exported tail
-    // down to its last ~62-count repeat while keeping 732 samples in two EBRs.
-    logic signed [9:0] revbuf[0:731];
-    logic [9:0] widx, ridx;
-    logic signed [9:0] rev_q, dry_l;
-    logic [1:0] rst, rlvl_l;
-    logic signed [10:0] rev_fbv;
-    logic signed [9:0] rev_fb;
-    logic signed [15:0] rev_echo;
-    wire [9:0] dlen = (rev_lvl == 2'd1) ? 10'd366 :
-                      (rev_lvl == 2'd2) ? 10'd732 : 10'd0;
-    always_comb begin
-      rev_fbv = $signed({dry_l[9], dry_l})
-                + ((rlvl_l == 2'd0)
-                     ? 11'sd0 : $signed({rev_q[9], rev_q}) >>> 1);
-      rev_fb = rev_fbv > 11'sd511 ? 10'sd511
-             : rev_fbv < -11'sd512 ? -10'sd512 : rev_fbv[9:0];
-      rev_echo = (rlvl_l == 2'd0)
-                   ? 16'sd0 : $signed({rev_q[9], rev_q, 5'b0});
-    end
-    always_ff @(posedge clk)
-      rev_q <= revbuf[ridx];
-    always_ff @(posedge clk) begin
-      if (reset) begin
-        widx <= 0; ridx <= 0; rst <= 0; pcm <= 16'sd0;
-        dry_l <= 0; rlvl_l <= 0;
-      end else begin
-        case (rst)
-          2'd0: if (dry_valid) begin
-            dry_l <= 10'(dry16 >>> 6);
-            rlvl_l <= rev_lvl;
-            ridx <= (dlen == 0) ? widx :
-                    (widx >= dlen) ? widx - dlen : widx + 10'd732 - dlen;
-            rst <= 2'd1;
-          end
-          2'd1: rst <= 2'd2;                     // revbuf read settles
-          2'd2: begin
-            pcm <= 16'(dry16 + rev_echo);
-            // PICO-8's reverb is a feedback comb: the delayed half-level
-            // repeat is written back with the dry signal, producing the
-            // measured 1/2, 1/4, 1/8... impulse train every delay period.
-            revbuf[widx] <= rev_fb;
-            widx <= (widx == 10'd731) ? 10'd0 : widx + 1;
-            rst <= 2'd0;
-          end
-          default: rst <= 2'd0;
-        endcase
-      end
-    end
-  end else begin : g_direct
-    always_ff @(posedge clk) begin
-      if (reset) pcm <= 16'sd0;
-      else if (dry_valid) pcm <= dry16;
-    end
+  // Output stage: the mixed sum is the PCM - the adopted reverb is
+  // per-voice, pre-mix (the rings above); the old shared post-mix
+  // delay is gone.
+  always_ff @(posedge clk) begin
+    if (reset) pcm <= 16'sd0;
+    else if (dry_valid) pcm <= dry16;
   end
-  endgenerate
 
   // ------------------------------------------------------------------
   // CPU interface: upload port, music mask, status reads

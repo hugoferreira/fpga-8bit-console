@@ -311,11 +311,15 @@ module psg_tb;
     set_meta(11, 16, 0, 0); set_filter(11, 0);          // pitched
     for (int r = 0; r < 32; r++) set_note(12, r, 30, 6, 7, 0);
     set_meta(12, 16, 0, 0); set_filter(12, 4);          // buzz (brown)
-    // sfx13/14: short square with reverb 2 vs none
+    // sfx13/14: an impulse row then PLAYING silence, reverb 2 vs none -
+    // the adopted per-voice comb only runs while the voice renders, so
+    // the echo is measured in the silent rows, not after a stop.
     set_note(13, 0, 40, 3, 7, 0);
-    set_meta(13, 4, 1, 0); set_filter(13, 48);          // reverb 2, 1 row
+    for (int r = 1; r < 16; r++) set_note(13, r, 40, 3, 0, 0);
+    set_meta(13, 4, 16, 0); set_filter(13, 48);         // reverb 2
     set_note(14, 0, 40, 3, 7, 0);
-    set_meta(14, 4, 1, 0); set_filter(14, 0);           // no reverb, 1 row
+    for (int r = 1; r < 16; r++) set_note(14, r, 40, 3, 0, 0);
+    set_meta(14, 4, 16, 0); set_filter(14, 0);          // no reverb
 
     // patterns: 0 (loop start) -> 1 (loop back) cycle; 2 = stop flag
     set_pat(0, 8'h06 | 8'h80, 8'h41, 8'h42, 8'h43);
@@ -478,11 +482,7 @@ module psg_tb;
       measure(24000, md2, ch2);
       wr(8'h10, 8'h80);
       check(md0 > 0, "clean noise has large steps");
-      // TASK 2.5 (adopt-pico8-integer-audio): the pre-volume dampen is
-      // disconnected while the filter relocates behind the blend; the
-      // shrink check resumes with the relocated one-pole.
-      $display("  (dampen shrink check waived pending task 2.5: md0=%0d md2=%0d)",
-               md0, md2);
+      check(md2 * 2 < md0, "dampen shrinks the peak sample step");
     end
 
     // ---- 10. DETUNE -------------------------------------------------
@@ -514,16 +514,15 @@ module psg_tb;
       // the level-2 echo of the note's first sample lands 732 samples
       // after it was written, so skip past the note's own output and then
       // measure the window the echo has to arrive in
-      wr(8'h12, 8'd14);                   // dry short square
-      ticks(2);
-      wr(8'h12, 8'h80);
-      repeat (9000) @(posedge clk);
+      wr(8'h12, 8'd14);                   // dry impulse, then silence
+      ticks(6);
       peak_dev(78000, tail_dry);
-      wr(8'h12, 8'd13);                   // reverb-2 short square
-      ticks(2);
       wr(8'h12, 8'h80);
-      repeat (9000) @(posedge clk);
+      ticks(2);
+      wr(8'h12, 8'd13);                   // reverb-2 impulse
+      ticks(6);
       peak_dev(78000, tail_rev);
+      wr(8'h12, 8'h80);
       check(tail_dry < 4, "a dry note leaves nothing behind");
       check(tail_rev > tail_dry + 8, "reverb tail outlasts the dry note");
     end
