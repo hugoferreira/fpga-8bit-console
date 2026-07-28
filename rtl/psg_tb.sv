@@ -11,9 +11,14 @@
 // (volume multiply, pitch relative to C-2, the retrigger rule) and
 // waveform instruments.
 //
-// Run: verilator --binary --timing -j 4 \
+// Run: verilator --binary --timing -j 4 -Irtl \
 //        rtl/psg_tb.sv rtl/psg.sv rtl/dsigma.sv --top-module psg_tb \
 //        && ./obj_dir/Vpsg_tb
+//
+// -Irtl because psg.sv `include's its submodule files and psg_common.svh, and
+// the including file's own directory is NOT on the default search path. Still
+// flag-free in the sense that matters: no -Wno suppressions anywhere, and the
+// build has to come out silent.
 `timescale 1ns/1ps
 
 module psg_tb;
