@@ -78,7 +78,7 @@ module target_psg (
     // against the part's 32 (design decision 8 always put them behind
     // this parameter, with Gowin as their home). Measuring this target
     // at REVERB=1 measures a build that cannot exist.
-    psg #(.CLK_HZ(32'd28_125_000), .REVERB(0)) psg0 (
+    psg #(.CLK_HZ(32'd28_125_000), .REVERB(0), .DBG_PORT(0)) psg0 (
         .clk(psgclk), .reset(rst),
         .cs(cs), .rw(rw), .addr(addr), .di(di),
         .dout(dout), .pcm(pcm), .dbg()

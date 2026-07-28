@@ -53,16 +53,20 @@
 //   $22 music fade length in 16 ms units, applied to the next music start
 //       (fade in) or stop (fade out), then cleared
 module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
-             parameter REALTIME_PREVIEW = 0)
+             parameter REALTIME_PREVIEW = 0, parameter DBG_PORT = 1)
           (input bit clk, input bit reset,
            input bit cs, input bit rw, input logic [7:0] addr, input logic [7:0] di,
            output logic [7:0] dout,
            output logic signed [15:0] pcm,
            // Verification only: per-channel state for the simulator's
-           // --psg-trace. Left unconnected in the synthesised top level, so it
-           // costs nothing on the FPGA. Exists because there was no way to tell
-           // whether an audio fidelity complaint was allocation, sequencing or
-           // synthesis without seeing inside.
+           // --psg-trace. Nothing on hardware reads it, so DBG_PORT=0
+           // removes the cone that drives it rather than relying on the
+           // synthesiser to notice the port is unconnected - which also
+           // stops it constraining what the per-slot state may become
+           // (it is the only reader that ever wanted four slots at once).
+           // Exists because there was no way to tell whether an audio
+           // fidelity complaint was allocation, sequencing or synthesis
+           // without seeing inside.
            output logic [63:0] dbg);
 
   // Audio RAM: PICO-8 $3100-$42FF (music 0..255, SFX records 256..4607)
@@ -3512,19 +3516,25 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // four-channel shape and tools/p8_music_trace.py comparisons still work;
   // dbg[15:12] now says which channels are hearing the song rather than which
   // are "owned" by it, which under the pairing is the same question.
-  always_comb begin
-    dbg = 64'b0;
-    dbg[7:0]   = {mus_playing, 1'b0, mus_pat};
-    dbg[11:8]  = {playing[3], playing[2], playing[1], playing[0]};
-    dbg[15:12] = {playing[7], playing[6], playing[5], playing[4]};
-    dbg[21:16] = sfx_id[aud_sl(2'd0)];
-    dbg[27:22] = sfx_id[aud_sl(2'd1)];
-    dbg[33:28] = sfx_id[aud_sl(2'd2)];
-    dbg[39:34] = sfx_id[aud_sl(2'd3)];
-    dbg[45:40] = {1'b0, aud_row[2'd0]};
-    dbg[51:46] = {1'b0, aud_row[2'd1]};
-    dbg[57:52] = {1'b0, aud_row[2'd2]};
-    dbg[63:58] = {1'b0, aud_row[2'd3]};
+  generate
+  if (DBG_PORT) begin : g_dbg
+    always_comb begin
+      dbg = 64'b0;
+      dbg[7:0]   = {mus_playing, 1'b0, mus_pat};
+      dbg[11:8]  = {playing[3], playing[2], playing[1], playing[0]};
+      dbg[15:12] = {playing[7], playing[6], playing[5], playing[4]};
+      dbg[21:16] = sfx_id[aud_sl(2'd0)];
+      dbg[27:22] = sfx_id[aud_sl(2'd1)];
+      dbg[33:28] = sfx_id[aud_sl(2'd2)];
+      dbg[39:34] = sfx_id[aud_sl(2'd3)];
+      dbg[45:40] = {1'b0, aud_row[2'd0]};
+      dbg[51:46] = {1'b0, aud_row[2'd1]};
+      dbg[57:52] = {1'b0, aud_row[2'd2]};
+      dbg[63:58] = {1'b0, aud_row[2'd3]};
+    end
+  end else begin : g_no_dbg
+    always_comb dbg = 64'b0;
   end
+  endgenerate
 
 endmodule

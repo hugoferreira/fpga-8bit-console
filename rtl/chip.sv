@@ -21,6 +21,10 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
   // sample rate is derived correctly on any board (default: the simulator's
   // 161*121*3*60 Hz pixel clock). REVERB=0 drops the reverb delay BRAM.
   parameter CLK_HZ = 32'd3_506_580, REVERB = 1, PSG_PREVIEW = 0;
+  // The PSG's --psg-trace bus. Only top_simulator.sv reads it; every
+  // synthesised top leaves psg_dbg unconnected, so they set this to 0
+  // and the cone that drives it is never built.
+  parameter PSG_DBG = 1;
 
   // Which subsystems are present. Both default to 1, so `top.sv` and
   // `top_simulator.sv` build exactly the console they always did without being
@@ -255,7 +259,7 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
   generate
     if (HAS_PSG) begin : g_psg
       psg #(.CLK_HZ(CLK_HZ), .REVERB(REVERB),
-            .REALTIME_PREVIEW(PSG_PREVIEW)) psg0(
+            .REALTIME_PREVIEW(PSG_PREVIEW), .DBG_PORT(PSG_DBG)) psg0(
         .clk(psgclk),
         .reset(reset),
         .cs(psg_cs),

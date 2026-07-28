@@ -19,6 +19,24 @@ Reports, for a yosys JSON:
               arithmetic leaving with the register rather than from
               renaming it
 
+CAVEAT, measured 2026-07-28: placed cells are DETERMINISTIC (identical
+across five nextpnr seeds - only Fmax moves, by ~2.4 MHz) but they are
+not INSENSITIVE. Adding an unused module parameter, which leaves the
+pre-mapping netlist bit-for-bit identical at 14,398 cells and 1,610
+flops, moved placed cells by 59. That is abc9's LUT covering being
+order- and naming-sensitive, not placement noise. So a placed-cell delta
+below roughly 60 on this design does not distinguish a real saving from
+a mapping reshuffle.
+
+The structural number that does not move:
+
+    yosys -p "read_verilog -Irtl -sv rtl/target_psg.sv; \
+              synth_ice40 -top target_psg -run :map_luts; stat"
+
+Judge a change on THAT delta - it counts the gates, carries and flops
+the change actually removed - and use placed cells only for the fit
+verdict.
+
 Usage: psg_ff_census.py [netlist.json] [--top N]
 """
 

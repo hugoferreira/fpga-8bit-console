@@ -220,6 +220,30 @@
       46 the array costs. Only worth revisiting if ML writes the record
       directly (an eng_wa slot override) AND the staging can be shared
       with trg_row/trg_len, neither of which is obviously free.
+- [x] R.6c `dbg` conditionally compiled: DBG_PORT on psg, PSG_DBG on
+      chip, 0 in top.sv / top_tangnano20k.sv / target_harness.sv /
+      target_psg.sv, default 1 so top_simulator.sv keeps --psg-trace.
+      Nothing on hardware reads it, and it was the only reader that ever
+      wanted four slots at once, so removing it structurally stops it
+      constraining what the per-slot state may become.
+- [x] R.6d **METHODOLOGY, and it invalidates some earlier verdicts.**
+      Placed cells are DETERMINISTIC - identical across five nextpnr
+      seeds, with only Fmax moving (38.58-40.96 MHz) - so the campaign's
+      "a placed delta at fixed seed is netlist-real" holds. But they are
+      not INSENSITIVE. Adding the DBG_PORT parameter leaves the
+      PRE-MAPPING netlist bit-for-bit identical (14,398 cells, every gate
+      type, 1,610 flops) and still moves placed cells by 59. That is
+      abc9's LUT covering being order- and naming-sensitive.
+      Consequence: **a placed delta under ~60 cells does not distinguish
+      a real saving from a mapping reshuffle**, so R.3's +23 and -9 prove
+      nothing either way, and every sub-60 verdict in this change's
+      history should be read as unresolved rather than refuted. The
+      bulk-only rule may well still hold - it just was not established
+      by those numbers.
+      The structural metric that does not move:
+        yosys -p "read_verilog -Irtl -sv rtl/target_psg.sv; \
+                  synth_ice40 -top target_psg -run :map_luts; stat"
+      Judge a change on that delta; use placed cells for the fit verdict.
 - [ ] R.7 Next, if more is wanted: the campaign's own goal is 5,500. The
       NEW fact since the campaign paused is EBR headroom: REVERB=0 uses
       11 of 32 blocks, where the old ceiling was 15 and `record 32/32

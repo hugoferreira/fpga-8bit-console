@@ -79,7 +79,7 @@ module target_harness (
     /* verilator lint_off PINCONNECTEMPTY */
     chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE("palette565.bin"),
            .CLK_HZ(32'd28_125_000), .REVERB(1),
-           .HAS_PPU(HAS_PPU), .HAS_PSG(HAS_PSG),
+           .HAS_PPU(HAS_PPU), .HAS_PSG(HAS_PSG), .PSG_DBG(0),
            .RAM_ADDR_BITS(RAM_ADDR_BITS))
       chip0 (
         .clk(clk), .cpuclk(clk), .psgclk(psgclk), .reset(rst),

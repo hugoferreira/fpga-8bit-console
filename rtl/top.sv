@@ -76,7 +76,7 @@ module top(input  bit clk, output bit yellow_led,
   // chip.sv so both tops agree again.
   // ---------------------------------------------------------------------
   chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE), .CLK_HZ(PSG_CLK_HZ),
-         .RAM_ADDR_BITS(13))
+         .RAM_ADDR_BITS(13), .PSG_DBG(0))
     chip(.clk(masterclk), .cpuclk(cpuclk), .psgclk(psgclk), .reset, .vsync,
          .hsync, .vpos, .hpos,
          .buttons(8'h00), .rgb, .audio(audio), .psg_dbg());
