@@ -347,6 +347,67 @@ keep the statistical gates with the RNG boundary cited. The
 `reduce-psg-ice40-area` byte-compare baseline re-freezes once, at the
 final checkpoint of this change.
 
+### 7. Filter relocation: the RTL's dampen and reverb move
+
+The survey of rtl/psg.sv (2026-07-28) found both filters in the wrong
+place for exactness: dampen runs per-sample on the PRE-volume 8-bit
+sample (`s_lp`, Q8, difference-form with an arithmetic shift), and
+reverb is a shared POST-mix 10-bit delay on the final PCM. The binary
+runs both per voice on the post-blend stream at final output scale:
+comb first (feedback ring), dampen second (the blend-form recurrence),
+ring write-back post-dampen (fifth milestone). The adoption relocates
+both into the per-slot sample path after the crossfade: `s_lp` becomes
+the 16-bit final-scale dampen state, the shared output delay retires,
+and the mixer's leaves receive the filtered voice stream.
+
+### 8. The reverb ring is a capacity problem, parameterized
+
+Exact per-voice reverb needs ring entries of 17 bits (the comb
+fixpoint reaches +/-53,759 - hw_forms `bound`) at up to 732 samples of
+lookback: ~12.4 Kbit per slot, ~12 iCE40 EBR for the four music slots
+alone - far beyond the 15-EBR ceiling. Bandwidth is trivial (8
+accesses per sample against 1,275 clocks); capacity is not. So the
+exact per-voice comb lands behind the existing `REVERB` parameter:
+oracle and Tang Nano builds get exactness (Gowin BSRAMs are 18 Kbit,
+46 on the 20K), the iCE40 area target builds REVERB=0 exactly as it
+does today, and the area checkpoint comparison stays like-for-like.
+Slots beyond the four music ones share the same rule; a reverb-off
+build must still match every non-reverb oracle case byte-exactly.
+
+### RTL adoption map (survey facts the stages build on)
+
+- The per-sample path is 8-bit end-to-end today: `wq` from the wave
+  ROM/shift forms, `samp` selection, `n_mag` magnitude, x volume on
+  the serial m-service (24x10, `m_wide` gives 24x10 vs 24x8), 17-bit
+  product `mx_prod`, 22-bit leaves. Adoption: 16-bit z from computed
+  waves, G on the service (two passes or a widened B port - synthesis
+  spike), `>>10` + recip3 unit for /3072, magnitude/sign via the
+  existing `mx_neg` pattern.
+- Phase: `s_phase`/`s_phase2` are 24-bit with 8 extra fractional bits;
+  p becomes `s_phase[23:8]`. q0 becomes a true 17-bit register in the
+  `s_phase2` state words (layout words 2/3 repack); the slide's extra
+  fractional path retires with the binary's fine recurrence.
+- The secondary increment: the det_ceil two-clock subtract and the
+  phaser's three-term serial subtract (PWORK+7..9 ALU slots) retire in
+  favor of the proven dq adder forms - those ALU slots free up for the
+  G*z service passes.
+- The blend runs on the m-service at PWORK+13/23; adoption keeps the
+  slots but operands widen to 16-bit and the one-multiply form
+  ((old<<6) + i*(new-old)) replaces the two-product schedule.
+- The soft_add fold engine SURVIVES: its /5 series-with-fixup is
+  already exhaustively equal to the binary's compressor. Only its
+  scale changes: SA_TH 49152 -> 24576, leaves become the exact voice
+  samples, and the final >>1 (the "2x internal scale") plus the
+  output-stage >>6 shrink retire - dry16 IS the final PCM sum.
+- The tick side widens the amplitude: `eff_vol` 8-bit becomes the
+  12-bit `a` (volume<<8 through instrument sevenths tz(a*iv/7) via
+  the recip7 unit, detune boost a+(a>>2), G = a+(a>>1) at publication)
+  - parameter-bank word packing changes, K_SLPM's 1317 product
+  retires.
+- Noise (wave 6 paths: LFSR, `s_noise_lp`, brown) is untouched at the
+  shared-RNG boundary; its gain stage moves to the same G service with
+  the binary's /2048.
+
 ## Risks / Trade-offs
 
 - **[Mis-recovery residue]** A formula may still be subtly wrong despite
