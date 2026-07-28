@@ -187,8 +187,10 @@ transcribed to RTL with no fidelity risk.
   it in two visits without widening.
 - Worst-case bounds (exact interval propagation, comb feedback to its
   fixpoint): voice pre-filter [-26,880, 26,670]; reverb DOUBLES it -
-  ring entries reach +/-53,759 so a **16-bit ring RAM is NOT safe**
-  (17 bits; comb acc 19); dampen acc 19 bits (level 2); blend acc 23
+  the comb's own value reaches +/-53,759, so the comb ACCUMULATOR is 17
+  bits (superseded by the buffer study below: the binary's *storage* is
+  int16 regardless, and the accumulator narrows to 18 bits in its
+  `2x + h` form); dampen acc 19 bits (level 2); blend acc 23
   bits. The mix bus: all 16 reachable audibility placements (the
   binary's foreground-replaces-music rule - at most one live leaf per
   column pair) stay inside int16 at worst case, minimum headroom 378
@@ -240,6 +242,74 @@ widening are both legal, synthesis decides):
   routes on adder bits (13 vs 9 adds for /3072, on wider operands);
   both routes are recorded, synthesis spikes decide per the
   measurement law.
+
+**Minimal exact buffer geometry (`tools/psg_buffers.py`, 2026-07-28).**
+The reverb comb is the only stage that needs a RAM rather than registers,
+and the estimate in decision 8 below priced a literal transcription of
+the binary's structure. Driving the model through a swappable
+`make_history` hook - so the geometry study and the reference path share
+one ring implementation - collapses that price by 2.3x and corrects the
+cell width:
+
+- **The cell is int16, not 17 bits.** The RE notes state the ring twice,
+  independently: `8 * 366` bytes in the voice-record table and "183
+  signed 16-bit samples" per slot. Those agree only at 16 bits per entry
+  (2,928 B either way), and the adjacent tick buffer is 366 B = 183
+  int16 as well. So the 17-bit fixpoint is the *accumulator* width; the
+  binary computes in int32 and stores through an int16 cell. A 17-bit
+  ring is not a safer ring, it is a different answer - and it costs 4
+  iCE40 blocks against 3.
+- **The comb accumulator narrows.** `tz((4x+2h)/4) == tz((2x+h)/2)`,
+  exhaustive over every reachable accumulator value (|2x+h| <= 86,528):
+  18 bits, one add and one biased shift, instead of the transcribed
+  19-bit `4x + 2h`. Pre-halving the stored entry to save a bit is
+  refuted - the truncation is on the whole sum, so the cell's LSB is
+  load-bearing.
+- **The depth is 732 entries, flat - exactly half the ring.** Reads land
+  only at slot ages 2 and 4 ticks, so three of the eight slots are
+  written and never read. A flat 732-entry circular buffer per voice is
+  byte-exact on all 51 cases; 731 breaks `filter-reverb-2`, and 366
+  breaks that case and nothing else (so a level-1-only build is exact at
+  2 blocks). At exactly 732 the level-2 read address equals the write
+  address, so that port reads before writing - or take 733, since the
+  block quantization gives 768 regardless.
+- **Cost, measured not modelled.** yosys lane-packs a narrow memory to
+  the *bit* floor rather than an aspect-ratio bound (the in-tree witness
+  is the shipping 732 x 10-bit `revbuf` in two blocks, which no single
+  ratio can do). Measured per voice: transcribed 8x183x17 = **7 EBR**,
+  flat 732x16 = **3 EBR** (+188 LUT4 of lane muxing), 366x16 = 2, and
+  one Gowin BSRAM either way.
+- **What the gate cannot do.** Every deterministic case stays 51/51
+  byte-exact down to a **15-bit** cell and only breaks at 14, because the
+  four cases that read the ring back never exceed +/-15,116. Sizing this
+  RAM from the oracle gate would ship a cell too narrow for the corpus's
+  own 16-bit content. The gate proves arithmetic; it cannot size storage.
+- **The overflow semantic is open, and now has a witness.**
+  `build/psg_buffers/reverb-fixpoint.bin` - a legal 4,608-byte image
+  whose wavetable instrument is DC at full volume, so the delayed tap
+  reinforces at every lag - drives the comb to its fixpoint at -43,007,
+  10,239 past int16. No captured reference goes near it. Saturating that
+  cell costs 82 counts at the output (-52 dBFS, the soft_add compressor
+  absorbs a saturated leaf); wrapping it costs 49,357 and a sign flip.
+  The RTL saturates until the witness is captured from PICO-8.
+- **Count: 8 rings for unconditional exactness, 1 for the corpus.** The
+  notes' callback rule advances 8 classic playback states and states
+  explicitly that a muted music voice keeps advancing its phaser
+  history, so audibility does not bound the ring count. But no reference
+  distinguishes an unconditional write from a write only while the comb
+  is enabled (the model is 51/51 either way), and under the second
+  reading a pool of K rings is exact whenever at most K voices carry a
+  reverb digit at once. Celeste and NEMO enable **no filter at all** -
+  zero reverb, dampen, detune, noiz or buzz across every SFX - so
+  REVERB=0 costs the shipped corpus nothing, and K=1 covers it and every
+  oracle case.
+- **The iCE40 verdict, from the measured census** (aram 9, revbuf 2,
+  crom/recip/state_m/wrom 1 each = the recorded 15): adoption returns
+  wrom and the shared revbuf, leaving 12 committed. One exact ring lands
+  at **15 - the ceiling the build already spends** - and retires the
+  10-bit post-mix approximation with it. Two rings need 18, eight need
+  36 (past the HX8K device). On the Gowin GW2AR-18C the whole
+  unconditional eight-ring form is ~13 of 46 BSRAM.
 
 Constraints inherited from `reduce-psg-ice40-area`, which pauses at its
 6,199-cell / 15-EBR checkpoint until this change lands: the 15-EBR
@@ -360,19 +430,34 @@ both into the per-slot sample path after the crossfade: `s_lp` becomes
 the 16-bit final-scale dampen state, the shared output delay retires,
 and the mixer's leaves receive the filtered voice stream.
 
-### 8. The reverb ring is a capacity problem, parameterized
+### 8. The reverb ring is a capacity problem, sized by proof
 
-Exact per-voice reverb needs ring entries of 17 bits (the comb
-fixpoint reaches +/-53,759 - hw_forms `bound`) at up to 732 samples of
-lookback: ~12.4 Kbit per slot, ~12 iCE40 EBR for the four music slots
-alone - far beyond the 15-EBR ceiling. Bandwidth is trivial (8
-accesses per sample against 1,275 clocks); capacity is not. So the
-exact per-voice comb lands behind the existing `REVERB` parameter:
-oracle and Tang Nano builds get exactness (Gowin BSRAMs are 18 Kbit,
-46 on the 20K), the iCE40 area target builds REVERB=0 exactly as it
-does today, and the area checkpoint comparison stays like-for-like.
-Slots beyond the four music ones share the same rule; a reverb-off
-build must still match every non-reverb oracle case byte-exactly.
+Bandwidth is trivial (8 accesses per sample against 1,275 clocks);
+capacity is not, and the buffer study above settles the geometry rather
+than estimating it. The exact ring is **732 entries x 16 bits, flat, per
+voice - 3 iCE40 EBR measured**, not the 8x183x17 transcription (7).
+
+The comb lands behind the existing `REVERB` parameter, now with a
+ring-count dimension the parameter also carries:
+
+- `REVERB=0` (the iCE40 area target, unchanged): no ring, and it must
+  still match every non-reverb oracle case byte-exactly. The shipped
+  corpus asks for no filter at all, so this costs Celeste and NEMO
+  nothing.
+- `REVERB=1` on iCE40: **one** exact ring, 15 blocks total - the ceiling
+  the build already spends on the 10-bit shared post-mix approximation
+  it replaces. Byte-exact while at most one voice carries a reverb digit,
+  which covers every oracle case and both shipped carts. A second
+  concurrent reverb voice is a documented capacity limit, not a silent
+  wrong answer: the RTL must be able to say which voice owns the ring.
+- Tang Nano 20K / oracle builds: all eight advancing states get their own
+  ring, ~13 of 46 BSRAM, so unconditional exactness ships on the board
+  the console actually targets.
+
+The int16 cell is the binary's own, so a reverb-on build saturates at
+the cell (the survivable failure, -52 dBFS on the witness) rather than
+widening it. `build/psg_buffers/reverb-fixpoint.bin` is the case that
+makes the choice observable and the capture that would close it.
 
 ### RTL adoption map (survey facts the stages build on)
 

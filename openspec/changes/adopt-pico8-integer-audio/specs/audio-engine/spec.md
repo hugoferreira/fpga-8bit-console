@@ -92,3 +92,48 @@ wherever noise gates are defined.
 - **WHEN** a noise-consuming oracle case is gated
 - **THEN** the gate is statistical and its definition references the
   shared-RNG exactness boundary
+
+### Requirement: Reverb History Is Stored At The Binary's Width
+
+The reverb comb SHALL read and write a per-voice history of the voice's
+final post-comb, post-dampen samples through a **signed 16-bit** cell —
+the width the binary's own ring uses — retaining exactly the level-2
+lookback of 732 samples per voice. A cell whose value exceeds the range
+SHALL saturate, never wrap. The comb SHALL NOT be implemented as eight
+tick-quantized slots: reads land only 366 and 732 samples back, so three
+of the binary's eight slots are unreadable and their storage SHALL NOT be
+built.
+
+#### Scenario: Level-2 lookback is retained exactly
+
+- **WHEN** reverb level 2 plays for longer than 732 samples
+- **THEN** each sample's comb tap is the voice's own final sample from
+  exactly 732 samples earlier, and a 731-sample history is insufficient
+
+#### Scenario: Overflow saturates
+
+- **WHEN** the comb's feedback drives a voice past the 16-bit cell (a DC
+  wavetable at full volume reaches the fixpoint ±43,007)
+- **THEN** the stored value saturates at the cell's limit and the sign is
+  preserved
+
+### Requirement: Reverb Capacity Is Declared, Not Silent
+
+A build SHALL declare how many voices can carry a reverb digit
+concurrently, and SHALL be byte-exact against every oracle case within
+that capacity. A build with capacity 0 SHALL still match every
+reverb-free case byte-exactly. Exceeding the declared capacity SHALL
+produce a deterministic, documented degradation and SHALL be observable —
+not a silently wrong sample stream.
+
+#### Scenario: A capacity-0 build is still exact
+
+- **WHEN** the target builds with reverb storage disabled
+- **THEN** every oracle case whose SFX carry no reverb digit is
+  byte-exact, and the reverb-carrying cases are the only ones excluded
+
+#### Scenario: Capacity is reported rather than guessed
+
+- **WHEN** more voices request reverb than the build has history for
+- **THEN** which voices hold history is determined by a documented rule
+  and is observable, so the divergence can be attributed

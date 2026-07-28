@@ -25,6 +25,14 @@
       subcommand is the gate's executable form; level-2 dampen/reverb and
       the dampen-reverb order are recorded open in design.md pending the
       task-5.1 probe additions)
+- [x] 1.5 Size the one stage that needs a RAM from the model instead of
+      from estimates: minimal exact ring geometry, cell width, ring
+      count and block cost (COMPLETE as tools/psg_buffers.py, driving
+      the model through its `make_history` hook - flat 732 x int16 per
+      voice, 3 EBR measured against the transcription's 7, the comb
+      accumulator narrowed to `tz((2x+h)/2)`, the 15-bit blindness of
+      the deterministic gate, and the fixpoint witness recorded in
+      design.md)
 
 ## 2. Wave core in RTL (stages per the design's adoption map)
 
@@ -52,8 +60,10 @@
       bytes are free)
 - [ ] 2.5 Filter relocation (design 7): comb-then-dampen per voice on
       the post-blend stream, dampen as the blend-form recurrence via
-      biased shifts, per-voice 17-bit ring behind REVERB (design 8);
-      the shared output delay retires
+      biased shifts, the comb as the proven `tz((2x+h)/2)` accumulator,
+      and the ring at its proven minimal geometry - flat 732 x int16 per
+      voice, saturating at the cell, one ring on iCE40 and eight on
+      Gowin behind REVERB (design 8); the shared output delay retires
 - [ ] 2.6 Mixer rescale: SA_TH -> 24576, exact-scale leaves, retire the
       2x internal scale and the output >>6; dry16 is the final sum
       (bound.mix_never_clips holds under the four-audible invariant)
@@ -89,6 +99,13 @@
       for deterministic cases, statistical for the noise pair;
       results.json records the all-red RTL starting line the RTL
       sections must close)
+- [ ] 5.1a Capture the two cases that size the ring rather than its
+      arithmetic: `build/psg_buffers/reverb-fixpoint.bin` (pins the int16
+      overflow semantic - wrap, saturate, or an upstream clamp - which no
+      current reference reaches) and a reverb-enabled-mid-SFX case (pins
+      whether reverb-off voices maintain history, i.e. whether a K-ring
+      pool is exact). Both are model-predicted today; a capture converts
+      the recorded choices from reasoned to proven
 - [ ] 5.2 Re-freeze the reduce-psg-ice40-area byte-compare baseline at
       this change's final renders and note it in that change's design
 - [ ] 5.3 Celeste and NEMO headless runs with active audio; verify by

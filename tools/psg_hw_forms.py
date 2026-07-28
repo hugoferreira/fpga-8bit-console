@@ -22,6 +22,7 @@ Sections:
   amp   - G, the detune boost and vibrato as pure shift-adds
   bound - exact worst-case interval propagation through the whole
           pipeline (comb feedback to its fixpoint), and the int16 verdict
+          for the mix bus (buffer SIZES live in tools/psg_buffers.py)
   csd   - constant multiplies as signed adder networks: the target
           fabric has NO DSP blocks, so every product is LUT4+carry
           adds (combinational CSD network or serial service cycles)
@@ -353,14 +354,19 @@ def sec_bound() -> None:
             break
         lo, hi = nlo, nhi
     print(f"  note   comb fixpoint: [{lo:,d}, {hi:,d}] - reverb DOUBLES "
-          f"the voice bound; ring entries need {max(-lo, hi).bit_length() + 1}"
-          " bits, comb acc "
+          f"the voice bound; the comb's VALUE needs "
+          f"{max(-lo, hi).bit_length() + 1} bits, its accumulator "
           f"{max(4 * -v[0] + 2 * -lo, 4 * v[1] + 2 * hi).bit_length() + 1} "
-          "bits")
+          "bits in the transcribed 4x+2h form (18 as the proven 2x+h - "
+          "psg_buffers entry.comb_acc_narrower)")
     in16 = -32768 <= lo and hi <= 32767
     print(f"  note   ring entries {'fit' if in16 else 'EXCEED'} int16 "
-          f"- a 16-bit ring RAM is {'safe' if in16 else 'NOT safe'} at "
-          "worst case")
+          f"- so the comb ACCUMULATOR needs 17 bits at worst case")
+    print("  note   the STORAGE is still 16 bits: the binary's ring is "
+          "8 x 366 bytes of int16 (tools/psg_buffers.py layout), so the "
+          "overflow is the binary's too - a wider cell would be a "
+          "different answer, not a safer one. psg_buffers entry/fit owns "
+          "the storage question")
     voice = (lo, hi)                          # dampen and blend preserve it
 
     # Audibility rule: foreground on channel c REPLACES music slot 4+c,
@@ -392,6 +398,9 @@ def sec_bound() -> None:
            "all 16 reachable audibility placements stay in int16 at "
            "worst case - the four-audible rule is the invariant that "
            "makes a 16-bit mix bus exact")
+    print("  note   leaves here carry the unclamped comb value; with the "
+          "binary's int16 ring cell they are narrower still, so the "
+          "no-clip conclusion holds a fortiori")
 
     d_acc = max(abs(voice[0]), voice[1]) * 4
     print(f"  note   dampen: |y| <= voice bound (one-pole cannot "

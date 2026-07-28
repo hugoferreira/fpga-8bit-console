@@ -571,9 +571,49 @@ def damp_step(y: int, x: int, level: int) -> int:
     return tz(acc, d)
 
 
+class SlotRing:
+    """The binary's per-voice history ring, verbatim: eight slots of 183
+    signed 16-bit samples at voice-record offset +0x21ae, indexed by the
+    global ring position (RE notes, waveform-7 section and the
+    voice-record table).
+
+    `store` is the one hook where a replica's storage width becomes
+    visible; the default is the binary's own value passed through, which
+    is what the 51-case gate was proven against. tools/psg_buffers.py
+    swaps in narrower stores and other ring geometries to derive the
+    minimal exact buffer, so the geometry study and the reference path
+    share this single implementation."""
+
+    def __init__(self):
+        self.slots = [[0] * TICK_SAMPLES for _ in range(8)]
+        self.rpos = 0
+
+    def store(self, v: int) -> int:
+        return v
+
+    def tap(self, level: int) -> list[int]:
+        """The tick's delayed block: two slots back (366 samples) at
+        level 1, four (732) at level 2."""
+        return self.slots[(self.rpos + 4 + 2 * (level == 1)) & 7]
+
+    def push(self, samples: list[int]) -> list[int]:
+        """Write the tick's final samples and return them as stored - the
+        binary keeps one int16 block per voice, so whatever the store
+        does is what the mixer reads too."""
+        out = [self.store(v) for v in samples]
+        for v in out:
+            probe("ring.entry", v)
+        self.slots[self.rpos] = out
+        self.rpos = (self.rpos + 1) & 7
+        return out
+
+
+make_history = SlotRing              # tools/psg_buffers.py swaps this
+
+
 class ChannelVoice:
     """One music slot: oscillator + instrument state, a dampen one-pole
-    and the eight-slot history ring (the reverb comb, per voice)."""
+    and the history ring (the reverb comb, per voice)."""
 
     def __init__(self):
         self.sfx: Sfx | None = None
@@ -581,8 +621,7 @@ class ChannelVoice:
         self.osc = OscState()
         self.ins = InsState()
         self.damp_y = 0
-        self.ring = [[0] * TICK_SAMPLES for _ in range(8)]
-        self.rpos = 0
+        self.hist = make_history()
 
     def launch(self, sfx: Sfx, tick: int):
         self.sfx = sfx
@@ -615,9 +654,9 @@ class ChannelVoice:
         # (filter-dampen-reverb: the echo arrives one-pole-smoothed, at
         # half the dampen-first amplitude).
         if self.sfx.reverb:
-            tap = (self.rpos + 4 + 2 * (self.sfx.reverb == 1)) & 7
+            tap = self.hist.tap(self.sfx.reverb)
             for i in range(TICK_SAMPLES):
-                acc = 4 * new_samples[i] + 2 * self.ring[tap][i]
+                acc = 4 * new_samples[i] + 2 * tap[i]
                 probe("reverb.acc", acc)
                 new_samples[i] = tz(acc, 4)
         if self.sfx.dampen:
@@ -630,9 +669,7 @@ class ChannelVoice:
         # post-dampen - so a combined filter's echo train re-enters the
         # comb already smoothed (filter-dampen-reverb, hand-verified at
         # -15/-46/-89 against both single-filter orderings).
-        self.ring[self.rpos] = list(new_samples)
-        self.rpos = (self.rpos + 1) & 7
-        return new_samples
+        return self.hist.push(new_samples)
 
 
 def pattern_ticks(bin_path: Path, pat: int) -> int:
