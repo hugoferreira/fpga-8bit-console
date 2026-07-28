@@ -308,6 +308,52 @@ def probes() -> list[Probe]:
         32,
     ))
 
+    # Storage probes: these size the reverb ring rather than exercise its
+    # arithmetic, and every one of them separates two readings the existing
+    # matrix cannot (tools/psg_buffers.py).  A DC wavetable makes the comb's
+    # delayed tap reinforce the current sample at EVERY lag, so the feedback
+    # runs to its fixpoint y -> 2x instead of averaging out against a
+    # periodic waveform.
+    dc = wavetable([-128] * 64)
+    for name, vol, note_ in (
+            ("sub", 5, "fixpoint -30,720 stays inside int16: the control"),
+            ("mid", 6, "fixpoint -36,864 crosses int16 by 4,096"),
+            ("full", 7, "fixpoint -43,008 crosses int16 by 10,240")):
+        out.append(Probe(
+            f"filter-reverb-fixpoint-{name}",
+            f"DC wavetable at volume {vol} through reverb-2: {note_}",
+            {1: dc, 8: constant(24, 1, vol, filt=48, custom=True)},
+            [([8, None, None, None], False, False, True)],
+            32,
+        ))
+
+    out.append(Probe(
+        "filter-reverb-onset",
+        "a loud reverb-FREE SFX, then reverb-2 on the same channel: does "
+        "the second one's comb hear history the first one wrote?",
+        {0: constant(24, 3, 7), 1: constant(24, 3, 7, filt=48)},
+        [([0, None, None, None], False, False, False),
+         ([1, None, None, None], False, False, True)],
+        64,
+    ))
+    out.append(Probe(
+        "filter-reverb-level",
+        "reverb-1 then reverb-2 on the same channel: is the history "
+        "retained across the tap change?",
+        {0: constant(24, 3, 7, filt=24), 1: constant(24, 3, 7, filt=48)},
+        [([0, None, None, None], False, False, False),
+         ([1, None, None, None], False, False, True)],
+        64,
+    ))
+    out.append(Probe(
+        "filter-reverb-pair",
+        "two channels through reverb-1 at different pitches: per-voice "
+        "rings, or one shared history?",
+        {0: constant(24, 3, 7, filt=24), 1: constant(36, 1, 7, filt=24)},
+        [([0, 1, None, None], False, False, True)],
+        32,
+    ))
+
     # PICO-8 deliberately caps an infinite music export at 32768 music ticks.
     # Keep this case generated but out of the default fast matrix.
     out.append(Probe(

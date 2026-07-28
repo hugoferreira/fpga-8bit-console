@@ -95,14 +95,17 @@ wherever noise gates are defined.
 
 ### Requirement: Reverb History Is Stored At The Binary's Width
 
-The reverb comb SHALL read and write a per-voice history of the voice's
-final post-comb, post-dampen samples through a **signed 16-bit** cell —
-the width the binary's own ring uses — retaining exactly the level-2
-lookback of 732 samples per voice. A cell whose value exceeds the range
-SHALL saturate, never wrap. The comb SHALL NOT be implemented as eight
-tick-quantized slots: reads land only 366 and 732 samples back, so three
-of the binary's eight slots are unreadable and their storage SHALL NOT be
-built.
+The reverb comb SHALL read and write a **per-voice** history of the
+voice's final post-comb, post-dampen samples through a **signed 16-bit**
+cell — the width the binary's own ring uses — retaining exactly the
+level-2 lookback of 732 samples per voice. A value that exceeds the cell
+SHALL wrap in two's complement, never saturate, and the wrapped value
+SHALL be what the mixer receives: the binary's ring and per-voice tick
+buffer are one int16 storage class. Every concurrently advancing playback
+state SHALL fill its own history whether or not its own comb is reading
+it. The comb SHALL NOT be implemented as eight tick-quantized slots:
+reads land only 366 and 732 samples back, so three of the binary's eight
+slots are unreadable and their storage SHALL NOT be built.
 
 #### Scenario: Level-2 lookback is retained exactly
 
@@ -110,12 +113,35 @@ built.
 - **THEN** each sample's comb tap is the voice's own final sample from
   exactly 732 samples earlier, and a 731-sample history is insufficient
 
-#### Scenario: Overflow saturates
+#### Scenario: Overflow wraps
 
 - **WHEN** the comb's feedback drives a voice past the 16-bit cell (a DC
-  wavetable at full volume reaches the fixpoint ±43,007)
-- **THEN** the stored value saturates at the cell's limit and the sign is
-  preserved
+  wavetable at volume 6 or 7 through reverb-2 reaches the fixpoint)
+- **THEN** the stored and mixed value is the two's-complement truncation,
+  sign flip included, matching the captured export
+
+#### Scenario: History accrues before the comb reads it
+
+- **WHEN** an SFX carrying a reverb digit starts on a channel whose
+  previous SFX carried none
+- **THEN** its first sample's comb tap is the history the previous SFX
+  wrote, not silence
+
+### Requirement: The Comb Runs Per Oscillator State, Inside The Render
+
+The history comb SHALL be applied to each rendered block at the reverb
+level held in the oscillator state that produced it, before the 64-sample
+crossfade combines them — not once to the blended result. The crossfade's
+old-state continuation SHALL therefore carry the previous SFX's reverb
+level, including the case where that level is zero.
+
+#### Scenario: A level change is audible only in the crossfade
+
+- **WHEN** an SFX at reverb level 2 follows one at level 1 on the same
+  channel
+- **THEN** the first 64 samples of each tick blend an old-state
+  continuation combed at 366 samples back with a new block combed at 732,
+  and applying either level to the blended result instead is wrong
 
 ### Requirement: Reverb Capacity Is Declared, Not Silent
 

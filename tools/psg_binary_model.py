@@ -228,7 +228,7 @@ class OscState:
     """Everything _mix_osc_tick_new consumes for one tick's render."""
 
     __slots__ = ("wave", "dp", "dq", "g", "p", "q0", "mode", "alt",
-                 "table", "bass")
+                 "table", "bass", "rev")
 
     def __init__(self):
         self.wave = 0
@@ -241,6 +241,11 @@ class OscState:
         self.alt = False
         self.table = None
         self.bass = False
+        # The history selector lives in the OSCILLATOR state (RE notes:
+        # "hmode = state[0x5c]"), which is why the crossfade's copied old
+        # state combs at the level the previous SFX asked for - see
+        # ChannelVoice.tick.
+        self.rev = 0
 
     def copy(self) -> "OscState":
         o = OscState()
@@ -362,6 +367,7 @@ def calc_tick_state(sfx: Sfx, pos: int, prev: OscState,
     st.wave = note["wave"]
     st.dp = dp
     st.mode = sfx.detune
+    st.rev = sfx.reverb
     st.alt = bool(sfx.buzz)
     st.dq = dq_for(st.wave, st.mode, dp)
     # Detuned voices of waves 0..5 get the binary's amplitude boost
@@ -461,6 +467,7 @@ def calc_tick_custom(sfx: Sfx, get_sfx, pos: int, prev: OscState,
         st.dp = dp
         st.dq = dp
         st.mode = sfx.detune
+        st.rev = sfx.reverb
         st.alt = bool(sfx.buzz)
         st.g = tz(3 * a, 2)
     else:
@@ -509,6 +516,7 @@ def calc_tick_custom(sfx: Sfx, get_sfx, pos: int, prev: OscState,
             dp = tz(dx_clamped(p_1616) * (dd - tt), dd)
         st.dp = dp
         st.mode = sfx.detune
+        st.rev = sfx.reverb
         st.alt = bool(sfx.buzz)
         st.dq = dq_for(st.wave, st.mode, dp)
         if st.mode > 0 and st.wave <= 5:
@@ -578,18 +586,25 @@ class SlotRing:
     voice-record table).
 
     `store` is the one hook where a replica's storage width becomes
-    visible; the default is the binary's own value passed through, which
-    is what the 51-case gate was proven against. tools/psg_buffers.py
-    swaps in narrower stores and other ring geometries to derive the
-    minimal exact buffer, so the geometry study and the reference path
-    share this single implementation."""
+    visible; the default is the binary's own cell. tools/psg_buffers.py
+    swaps in other widths and ring geometries to derive the minimal exact
+    buffer, so the geometry study and the reference path share this
+    single implementation."""
 
     def __init__(self):
         self.slots = [[0] * TICK_SAMPLES for _ in range(8)]
         self.rpos = 0
 
     def store(self, v: int) -> int:
-        return v
+        """The binary's cell is int16 and it WRAPS. Both the ring
+        (+0x21ae) and the voice's tick buffer (+0x2040) are int16, so the
+        wrap is what the mixer reads too, and
+        filter-reverb-fixpoint-mid/-full convict it: at the comb's
+        fixpoint the export flips sign exactly where two's-complement
+        truncation does, while saturation and unbounded arithmetic both
+        diverge. No deterministic case below the fixpoint can tell the
+        three apart - see tools/psg_buffers.py entry."""
+        return ((v + 0x8000) & 0xFFFF) - 0x8000
 
     def tap(self, level: int) -> list[int]:
         """The tick's delayed block: two slots back (366 samples) at
@@ -637,11 +652,6 @@ class ChannelVoice:
         cur = self.osc
         new_samples = cur.render(TICK_SAMPLES)
         old_samples = old.render(BLEND_SAMPLES)
-        for i in range(BLEND_SAMPLES):
-            acc = (i * new_samples[i]
-                   + (BLEND_SAMPLES - i) * old_samples[i])
-            probe("blend.acc", acc)
-            new_samples[i] = tz(acc, BLEND_SAMPLES)
         # REVERB: the per-voice history-ring comb, enabled by the reverb
         # digit: tap two slots back (366 samples) at level 1, four (732)
         # at level 2; y = tz((4y + 2h)/4) with the post-comb tick written
@@ -653,12 +663,28 @@ class ChannelVoice:
         # core with its 254/256 secondary. The comb runs BEFORE dampen
         # (filter-dampen-reverb: the echo arrives one-pole-smoothed, at
         # half the dampen-first amplitude).
-        if self.sfx.reverb:
-            tap = self.hist.tap(self.sfx.reverb)
-            for i in range(TICK_SAMPLES):
-                acc = 4 * new_samples[i] + 2 * tap[i]
+        #
+        # The comb sits INSIDE each block's render, not after the
+        # crossfade, and each block combs at its OWN state's level: the
+        # selector is oscillator state (`hmode = state[0x5c]`), so the
+        # copied old state carries the level the PREVIOUS SFX asked for.
+        # filter-reverb-onset and filter-reverb-level convict the
+        # after-the-blend order - it diverges on exactly the 64 crossfade
+        # samples of every lap tick, by the half tap the old continuation
+        # must not receive (2.000x at the switch, decaying with the echo).
+        for block, level in ((new_samples, cur.rev), (old_samples, old.rev)):
+            if not level:
+                continue
+            tap = self.hist.tap(level)
+            for i in range(len(block)):
+                acc = 4 * block[i] + 2 * tap[i]
                 probe("reverb.acc", acc)
-                new_samples[i] = tz(acc, 4)
+                block[i] = tz(acc, 4)
+        for i in range(BLEND_SAMPLES):
+            acc = (i * new_samples[i]
+                   + (BLEND_SAMPLES - i) * old_samples[i])
+            probe("blend.acc", acc)
+            new_samples[i] = tz(acc, BLEND_SAMPLES)
         if self.sfx.dampen:
             y = self.damp_y
             for i in range(TICK_SAMPLES):
