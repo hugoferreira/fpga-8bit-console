@@ -493,12 +493,16 @@ The survey of rtl/psg.sv (2026-07-28) found both filters in the wrong
 place for exactness: dampen runs per-sample on the PRE-volume 8-bit
 sample (`s_lp`, Q8, difference-form with an arithmetic shift), and
 reverb is a shared POST-mix 10-bit delay on the final PCM. The binary
-runs both per voice on the post-blend stream at final output scale:
-comb first (feedback ring), dampen second (the blend-form recurrence),
-ring write-back post-dampen (fifth milestone). The adoption relocates
-both into the per-slot sample path after the crossfade: `s_lp` becomes
-the 16-bit final-scale dampen state, the shared output delay retires,
-and the mixer's leaves receive the filtered voice stream.
+runs both per voice at final output scale: comb first (feedback ring),
+dampen second (the blend-form recurrence), ring write-back post-dampen
+(fifth milestone). The sixth milestone then placed the comb precisely:
+it is **inside each block's render**, at the reverb level held in the
+oscillator state that produced it, so the crossfade's old-state
+continuation combs at the previous SFX's level and the blend follows
+both combs. Dampen stays after the blend, once per voice. The adoption
+relocates both into the per-slot sample path: `s_lp` becomes the 16-bit
+final-scale dampen state, the shared output delay retires, and the
+mixer's leaves receive the filtered voice stream.
 
 ### 8. The reverb ring is a capacity problem, sized by proof
 
