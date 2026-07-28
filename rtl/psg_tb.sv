@@ -105,7 +105,7 @@ module psg_tb;
         tick_job_active = 1;
         tick_window_active = 1;
         // S_IDLE is the first enumerator of sst_t, so its ordinal is 0.
-        tick_busy_at_pretick = (dut.sst != 0);
+        tick_busy_at_pretick = (dut.u_seq.sst != 0);
       end
       if (tick_window_active && !dut.pre_tick) begin
         tick_window_clocks++;
@@ -451,10 +451,10 @@ module psg_tb;
         // The pitch table lives in the constants block now: word k holds
         // the effective 13 bits of pinc k, reconstructed as dp << 8.
         case (eff_inc_of(1))
-          {3'b0, dut.crom[10][12:0], 8'b0}: hits[0]++;
-          {3'b0, dut.crom[20][12:0], 8'b0}: hits[1]++;
-          {3'b0, dut.crom[30][12:0], 8'b0}: hits[2]++;
-          {3'b0, dut.crom[40][12:0], 8'b0}: hits[3]++;
+          {3'b0, dut.u_seq.crom[10][12:0], 8'b0}: hits[0]++;
+          {3'b0, dut.u_seq.crom[20][12:0], 8'b0}: hits[1]++;
+          {3'b0, dut.u_seq.crom[30][12:0], 8'b0}: hits[2]++;
+          {3'b0, dut.u_seq.crom[40][12:0], 8'b0}: hits[3]++;
           default: ;
         endcase
       end
@@ -471,7 +471,7 @@ module psg_tb;
     check(q[7] == 1, "music playing");
     // The song lands on channel 0's MUSIC slot, not its foreground slot, so
     // $03's low nibble stays clear - see [18].
-    check(dut.playing[4] == 1, "music launched sfx on channel 0's music slot");
+    check(dut.u_seq.playing[4] == 1, "music launched sfx on channel 0's music slot");
     ticks(34);                          // pattern 0 is 32 ticks long
     rd(8'h20, q);
     check(q[5:0] == 6'd1, "advanced to pattern 1");
@@ -481,7 +481,7 @@ module psg_tb;
     wr(8'h20, 8'h80);
     rd(8'h03, q);
     check(q[7] == 0, "music stops on $80");
-    check(dut.playing[4] == 0, "music channel silenced on stop");
+    check(dut.u_seq.playing[4] == 0, "music channel silenced on stop");
 
     wr(8'h20, 8'd2);
     ticks(2);
@@ -677,15 +677,15 @@ module psg_tb;
     wr(8'h22, 8'd125);                   // 2 s
     wr(8'h20, 8'd0);
     ticks(2);
-    check(dut.mus_gain < 8'd40, "fade-in starts near silence");
+    check(dut.u_seq.mus_gain < 8'd40, "fade-in starts near silence");
     ticks(60);
-    check(dut.mus_gain > 8'd60, "fade-in gain rises");
+    check(dut.u_seq.mus_gain > 8'd60, "fade-in gain rises");
     wr(8'h22, 8'd16);                    // 256 ms = 32 ticks
     wr(8'h20, 8'h80);
     ticks(4);
     rd(8'h03, q);
     check(q[7] == 1, "music keeps playing while it fades out");
-    check(dut.mus_gain < 8'd230, "fade-out gain falls");
+    check(dut.u_seq.mus_gain < 8'd230, "fade-out gain falls");
     ticks(40);
     rd(8'h03, q);
     check(q[7] == 0, "music stops when the fade-out reaches silence");
@@ -696,7 +696,7 @@ module psg_tb;
     wr(8'h21, 8'h07);
     wr(8'h20, 8'd3);
     ticks(2);
-    check(dut.playing[4] && dut.playing[5] && dut.playing[6] && dut.playing[7],
+    check(dut.u_seq.playing[4] && dut.u_seq.playing[5] && dut.u_seq.playing[6] && dut.u_seq.playing[7],
           "all four pattern channels launch on their music slots");
     rd(8'h03, q);
     check(q[7], "the song reads as playing");
@@ -735,8 +735,8 @@ module psg_tb;
       wr(8'h22, 8'd0);                   // no fade, so gain is not a variable
       wr(8'h20, 8'd3);                   // pattern 3 launches all four channels
       ticks(3);
-      check(dut.playing[4], "channel 0's music slot is running");
-      mus_sfx = dut.sfx_id[4];
+      check(dut.u_seq.playing[4], "channel 0's music slot is running");
+      mus_sfx = dut.u_seq.sfx_id[4];
       rd(8'h14, q);
       check(q[7] && q[5:0] == mus_sfx,
             "$14 reports the music while nothing covers it");
@@ -747,9 +747,9 @@ module psg_tb;
       wr(8'h18, 8'd1);                   // length 1 row, so it ends quickly
       wr(8'h10, 8'd15);
       ticks(2);
-      check(dut.playing[0], "channel 0's foreground slot is running");
-      check(dut.playing[4], "the music slot was NOT stopped");
-      check(dut.sfx_id[4] == mus_sfx, "and it still holds the music's SFX");
+      check(dut.u_seq.playing[0], "channel 0's foreground slot is running");
+      check(dut.u_seq.playing[4], "the music slot was NOT stopped");
+      check(dut.u_seq.sfx_id[4] == mus_sfx, "and it still holds the music's SFX");
       rd(8'h14, q);
       check(q[5:0] == 6'd15, "$14 reports the covering effect");
 
@@ -761,7 +761,7 @@ module psg_tb;
       t0 = {3'b0, row_of(4)};
       ticks(6);                          // outlast the 4-tick effect
       check({3'b0, row_of(4)} != t0, "the covered music advanced while inaudible");
-      check(!dut.playing[0], "the effect finished");
+      check(!dut.u_seq.playing[0], "the effect finished");
       rd(8'h14, q);
       check(q[7] && q[5:0] == mus_sfx,
             "the music is audible again, at its own current position");
@@ -798,7 +798,7 @@ module psg_tb;
       wr(8'h10, 8'd15);                  // the CPU takes channel 0 right now
 
       check(dut.trig_req[4], "the music slot's pending trigger is untouched");
-      check(dut.launched[4], "and it still paces the pattern");
+      check(dut.u_seq.launched[4], "and it still paces the pattern");
 
       // The pattern must still run its own length: it should not end the
       // moment the sound effect does. 20 ticks is well past the 4-tick sound
@@ -850,7 +850,7 @@ module psg_tb;
       loud = 0; quiet = 0;
       wr(8'h10, 8'd18);                  // instrument 0 alternates vol 5/2
       ticks(1);
-      check(eff_inc_of(0) == {3'b0, dut.crom[33][12:0], 8'b0},
+      check(eff_inc_of(0) == {3'b0, dut.u_seq.crom[33][12:0], 8'b0},
             "instrument pitch 24 leaves the note's pitch alone");
       for (int i = 0; i < 6; i++) begin
         // Exact sevenths (3.1b): a = tz(a0 * iv, 7) with a0 = 7<<8 is
@@ -864,7 +864,7 @@ module psg_tb;
     end
     wr(8'h11, 8'd19);                    // instrument 1 sits at pitch 36
     ticks(2);
-    check(eff_inc_of(1) == {3'b0, dut.crom[45][12:0], 8'b0},
+    check(eff_inc_of(1) == {3'b0, dut.u_seq.crom[45][12:0], 8'b0},
           "instrument pitch adds relative to C-2 (33 + 36 - 24)");
     wr(8'h11, 8'h80);
 
@@ -880,7 +880,7 @@ module psg_tb;
     wr(8'h12, 8'd26);                    // effect 3 asks for a retrigger
     ticks(6);
     check(ins_row_of(2) <= 5'd3, "effect 3 retriggers instead of dropping");
-    check(eff_inc_of(2) == {3'b0, dut.crom[33][12:0], 8'b0},
+    check(eff_inc_of(2) == {3'b0, dut.u_seq.crom[33][12:0], 8'b0},
           "effect 3 does not drop the pitch");
     wr(8'h12, 8'h80);
 
@@ -932,7 +932,7 @@ module psg_tb;
       begin
         int live;
         live = 0;
-        for (int i = 0; i < 8; i++) if (dut.playing[i]) live++;
+        for (int i = 0; i < 8; i++) if (dut.u_seq.playing[i]) live++;
         check(live == 8, "all eight slots are running");
       end
       for (int i = 0; i < 4; i++) wr(8'h10 + 8'(i), 8'h80);
