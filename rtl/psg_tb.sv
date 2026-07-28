@@ -816,8 +816,10 @@ module psg_tb;
       check(eff_inc_of(0) == {3'b0, dut.crom[33][12:0], 8'b0},
             "instrument pitch 24 leaves the note's pitch alone");
       for (int i = 0; i < 6; i++) begin
-        if (eff_vol_of(0) == 12'd1260) loud++;
-        if (eff_vol_of(0) == 12'd504)  quiet++;
+        // Exact sevenths (3.1b): a = tz(a0 * iv, 7) with a0 = 7<<8 is
+        // iv<<8 on the nose. The old 1317/x7 calibration read 1260/504.
+        if (eff_vol_of(0) == 12'd1280) loud++;
+        if (eff_vol_of(0) == 12'd512)  quiet++;
         ticks(1);
       end
       check(loud > 0 && quiet > 0, "instrument volume multiplies the note's");

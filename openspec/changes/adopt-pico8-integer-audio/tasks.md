@@ -127,6 +127,20 @@
       cheaper than muxing the 26-bit accumulator's shift direction, and
       a divide can then overlap the next product. The recip table still
       has the pitch half as a consumer and stays until 3.2
+- [x] 3.1b Instrument sevenths COMPLETE: the binary composes the note's
+      OWN effect first and folds the instrument after - a = tz(a*iv, 7),
+      or tz(a0_note * (ia>>8), 7) when the instrument row is the one
+      carrying the effect. The RTL folded vol*ivol at 1317>>8 BEFORE the
+      effect ran, so both the order and the scale were wrong. The fold
+      moves to steps 8/9 (product then a divide by 7 on the same
+      restoring unit) and the 1317 constant, vmul/pvmul and K_SLPM's
+      re-issue all retire. Two traps: by step 10 d_res holds the
+      SEVENTH's quotient, so the music fade must read the captured vol_r
+      (not fxv_next, which recomputes from d_res); and the fade product
+      must take the POST-seventh amplitude. For a full-volume note the
+      exact answer is iv<<8 on the nose - psg_tb's 1260/504 were the old
+      calibration and are now 1280/512. Closes the whole sfx-instrument
+      family: 56 green, 1 red
 - [ ] 3.3 Adopt vibrato and arpeggio recurrences; model-exact per tick
 - [ ] 3.4 Verify the 64-sample crossfade against the binary's
       `tz((i*new + (64-i)*old)/64)` under the new operand forms
