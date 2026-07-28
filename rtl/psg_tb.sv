@@ -48,6 +48,12 @@ module psg_tb;
   int tick_job_clocks = 0;
   int max_tick_job_clocks = 0;
   bit tick_job_active = 0;
+  // The window the pre-run actually has: pre_tick to tick_en, measured
+  // rather than assumed, so the printed margin tracks psg.sv's pre_tick
+  // constant instead of a stale copy of it.
+  int tick_window_clocks = 0;
+  int tick_window = 0;
+  bit tick_window_active = 0;
   bit tick_busy_at_pretick = 0;
   int late_flips = 0;
 
@@ -88,10 +94,21 @@ module psg_tb;
       // means the tick program no longer fits one sample interval.
       if (dut.pre_tick) begin
         tick_job_clocks = 0;
+        tick_window_clocks = 0;
         tick_job_active = 1;
+        tick_window_active = 1;
         // S_IDLE is the first enumerator of sst_t, so its ordinal is 0.
         tick_busy_at_pretick = (dut.sst != 0);
-      end else if (tick_job_active) begin
+      end
+      if (tick_window_active && !dut.pre_tick) begin
+        tick_window_clocks++;
+        if (dut.tick_en) begin
+          if (tick_window_clocks > tick_window)
+            tick_window = tick_window_clocks;
+          tick_window_active = 0;
+        end
+      end
+      if (tick_job_active && !dut.pre_tick) begin
         tick_job_clocks++;
         if (dut.bank_ready) begin
           if (tick_job_clocks > max_tick_job_clocks)
@@ -871,6 +888,38 @@ module psg_tb;
       check(inc_bass == (inc_plain >> 1), "the bass flag drops an octave");
     end
 
+    // ---- 20d. eight slots at the effect program's worst case --------
+    // Every scenario above leaves most slots idle, and an idle slot
+    // skips the whole effect program through K_ROT. The pre-run budget
+    // is set by the opposite case: all eight slots running the most
+    // expensive path there is - a custom-instrument note carrying a
+    // slide, so the tick pays both slide divides, the volume divide and
+    // the instrument's seventh on every voice.
+    $display("[20d] pre-run budget with all eight slots on slide + instrument");
+    begin
+      // SFX 26: instrument rows. SFX 27: the note that slides through it.
+      for (int r = 0; r < 32; r++) set_note(26, r, 24 + (r % 12), 0, 5, 0);
+      set_meta(26, 1, 0, 0);
+      for (int r = 0; r < 32; r++)
+        set_inote(27, r, 20 + (r % 24), 2, 7, 1);   // instrument 2, slide
+      set_meta(27, 3, 0, 0);                        // speed 3: a real fraction
+      // pattern 2 launches it on all four music slots
+      img[8] = 8'd27; img[9] = 8'd27; img[10] = 8'd27; img[11] = 8'd27;
+      upload;
+      wr(8'h20, 8'd2);                              // music: slots 4..7
+      for (int i = 0; i < 4; i++) wr(8'h10 + i, 8'd27);   // and slots 0..3
+      ticks(8);
+      begin
+        int live;
+        live = 0;
+        for (int i = 0; i < 8; i++) if (dut.playing[i]) live++;
+        check(live == 8, "all eight slots are running");
+      end
+      for (int i = 0; i < 4; i++) wr(8'h10 + i, 8'h80);
+      wr(8'h21, 8'h00);
+      ticks(2);
+    end
+
     // ---- 21. filter byte dampen wraps -------------------------------
     $display("[21] dampen field is taken mod 3");
     wr(8'h13, 8'd25);                    // filter byte 224
@@ -882,8 +931,9 @@ module psg_tb;
              max_sample_job_clocks);
     check(max_sample_job_clocks > 0 && max_sample_job_clocks < 1275,
           "all slot and mix work completes before the next sample");
-    $display("  tick pre-run: worst %0d / %0d clocks after pre_tick, %0d late flips",
-             max_tick_job_clocks, CLKHZ / 22050, late_flips);
+    $display("  tick pre-run: worst %0d / %0d clocks after pre_tick, %0d spare, %0d late flips",
+             max_tick_job_clocks, tick_window,
+             tick_window - max_tick_job_clocks, late_flips);
     check(max_tick_job_clocks > 0,
           "each tick evaluation stages its bank before the boundary");
     check(late_flips == 0,

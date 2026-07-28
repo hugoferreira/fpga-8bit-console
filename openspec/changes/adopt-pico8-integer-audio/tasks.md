@@ -93,8 +93,15 @@
 
 ## 3. Effect recurrences
 
-- [ ] 3.1 Adopt drop, fade-in, fade-out exactly (idiv-truncation
-      semantics); model-exact per tick
+- [x] 3.1 Adopt drop, fade-in, fade-out exactly (idiv-truncation
+      semantics); model-exact per tick (COMPLETE - fades in 3.1a, drop
+      here). DROP is tz(dp * (d - t), d) on the binary's INTEGER dp,
+      which is base_inc[20:8]: multiplying the 24-bit increment instead
+      divides on a finer grid than the binary's and drifts. It has no
+      volume product, so its quotient takes the otherwise-idle step-5
+      divide slot and is consumed at step 7 with the volume ones - which
+      means step 6 must NOT fire for drop, or it overwrites the quotient
+      before that consume. The vibrato's carry chain sheds its drop arm
 - [x] 3.1a Volume half COMPLETE: 12-bit `a` = vol<<8 through the effect
       program (vol_r/pvol_r/fxv_next), fade-in/fade-out as the exact
       quotient and slide as a_s + tz(t*(a0-a_s), d) - the identity that
@@ -139,6 +146,17 @@
       it with a restoring divide on the existing serial adder (three
       divides per voice-tick = 0.3% of the tick budget) and retire the
       recip EBR; record the block against the ring budget
+      (COMPLETE: drop was the Q8 row fraction's last consumer, so
+      recip[0:255], recip_q, u_r, step 0's product and psg_recip.hex all
+      retire together - 12 EBR to 11 at REVERB=0. The pre-run measured
+      1,212 clocks after it, but that number was a fiction: every
+      scenario left most slots idle, and an idle slot skips the effect
+      program through K_ROT. psg_tb case 20d now runs all eight slots on
+      slide-plus-instrument, the most expensive path there is, and
+      measures 5,052 - which four intervals of pre-run window cleared by
+      only 56 clocks. pre_tick moves to scnt 176 (six intervals, 2,602
+      spare) and the tb reports the window it MEASURES rather than a
+      stale copy of the constant)
 - [x] 3.2b Divider LANDED: 24 shift-subtract steps over a 24-bit
       dividend field with the partial remainder in the top byte (rem < d
       holds from 0, so the shifted partial is 9 bits and the restored

@@ -11,7 +11,6 @@ virtual sample rate, so they are independent of the system clock):
   rtl/psg_noise.hex  64 x unsigned 8-bit, noise gain per key (1.0 = 256)
                      (slots 6/7 zero: noise is an LFSR, phaser is summed
                      from two triangle reads)
-  rtl/psg_recip.hex  256 x 16-bit, 65536/speed for Q8 row progress
 """
 import math
 import os
@@ -170,10 +169,6 @@ def noise_gain(key):
 with open("rtl/psg_noise.hex", "w") as f:
     for k in range(64):
         f.write(f"{max(0, min(255, round(noise_gain(k) * 256.0))):02x}\n")
-
-with open("rtl/psg_recip.hex", "w") as f:
-    for s in range(256):
-        f.write(f"{min(0xFFFF, round(65536 / max(1, s))):04x}\n")
 
 print("pitch 33 -> PICO-8 dp", pico8_phase_increment(33) >> 8,
       "phase increment", pico8_phase_increment(33))

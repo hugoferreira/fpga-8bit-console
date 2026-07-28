@@ -73,10 +73,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // ROM retires. The constants block keeps the pitch increments; words
   // 64..255 stay reserved for microcode and scheduled tables.
   logic [15:0] crom[0:255];
-  logic [15:0] recip[0:255];         // 65536 / speed
   initial begin
     $readmemh("./rtl/psg_const.hex", crom);
-    $readmemh("./rtl/psg_recip.hex", recip);
   end
 
   // ------------------------------------------------------------------
@@ -134,15 +132,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           tick_hold <= 2'd2;
         end else begin
           scnt <= scnt + 1;
-          // Four intervals of pre-run window: the engine's advance and
+          // Six intervals of pre-run window. The engine's advance and
           // staging sequences grew the tick program past one interval's
-          // slack, and section 3's exact divides (one per effect, one
-          // more per instrument seventh) grew it past two. The pre_tick
+          // slack, and section 3's exact divides (two for a slide, one
+          // for the volume, one for an instrument's seventh) grew it
+          // past four: psg_tb's all-eight-slots case measures 5,044
+          // clocks, which four intervals clear by only 56. The pre_tick
           // constant is exactly the knob the 3.0 handshake left for that
           // (design 3, staging constraints). The cost is that a CPU
           // write landing inside the window is observed one tick
           // evaluation later, over a wider window than before.
-          if (scnt == 8'd178)
+          if (scnt == 8'd176)
             pre_tick <= 1;
         end
       end else begin
@@ -693,8 +693,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [5:0] e_prevp = ins_use ? pclamp(pp_raw) : w_prev_pitch;
 
 
-  // Pitch and reciprocal tables are read through one synchronous port
-  // each, so both infer as block RAM instead of ~750 LUTs of address mux.
+  // The pitch/constants table is read through one synchronous port, so
+  // it infers as block RAM instead of ~750 LUTs of address mux. The
+  // reciprocal table that sat beside it is gone: every effect now
+  // divides exactly (3.1/3.2), and round(65536/s) had no other reader.
   // The three pitch lookups an evaluation needs (this note, the previous
   // one for slide, the arpeggio row) are prefetched into registers by the
   // K_PF states before K_FX runs.
@@ -705,7 +707,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Every pitch increment is dp << 8 with dp in 13 bits, so the 24-bit
   // value is a wiring reconstruction of the constants word.
   wire [23:0] pinc_q = {3'b000, crom_q[12:0], 8'h00};
-  logic [15:0] recip_q;
   logic [23:0] arp_r;
   wire signed [8:0] arp_raw =
       e_insfx ? ($signed({3'b0, w_cur_pitch}) + $signed({3'b0, arp_p}) - 9'sd24)
@@ -736,7 +737,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   end
   always_ff @(posedge clk) begin
     crom_q  <= crom[pinc_addr];
-    recip_q <= recip[eff_sp];
   end
 
   // The base pitch increment is the LIVE table port: pinc_addr idles at
@@ -785,7 +785,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Products retain the original truncation points: 24-bit effects use
   // m_res[31:8], and volumes use m_res[15:8].
   logic [3:0]  xs;
-  logic [7:0]  u_r;
   // The binary's amplitude is 12-bit `a` = vol<<8 carried through the
   // effect arithmetic (2.3/3.1). The Q8 row fraction it replaces cost
   // a fixed 252/256 = 0.984375 of exact on every effect path.
@@ -914,10 +913,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // base + ~p24 + 1, so the round-up and the negations ride the carry-in.
   // Two's-complement identities - the results are bit-for-bit unchanged.
   wire        vib_cb  = |m_res[6:0];
-  wire        fxp_neg = (e_fx == 3'd3) | lfo_neg;
-  wire [23:0] fxp_op  = (e_fx == 3'd3) ? p24 : m_res[30:7];
-  wire [23:0] fxp_res = base_inc + (fxp_neg ? ~fxp_op : fxp_op)
-                      + {23'b0, (e_fx == 3'd3) | (lfo_neg & ~vib_cb)};
+  wire [23:0] fxp_op  = m_res[30:7];
+  wire [23:0] fxp_res = base_inc + (lfo_neg ? ~fxp_op : fxp_op)
+                      + {23'b0, (lfo_neg & ~vib_cb)};
   logic [23:0] fxi_next;
   logic [11:0] fxv_next;
 
@@ -932,8 +930,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     mul_md = 2'd0;
     mul_go = 1'b0;
     case (xs)
-      4'd0: begin mul_a = {8'b0, recip_q};     mul_b = {4'b0, eff_fcnt};
-                  mul_go = 1'b1; end
+
       4'd1: if (e_fx == 3'd1) begin
               // |semitone delta| * t: the numerator of the slide's exact
               // pitch quotient, not a Q8 fraction to scale by.
@@ -952,7 +949,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               3'd4: begin mul_a = {12'b0, vol_r};  mul_b = {4'b0, eff_fcnt};
                           mul_go = 1'b1; end
               3'd5: begin mul_a = {12'b0, vol_r};
-                          mul_b = {4'b0, eff_sp} - {4'b0, eff_fcnt};
+                          mul_b = eff_rem;
                           mul_go = 1'b1; end
               default: ;
             endcase
@@ -971,7 +968,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       4'd4: case (e_fx)
               3'd2: begin mul_a = base_inc; mul_b = {10'b0, lfo_mag};
                           mul_go = 1'b1; end
-              3'd3: begin mul_a = base_inc; mul_b = {4'b0, u_r};
+              // DROP (3.1): tz(dp * (d - t), d) on the binary's INTEGER
+              // dp, which is base_inc's [20:8] - multiplying the 24-bit
+              // increment instead would divide on a finer grid than the
+              // binary's and drift.
+              3'd3: begin mul_a = {11'b0, base_inc[20:8]};
+                          mul_b = eff_rem;
                           mul_go = 1'b1; end
               default: ;
             endcase
@@ -991,9 +993,18 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // The slide adds two: its whole-semitone quotient launches on the same
   // cycle the detour is taken (m_res still holds |D| * t), and the
   // fraction's launches when that one lands.
+  // The volume effects divide at step 6; DROP has no volume product, so
+  // its pitch quotient takes step 5 and is consumed at step 7 alongside
+  // them. Step 6 must then NOT fire for drop, or it would overwrite the
+  // quotient before that consume.
+  wire vol_div = (e_fx == 3'd1) || (e_fx == 3'd4) || (e_fx == 3'd5);
+  // d - t, the "rows remaining" multiplier fade-out and drop share.
+  wire [11:0] eff_rem = {4'b0, eff_sp} - {4'b0, eff_fcnt};
   assign div_start = !walk_frozen
                      && ((sst == K_FX && !m_busy
-                          && (xs == 4'd6 || (xs == 4'd9 && ins_use)
+                          && ((xs == 4'd5 && e_fx == 3'd3)
+                              || (xs == 4'd6 && vol_div)
+                              || (xs == 4'd9 && ins_use)
                               || (xs == 4'd2 && e_fx == 3'd1)))
                          || (sst == K_SL0 && !d_busy));
 
@@ -1020,7 +1031,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // PICO-8 multiplies its integer `dp`, then the FPGA phase convention
       // expands that result by eight bits.  Multiplying base_inc directly is
       // otherwise subtly more precise and accumulates audible phase drift.
-      3'd2, 3'd3: fxi_next = {fxp_res[23:8], 8'b0};
+      3'd2: fxi_next = {fxp_res[23:8], 8'b0};
+      3'd3: fxi_next = {3'b0, d_res[12:0], 8'b0};
       3'd6, 3'd7: fxi_next = arp_r;
       default: ;
     endcase
@@ -1626,7 +1638,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         K_FX: if (!m_busy && !((xs == 4'd7 || xs == 4'd10) && d_busy)) begin
           if (xs == 0) arp_r <= pinc_q;
           case (xs)
-            4'd1: u_r    <= p8;
             // The effect runs on the note's OWN amplitude, or on the
             // instrument row's when the instrument is the one carrying
             // the effect. The instrument fold used to happen here, ahead
@@ -1638,8 +1649,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                                     : pvol_direct;
             // arp_r and vol_r are dead after their respective effect
             // calculations, so they become the publication result slots.
-            4'd5: arp_r  <= fxi_next;
-            4'd7: vol_r  <= fxv_next;
+            4'd5: if (e_fx != 3'd3) arp_r <= fxi_next;
+            4'd7: begin
+              vol_r <= fxv_next;
+              if (e_fx == 3'd3) arp_r <= fxi_next;   // the drop quotient
+            end
             4'd10: vol_r <= a_post;
             4'd11: if (is_mus(c)) vol_r <= m_res[19:8];
             default: ;
