@@ -1011,17 +1011,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // A negative slide delta truncates the OTHER way - tz of a negative
   // quotient is -ceil of its magnitude - so that numerator carries the
   // d-1 round-up.
+  // Every numerator is one of two sources plus, on the two sites that
+  // need a ceil rather than a floor, the same d-1. Spelling it that way
+  // is ONE 24-bit adder behind a two-way mux; the literal per-site form
+  // built two adders behind a three-way one, and at 24 bits wide that
+  // is the arm cost THE LAW warns about.
+  wire div_ceil = (sst == K_SL0) ? slp_neg
+                                 : (xs == 4'd6 && e_fx == 3'd1 && vl_neg);
+  wire [23:0] div_base = (sst == K_SL0) ? {d_rem, 16'b0} : m_res[23:0];
   always_comb begin
     div_d = (sst == K_FX && xs == 4'd9) ? 8'd7 : eff_sp;
-    if (sst == K_SL0)
-      // r1 << 16, plus the d-1 that turns the floor into the ceil a
-      // negative delta needs.
-      div_n = {d_rem, 16'b0}
-            + (slp_neg ? ({16'b0, eff_sp} - 24'd1) : 24'd0);
-    else if (sst == K_FX && xs == 4'd6 && e_fx == 3'd1 && vl_neg)
-      div_n = m_res[23:0] + {16'b0, eff_sp} - 24'd1;
-    else
-      div_n = m_res[23:0];
+    div_n = div_base + (div_ceil ? ({16'b0, eff_sp} - 24'd1) : 24'd0);
   end
 
   always_comb begin

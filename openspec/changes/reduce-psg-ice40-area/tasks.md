@@ -115,3 +115,48 @@
       BRAMs; document rejected variants and remaining timing headroom
 - [x] 6.5 Validate the OpenSpec change strictly and reconcile every completed
       task with the recorded evidence
+
+## Resumed after adopt-pico8-integer-audio (2026-07-28)
+
+- [x] R.0 Re-baseline. `rtl/target_psg.sv` now instantiates REVERB=0:
+      adoption 2.5's exact per-voice rings are 732 x int16 EACH, 36 EBR
+      against the part's 32, so measuring this target at REVERB=1
+      measured a build that cannot exist. Baseline 8,064 LC / 11 EBR.
+- [x] R.1 `tools/psg_ff_census.py` - the packing metric promoted out of a
+      session scratchpad, where it was lost. Grades a yosys JSON by
+      PLACED cells: an iCE40 flop shares its cell only with the LUT
+      driving its D, at fanout 1, so unpackable flops are whole cells a
+      mapped LUT4 count never shows. Also ranks LUT cones by driven-net
+      family, which needs the yosys chain suffix cut or every LUT is its
+      own family.
+- [x] R.2 The divider's numerator: one 24-bit adder behind a two-way mux
+      instead of two adders behind a three-way one. **-63 LC** (8,064 ->
+      8,001), oracle 57/57 unchanged.
+- [x] R.3 REFUTED, with numbers, and they re-confirm the bulk-only rule
+      at this density: retiring arp_r's self-feedback arm (slide and
+      both arpeggios re-publish what the register already holds, so the
+      arm is pure mux) measured **+23**; folding vol_r's step-10 write
+      into step 11 measured **-9 against that**, i.e. both together
+      **+14** over the R.2 baseline. Reverted. Arm-counting arguments do
+      not survive abc9 re-buffering below ~50 cells - only families that
+      take their arithmetic or decode with them pay.
+- [x] R.4 REFUTED by proof, not measurement: none of stage 2's
+      reciprocal constants can be truncated. recip7 (149797), recip15
+      (279621) and recip3 (174763) all need full precision over the
+      domains the wave cone presents - 0 low bits free on the first two,
+      and recip3 breaks at bit 1. The slide's K behaved the same way, so
+      treat "shorten the constant" as closed for this design.
+- [ ] R.5 The remaining gap is 321 LC and needs a bulk restructure. The
+      NEW fact since the campaign paused is EBR headroom: REVERB=0 uses
+      11 of 32 blocks, where the old ceiling was 15 and `record 32/32
+      full` is what priced the per-slot arrays dead. state_m is 8 x 32 x
+      16 = one block; widening VSTR to 64 costs a second and opens 32
+      words per slot. The census puts sfx_id at 48 unpackable flops, row
+      38, trg_len 24, trg_row 20 - 130 whole cells plus their read muxes
+      and the ch_base/sa_off cones they feed. Address-selected storage is
+      the ONE shape that has always paid here (THE LAW, design 5c).
+      Cost: ch_base is combinational across the trigger sequence, so
+      sfx_id must stage into a working register at V_LD, and the CPU and
+      ML_L0-L3 write sites need the port. Estimate -150..250; the wave
+      cone (smp_b, 887 cells) is the only larger target and is task 4.1's
+      sample-side engine.

@@ -73,7 +73,12 @@ module target_psg (
     // does for pcm and dout - makes it place and makes the number wrong, by
     // keeping alive logic the console trims. Match the shipping top, always.
     /* verilator lint_off PINCONNECTEMPTY */
-    psg #(.CLK_HZ(32'd28_125_000), .REVERB(1)) psg0 (
+    // REVERB=0 is what an iCE40 can actually carry: the exact per-voice
+    // rings adoption 2.5 landed are 732 x int16 EACH, which is 36 EBR
+    // against the part's 32 (design decision 8 always put them behind
+    // this parameter, with Gowin as their home). Measuring this target
+    // at REVERB=1 measures a build that cannot exist.
+    psg #(.CLK_HZ(32'd28_125_000), .REVERB(0)) psg0 (
         .clk(psgclk), .reset(rst),
         .cs(cs), .rw(rw), .addr(addr), .di(di),
         .dout(dout), .pcm(pcm), .dbg()
