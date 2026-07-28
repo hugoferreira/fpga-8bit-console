@@ -351,3 +351,24 @@
       -35..60 decode win to -5..30. The pph control store only paid
       because its fabric was 2-3x larger. The decode-to-ROM lever is
       exhausted.
+- [x] R.12 Width audit round 2 - the increment carriers: 7,344 ->
+      7,216 (**-128** placed, -209 structural, the richest structural
+      delta since the bundle). EVERY pitch-increment carrier (arp_r,
+      s_eff_inc, s_old_inc, s_last_inc, einc, base_inc, fxi_next,
+      fxp_res, pub_inc) narrows 24 -> 21: the pitch table's entries are
+      13 bits (max 0x1CE0 -> increment 1,892,352; the vibrato 258/256
+      ceiling is 1,907,136, both < 2^21), but every ADD between the
+      carriers laundered that bound out of synthesis's sight - pinc_q's
+      three structural zero bits die at the first adder. The bound was
+      verified from rtl/psg_const.hex itself, not the notes. Record
+      word layouts keep their shape ({3'b0, inc[20:16]} in the packed
+      high bytes), so the TB probes and the BRAM images are untouched.
+      Oracle 59/59, psg_tb ALL PASS.
+      **METHOD, for what remains: "invisible bounds" - properties
+      provable from table contents, algebra, or schedule that synthesis
+      cannot see - is the lever class the census and ablation methods
+      missed. Widths are now mined (remaining: eff_rem -4, bl_res -1
+      bit = noise). The sibling classes still open: provably-dead mux
+      arms (z_lin/z_prim wave-6 defaults alias to a live arm), and
+      provable exclusivity (the state-port priority chain - measured
+      worth ~-15..30 but deliberately kept as a structural contract).**

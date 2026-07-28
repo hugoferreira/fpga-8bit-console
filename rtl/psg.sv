@@ -373,7 +373,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
   // The synthesis walk's working copy: parameters and oscillator state loaded
   // serially from state_m, with the oscillator words written back in place.
-  logic [23:0] s_eff_inc;
+  // Increment carriers are 21 bits: the pitch table's 13-bit entries
+  // put every increment (vibrato included) under 2^21, but the adds
+  // between them launder that bound out of synthesis's sight.
+  logic [20:0] s_eff_inc;
   logic [2:0]  s_snd_wave;
   logic        s_snd_wt;
   logic [2:0]  s_snd_id;
@@ -390,7 +393,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // PICO-8 keeps a copy of the preceding oscillator state at every synthesis
   // tick and blends its continuation into the first 64 new samples. These
   // fields live in the oscillator portion of state_m.
-  logic [23:0] s_old_phase, s_old_inc, s_last_inc;
+  logic [23:0] s_old_phase;
+  logic [20:0] s_old_inc, s_last_inc;
   logic [12:0] s_old_G, s_last_G;
   logic [2:0]  s_old_wave, s_last_wave;
   // The old state's own 17-bit secondary and the detune modes each side
@@ -727,7 +731,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Every pitch increment is dp << 8 with dp in 13 bits, so the 24-bit
   // value is a wiring reconstruction of the constants word.
   wire [23:0] pinc_q = {3'b000, crom_q[12:0], 8'h00};
-  logic [23:0] arp_r;
+  logic [20:0] arp_r;
   wire signed [8:0] arp_raw =
       e_insfx ? ($signed({3'b0, w_cur_pitch}) + $signed({3'b0, arp_p}) - 9'sd24)
     : ins_use ? ($signed({3'b0, arp_p}) + $signed({3'b0, w_ins_pitch}) - 9'sd24)
@@ -766,7 +770,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // default address. The base_r/prev_r prefetch registers this replaces
   // were a leftover of the phase-increment slide: prev_r had no consumer
   // at all.
-  wire [23:0] base_inc = pinc_q;
+  wire [20:0] base_inc = pinc_q[20:0];
   // The binary's amplitude is vol<<8 exactly (a0 in _calculate_osc_state).
   wire [11:0] vol_direct  = w_ins_done ? 12'd0 : {1'b0, w_cur_vol, 8'b0};
   wire [11:0] pvol_direct = {1'b0, w_prev_vol, 8'b0};
@@ -935,10 +939,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // base + ~p24 + 1, so the round-up and the negations ride the carry-in.
   // Two's-complement identities - the results are bit-for-bit unchanged.
   wire        vib_cb  = |m_res[6:0];
-  wire [23:0] fxp_op  = m_res[30:7];
-  wire [23:0] fxp_res = base_inc + (lfo_neg ? ~fxp_op : fxp_op)
-                      + {23'b0, (lfo_neg & ~vib_cb)};
-  logic [23:0] fxi_next;
+  wire [20:0] fxp_op  = m_res[27:7];
+  wire [20:0] fxp_res = base_inc + (lfo_neg ? ~fxp_op : fxp_op)
+                      + {20'b0, (lfo_neg & ~vib_cb)};
+  logic [20:0] fxi_next;
   logic [11:0] fxv_next;
 
   // Operands for the product started at step xs
@@ -988,7 +992,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                    mul_b = {4'b0, mus_gain} + 12'd1; mul_md = 2'd1;
                    mul_go = 1'b1; end
       4'd4: case (e_fx)
-              3'd2: begin mul_a = {1'b0, base_inc}; mul_b = {10'b0, lfo_mag};
+              3'd2: begin mul_a = {4'b0, base_inc}; mul_b = {10'b0, lfo_mag};
                           mul_go = 1'b1; end
               // DROP (3.1): tz(dp * (d - t), d) on the binary's INTEGER
               // dp, which is base_inc's [20:8] - multiplying the 24-bit
@@ -1053,8 +1057,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // PICO-8 multiplies its integer `dp`, then the FPGA phase convention
       // expands that result by eight bits.  Multiplying base_inc directly is
       // otherwise subtly more precise and accumulates audible phase drift.
-      3'd2: fxi_next = {fxp_res[23:8], 8'b0};
-      3'd3: fxi_next = {3'b0, d_res[12:0], 8'b0};
+      3'd2: fxi_next = {fxp_res[20:8], 8'b0};
+      3'd3: fxi_next = {d_res[12:0], 8'b0};
       3'd6, 3'd7: fxi_next = arp_r;
       default: ;
     endcase
@@ -1075,8 +1079,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // program's result slots, the music fade is the xs 7 product (the m
   // service is idle until the next slot's first launch), and everything
   // else is a register or a cone over registers.
-  wire [23:0] pub_inc = (w_ins_on && w_ins_wt && w_ins_bass)
-                          ? {1'b0, arp_r[23:1]} : arp_r;
+  wire [20:0] pub_inc = (w_ins_on && w_ins_wt && w_ins_bass)
+                          ? {1'b0, arp_r[20:1]} : arp_r;
   // The published amplitude (2.3/3.1): the binary's 12-bit `a`, carried
   // exactly through the effect arithmetic now that the recurrences
   // divide rather than scale by a Q8 fraction. vol_r is a REGISTER, not
@@ -1095,7 +1099,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       P_W1:    pub_wd = {1'b0, w_ins_id, (w_ins_on & w_ins_wt),
                          (ins_use ? w_ins_wave
                           : (w_ins_on && w_ins_wt) ? 3'd0 : w_cur_wave),
-                         pub_inc[23:16]};
+                         3'b0, pub_inc[20:16]};
       P_W2:    pub_wd = {1'b0,
                          (w_cur_fx == 3'd1
                           || (w_ins_on && !w_ins_wt
@@ -1662,7 +1666,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         K_PF0: sst <= K_FX;
         // Effect evaluation, one microinstruction per completed product.
         K_FX: if (!m_busy && !((xs == 4'd7 || xs == 4'd10) && d_busy)) begin
-          if (xs == 0) arp_r <= pinc_q;
+          if (xs == 0) arp_r <= pinc_q[20:0];
           case (xs)
             // The effect runs on the note's OWN amplitude, or on the
             // instrument row's when the instrument is the one carrying
@@ -1726,7 +1730,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         end
         K_SL7: sst <= K_SL8;              // base_c issued
         K_SL8: if (!m_busy) begin
-          arp_r <= {3'b0, sl_dp, 8'b0};
+          arp_r <= {sl_dp, 8'b0};
           // Resume after micro-op 2 by starting its current-volume product.
           xs    <= 4'd3;
           sst   <= K_FX;
@@ -2028,9 +2032,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         4'd6:    sosc_wd = s_old_phase[23:8];
         4'd7:    sosc_wd = {bl_cnt, old_q0[16:8]};
         4'd8:    sosc_wd = s_old_inc[15:0];
-        4'd9:    sosc_wd = {s_old_G[7:0], s_old_inc[23:16]};
+        4'd9:    sosc_wd = {s_old_G[7:0], 3'b0, s_old_inc[20:16]};
         4'd10:   sosc_wd = {1'b0, old_rev_r, last_rev_r,
-                            s_last_wave, s_last_inc[23:16]};
+                            s_last_wave, 3'b0, s_last_inc[20:16]};
         4'd11:   sosc_wd = s_last_inc[15:0];
         4'd12:   sosc_wd = {1'b0, old_alt_r, last_alt_r,
                             last_mode_r, s_old_wave, s_last_G[7:0]};
@@ -2468,7 +2472,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // exhaustively proven over the clamped dp range): the subtractive Ks are
   // dp minus a ceil term, triangle mode-1 is three shift-adds, and the
   // phaser's 254/256 default replaces the retired ~109/110 serial chain.
-  wire [23:0] einc = s_eff_inc;
+  wire [20:0] einc = s_eff_inc;
   // The one dq network serves both phase contexts: the live voice at
   // PWORK+6 and the old continuation at PWORK+5 (its wave/mode/dp are
   // the previous tick's, carried in the old fields).
@@ -2476,7 +2480,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                                      : ctrl_q[CTRL_DQO];
   wire [2:0] dq_wave = dq_old_ctx ? s_old_wave : s_snd_wave;
   wire [1:0] dq_mode = dq_old_ctx ? old_mode_r : s_ch_det;
-  wire [23:0] dp24 = {8'b0, dq_old_ctx ? s_old_inc[23:8] : einc[23:8]};
+  wire [23:0] dp24 = {11'b0, dq_old_ctx ? s_old_inc[20:8] : einc[20:8]};
   logic [16:0] dq17;
   always_comb begin
     if (s_snd_wt)
@@ -2516,16 +2520,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // The deliberately compact simulator preview still uses its original
   // single-cycle secondary increment. REALTIME_PREVIEW is a parameter, so
   // this complete network is removed from hardware and oracle builds.
-  wire [16:0] preview_det_round = {1'b0, einc[23:8]} + 17'd255;
+  wire [16:0] preview_det_round = {4'b0, einc[20:8]} + 17'd255;
   wire [16:0] preview_det_wide =
-      {1'b0, einc[23:8]} - {8'b0, preview_det_round[16:8]};
+      {4'b0, einc[20:8]} - {8'b0, preview_det_round[16:8]};
   wire [23:0] preview_v2inc =
-      s_snd_wt ? einc :
-      (s_snd_wave == 3'd7) ? (einc - {7'b0, einc[23:7]}
-                                        - {10'b0, einc[23:10]}
-                                        - {12'b0, einc[23:12]}) :
+      s_snd_wt ? {3'b0, einc} :
+      (s_snd_wave == 3'd7) ? ({3'b0, einc} - {10'b0, einc[20:7]}
+                                        - {13'b0, einc[20:10]}
+                                        - {15'b0, einc[20:12]}) :
       (s_ch_det == 2'd1)   ? {preview_det_wide[15:0], 8'b0} :
-      (s_ch_det == 2'd2)   ? {einc[22:0], 1'b0} :
+      (s_ch_det == 2'd2)   ? {2'b0, einc, 1'b0} :
                                   24'd0;
   wire v2_on = s_snd_wt || (s_snd_wave == 3'd7) || (s_ch_det != 0);
 
@@ -2545,10 +2549,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [23:0] pha_a, pha_b;
   always_comb begin
     pha_a = s_phase;
-    pha_b = einc;
+    pha_b = {3'b0, einc};
     if (dq_old_ctx) begin
       pha_a = s_old_phase;
-      pha_b = s_old_inc;
+      pha_b = {3'b0, s_old_inc};
     end
   end
   wire [23:0] pha_y = pha_a + pha_b;
@@ -3170,10 +3174,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                    {bl_cnt, old_q0[16:8]} <= state_q;
           7'd9: if (!REALTIME_PREVIEW) s_old_inc[15:0] <= state_q;
           7'd10: if (!REALTIME_PREVIEW)
-                    {s_old_G[7:0], s_old_inc[23:16]} <= state_q;
+                    {s_old_G[7:0], s_old_inc[20:16]}
+                      <= {state_q[15:8], state_q[4:0]};
           7'd11: if (!REALTIME_PREVIEW)
                     {old_rev_r, last_rev_r, s_last_wave,
-                     s_last_inc[23:16]} <= state_q[14:0];
+                     s_last_inc[20:16]} <= {state_q[14:8], state_q[4:0]};
           7'd12: if (!REALTIME_PREVIEW) s_last_inc[15:0] <= state_q;
           7'd13: if (!REALTIME_PREVIEW)
                     {old_alt_r, last_alt_r, last_mode_r, s_old_wave,
@@ -3185,8 +3190,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           7'(PLOSC + 1):
             s_eff_inc[15:0] <= state_q;
           7'(PLOSC + 2):
-            {s_snd_id, s_snd_wt, s_snd_wave, s_eff_inc[23:16]}
-              <= state_q[14:0];
+            {s_snd_id, s_snd_wt, s_snd_wave, s_eff_inc[20:16]}
+              <= {state_q[14:8], state_q[4:0]};
           7'(PLOSC + 3):
             {s_ch_damp, s_ch_rev, s_ch_det, s_ch_buzz,
              s_ch_noiz, s_snd_pitch} <= state_q[13:0];
@@ -3211,7 +3216,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             7'(PWORK): begin
               lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
               if (playing[pc_ch] && s_eff_a != 0) begin
-                s_phase <= s_phase + einc;
+                s_phase <= s_phase + {3'b0, einc};
                 if (s_ch_noiz || s_phase[23:20] != s_nz_ph) begin
                   s_nz_ph <= s_phase[23:20];
                   s_nz_hold <= $signed(lfsr[7:0]);
