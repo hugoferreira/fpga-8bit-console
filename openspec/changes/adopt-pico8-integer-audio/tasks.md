@@ -44,7 +44,12 @@
       seed-1); retire the 1317 constant, K_SLPM and the 254-scale
 - [ ] 2.4 Crossfade at 16-bit: one-multiply blend ((old<<6)+i*(new-old))
       on the existing service slots; transitions re-verified against
-      the model
+      the model. Includes the OLD-state secondary: the model's
+      old.render(64) advances the copied q0/dq, which the RTL's
+      primary-only continuation lacks - store old_q0 (17 bits) plus its
+      dq inputs by repacking the old words (after the slide adoption
+      every phase/increment is <<8-aligned, so the old phase/inc low
+      bytes are free)
 - [ ] 2.5 Filter relocation (design 7): comb-then-dampen per voice on
       the post-blend stream, dampen as the blend-form recurrence via
       biased shifts, per-voice 17-bit ring behind REVERB (design 8);

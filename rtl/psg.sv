@@ -1755,7 +1755,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         4'd0:    sosc_wd = s_phase[15:0];
         4'd1:    sosc_wd = {s_nz_hold, s_phase[23:16]};
         4'd2:    sosc_wd = s_phase2[15:0];
-        4'd3:    sosc_wd = {4'b0, s_nz_ph, s_phase2[23:16]};
+        // The binary's secondary phase is a true 17-bit q0: bit 16 rides
+        // where phase2[16] already sat, so the load path is unchanged and
+        // bits [23:17] read back as zero.
+        4'd3:    sosc_wd = {4'b0, s_nz_ph, 7'b0, s_phase2[16]};
         4'd4:    sosc_wd = {3'b0, s_brown};
         4'd5:    sosc_wd = s_lp;
         4'd6:    sosc_wd = s_old_phase[15:0];
@@ -1943,7 +1946,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     wsel = s_snd_wave;
     wph = s_phase[23:16];
     if (pph == 7'(PWORK + 1))
-      wph = s_phase2[23:16];        // second voice
+      wph = q16[15:8];              // second voice (q0 view)
     else if (pph == 7'(PWORK + 2)) begin
       wsel = s_old_wave;
       wph = s_old_phase[23:16];     // old-state continuation
@@ -1985,14 +1988,46 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     endcase
   end
 
-  // Second voice: phaser preset (~109/110) on wave 7, else the detune ratio
+  // Second voice: the binary's universal 17-bit q0. Every rendering voice
+  // advances q0 by dq = tz(dp*K/256), K selected per wave and detune mode.
+  // Each K is at most two adds and one shift (psg_hw_forms dq.k*, all
+  // exhaustively proven over the clamped dp range): the subtractive Ks are
+  // dp minus a ceil term, triangle mode-1 is three shift-adds, and the
+  // phaser's 254/256 default replaces the retired ~109/110 serial chain.
   wire [23:0] einc = s_eff_inc;
-  // PICO-8 keeps a 17-bit secondary phase and computes DETUNE-1's increment
-  // as trunc(dp * 255 / 256).  The FPGA phase has eight additional fractional
-  // bits. ceil(dp/256) is subtracted on a second phase-ALU clock, retaining
-  // the exact truncated 16-bit result followed by eight zeroes.
-  wire [8:0] det_ceil =
-      {1'b0, einc[23:16]} + 9'(|einc[15:8]);
+  wire [23:0] dp24 = {8'b0, einc[23:8]};
+  logic [16:0] dq17;
+  always_comb begin
+    if (s_snd_wt)
+      dq17 = dp24[16:0];                                        // dq = dp
+    else if (s_snd_wave == 3'd0) begin
+      case (s_ch_det)
+        2'd1:    dq17 = 17'(((dp24 << 7) + (dp24 << 6) + dp24) >> 8);
+        2'd2:    dq17 = 17'(dp24 + (dp24 >> 1));                // K=384
+        default: dq17 = dp24[16:0];                             // K=256
+      endcase
+    end else if (s_snd_wave == 3'd7) begin
+      case (s_ch_det)
+        2'd1:    dq17 = 17'(dp24 - (((dp24 << 2) + (dp24 << 1)
+                                     + 24'd255) >> 8));         // K=250
+        2'd2:    dq17 = 17'((dp24 << 1) - ((dp24 + 24'd63) >> 6));  // 508
+        default: dq17 = 17'(dp24 - ((dp24 + 24'd127) >> 7));    // K=254
+      endcase
+    end else if (s_ch_det != 2'd0)
+      dq17 = 17'(dp24 - ((dp24 + 24'd255) >> 8));               // K=255
+    else
+      dq17 = dp24[16:0];                                        // K=256
+  end
+  // The 16-bit q the wave functions read: u16(q0 << (mode==2)), except
+  // triangle and phaser whose secondary reads u16(q0) unshifted (the
+  // model's wave_pair). The preview schedule keeps its original 24-bit
+  // second phase, so its view is the old [23:8] window.
+  wire [15:0] q16 =
+      REALTIME_PREVIEW ? s_phase2[23:8]
+    : (!s_snd_wt && (s_snd_wave == 3'd0 || s_snd_wave == 3'd7))
+        ? s_phase2[15:0]
+    : (s_ch_det == 2'd2) ? {s_phase2[14:0], 1'b0}
+                         : s_phase2[15:0];
   // The deliberately compact simulator preview still uses its original
   // single-cycle secondary increment. REALTIME_PREVIEW is a parameter, so
   // this complete network is removed from hardware and oracle builds.
@@ -2092,34 +2127,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         phase_alu_a = s_old_phase;
         phase_alu_b = s_old_inc;
       end
-      7'(PWORK + 6): begin
-        phase_alu_a = s_phase2;
-        if (s_snd_wt)
-          phase_alu_b = einc;
-        else if (s_snd_wave == 3'd7)
-          phase_alu_b = einc;
-        else if (s_ch_det == 2'd1)
-          phase_alu_b = {einc[23:8], 8'b0};
-        else
-          phase_alu_b = {einc[22:0], 1'b0};
-      end
-      7'(PWORK + 7): begin
-        phase_alu_a = s_phase2;
-        phase_alu_sub = 1'b1;
-        phase_alu_b = (s_snd_wave == 3'd7)
-                        ? {7'b0, einc[23:7]}
-                        : {7'b0, det_ceil, 8'b0};
-      end
-      7'(PWORK + 8): begin
-        phase_alu_a = s_phase2;
-        phase_alu_b = {10'b0, einc[23:10]};
-        phase_alu_sub = 1'b1;
-      end
-      7'(PWORK + 9): begin
-        phase_alu_a = s_phase2;
-        phase_alu_b = {12'b0, einc[23:12]};
-        phase_alu_sub = 1'b1;
-      end
+      // PWORK+6..9 no longer touch the ALU: the universal q0 advances on
+      // its own 17-bit adder (dq17), so these four slots are free for the
+      // adoption's G*z service passes (design section, adoption map).
       default: ;
     endcase
   end
@@ -2146,12 +2156,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       end else if (pph == 7'(PWORK + (REALTIME_PREVIEW ? 1 : 2))
                    && v2_on) begin
         syn_rd   = 1'b1;
-        syn_addr = s_snd_wtb + {7'b0, s_phase2[23:18]};
+        syn_addr = s_snd_wtb + {7'b0, q16[15:10]};
       end else if (!REALTIME_PREVIEW && pph == 7'(PWORK + 3)
                    && v2_on) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb
-                 + {7'b0, s_phase2[23:18] + 6'd1};
+                 + {7'b0, q16[15:10] + 6'd1};
       end
     end
   end
@@ -2803,7 +2813,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                   s_phase <= phase_alu_y;
               end else begin
                 wt_pf <= s_phase[17:8];
-                wt_qf <= s_phase2[17:8];
+                wt_qf <= q16[9:0];
               end
               // noise: white every sample when NOIZ, else pitched S&H
               if (s_ch_noiz || s_phase[23:20] != s_nz_ph) begin
@@ -2926,23 +2936,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           end
           7'(PWORK + 6): begin
             // All secondary waveform reads have captured the pre-advance
-            // phase. Wavetable and DETUNE-2 finish here; DETUNE-1 and phaser
-            // continue through the same ALU below.
-            if (playing[pc_ch] && s_eff_vol != 0 && v2_on)
-              s_phase2 <= phase_alu_y;
-          end
-          7'(PWORK + 7): begin
-            if (playing[pc_ch] && s_eff_vol != 0
-                && (s_snd_wave == 3'd7
-                    || (!s_snd_wt && s_ch_det == 2'd1)))
-              s_phase2 <= phase_alu_y;
-          end
-          7'(PWORK + 8), 7'(PWORK + 9): begin
-            // Phaser's 109/110 approximation is
-            // x - (x>>7) - (x>>10) - (x>>12), accumulated serially.
-            if (playing[pc_ch] && s_eff_vol != 0
-                && !s_snd_wt && s_snd_wave == 3'd7)
-              s_phase2 <= phase_alu_y;
+            // phase. The universal q0 advances for EVERY rendering voice -
+            // the binary's `q0 = (q0 + dq) & 0x1ffff` - on a dedicated
+            // 17-bit add. The old v2_on gating and the DETUNE-1/phaser
+            // multi-step ALU sequence (PWORK+7..9) are retired; dq17 holds
+            // the proven per-wave adder forms, including the phaser's
+            // 254/256 that replaces the ~109/110 approximation.
+            if (playing[pc_ch] && s_eff_vol != 0)
+              s_phase2 <= {7'b0, 17'(s_phase2[16:0] + dq17)};
           end
           7'(PWORK + 13): begin
             if (!s_snd_wt) begin
