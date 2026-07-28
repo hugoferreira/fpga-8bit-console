@@ -52,6 +52,30 @@
 //       auto-picking a channel for an SFX; reset $00)
 //   $22 music fade length in 16 ms units, applied to the next music start
 //       (fade in) or stop (fade out), then cleared
+//
+// MODULE MAP. This file is the composition; every register is written by
+// exactly one submodule, cross-module reads travel on ports, and there are
+// no cross-module writes.
+//
+//   psg_timing     u_timing  the fractional divider, scnt, the five strobes
+//   psg_aram       u_aram    the PICO-8 image, the upload port, the ONE
+//                            shared read port and its borrow/replay contract
+//   psg_mulsvc     u_mul     the one shift-add multiplier
+//   psg_divsvc     u_div     the one restoring divider (sequencer only)
+//   psg_state_mem  u_state   the scheduled record store and its two-owner
+//                            port priority
+//   psg_wave       u_wave    the computed wave layer: z_eval, dq17, q16
+//   psg_walk       u_walk    the per-sample synthesis walk; owns prun/pph
+//   psg_seq        u_seq     the per-tick sequencer; owns the FSM, the
+//                            records, the effects and the control writes
+//   psg           (this)     ports, wiring, walk_frozen, the multiply
+//                            merge, the PCM register, the CPU read mux, dbg
+//
+// The shared-resource invariants are the interfaces, not comments: one
+// multiply service behind one merged request bundle, one divider, one
+// state_m port pair behind two owner bundles, one aram read port. The
+// walk-freeze contract is formed HERE because its four terms belong to
+// three different owners and this is the only scope that sees them all.
 
 // Slot counts, the scheduled record's word layout and the audible-slot rule,
 // at compilation-unit scope so the functional submodules share one copy.
@@ -87,7 +111,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
            // without seeing inside.
            output logic [63:0] dbg);
 
-
   // ------------------------------------------------------------------
   // Timing: 22050 Hz virtual sample rate, sequencer tick every 183
   // ------------------------------------------------------------------
@@ -113,8 +136,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .clk(clk), .reset(reset),
     .sample_en(sample_en), .tick_en(tick_en), .tick_en_d(tick_en_d),
     .pre_tick(pre_tick), .scnt(scnt));
-
-
 
   // Audio RAM read port, shared: u_aram (rtl/psg_aram.sv) owns the array and
   // the borrow/replay contract; these are the wires the two requesters and
@@ -150,7 +171,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire  [27:0] m_res12;
   wire         m_busy;
 
-
   // The divider's request comes from the sequencer alone, so there is no
   // merge to make: div_start / div_n / div_d go straight to u_div.
   wire         div_start;
@@ -164,7 +184,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .clk(clk), .reset(reset),
     .div_start(div_start), .div_n(div_n), .div_d(div_d),
     .d_res(d_res), .d_rem(d_rem), .d_busy(d_busy));
-
 
   // The store, and the fixed sample-walk-first priority between the two
   // owner bundles above.
@@ -249,9 +268,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [16:0] dq17;
   wire [15:0] q16;
 
-
-
-
   // The service's single request port. The two bundles are DISJOINT, not
   // merely prioritised - the walk arm needs `prun`, the sequencer arm needs
   // `!walk_frozen`, and walk_frozen subsumes prun - and every arm in both
@@ -323,7 +339,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire signed [24:0] smul_a;
   wire [11:0] smul_b;
   wire [1:0]  smul_mode;
-
 
   // Output stage: the mixed sum is the PCM - the adopted reverb is
   // per-voice, pre-mix (the rings above); the old shared post-mix
