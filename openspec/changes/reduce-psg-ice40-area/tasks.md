@@ -372,3 +372,12 @@
       arms (z_lin/z_prim wave-6 defaults alias to a live arm), and
       provable exclusivity (the state-port priority chain - measured
       worth ~-15..30 but deliberately kept as a structural contract).**
+- [x] R.13 Dead-arm aliasing REFUTED: +115 structural, reverted.
+      Constant default arms cost nothing after optimization; aliasing
+      them to live nets (mul_start_a = mul_a, z_lin default = tri_v)
+      chains the tick mux INTO the sample mux - series routing, not
+      sharing. Trap logged: mul_start_mode's zero default is LIVE (the
+      blend and T_NL products rely on it for their 8-cycle runs); an
+      alias there miscounts cycles and was caught before the gates.
+      Goal-campaign close-out at 7,216: five landed stages (-430
+      cumulative), four refutations with numbers, all render-exact.
