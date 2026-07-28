@@ -334,3 +334,20 @@
       networks pays only when they are WIDE (t24572's 31-bit chains);
       16-19-bit exclusive-per-cycle adders are already optimal under a
       value mux.**
+- [x] R.11 Width audit on the shared services (`pending-hash`): 7,385 ->
+      7,344 (**-41** placed, -33 structural). The fold ALU narrows
+      24 -> 18 - operands are 18-bit stack/series values and the widest
+      result is a compare spanning +-(65,536 + 24,576) = 90,112, inside
+      signed 18; the compare sign moves to bit 17. The m service's
+      A-side narrows 24 -> 21 - the widest operand any arm supplies is
+      base_inc, whose pitch-table ceiling is 0x1CE0 << 8 = 1,892,352 <
+      2^21; m_p 37 -> 34, m_acc 25 -> 22. Synthesis cannot see either
+      bound (they live in the pitch table's content and the soft-add
+      algebra), which is why the bits were real cells. Oracle 59/59,
+      psg_tb ALL PASS.
+      ALSO CLOSED BY ARITHMETIC, not built: an fx/tick microword (the
+      xs/e_fx decode into a 128x16 EBR) - its ROM output register is
+      14-16 BRAM-fed unpackable flops, a whole-cell tax that eats the
+      -35..60 decode win to -5..30. The pph control store only paid
+      because its fabric was 2-3x larger. The decode-to-ROM lever is
+      exhausted.

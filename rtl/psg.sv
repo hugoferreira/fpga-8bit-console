@@ -782,16 +782,20 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // array multipliers cost. An evaluation runs six of them, 4 channels
   // 120 times a second - about 240 clocks in a tick.
   // ------------------------------------------------------------------
-  logic [23:0] m_a;
-  logic [36:0] m_p;                  // accumulator plus 8/10/12-bit multiplier
+  // 21 bits, not 24: the widest |A| any arm supplies is base_inc,
+  // whose pitch-table ceiling is 0x1CE0 << 8 = 1,892,352 < 2^21; the
+  // signed arms peak at 18 bits. The accumulator and product register
+  // narrow with it (products peak at 22 bits real, 33 structural).
+  logic [20:0] m_a;
+  logic [33:0] m_p;                  // accumulator plus 8/10/12-bit multiplier
   logic [3:0]  m_cnt;
   logic [1:0]  m_mode;               // 0: 8-bit B, 1: 10-bit, 2: 12-bit
   // Reset contract: m_cnt and the micro-PC are validity/control state and
   // reset to idle.  m_a/m_p and the working results below are datapath:
   // every one is overwritten by the six-op program before it is observed.
-  wire  [24:0] m_acc = (m_mode == 2'd2) ? m_p[36:12]
-                     : (m_mode == 2'd1) ? m_p[34:10] : m_p[32:8];
-  wire  [25:0] m_sum = {1'b0, m_acc} + (m_p[0] ? {2'b0, m_a} : 26'd0);
+  wire  [21:0] m_acc = (m_mode == 2'd2) ? m_p[33:12]
+                     : (m_mode == 2'd1) ? m_p[31:10] : m_p[29:8];
+  wire  [22:0] m_sum = {1'b0, m_acc} + (m_p[0] ? {2'b0, m_a} : 23'd0);
   wire  [31:0] m_res = m_p[31:0];
   wire  [33:0] m_res_wide = m_p[33:0];
   wire  [27:0] m_res12 = m_p[27:0];
@@ -2549,13 +2553,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   end
   wire [23:0] pha_y = pha_a + pha_b;
 
-  logic [23:0] fold_a, fold_b;
+  // 18 bits, not 24: operands are 18-bit stack/series values, and the
+  // widest result is a compare spanning +-(65,536 + 24,576) = 90,112,
+  // inside signed 18. The compare sign moves from bit 23 to bit 17.
+  logic [17:0] fold_a, fold_b;
   logic        fold_sub, fold_cin;
   // One physical carry chain for the fold: a - b is a + ~b + 1, and the
   // single "+1" micro-op rides the same carry-in.
-  wire [23:0] phase_alu_y =
+  wire [17:0] phase_alu_y =
       fold_a + (fold_sub ? ~fold_b : fold_b)
-             + {23'b0, fold_sub | fold_cin};
+             + {17'b0, fold_sub | fold_cin};
 
   // Wavetable instruments read their 64 samples out of audio RAM, one
   // borrowed read per voice per sample (the sequencer FSM freezes for it).
@@ -2877,9 +2884,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // the per-source magnitude networks retire. Truncation points are
       // unchanged - the product is formed and scaled in the magnitude
       // domain exactly as before.
-      m_a    <= mul_start_a[24] ? (24'd0 - mul_start_a[23:0])
-                                : mul_start_a[23:0];
-      m_p    <= {25'b0, mul_start_b};
+      m_a    <= mul_start_a[24] ? (21'd0 - mul_start_a[20:0])
+                                : mul_start_a[20:0];
+      m_p    <= {22'b0, mul_start_b};
       m_mode <= mul_start_mode;
       m_cnt  <= (mul_start_mode == 2'd2) ? 4'd12
               : (mul_start_mode == 2'd1) ? 4'd10 : 4'd8;
@@ -2991,29 +2998,29 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // the underflow side. Steps 4-10 run regardless and commit nothing unless
   // a compare fired; the schedule is fixed so nothing downstream cares.
   always_comb begin
-    fold_a = 24'd0; fold_b = 24'd0; fold_sub = 1'b0; fold_cin = 1'b0;
+    fold_a = 18'd0; fold_b = 18'd0; fold_sub = 1'b0; fold_cin = 1'b0;
     case (fmc)
-      4'd1:  begin fold_a = {{6{fda[17]}}, fda};
-                   fold_b = {{6{fdb[17]}}, fdb}; end
-      4'd2:  begin fold_a = {{6{fda[17]}}, fda};
-                   fold_b = 24'(SA_TH); fold_sub = 1'b1; end
-      4'd3:  begin fold_a = 24'(-SA_TH);
-                   fold_b = {{6{fda[17]}}, fda}; fold_sub = 1'b1; end
-      4'd4:  begin fold_a = {7'b0, fx_r[17:1]};
-                   fold_b = {8'b0, fx_r[17:2]}; end
-      4'd5:  begin fold_a = {6'b0, ft2};
-                   fold_b = {10'b0, ft2[17:4]}; end
-      4'd6:  begin fold_a = {6'b0, ft2};
-                   fold_b = {14'b0, ft2[17:8]}; end
-      4'd7:  begin fold_a = {6'b0, fx_r};
-                   fold_b = {6'b0, ft2[17:2], 2'b00}; fold_sub = 1'b1; end
-      4'd8:  begin fold_a = {6'b0, fx_r};
-                   fold_b = {8'b0, ft2[17:2]}; fold_sub = 1'b1; end
-      4'd9:  begin fold_a = 24'(SA_TH);
-                   fold_b = {8'b0, ft2[17:2]};
+      4'd1:  begin fold_a = fda;
+                   fold_b = fdb; end
+      4'd2:  begin fold_a = fda;
+                   fold_b = 18'(SA_TH); fold_sub = 1'b1; end
+      4'd3:  begin fold_a = 18'(-SA_TH);
+                   fold_b = fda; fold_sub = 1'b1; end
+      4'd4:  begin fold_a = {1'b0, fx_r[17:1]};
+                   fold_b = {2'b0, fx_r[17:2]}; end
+      4'd5:  begin fold_a = ft2;
+                   fold_b = {4'b0, ft2[17:4]}; end
+      4'd6:  begin fold_a = ft2;
+                   fold_b = {8'b0, ft2[17:8]}; end
+      4'd7:  begin fold_a = fx_r;
+                   fold_b = {ft2[17:2], 2'b00}; fold_sub = 1'b1; end
+      4'd8:  begin fold_a = fx_r;
+                   fold_b = {2'b0, ft2[17:2]}; fold_sub = 1'b1; end
+      4'd9:  begin fold_a = 18'(SA_TH);
+                   fold_b = {2'b0, ft2[17:2]};
                    fold_cin = (fr_r >= 4'd5); end
-      4'd10: begin fold_a = 24'd0;
-                   fold_b = {{6{fda[17]}}, fda}; fold_sub = 1'b1; end
+      4'd10: begin fold_a = 18'd0;
+                   fold_b = fda; fold_sub = 1'b1; end
       default: ;
     endcase
   end
@@ -3097,13 +3104,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         case (fmc)
           4'd1:  begin fstk[fdsti] <= phase_alu_y[17:0]; fmc <= 4'd2; end
           4'd2:  begin
-            f_over <= ~phase_alu_y[23];
-            if (!phase_alu_y[23]) fx_r <= phase_alu_y[17:0];
+            f_over <= ~phase_alu_y[17];
+            if (!phase_alu_y[17]) fx_r <= phase_alu_y[17:0];
             fmc <= 4'd3;
           end
           4'd3:  begin
-            f_under <= ~phase_alu_y[23];
-            if (!phase_alu_y[23]) fx_r <= phase_alu_y[17:0];
+            f_under <= ~phase_alu_y[17];
+            if (!phase_alu_y[17]) fx_r <= phase_alu_y[17:0];
             fmc <= 4'd4;
           end
           4'd4, 4'd5, 4'd6: begin ft2 <= phase_alu_y[17:0]; fmc <= fmc + 1; end
