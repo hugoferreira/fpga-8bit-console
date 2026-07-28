@@ -22,6 +22,9 @@ Sections:
   amp   - G, the detune boost and vibrato as pure shift-adds
   bound - exact worst-case interval propagation through the whole
           pipeline (comb feedback to its fixpoint), and the int16 verdict
+  csd   - constant multiplies as signed adder networks: the target
+          fabric has NO DSP blocks, so every product is LUT4+carry
+          adds (combinational CSD network or serial service cycles)
   rom   - packing notes for the small tables
 
 Usage: psg_hw_forms.py [section ...]
@@ -53,10 +56,27 @@ def resign(neg: bool, mag: int) -> int:
 # --- div: shift + magnitude reciprocal --------------------------------------
 
 def find_reciprocal(d: int, n_max: int) -> tuple[int, int] | None:
-    """Smallest (shift, mult) with (n*mult)>>shift == n//d on [0, n_max]."""
-    for s in range(d.bit_length(), 40):
+    """Smallest (shift, mult) with (n*mult)>>shift == n//d on [0, n_max].
+
+    With m = ceil(2^s/d) and e = m*d - 2^s, the form is exact on the
+    whole range iff e*N' < 2^s where N' is the largest n <= n_max with
+    n mod d == d-1 (the binding residue). Small domains are verified
+    exhaustively on top of the criterion; large ones check the binding
+    boundary neighbourhood and a stride."""
+    for s in range(d.bit_length(), 48):
         m = -(-(1 << s) // d)                 # ceil(2^s / d)
-        if all((n * m) >> s == n // d for n in range(n_max + 1)):
+        e = m * d - (1 << s)
+        np_ = n_max - ((n_max - (d - 1)) % d)
+        if e and e * np_ >= (1 << s):
+            continue
+        if n_max <= 2_000_000:
+            ok = all((n * m) >> s == n // d for n in range(n_max + 1))
+        else:
+            pts = [n for base in (np_, n_max) for n in
+                   range(max(0, base - 2 * d), base + 1)]
+            pts += list(range(0, n_max, max(1, n_max // 100_000)))
+            ok = all((n * m) >> s == n // d for n in pts)
+        if ok:
             return s, m
     return None
 
@@ -382,7 +402,68 @@ def sec_bound() -> None:
           f"({b_acc.bit_length() + 1} bits)")
 
 
-# --- rom: table packing notes -----------------------------------------------
+# --- csd: constant-multiply adder costs on LUT4 fabric ----------------------
+
+def naf(n: int) -> list[tuple[int, int]]:
+    """Non-adjacent form: minimal signed-power-of-two decomposition."""
+    out, k = [], 0
+    while n:
+        if n & 1:
+            d = 2 - (n & 3)                   # +1 or -1
+            out.append((d, k))
+            n -= d
+        n >>= 1
+        k += 1
+    return out
+
+
+def sec_csd() -> None:
+    print("csd: constant multiplies as signed adder networks (no DSP - "
+          "LUT4+carry only)")
+    print("  cost model: combinational = (terms-1) adds of ~result width; "
+          "serial = one pass per multiplier bit on the shared adder")
+
+    consts = [
+        ("tilt/skew 24572", 24572, 16),
+        ("recip3 174763", 174763, 17),
+        ("recip7 149797", 149797, 18),
+        ("recip15 279621", 279621, 19),
+        ("compressor 52429", 52429, 17),
+        ("slide K 0x2F8DF18F", 0x2F8DF18F, 27),
+    ]
+    for name, c, opw in consts:
+        terms = naf(c)
+        print(f"  note   {name:22s} {c.bit_length():2d} bits, "
+              f"{bin(c).count('1'):2d} ones -> {len(terms):2d} CSD terms "
+              f"= {len(terms) - 1:2d} adds (operand {opw} bits) | serial "
+              f"{c.bit_length()} cycles")
+
+    # the 3-term tilt/skew identity, exhaustively
+    ok = all(24572 * x == (x << 14) + (x << 13) - (x << 2)
+             for x in range(65536))
+    report("csd.tilt_two_adds", ok,
+           "24572x == (x<<14) + (x<<13) - (x<<2): the tilt/skew ramp "
+           "multiply is TWO adds, exhaustively")
+
+    # direct one-shot reciprocals as an alternative to the staged routes
+    p_max = 82_575_360
+    for name, d, n_max, staged in (
+            ("3072", 3072, p_max, "(>>10 then recip3: 9 adds x 17b)"),
+            ("57344", 57344, 24572 * 57343, "(>>13 then recip7)"),
+            ("61440", 61440, 24572 * 61439, "(>>12 then recip15)")):
+        r = find_reciprocal(d, n_max)
+        if r is None:
+            report(f"csd.direct{name}", False, "no direct reciprocal found")
+            continue
+        s, m = r
+        t = naf(m)
+        print(f"  note   direct /{name}: n*{m}>>{s} exact to "
+              f"{n_max:,d}; {m.bit_length()} bits, {len(t)} CSD terms = "
+              f"{len(t) - 1} adds on the full {n_max.bit_length()}-bit "
+              f"operand {staged}")
+    print("  note   staged routes shift first, so their adders are "
+          "narrower; direct routes skip a stage but add on the full "
+          "operand - synthesis spikes decide per the measurement law")
 
 def sec_rom() -> None:
     print("rom: small-table packing")
@@ -404,7 +485,7 @@ def sec_rom() -> None:
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
             "svc": sec_svc, "tzpow": sec_tzpow, "blend": sec_blend,
             "dq": sec_dq, "amp": sec_amp, "bound": sec_bound,
-            "rom": sec_rom}
+            "csd": sec_csd, "rom": sec_rom}
 
 
 def main() -> int:

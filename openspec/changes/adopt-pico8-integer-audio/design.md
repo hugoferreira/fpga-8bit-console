@@ -222,6 +222,25 @@ Second tier (31/31 total after the follow-up sweep):
   true reachable excess domain (<= 82,942 = 2x53,759 - 24,576), no
   reciprocal smaller than 52429>>18 is exact.
 
+Third tier - the no-DSP cost model (the target fabric synthesizes all
+arithmetic to LUT4s + carry chains + FFs; a "service pass" is serial
+shift-add cycles on one shared adder, and a constant multiply is a CSD
+signed-adder network of (terms-1) adds; the svc "10-bit port" is a
+register/mux width choice, not silicon - two visits or a 2-bit port
+widening are both legal, synthesis decides):
+
+- CSD adder counts for every pipeline constant: tilt/skew 24572 =
+  **2 adds** (`(x<<14)+(x<<13)-(x<<2)`, proven exhaustively); recip15
+  5 adds; recip7 6 adds; compressor 8 adds (rare path - serial is
+  fine); recip3 9 adds (alternating bits resist CSD; serial 18
+  cycles is its alternative); slide K collapses 19 ones to 10 CSD
+  terms (per-tick only).
+- Direct single-constant reciprocals exist for /3072, /57344, /61440
+  (found and range-proven) but all lose to the staged shift-first
+  routes on adder bits (13 vs 9 adds for /3072, on wider operands);
+  both routes are recorded, synthesis spikes decide per the
+  measurement law.
+
 Constraints inherited from `reduce-psg-ice40-area`, which pauses at its
 6,199-cell / 15-EBR checkpoint until this change lands: the 15-EBR
 ceiling, the 1,275-clock sample budget (pre-run depth is a free constant),
