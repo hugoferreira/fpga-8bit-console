@@ -338,23 +338,28 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [7:0]  eff_sp, eff_fcnt;
   logic [4:0]  eff_tcnt;
 
-  // Register-resident record layout, four words. This MUST stay an
-  // always_comb reading the working registers directly, not a function
-  // called from a continuous assign: iverilog does not infer sensitivity to
-  // signals a function reads internally, so `assign vwdata = vpack(vcnt)`
-  // held 0 forever and every store wrote zeros. The unpack in V_LD is the
-  // mirror of this and the two must move together. Flow-owned words never
-  // appear here: V_ST does not store them and V_LD does not unpack them
-  // (word 8's ins_pitch read-copy is the one exception, refreshed on load).
+  // Register-resident record words 3/4/5/9, each field list spelled ONCE:
+  // the pack (vwdata, store order) and the unpack (V_LD, load order) expand
+  // the same macro, so the mirror pair cannot drift apart. The always_comb
+  // form itself MUST stay - not a function called from a continuous assign:
+  // iverilog does not infer sensitivity to signals a function reads
+  // internally, so `assign vwdata = vpack(vcnt)` held 0 forever and every
+  // store wrote zeros. Flow-owned words never appear here: V_ST does not
+  // store them and V_LD does not unpack them (word 8's ins_pitch read-copy
+  // is the one exception, refreshed on load).
+`define PSG_REC_W3 {w_ins_bass, w_cur_wave, w_prev_pitch, w_cur_pitch}
+`define PSG_REC_W4 {w_ins_done, w_bf_rev, w_bf_det, w_bf_buzz, w_bf_noiz, \
+                    w_prev_vol, w_cur_fx, w_cur_vol}
+`define PSG_REC_W5 {w_ins_vol, w_ins_wave, w_ins_row, w_ins_id, w_bf_damp}
+`define PSG_REC_W9 {w_ins_wt, w_ins_on, w_ins_prev_vol, w_ins_fx, \
+                    w_ins_prev_pitch}
   always_comb begin
     case (vcnt)
-      4'd0: vwdata = {w_ins_bass, w_cur_wave, w_prev_pitch, w_cur_pitch};
-      4'd1: vwdata = {w_ins_done, w_bf_rev, w_bf_det, w_bf_buzz, w_bf_noiz,
-                      w_prev_vol, w_cur_fx, w_cur_vol};
-      4'd2: vwdata = {w_ins_vol, w_ins_wave, w_ins_row, w_ins_id, w_bf_damp};
+      4'd0: vwdata = `PSG_REC_W3;
+      4'd1: vwdata = `PSG_REC_W4;
+      4'd2: vwdata = `PSG_REC_W5;
       4'd4: vwdata = {11'b0, w_row};
-      default: vwdata = {2'b0, w_ins_wt, w_ins_on,
-                         w_ins_prev_vol, w_ins_fx, w_ins_prev_pitch};
+      default: vwdata = {2'b0, `PSG_REC_W9};
     endcase
   end
 
@@ -408,10 +413,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // asked for while the new block combs at the current one.
   logic [1:0]  old_rev_r, last_rev_r;
   logic [6:0]  bl_cnt;               // samples since this voice's copy
-  // The wavetable's base address in audio RAM, recomputed rather than stored:
-  // 256 + id * 68 is two shifts and an add, against 13 bits per slot of state
-  // and the mux to read them.
-  wire [12:0] s_snd_wtb = 13'd256 + {4'b0, s_snd_id, 6'b0} + {8'b0, s_snd_id, 2'b0};
+  // An SFX record's base byte address in audio RAM: 256 + n*68, as two
+  // shifts and an add. Every consumer recomputes it from its own id
+  // rather than storing it: 13 bits per slot of state plus the mux to
+  // read them costs more than the adders.
+  function automatic logic [12:0] rec_base(input logic [5:0] n);
+    rec_base = 13'd256 + {1'b0, n, 6'b0} + {5'b0, n, 2'b0};
+  endfunction
+  wire [12:0] s_snd_wtb = rec_base({3'b0, s_snd_id});
 
   // Per-slot filter state: bf_* comes from the played SFX's filter byte at
   // trigger and lives in the sequencer's record; ch_* is that folded together
@@ -536,11 +545,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [7:0]  note_lo;
   logic [5:0]  arp_p;
 
-  wire [12:0] ch_base  = 13'd256 + {1'b0, sfx_id[c], 6'b0} + {5'b0, sfx_id[c], 2'b0};
-  wire [12:0] ins_base = 13'd256 + {4'b0, w_ins_id, 6'b0} + {8'b0, w_ins_id, 2'b0};
+  wire [12:0] ch_base  = rec_base(sfx_id[c]);
+  wire [12:0] ins_base = rec_base({3'b0, w_ins_id});
 
   // The note's instrument voice: a playhead (ins_use) or a wavetable
   wire ins_use = w_ins_on & ~w_ins_wt;
+  // The note cedes effect control to the instrument when it carries no
+  // effect of its own: fx 0, or fx 3 (retrigger) on an instrument note.
+  wire fx_dfl = (w_cur_fx == 3'd0) || (w_cur_fx == 3'd3);
 
   // Effect 3 on a custom-instrument note means "retrigger", not "drop"; the
   // instrument's own effect is used when the note carries none of its own.
@@ -749,11 +761,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       K_PF0:   pinc_addr = {2'b0, e_arp};
       // Four affine words per chromatic, then the octave-3 pitch word
       // that IS base_c.
-      K_SL2:   pinc_addr = 8'd64 + {sl_chr[3:0], 2'd0};
-      K_SL3:   pinc_addr = 8'd64 + {sl_chr[3:0], 2'd1};
-      K_SL4:   pinc_addr = 8'd64 + {sl_chr[3:0], 2'd2};
+      K_SL2:   pinc_addr = 8'd64 + {2'b0, sl_chr[3:0], 2'd0};
+      K_SL3:   pinc_addr = 8'd64 + {2'b0, sl_chr[3:0], 2'd1};
+      K_SL4:   pinc_addr = 8'd64 + {2'b0, sl_chr[3:0], 2'd2};
       K_SL5,
-      K_SL6:   pinc_addr = 8'd64 + {sl_chr[3:0], 2'd3};
+      K_SL6:   pinc_addr = 8'd64 + {2'b0, sl_chr[3:0], 2'd3};
       K_SL7,
       K_SL8:   pinc_addr = 8'd36 + {2'b0, sl_chr};
       default: pinc_addr = {2'b0, e_pitch};
@@ -912,7 +924,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [17:0] sl_uhi;                // (r + frac*b[11:0]) >> 12
   wire  [29:0] sl_u = {crom_q[12:0], sl_rlo} + {2'b0, m_res[27:0]};
   wire  [25:0] sl_w = {8'b0, sl_uhi} + m_res[25:0];
-  wire  [12:0] sl_dp_pre = crom_q[12:0] + {5'b0, sl_w[25:17]};
+  wire  [12:0] sl_dp_pre = crom_q[12:0] + {4'b0, sl_w[25:17]};
   // dx_for_note_fine's octave shift, folded onto the pre-octave value:
   // nested floors compose, so shifting after the >>29 is the binary's
   // own >> (3 - octave). Pitches 0..63 keep dp inside 13 bits and never
@@ -1102,39 +1114,71 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                          3'b0, pub_inc[20:16]};
       P_W2:    pub_wd = {1'b0,
                          (w_cur_fx == 3'd1
-                          || (w_ins_on && !w_ins_wt
-                              && (w_cur_fx == 3'd0
-                                  || w_cur_fx == 3'd3)
-                              && w_ins_fx == 3'd1)),
+                          || (ins_use && fx_dfl && w_ins_fx == 3'd1)),
                          w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz,
                          w_ch_noiz, e_pitch};
-      default: pub_wd = {(w_ins_on && !w_ins_wt
-                          && (w_cur_fx == 3'd0 || w_cur_fx == 3'd3)
+      default: pub_wd = {(ins_use && fx_dfl
                           && (w_ins_fx == 3'd0
                               || w_ins_fx == 3'd4
                               || w_ins_fx == 3'd5)),
                          ((!w_ins_on && w_cur_fx == 3'd3)
-                          || (w_ins_on && !w_ins_wt
-                              && (w_cur_fx == 3'd0
-                                  || w_cur_fx == 3'd3)
-                              && w_ins_fx == 3'd3)),
+                          || (ins_use && fx_dfl && w_ins_fx == 3'd3)),
                          clr_tog[c],
                          ((!w_ins_on
                            && (w_cur_fx == 3'd0
                                || w_cur_fx == 3'd4
                                || w_cur_fx == 3'd5))
-                          || (w_ins_on && !w_ins_wt
-                              && (w_cur_fx == 3'd0
-                                  || w_cur_fx == 3'd3)
+                          || (ins_use && fx_dfl
                               && (w_ins_fx == 3'd0
                                   || w_ins_fx == 3'd4
                                   || w_ins_fx == 3'd5))
-                          || (w_ins_on && !w_ins_wt
+                          || (ins_use
                               && (w_cur_fx == 3'd4
                                   || w_cur_fx == 3'd5))),
                          a_pub};
     endcase
   end
+
+  // The row note's wave field, assembled from the byte pair (T_NH/K_NH
+  // leave the low byte in note_lo while the high byte lands in seq_q).
+  wire [2:0] note_wave = {seq_q[0], note_lo[7:6]};
+
+  // T_NL's pattern-length product, launched once per pattern by its
+  // left-most launched non-looping channel. The FSM's capture arm, the
+  // m-service launch arm and the schedule check all test this predicate.
+  wire tnl_len_launch = launched[c] && !tch_seen && !(acc[7:0] < seq_q);
+
+  // The note register load, identical at T_LD and K_LD: pitch and wave
+  // from the byte pair, volume and effect from the high byte.
+  task cur_note_load();
+    w_cur_pitch <= note_lo[5:0];
+    w_cur_wave  <= note_wave;
+    w_cur_vol   <= seq_q[3:1];
+    w_cur_fx    <= seq_q[6:4];
+  endtask
+
+  // One pattern-byte launch on a channel's MUSIC slot - {1'b1, ch} is
+  // slot NCH+ch under the fixed pairing is_mus() states - called by the
+  // ML_L0..ML_L3 walk as each byte lands in seq_q.
+  task ml_launch(input logic [1:0] ch);
+    if (!seq_q[6]) begin
+      trig_req[{1'b1, ch}] <= 1;
+      sfx_id[{1'b1, ch}] <= seq_q[5:0];
+      launched[{1'b1, ch}] <= 1;
+    end
+  endtask
+
+  // Stop the four music slots. `how` picks the visibility class of task
+  // 3.0: 0 = immediately (a CPU action, arrival-relative), 1 = from the
+  // boundary sample (class 1), 2 = one sample past it (class 2).
+  task mus_stop(input logic [1:0] how);
+    for (int i = NCH; i < NV; i++)
+      case (how)
+        2'd0:    playing[i] <= 0;
+        2'd1:    pend_stop[i] <= 1;
+        default: pend_stop2[i] <= 1;
+      endcase
+  endtask
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -1200,8 +1244,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         ptick_pend <= 0;
       end
 `ifndef SYNTHESIS
-      if (!walk_frozen && sst == T_NL && launched[c] && !tch_seen
-          && !(acc[7:0] < seq_q) && m_busy)
+      if (!walk_frozen && sst == T_NL && tnl_len_launch && m_busy)
         $error("T_NL pattern-length product blocked by a busy m service");
 `endif
       // Boundary publication for the pre-run tick pass: the evaluation ran
@@ -1278,14 +1321,11 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // infers as block RAM instead of the LUT muxes it replaces.
         V_LD: begin
           case (vcnt)
-            4'd1: {w_ins_bass, w_cur_wave, w_prev_pitch, w_cur_pitch} <= state_q;
-            4'd2: {w_ins_done, w_bf_rev, w_bf_det, w_bf_buzz, w_bf_noiz,
-                   w_prev_vol, w_cur_fx, w_cur_vol} <= state_q;
-            4'd3: {w_ins_vol, w_ins_wave, w_ins_row, w_ins_id, w_bf_damp}
-                    <= state_q;
+            4'd1: `PSG_REC_W3 <= state_q;
+            4'd2: `PSG_REC_W4 <= state_q;
+            4'd3: `PSG_REC_W5 <= state_q;
             4'd4: w_ins_pitch <= state_q[13:8];   // word 8 read-copy refresh
-            4'd5: {w_ins_wt, w_ins_on, w_ins_prev_vol, w_ins_fx,
-                   w_ins_prev_pitch} <= state_q[13:0];
+            4'd5: `PSG_REC_W9 <= state_q[13:0];
             // The carried channel filters: an instrument that continues
             // without a retrigger passes no filter-writing state, so the
             // active bank's word refreshes the w_ch_* registers the P_W2
@@ -1406,7 +1446,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               ptick_seen <= 1;
               ptick_tgt <= {wrd[7:0], 5'b0};
             end
-            if (!tch_seen && !(acc[7:0] < seq_q)) begin
+            if (tnl_len_launch) begin
               tch_seen <= 1;
               // The w_sp * pat_rows product runs on the shared m service
               // (launch in the mul_start mux, capture below when it lands).
@@ -1423,13 +1463,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           sst <= T_LD;
         end
         T_LD: begin
-          w_cur_pitch <= note_lo[5:0];
-          w_cur_wave  <= {seq_q[0], note_lo[7:6]};
-          w_cur_vol   <= seq_q[3:1];
-          w_cur_fx    <= seq_q[6:4];
+          cur_note_load();
           if (seq_q[7]) begin               // custom instrument: always new
             w_ins_on <= 1;
-            w_ins_id <= {seq_q[0], note_lo[7:6]};
+            w_ins_id <= note_wave;
             sst <= I_TR0;
           end else
             sst <= ES0;
@@ -1473,7 +1510,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           if (!froll) begin
             // the row holds, but the instrument playhead still advances
             if (!abank) begin
-              if (w_ins_on && !w_ins_wt) begin
+              if (ins_use) begin
                 abank <= 1;
                 sst <= EA0;
               end else
@@ -1544,16 +1581,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           sst <= K_LD;
         end
         K_LD: begin
-          w_cur_pitch <= note_lo[5:0];
-          w_cur_wave  <= {seq_q[0], note_lo[7:6]};
-          w_cur_vol   <= seq_q[3:1];
-          w_cur_fx    <= seq_q[6:4];
+          cur_note_load();
           if (seq_q[7]) begin
             w_ins_on <= 1;
-            w_ins_id <= {seq_q[0], note_lo[7:6]};
+            w_ins_id <= note_wave;
             // retrigger on a pitch change, after a silent note, on a new
             // instrument, or when the note asks for it with effect 3
-            if (!w_ins_on || w_ins_id != {seq_q[0], note_lo[7:6]} ||
+            if (!w_ins_on || w_ins_id != note_wave ||
                 note_lo[5:0] != w_prev_pitch || w_prev_vol == 0 ||
                 seq_q[6:4] == 3'd3)
               sst <= I_TR0;
@@ -1634,7 +1668,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           // wrd's low byte still holds the speed on every path here (staged
           // at I_TR2, or reloaded from word 8 by the EA sequence).
           w_ins_pitch <= note_lo[5:0];
-          w_ins_wave  <= {seq_q[0], note_lo[7:6]};
+          w_ins_wave  <= note_wave;
           w_ins_vol   <= seq_q[3:1];
           w_ins_fx    <= seq_q[6:4];
           sst <= ES0;
@@ -1774,18 +1808,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             if (trig_req == 0 && pticks + 13'd1 >= ptick_tgt) begin
               if (f_stop) begin
                 mus_playing <= 0;
-                for (int i = NCH; i < NV; i++) begin
-                  pend_stop2[i] <= 1;      // visible one sample past the boundary
-                          end
+                mus_stop(2'd2);            // visible one sample past the boundary
               end else if (f_lb) begin
                 scan_p <= mus_pat;
                 ml_cpu <= 0;
                 sst <= MS_RD;
               end else if (mus_pat == 6'd63) begin
                 mus_playing <= 0;
-                for (int i = NCH; i < NV; i++) begin
-                  pend_stop2[i] <= 1;
-                          end
+                mus_stop(2'd2);
               end else begin
                 mus_pat <= mus_pat + 1;
                 ml_cpu <= 0;
@@ -1812,12 +1842,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           // A CPU launch stops the old slots at once (arrival-relative, as
           // before); the song's own pattern advance defers to class 2 so
           // the boundary sample still renders the old pattern's tail.
-          for (int i = NCH; i < NV; i++) begin
-            if (ml_cpu)
-              playing[i] <= 0;
-            else
-              pend_stop2[i] <= 1;
-              end
+          mus_stop(ml_cpu ? 2'd0 : 2'd2);
           launched <= 0;
           sst <= ML_RD0;
         end
@@ -1830,37 +1855,21 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // the foreground bits. $21 stays readable but advisory.
         ML_RD0: sst <= ML_L0;
         ML_L0: begin
-          if (!seq_q[6]) begin
-            trig_req[NCH+0] <= 1;
-            sfx_id[NCH+0] <= seq_q[5:0];
-            launched[NCH+0] <= 1;
-          end
+          ml_launch(2'd0);
           sst <= ML_L1;
         end
         ML_L1: begin
           f_lb <= seq_q[7];
-          if (!seq_q[6]) begin
-            trig_req[NCH+1] <= 1;
-            sfx_id[NCH+1] <= seq_q[5:0];
-            launched[NCH+1] <= 1;
-          end
+          ml_launch(2'd1);
           sst <= ML_L2;
         end
         ML_L2: begin
           f_stop <= seq_q[7];
-          if (!seq_q[6]) begin
-            trig_req[NCH+2] <= 1;
-            sfx_id[NCH+2] <= seq_q[5:0];
-            launched[NCH+2] <= 1;
-          end
+          ml_launch(2'd2);
           sst <= ML_L3;
         end
         ML_L3: begin
-          if (!seq_q[6]) begin
-            trig_req[NCH+3] <= 1;
-            sfx_id[NCH+3] <= seq_q[5:0];
-            launched[NCH+3] <= 1;
-          end
+          ml_launch(2'd3);
           mus_playing <= 1;
           tch_seen <= 0;                    // the walk fills the length in
           ptick_seen <= 0;
@@ -1885,9 +1894,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             if (fade_dir == 2'd2) begin       // faded out: stop the music
               mus_playing <= 0;
               mus_launch <= 0;
-              for (int i = NCH; i < NV; i++) begin
-                pend_stop[i] <= 1;            // visible from the boundary
-                      end
+              mus_stop(2'd1);                 // visible from the boundary
             end
           end else begin
             fade_acc <= fade_acc + {3'b0, fade_step};
@@ -1940,9 +1947,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             mus_launch <= 0;
             fade_dir <= 0;
             mus_gain <= 8'd255;
-            for (int i = NCH; i < NV; i++) begin
-              playing[i] <= 0;
-                  end
+            mus_stop(2'd0);
           end
         end else begin
           mus_pat <= di[5:0];
@@ -2004,6 +2009,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Record streaming for the synthesis walk. Reads are issued on the load
   // cycles and land one cycle later; the oscillator write-back runs on the
   // store cycles, addressing word pph-PSTOR.
+  // Mirrored oscillator-record words, each field list spelled once for
+  // the pack (sosc_wd), the unpack (the pph load case) and - for word
+  // 14 - the late dampen write-back, so the layouts cannot drift apart.
+`define PSG_OSC_W14 {s_lp[16], old_mode_r, s_brown}
+`define PSG_OSC_W17 {bl_cnt, old_q0[16:8]}
+`define PSG_OSC_W22 {old_alt_r, last_alt_r, last_mode_r, s_old_wave, \
+                     s_last_G[7:0]}
   wire [3:0] s_stw = 4'(pph - 7'(PSTOR));
   always_comb begin
     if (REALTIME_PREVIEW) begin
@@ -2013,7 +2025,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         4'd2:    sosc_wd = s_phase2[15:0];
         4'd3:    sosc_wd = {4'b0, s_nz_ph, s_phase2[23:16]};
         4'd4:    sosc_wd = {3'b0, s_brown};
-        4'd5:    sosc_wd = s_lp;
+        4'd5:    sosc_wd = s_lp[15:0];
         4'd6:    sosc_wd = s_noise_lp;
         default: sosc_wd = 16'd0;
       endcase
@@ -2027,17 +2039,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // slices (the low bytes ride words 9 and 12).
         4'd3:    sosc_wd = {1'b0, s_old_G[12:8], s_last_G[12:8],
                             s_nz_ph, s_phase2[16]};
-        4'd4:    sosc_wd = {s_lp[16], old_mode_r, s_brown};
+        4'd4:    sosc_wd = `PSG_OSC_W14;
         4'd5:    sosc_wd = s_lp[15:0];
         4'd6:    sosc_wd = s_old_phase[23:8];
-        4'd7:    sosc_wd = {bl_cnt, old_q0[16:8]};
+        4'd7:    sosc_wd = `PSG_OSC_W17;
         4'd8:    sosc_wd = s_old_inc[15:0];
         4'd9:    sosc_wd = {s_old_G[7:0], 3'b0, s_old_inc[20:16]};
         4'd10:   sosc_wd = {1'b0, old_rev_r, last_rev_r,
                             s_last_wave, 3'b0, s_last_inc[20:16]};
         4'd11:   sosc_wd = s_last_inc[15:0];
-        4'd12:   sosc_wd = {1'b0, old_alt_r, last_alt_r,
-                            last_mode_r, s_old_wave, s_last_G[7:0]};
+        4'd12:   sosc_wd = {1'b0, `PSG_OSC_W22};
         default: sosc_wd = s_noise_lp;
       endcase
     end
@@ -2051,9 +2062,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   function automatic logic [5:0] tick_load_word(
       input logic [3:0] n, input logic bank);
     case (n)
-      4'd0: tick_load_word = 5'd3;
-      4'd1: tick_load_word = 5'd4;
-      4'd2: tick_load_word = 5'd5;
+      4'd0: tick_load_word = 6'd3;
+      4'd1: tick_load_word = 6'd4;
+      4'd2: tick_load_word = 6'd5;
       4'd3: tick_load_word = 6'd8;         // ins_pitch read-copy refresh
       4'd4: tick_load_word = 6'd9;
       4'd6: tick_load_word = V_SEQ;        // the note position
@@ -2064,8 +2075,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   function automatic logic [5:0] tick_store_word(
       input logic [3:0] n, input logic bank);
     case (n)
-      4'd0: tick_store_word = 5'd3;
-      4'd1: tick_store_word = 5'd4;
+      4'd0: tick_store_word = 6'd3;
+      4'd1: tick_store_word = 6'd4;
       4'd2: tick_store_word = 6'd5;
       4'd4: tick_store_word = V_SEQ;
       default: tick_store_word = 6'd9;
@@ -2086,32 +2097,32 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic [5:0] eng_word;
   always_comb begin
     eng_rd = 1'b1;
-    eng_word = 5'd0;
+    eng_word = 6'd0;
     case (sst)
-      EA0:  eng_word = abank ? 5'd6 : 5'd0;
-      EA1:  eng_word = state_replay ? (abank ? 5'd6 : 5'd0)
-                                    : (abank ? 5'd8 : 5'd2);
-      EA2:  eng_word = state_replay ? (abank ? 5'd8 : 5'd2)
-                                    : (abank ? 5'd7 : 5'd1);
+      EA0:  eng_word = abank ? 6'd6 : 6'd0;
+      EA1:  eng_word = state_replay ? (abank ? 6'd6 : 6'd0)
+                                    : (abank ? 6'd8 : 6'd2);
+      EA2:  eng_word = state_replay ? (abank ? 6'd8 : 6'd2)
+                                    : (abank ? 6'd7 : 6'd1);
       EA3:  begin
-              eng_word = abank ? 5'd7 : 5'd1;
+              eng_word = abank ? 6'd7 : 6'd1;
               eng_rd = state_replay;
             end
-      ES0:  eng_word = e_insfx ? 5'd6 : 5'd0;
-      ES1:  eng_word = state_replay ? (e_insfx ? 5'd6 : 5'd0)
-                                    : (e_insfx ? 5'd8 : 5'd2);
+      ES0:  eng_word = e_insfx ? 6'd6 : 6'd0;
+      ES1:  eng_word = state_replay ? (e_insfx ? 6'd6 : 6'd0)
+                                    : (e_insfx ? 6'd8 : 6'd2);
       ES2:  begin
-              eng_word = e_insfx ? 5'd8 : 5'd2;
+              eng_word = e_insfx ? 6'd8 : 6'd2;
               eng_rd = state_replay;
             end
       // The skipped-slot copy reads the ACTIVE sounding words (the
       // STAGED ones in a joined trigger pass - see par_cpy).
       K_ROT: eng_word = par_cpy;
-      PC0:   eng_word = state_replay ? par_cpy : par_cpy + 5'd1;
-      PC1:   eng_word = state_replay ? par_cpy + 5'd1 : par_cpy + 5'd2;
-      PC2:   eng_word = state_replay ? par_cpy + 5'd2 : par_cpy + 5'd3;
+      PC0:   eng_word = state_replay ? par_cpy : par_cpy + 6'd1;
+      PC1:   eng_word = state_replay ? par_cpy + 6'd1 : par_cpy + 6'd2;
+      PC2:   eng_word = state_replay ? par_cpy + 6'd2 : par_cpy + 6'd3;
       PC3:   begin
-               eng_word = par_cpy + 5'd3;
+               eng_word = par_cpy + 6'd3;
                eng_rd = state_replay;
              end
       default: eng_rd = 1'b0;
@@ -2128,39 +2139,39 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [4:0] seed5 = 5'(w_row * sp_in[4:0]);
   always_comb begin
     eng_we = 1'b1;
-    eng_wa = 5'd0;
+    eng_wa = 6'd0;
     eng_wd = 16'd0;
     case (sst)
-      T_LS:  begin eng_wa = 5'd0; eng_wd = {3'b0, seed5, 8'b0}; end
-      T_NL:  begin eng_wa = 5'd1; eng_wd = {seq_q, acc[7:0]}; end
-      T_NH:  begin eng_wa = 5'd2; eng_wd = {2'b0, wrd[13:8], wrd[7:0]}; end
-      I_TR0: begin eng_wa = 5'd6; eng_wd = 16'd0; end
-      I_TR2: begin eng_wa = 5'd8; eng_wd = {2'b0, w_ins_pitch, sp_in}; end
-      I_TR4: begin eng_wa = 5'd7; eng_wd = {seq_q, acc[7:0]}; end
-      I_TW:  begin eng_wa = 5'd8; eng_wd = {2'b0, 6'd24, wrd[7:0]}; end
-      I_LD:  begin eng_wa = 5'd8; eng_wd = {2'b0, note_lo[5:0], wrd[7:0]}; end
+      T_LS:  begin eng_wa = 6'd0; eng_wd = {3'b0, seed5, 8'b0}; end
+      T_NL:  begin eng_wa = 6'd1; eng_wd = {seq_q, acc[7:0]}; end
+      T_NH:  begin eng_wa = 6'd2; eng_wd = {2'b0, wrd[13:8], wrd[7:0]}; end
+      I_TR0: begin eng_wa = 6'd6; eng_wd = 16'd0; end
+      I_TR2: begin eng_wa = 6'd8; eng_wd = {2'b0, w_ins_pitch, sp_in}; end
+      I_TR4: begin eng_wa = 6'd7; eng_wd = {seq_q, acc[7:0]}; end
+      I_TW:  begin eng_wa = 6'd8; eng_wd = {2'b0, 6'd24, wrd[7:0]}; end
+      I_LD:  begin eng_wa = 6'd8; eng_wd = {2'b0, note_lo[5:0], wrd[7:0]}; end
       EA2:   begin
-               eng_wa = abank ? 5'd6 : 5'd0;
+               eng_wa = abank ? 6'd6 : 6'd0;
                eng_wd = {acc[15:8] + 8'd1,
                          ta_ge ? 8'd0 : acc[7:0] + 8'd1};
              end
       EA5:   begin
                // The explicit-length decrement, note bank only; the other
                // EA5 outcomes write no word.
-               eng_wa = 5'd2;
+               eng_wa = 6'd2;
                eng_wd = {2'b0, wrd[13:8] - 6'd1, wrd[7:0]};
                eng_we = !abank && wrd[13:8] != 0
                         && !(wrd[13:8] == 6'd1 || w_row == 5'd31);
              end
       // Direct publication and the skipped-slot copy.
       P_W0:  begin eng_wa = par_ina;         eng_wd = pub_wd; end
-      P_W1:  begin eng_wa = par_ina + 5'd1;  eng_wd = pub_wd; end
-      P_W2:  begin eng_wa = par_ina + 5'd2;  eng_wd = pub_wd; end
-      P_W3:  begin eng_wa = par_ina + 5'd3;  eng_wd = pub_wd; end
+      P_W1:  begin eng_wa = par_ina + 6'd1;  eng_wd = pub_wd; end
+      P_W2:  begin eng_wa = par_ina + 6'd2;  eng_wd = pub_wd; end
+      P_W3:  begin eng_wa = par_ina + 6'd3;  eng_wd = pub_wd; end
       PC0:   begin eng_wa = par_ina;         eng_wd = state_q; end
-      PC1:   begin eng_wa = par_ina + 5'd1;  eng_wd = state_q; end
-      PC2:   begin eng_wa = par_ina + 5'd2;  eng_wd = state_q; end
-      PC3:   begin eng_wa = par_ina + 5'd3;
+      PC1:   begin eng_wa = par_ina + 6'd1;  eng_wd = state_q; end
+      PC2:   begin eng_wa = par_ina + 6'd2;  eng_wd = state_q; end
+      PC3:   begin eng_wa = par_ina + 6'd3;
                eng_wd = cpz ? {state_q[15:8], 8'd0} : state_q;
              end
       default: eng_we = 1'b0;
@@ -2200,7 +2211,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                                                  : V_OSC + 5'd4};
       state_wd = (pph == 7'(PWORK + 87))
                    ? s_lp[15:0]
-                   : {s_lp[16], old_mode_r, s_brown};
+                   : `PSG_OSC_W14;
     end else if (state_sample_we) begin
       state_wa = {pc_ch, V_OSC + 5'(s_stw)};
       state_wd = sosc_wd;
@@ -2356,10 +2367,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // exactly, and both indices stay inside a table the spare blocks can
   // carry. Eleven CSD adds become three, and the reads are the stage
   // register the cone already had.
+  // The indices carry exactly the tables' address widths: the split
+  // identities bound h + l below each size (847 and 1695), so the sums
+  // never wrap and the extra carry bit the general form would grow is
+  // provably dead.
   wire [9:0]  t_h7  = t_pre[18:9];
-  wire [10:0] t_ix7 = {1'b0, t_h7} + {2'b0, t_pre[8:0]};
+  wire [9:0]  t_ix7 = t_h7 + {1'b0, t_pre[8:0]};
   wire [10:0] t_h15 = t_pre[18:8];
-  wire [11:0] t_ix15 = {1'b0, t_h15} + {4'b0, t_pre[7:0]};
+  wire [10:0] t_ix15 = t_h15 + {3'b0, t_pre[7:0]};
   // saw: tz((x - 32768)/4); saw_alt folds in the half-rate copy.
   wire signed [15:0] saw_sx = $signed({~wx_r[15], wx_r[14:0]});
   wire signed [17:0] saw_v = tzs({{2{saw_sx[15]}}, saw_sx}, 2'd2);
@@ -2746,7 +2761,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         if (pph == 7'(PWORK + 2)) begin
           mul_start   = 1'b1;
           mul_start_a = 25'(z_new_c);
-          mul_start_b = {2'b0, s_eff_a[11:4]};
+          mul_start_b = {4'b0, s_eff_a[11:4]};
         end
       end else begin
         // The G*z product runs as two limb passes per voice
@@ -2771,14 +2786,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               mul_start_mode = 2'd2;
             end
           end
-          // /3 limb passes: m_res12 is the whole G*z magnitude.
-          4'd3: if (!s_snd_wt) begin
+          // /3 limb passes: m_res12 is the whole G*z magnitude. Arms 3/9
+          // are the new and old voices' hi limbs and 5/10 their lo limbs
+          // - identical launches, distinguished only by where the consume
+          // steps put the result.
+          4'd3, 4'd9: if (!s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = {8'b0, m_res12[26:10]};
             mul_start_b = 12'd341;
             mul_start_mode = 2'd1;
           end
-          4'd5: if (!s_snd_wt) begin
+          4'd5, 4'd10: if (!s_snd_wt) begin
             mul_start   = 1'b1;
             mul_start_a = {8'b0, gz_s1_r};
             mul_start_b = 12'd171;
@@ -2789,18 +2807,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             mul_start_a = 25'(z_old_c);
             mul_start_b = 12'(s_old_G);
             mul_start_mode = 2'd2;
-          end
-          4'd9: if (!s_snd_wt) begin
-            mul_start   = 1'b1;
-            mul_start_a = {8'b0, m_res12[26:10]};
-            mul_start_b = 12'd341;
-            mul_start_mode = 2'd1;
-          end
-          4'd10: if (!s_snd_wt) begin
-            mul_start   = 1'b1;
-            mul_start_a = {8'b0, gz_s1_r};
-            mul_start_b = 12'd171;
-            mul_start_mode = 2'd1;
           end
           4'd11: if (bl_cnt != 7'd64) begin
             mul_start   = 1'b1;
@@ -2864,10 +2870,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         // m cannot be busy here - the nearest preceding launch site is the
         // previous slot's xs 6 product, a full record store earlier - and
         // the simulation-only check below guards that schedule fact.
-        T_NL: if (launched[c] && !tch_seen && !(acc[7:0] < seq_q)) begin
+        T_NL: if (tnl_len_launch) begin
           mul_start   = 1'b1;
           mul_start_a = {17'b0, wrd[7:0]};       // speed, staged at T_LS
-          mul_start_b = {4'b0, pat_rows};
+          mul_start_b = {6'b0, pat_rows};
         end
         default: ;
       endcase
@@ -3078,6 +3084,67 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // tick_publish) is gone: the tick program no longer shares the boundary
   // sample's 1,275-clock budget with synthesis.
 
+  // Steps the preview and hardware schedules share, spelled once each.
+
+  // Per-sample noise state when `run` (playing, nonzero amplitude) -
+  // white into the pitched S&H window (every sample when NOIZ), the
+  // brown integrator (leaky low-pass of white, for BUZZ), the built-in
+  // noise one-pole - and the filter-state reset a trigger asked for.
+  // The reset overrides the step, spelled as one clr-priority write per
+  // register: that is the enable/data cone synthesis derives from a
+  // step-then-clear block anyway, and Verilator's always_ff lint only
+  // attributes a task's writes to the caller when each register has a
+  // single write site in the task.
+  task noise_filt_step(input logic run);
+    logic clr;
+    clr = (clr_tog[pc_ch] != clr_ack[pc_ch]);
+    if (run) begin
+      if (s_ch_noiz || s_phase[23:20] != s_nz_ph) begin
+        s_nz_ph <= s_phase[23:20];
+        s_nz_hold <= $signed(lfsr[7:0]);
+      end
+    end
+    if (clr) begin
+      clr_ack[pc_ch] <= clr_tog[pc_ch];
+      s_lp <= 0;
+    end
+    if (run || clr)
+      s_brown <= clr ? 13'sd0
+                     : s_brown - {{5{s_brown[12]}}, s_brown[12:5]}
+                               + $signed({{5{lfsr[7]}}, lfsr[7:0]});
+    if ((run && s_snd_wave == 3'd6) || clr)
+      s_noise_lp <= clr ? 16'sd0 : noise_next;
+  endtask
+
+  // Stage the mixer leaf: the z sign for the G product's consume step,
+  // and the run/audible split - a music slot renders while its channel's
+  // foreground effect plays, but only the mixer leaf is zeroed.
+  task stage_leaf();
+    mxs_new <= z_new_c[17];
+    mx_play <= playing[pc_ch];
+    mx_aud  <= playing[pc_ch]
+               & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
+  endtask
+
+  // Fold this slot into the soft_add tree: an even slot's leaf waits on
+  // the stack; an odd slot's launches the fold chain (one fold, or the
+  // queued multi-fold steps after slots 3 and 7). mix_leaf is zero for a
+  // slot that is running but suppressed, which is deliberate - the
+  // tree's zero leaves are part of the function.
+  task fold_launch();
+    if (pc_ch[0] == 1'b0)
+      fstk[(pc_ch == 3'd0) ? 2'd0
+         : (pc_ch == 3'd6) ? 2'd2 : 2'd1] <= mix_leaf;
+    else begin
+      fsel  <= (pc_ch == 3'd1) ? 3'd0
+             : (pc_ch == 3'd7) ? 3'd2 : 3'd1;
+      fpend <= (pc_ch == 3'd3) ? 2'd1
+             : (pc_ch == 3'd7) ? 2'd2 : 2'd0;
+      ffin  <= (pc_ch == 3'd7);
+      fmc   <= 4'd1;
+    end
+  endtask
+
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -3164,14 +3231,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           7'd5: if (REALTIME_PREVIEW)
                   s_brown <= state_q[12:0];
                 else
-                  {s_lp[16], old_mode_r, s_brown} <= state_q;
+                  `PSG_OSC_W14 <= state_q;
           7'd6: if (!REALTIME_PREVIEW) s_lp[15:0] <= state_q;
           7'd7: if (REALTIME_PREVIEW)
                    s_noise_lp <= state_q;
                 else
                    s_old_phase <= {state_q, 8'b0};
           7'd8: if (!REALTIME_PREVIEW)
-                   {bl_cnt, old_q0[16:8]} <= state_q;
+                   `PSG_OSC_W17 <= state_q;
           7'd9: if (!REALTIME_PREVIEW) s_old_inc[15:0] <= state_q;
           7'd10: if (!REALTIME_PREVIEW)
                     {s_old_G[7:0], s_old_inc[20:16]}
@@ -3181,8 +3248,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                      s_last_inc[20:16]} <= {state_q[14:8], state_q[4:0]};
           7'd12: if (!REALTIME_PREVIEW) s_last_inc[15:0] <= state_q;
           7'd13: if (!REALTIME_PREVIEW)
-                    {old_alt_r, last_alt_r, last_mode_r, s_old_wave,
-                     s_last_G[7:0]} <= state_q[14:0];
+                    `PSG_OSC_W22 <= state_q[14:0];
           7'd14: if (!REALTIME_PREVIEW) s_noise_lp <= state_q;
           default: ;
         endcase
@@ -3215,27 +3281,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           case (pph)
             7'(PWORK): begin
               lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
-              if (playing[pc_ch] && s_eff_a != 0) begin
+              if (playing[pc_ch] && s_eff_a != 0)
                 s_phase <= s_phase + {3'b0, einc};
-                if (s_ch_noiz || s_phase[23:20] != s_nz_ph) begin
-                  s_nz_ph <= s_phase[23:20];
-                  s_nz_hold <= $signed(lfsr[7:0]);
-                end
-                s_brown <= s_brown
-                              - {{5{s_brown[12]}}, s_brown[12:5]}
-                              + $signed({{5{lfsr[7]}}, lfsr[7:0]});
-                if (s_snd_wave == 3'd6)
-                  s_noise_lp <= noise_next;
-              end else if (playing[pc_ch]) begin
+              else if (playing[pc_ch]) begin
                 s_phase <= 0;
                 s_phase2 <= 0;
               end
-              if (clr_tog[pc_ch] != clr_ack[pc_ch]) begin
-                clr_ack[pc_ch] <= clr_tog[pc_ch];
-                s_lp <= 0;
-                s_brown <= 0;
-                s_noise_lp <= 0;
-              end
+              noise_filt_step(playing[pc_ch] && s_eff_a != 0);
             end
             7'(PWORK + 1): begin
               // The secondary synchronous read observes q during this cycle.
@@ -3247,25 +3299,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             end
             7'(PWORK + 2): begin
               smp_b <= s_snd_wt ? 18'($signed(seq_q)) : z_eval;
-              mxs_new <= z_new_c[17];
-              mx_play <= playing[pc_ch];
-              mx_aud  <= playing[pc_ch]
-                         & ~(is_mus(pc_ch)
-                             & playing[{1'b0, pc_ch[1:0]}]);
+              stage_leaf();
             end
-            7'(PFOLD): begin
-              if (pc_ch[0] == 1'b0)
-                fstk[(pc_ch == 3'd0) ? 2'd0
-                   : (pc_ch == 3'd6) ? 2'd2 : 2'd1] <= mix_leaf;
-              else begin
-                fsel  <= (pc_ch == 3'd1) ? 3'd0
-                       : (pc_ch == 3'd7) ? 3'd2 : 3'd1;
-                fpend <= (pc_ch == 3'd3) ? 2'd1
-                       : (pc_ch == 3'd7) ? 2'd2 : 2'd0;
-                ffin  <= (pc_ch == 3'd7);
-                fmc   <= 4'd1;
-              end
-            end
+            7'(PFOLD): fold_launch();
             default: ;
           endcase
         end else begin
@@ -3296,17 +3332,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                 wt_pf <= s_phase[17:8];
                 wt_qf <= q16[9:0];
               end
-              // noise: white every sample when NOIZ, else pitched S&H
-              if (s_ch_noiz || s_phase[23:20] != s_nz_ph) begin
-                s_nz_ph <= s_phase[23:20];
-                s_nz_hold <= $signed(lfsr[7:0]);
-              end
-              // brown integrator (leaky low-pass of white) for BUZZ noise
-              s_brown <= s_brown
-                            - {{5{s_brown[12]}}, s_brown[12:5]}
-                            + $signed({{5{lfsr[7]}}, lfsr[7:0]});
-              if (s_snd_wave == 3'd6)
-                s_noise_lp <= noise_next;
             end
             // Parameter publication happens atomically once per tick. On the
             // first sample that observes a new built-in oscillator state,
@@ -3346,13 +3371,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               end
             end else if (bl_cnt != 7'd64)
               bl_cnt <= bl_cnt + 7'd1;
-            // a trigger asked for this channel's filter state to be reset
-            if (clr_tog[pc_ch] != clr_ack[pc_ch]) begin
-              clr_ack[pc_ch] <= clr_tog[pc_ch];
-              s_lp <= 0;
-              s_brown <= 0;
-              s_noise_lp <= 0;
-            end
+            noise_filt_step(playing[pc_ch] && s_eff_a != 0);
           end
           ctrl_q[CTRL_W1]: begin           // main-voice sample
             // Keep q's synchronous ROM address on the pre-advance phase,
@@ -3393,15 +3412,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               // p and then q; wi_neg reapplies floor rounding via the sign.
               wt_q1 <= $signed(seq_q);
               wi_neg <= wt_pd[8];
-            end else begin
-              // First G*z limb pass launches this cycle; stage the sign
-              // and the mixer-leaf gating.
-              mxs_new <= z_new_c[17];
-              mx_play <= playing[pc_ch];
-              // Audible unless this music slot has a foreground effect.
-              mx_aud  <= playing[pc_ch]
-                         & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
-            end
+            end else
+              // The first G*z limb pass launches this cycle.
+              stage_leaf();
           end
           ctrl_q[CTRL_W15]: begin
             if (s_snd_wt) begin
@@ -3445,12 +3458,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
               smp_b <= wt_z;
           end
           ctrl_q[CTRL_W27]: begin
-            if (s_snd_wt) begin
-              mxs_new <= z_new_c[17];
-              mx_play <= playing[pc_ch];
-              mx_aud  <= playing[pc_ch]
-                         & ~(is_mus(pc_ch) & playing[{1'b0, pc_ch[1:0]}]);
-            end
+            if (s_snd_wt)
+              stage_leaf();
           end
           ctrl_q[CTRL_W28]: begin
             if (!s_snd_wt)
@@ -3505,24 +3514,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             else
               mx_prod <= 17'(bl_acc_tz >>> 6);
           end
-          ctrl_q[CTRL_FOLD]: begin               // fold into the tree
-            // An even slot's leaf waits on the stack; an odd slot's launches
-            // the fold chain (one fold, or the queued multi-fold steps after
-            // slots 3 and 7). mix_leaf is zero for a slot that is running but
-            // suppressed, which is deliberate - the tree's zero leaves are
-            // part of the function.
-            if (pc_ch[0] == 1'b0)
-              fstk[(pc_ch == 3'd0) ? 2'd0
-                 : (pc_ch == 3'd6) ? 2'd2 : 2'd1] <= mix_leaf;
-            else begin
-              fsel  <= (pc_ch == 3'd1) ? 3'd0
-                     : (pc_ch == 3'd7) ? 3'd2 : 3'd1;
-              fpend <= (pc_ch == 3'd3) ? 2'd1
-                     : (pc_ch == 3'd7) ? 2'd2 : 2'd0;
-              ffin  <= (pc_ch == 3'd7);
-              fmc   <= 4'd1;
-            end
-          end
+          ctrl_q[CTRL_FOLD]: fold_launch();      // fold into the tree
           default: ;
         endcase
         end
@@ -3610,14 +3602,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       dbg[7:0]   = {mus_playing, 1'b0, mus_pat};
       dbg[11:8]  = {playing[3], playing[2], playing[1], playing[0]};
       dbg[15:12] = {playing[7], playing[6], playing[5], playing[4]};
-      dbg[21:16] = sfx_id[aud_sl(2'd0)];
-      dbg[27:22] = sfx_id[aud_sl(2'd1)];
-      dbg[33:28] = sfx_id[aud_sl(2'd2)];
-      dbg[39:34] = sfx_id[aud_sl(2'd3)];
-      dbg[45:40] = {1'b0, aud_row[2'd0]};
-      dbg[51:46] = {1'b0, aud_row[2'd1]};
-      dbg[57:52] = {1'b0, aud_row[2'd2]};
-      dbg[63:58] = {1'b0, aud_row[2'd3]};
+      for (int ch = 0; ch < NCH; ch++) begin
+        dbg[16 + ch*6 +: 6] = sfx_id[aud_sl(2'(ch))];
+        dbg[40 + ch*6 +: 6] = {1'b0, aud_row[ch]};
+      end
     end
   end else begin : g_no_dbg
     always_comb dbg = 64'b0;
@@ -3625,3 +3613,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   endgenerate
 
 endmodule
+
+// This file is `include'd by chip.sv and the synthesis targets; keep the
+// record-layout macros from leaking into whatever is compiled after it.
+`undef PSG_REC_W3
+`undef PSG_REC_W4
+`undef PSG_REC_W5
+`undef PSG_REC_W9
+`undef PSG_OSC_W14
+`undef PSG_OSC_W17
+`undef PSG_OSC_W22

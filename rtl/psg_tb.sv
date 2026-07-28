@@ -11,8 +11,9 @@
 // (volume multiply, pitch relative to C-2, the retrigger rule) and
 // waveform instruments.
 //
-// Run: verilator --binary --timing -j 4 rtl/psg_tb.sv rtl/psg.sv \
-//        rtl/dsigma.sv --top-module psg_tb && ./obj_dir/Vpsg_tb
+// Run: verilator --binary --timing -j 4 \
+//        rtl/psg_tb.sv rtl/psg.sv rtl/dsigma.sv --top-module psg_tb \
+//        && ./obj_dir/Vpsg_tb
 `timescale 1ns/1ps
 
 module psg_tb;
@@ -34,7 +35,8 @@ module psg_tb;
   psg #(.CLK_HZ(CLKHZ)) dut(
     .clk(clk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di),
-    .dout(dout), .pcm(pcm));
+    .dout(dout), .pcm(pcm),
+    .dbg());   // verification port, deliberately unconnected here
 
   // Delta-sigma modulator under test (driven directly from a ramp below)
   logic signed [15:0] ds_pcm = 0;
@@ -417,14 +419,14 @@ module psg_tb;
     $display("[5] fade in / fade out volume ramps");
     wr(8'h10, 8'd4);
     ticks(2);
-    inc0 = {16'b0, eff_vol_of(0)};
+    inc0 = {12'b0, eff_vol_of(0)};
     ticks(5);
-    inc1 = {16'b0, eff_vol_of(0)};
+    inc1 = {12'b0, eff_vol_of(0)};
     check(inc1 > inc0, "fade-in volume rises");
     ticks(3);                          // into row 1 (fade out)
-    inc0 = {16'b0, eff_vol_of(0)};
+    inc0 = {12'b0, eff_vol_of(0)};
     ticks(5);
-    inc1 = {16'b0, eff_vol_of(0)};
+    inc1 = {12'b0, eff_vol_of(0)};
     check(inc1 < inc0, "fade-out volume falls");
     wr(8'h10, 8'h80);
 
@@ -557,9 +559,9 @@ module psg_tb;
     begin
       int lo_hi, hi_hi;
       lo_hi = 0; hi_hi = 0;
-      ds_pcm = 8'd32;
+      ds_pcm = 16'sd32;
       repeat (2000) begin @(posedge clk); if (ds_out) lo_hi++; end
-      ds_pcm = 8'd224;
+      ds_pcm = 16'sd224;
       repeat (2000) begin @(posedge clk); if (ds_out) hi_hi++; end
       check(hi_hi > lo_hi, "higher PCM -> denser 1s");
       check(lo_hi > 100 && hi_hi < 1900, "density is proportional, not saturated");
@@ -578,7 +580,7 @@ module psg_tb;
 
     // instrument bank in SFX 0-4 (the earlier tests are done with them)
     for (int r = 0; r < 32; r++)                    // 0: tremolo, no transpose
-      set_note(0, r, 24, 0, (r % 2) ? 2 : 5, 0);
+      set_note(0, r, 24, 0, (r % 2 != 0) ? 2 : 5, 0);
     set_meta(0, 1, 0, 0);
     for (int r = 0; r < 32; r++) set_note(1, r, 36, 0, 7, 0);  // 1: +12
     set_meta(1, 8, 0, 0);
@@ -810,7 +812,7 @@ module psg_tb;
     begin
       int pk_alone, pk_with_ch0;
       wr(8'h20, 8'h80);
-      for (int i = 0; i < 4; i++) wr(8'h10 + i, 8'h80);
+      for (int i = 0; i < 4; i++) wr(8'h10 + 8'(i), 8'h80);
       ticks(1);
       wr(8'h12, 8'd40);                  // high-pitched noise on channel 2
       ticks(2);
@@ -827,7 +829,7 @@ module psg_tb;
       // relevant invariant is that the added channel publishes zero gain.
       check(eff_vol_of(0) == 0 && pk_with_ch0 > 20,
             "a silent low note contributes zero while noise stays audible");
-      for (int i = 0; i < 4; i++) wr(8'h10 + i, 8'h80);
+      for (int i = 0; i < 4; i++) wr(8'h10 + 8'(i), 8'h80);
       ticks(1);
     end
 
@@ -915,7 +917,7 @@ module psg_tb;
       img[8] = 8'd27; img[9] = 8'd27; img[10] = 8'd27; img[11] = 8'd27;
       upload;
       wr(8'h20, 8'd2);                              // music: slots 4..7
-      for (int i = 0; i < 4; i++) wr(8'h10 + i, 8'd27);   // and slots 0..3
+      for (int i = 0; i < 4; i++) wr(8'h10 + 8'(i), 8'd27);   // and slots 0..3
       ticks(8);
       begin
         int live;
@@ -923,7 +925,7 @@ module psg_tb;
         for (int i = 0; i < 8; i++) if (dut.playing[i]) live++;
         check(live == 8, "all eight slots are running");
       end
-      for (int i = 0; i < 4; i++) wr(8'h10 + i, 8'h80);
+      for (int i = 0; i < 4; i++) wr(8'h10 + 8'(i), 8'h80);
       wr(8'h21, 8'h00);
       ticks(2);
     end
