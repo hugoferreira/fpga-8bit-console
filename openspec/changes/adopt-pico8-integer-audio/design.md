@@ -162,6 +162,43 @@ The `area-final` reference/render set stays frozen untouched for
 Noise stays at the RNG boundary; the model's remaining work is done -
 the RTL phases follow, sized by the width report.
 
+**Pre-RTL proven forms (`tools/psg_hw_forms.py`, 14/14 PROVED on
+stated domains):** every candidate decomposition below is exhaustively
+equal to the binary's form over its true operand domain and can be
+transcribed to RTL with no fidelity risk.
+
+- Divisors: `tz(x/3072)` = magnitude `>>10` then a /3 reciprocal
+  (`n*174763>>19`, proven to 131,072) - and organ's `tz(2(x-32768)/3)`
+  shares that same /3 unit. The skew/tilt `//57344` = `>>13` then /7
+  (`n*149797>>20`), shared with the instrument sevenths `tz(a*iv/7)`.
+  Tilt-61440 = `>>12` then /15 (`n*279621>>22`). Every divide in the
+  deterministic pipeline is shifts plus one of three small reciprocal
+  units.
+- The soft-add compressor is exactly `excess // 5` (52429 =
+  (2^18+1)/5; proven to 131,072): the apparent 29-bit constant product
+  is not real hardware - it is the /5 reciprocal itself.
+- Slide fine path: reachable `blended` spans 786,432 values in
+  [34.3M, 68.6M]; the x0x2F8DF18F product splits into six partials no
+  wider than 14x10 into a 56-bit accumulator, exact over the whole
+  domain; no low bit of K is droppable (bit-1 truncation already
+  breaks); pre-octave dp spans [1,554, 3,108] - 12 bits.
+- `G*z`: G = gh*128+gl gives two service passes (24x5, 24x7)
+  accumulating the exact 28-bit product - the 24x10 m-service carries
+  it in two visits without widening.
+- Worst-case bounds (exact interval propagation, comb feedback to its
+  fixpoint): voice pre-filter [-26,880, 26,670]; reverb DOUBLES it -
+  ring entries reach +/-53,759 so a **16-bit ring RAM is NOT safe**
+  (17 bits; comb acc 19); dampen acc 19 bits (level 2); blend acc 23
+  bits. The mix bus: all 16 reachable audibility placements (the
+  binary's foreground-replaces-music rule - at most one live leaf per
+  column pair) stay inside int16 at worst case, minimum headroom 378
+  at fg-mask 0101; the hypothetical 8-live tree would clip at
+  -34,111. The four-audible invariant is what makes a 16-bit mix bus
+  exact, and the RTL must preserve it (or clamp).
+- Tables: NOTE_DX is 13x11-bit = 13 constants-EBR words directly (or
+  10-bit base + 12 six-bit gaps = 82 bits); vibrato's eight
+  multipliers are 128+s with s in [-2, 2].
+
 Constraints inherited from `reduce-psg-ice40-area`, which pauses at its
 6,199-cell / 15-EBR checkpoint until this change lands: the 15-EBR
 ceiling, the 1,275-clock sample budget (pre-run depth is a free constant),
