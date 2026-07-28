@@ -146,7 +146,30 @@
       domains the wave cone presents - 0 low bits free on the first two,
       and recip3 breaks at bit 1. The slide's K behaved the same way, so
       treat "shorten the constant" as closed for this design.
-- [ ] R.5 The remaining gap is 321 LC and needs a bulk restructure. The
+- [x] R.5 **THE PSG PLACES: 7,672 / 7,680 LC, 18/32 EBR, routed 39.71
+      MHz against the 28.125 the design needs.** 8,064 -> 7,672 (-392).
+      Found by ABLATION, not by reading the RTL: stubbing each stage-2
+      reciprocal priced the organ's /3 at 161 LC and the tilt /7 + /15
+      pair at 219 - 380 of the 878-cell wave cone in three constant
+      multiplies, which is almost exactly the gap that was open. The
+      constants themselves are near-minimal (a search over every exact
+      (mult, shift) pair found 149797 and 279621 already cheapest, and
+      /3 only one CSD term better), and psg_hw_forms had already proved
+      their low bits are not free - so the win had to come from a
+      different SHAPE.
+      That shape is the split identity: 2^k*h + l with 2^k = d*m + 1
+      gives x/d = m*h + (h + l)/d EXACTLY, and h+l stays small enough
+      that the remainder is a table. 256h = 3*85h + h (512 entries),
+      512h = 7*73h + h (1024), 256h = 15*17h + h (2048). Eleven-plus CSD
+      adds become four, and the table read IS the pipeline register the
+      cone already had - so no stage is added and no schedule moves.
+      REVERB=0 is what pays for it: 11 spare blocks, where the campaign
+      that priced these dead was under a 15-EBR ceiling. Oracle 57/57
+      byte-exact at every step; psg_tb ALL PASS, deadline 906/1275,
+      pre-run 5,052/7,654. The critical path is now tab7's output into
+      smp_b, which is the expected cost of putting a block read in the
+      wave cone and leaves 11 MHz of margin.
+- [ ] R.6 Next, if more is wanted: the campaign's own goal is 5,500. The
       NEW fact since the campaign paused is EBR headroom: REVERB=0 uses
       11 of 32 blocks, where the old ceiling was 15 and `record 32/32
       full` is what priced the per-slot arrays dead. state_m is 8 x 32 x
@@ -157,6 +180,7 @@
       the ONE shape that has always paid here (THE LAW, design 5c).
       Cost: ch_base is combinational across the trigger sequence, so
       sfx_id must stage into a working register at V_LD, and the CPU and
-      ML_L0-L3 write sites need the port. Estimate -150..250; the wave
-      cone (smp_b, 887 cells) is the only larger target and is task 4.1's
-      sample-side engine.
+      ML_L0-L3 write sites need the port. Estimate -150..250. The split
+      identity above may also have more to give: t_pre's /7 could use a
+      k=6 split (9h, one add instead of two) for six more blocks, and
+      the same shape applies anywhere a constant divisor survives.

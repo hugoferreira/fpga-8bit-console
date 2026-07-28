@@ -2226,6 +2226,24 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     tzs = (v + (v[17] ? $signed((18'sd1 <<< k) - 18'sd1) : 18'sd0)) >>> k;
   endfunction
 
+  // The split remainders, forced to blocks: as LUTs these ROMs cost more
+  // than the networks they replace, and REVERB=0 leaves the blocks idle.
+  (* ram_style = "block" *) logic [7:0] org3[0:511];
+  (* ram_style = "block" *) logic [6:0] tab7[0:1023];
+  (* ram_style = "block" *) logic [6:0] tab15[0:2047];
+  initial begin
+    for (int i = 0; i < 512;  i++) org3[i]  = 8'(i / 3);
+    for (int i = 0; i < 1024; i++) tab7[i]  = 7'(i / 7);
+    for (int i = 0; i < 2048; i++) tab15[i] = 7'(i / 15);
+  end
+  logic [7:0] org3_q;
+  logic [6:0] t7_q, t15_q;
+  always_ff @(posedge clk) begin
+    org3_q <= org3[org_ix];
+    t7_q   <= tab7[t_ix7];
+    t15_q  <= tab15[t_ix15];
+  end
+
   // The cone is two REGISTERED stages so the reciprocal CSD networks do
   // not sit on the same path as the ramp arithmetic (routed Fmax fell
   // to 25 MHz single-cycle): stage 1 forms every linear piece and the
@@ -2248,6 +2266,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [30:0] t24572 = ({15'b0, tramp} << 14) + ({15'b0, tramp} << 13)
                      - ({15'b0, tramp} << 2);
   wire [18:0] t_pre = tilt_hi ? t24572[30:12] : {1'b0, t24572[30:13]};
+  // The tilt reciprocals take the organ's shape. 512h = 7*73h + h and
+  // 256h = 15*17h + h, so
+  //   t/7  = 73h + (h + l)/7    with h = t>>9, l = t[8:0]
+  //   t/15 = 17h + (h + l)/15   with h = t>>8, l = t[7:0]
+  // exactly, and both indices stay inside a table the spare blocks can
+  // carry. Eleven CSD adds become three, and the reads are the stage
+  // register the cone already had.
+  wire [9:0]  t_h7  = t_pre[18:9];
+  wire [10:0] t_ix7 = {1'b0, t_h7} + {2'b0, t_pre[8:0]};
+  wire [10:0] t_h15 = t_pre[18:8];
+  wire [11:0] t_ix15 = {1'b0, t_h15} + {4'b0, t_pre[7:0]};
   // saw: tz((x - 32768)/4); saw_alt folds in the half-rate copy.
   wire signed [15:0] saw_sx = $signed({~wx_r[15], wx_r[14:0]});
   wire signed [17:0] saw_v = tzs({{2{saw_sx[15]}}, saw_sx}, 2'd2);
@@ -2259,6 +2288,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire signed [17:0] sq_v = (wx_r < sq_th) ? -18'sd6143 : 18'sd6143;
   // organ linear pieces; the half-slope ramp waits for stage 2's recip3.
   wire [14:0] org_ramp = wx_r[14] ? 15'(16'd0 - wx_r) : wx_r[14:0];
+  // The organ's tz(2x/3) as address-selected storage instead of a
+  // nine-add CSD network. With v = 2x = 256h + l, 256h is 3*85h + h, so
+  //   v/3 = 85h + (h + l)/3
+  // exactly - and h+l stays under 512, which is one EBR of eighths. The
+  // shifts feeding 85h are free; the table read IS the pipeline
+  // register the cone already had, so no stage is added.
+  wire [7:0] org_h = org_ramp[14:7];
+  wire [8:0] org_ix = {1'b0, org_h} + {1'b0, org_ramp[6:0], 1'b0};
   wire signed [17:0] org_lin =
       !wx_r[14] ? ($signed({2'b0, wx_r}) - 18'sd8192)
                 : (18'sd24576 - $signed({2'b0, wx_r}));
@@ -2280,19 +2317,23 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   end
 
   logic signed [17:0] z_lin_r;
-  logic [18:0] t_pre_r;
+  logic [14:0] t_pre_r;      // only the tail path reads it
+  logic [9:0]  t_h7_r;
+  logic [10:0] t_h15_r;
   logic        tilt_hi_r, tilt_tail_r, org_hi_r;
-  logic [14:0] org_ramp_r;
+  logic [7:0]  org_h_r;
   logic signed [17:0] tri4_r;
   logic [2:0]  wsel_r2;
   logic        wsec_r2, walt_r2;
   always_ff @(posedge clk) begin
     z_lin_r <= z_lin;
-    t_pre_r <= t_pre;
+    t_pre_r <= t_pre[14:0];
+    t_h7_r  <= t_h7;
+    t_h15_r <= t_h15;
     tilt_hi_r <= tilt_hi;
     tilt_tail_r <= tilt_tail;
     org_hi_r <= wx_r[15];
-    org_ramp_r <= org_ramp;
+    org_h_r <= org_h;
     tri4_r <= tri4;
     wsel_r2 <= wsel_r;
     wsec_r2 <= wsec_r;
@@ -2300,13 +2341,17 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   end
 
   // Stage 2: the reciprocal cones and the composition.
-  wire [37:0] t_p7  = 38'(t_pre_r) * 38'd149797;
-  wire [37:0] t_p15 = 38'(t_pre_r) * 38'd279621;
-  wire [14:0] t_div = tilt_tail_r ? t_pre_r[14:0]
-                    : tilt_hi_r ? t_p15[36:22] : t_p7[34:20];
+  wire [15:0] t_q7  = {t_h7_r, 6'b0} + {3'b0, t_h7_r, 3'b0} + {6'b0, t_h7_r}
+                    + {8'b0, t7_q};
+  wire [15:0] t_q15 = {1'b0, t_h15_r, 4'b0} + {5'b0, t_h15_r}
+                    + {9'b0, t15_q};
+  wire [14:0] t_div = tilt_tail_r ? t_pre_r
+                    : tilt_hi_r ? t_q15[14:0] : t_q7[14:0];
   wire signed [17:0] tilt_v2 = $signed({3'b0, t_div}) - 18'sd12286;
-  wire [33:0] org_p = 34'(org_ramp_r) * 34'd174763;
-  wire signed [17:0] org_div = $signed({4'b0, org_p[31:18]}) - 18'sd8192;
+  wire [14:0] org_85 = {org_h_r, 6'b0} + {2'b0, org_h_r, 4'b0}
+                     + {4'b0, org_h_r, 2'b0} + {7'b0, org_h_r};
+  wire signed [17:0] org_div =
+      $signed({3'b0, org_85 + {7'b0, org3_q}}) - 18'sd8192;
   wire signed [17:0] tri_alt_v = tilt_v2 + tri4_r + (tri4_r <<< 1);
 
   logic signed [17:0] z_prim;
