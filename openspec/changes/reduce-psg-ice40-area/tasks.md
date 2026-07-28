@@ -325,4 +325,12 @@
       reorder to retire old_smp/old_smpb, tick-side microword, ins
       decode shavings - is -150..250 optimistic. Anything larger means
       render-visible trades (crossfade, custom instruments, the noise
-      process), which are product decisions, not area work.**
+      process), which are product decisions, not area work.
+      One more identity was tried and REFUTED after this entry: dq17's
+      seven per-wave K-adders factored into one masked shift tree (all
+      forms proven exact in Python first) measured **+46 structural** -
+      the narrow dedicated adders plus a value mux beat the uniform
+      masked tree. Reverted. The unification law refines to: retiring
+      networks pays only when they are WIDE (t24572's 31-bit chains);
+      16-19-bit exclusive-per-cycle adders are already optimal under a
+      value mux.**
