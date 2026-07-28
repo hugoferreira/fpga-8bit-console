@@ -194,6 +194,32 @@
           but the port is shared with the walk and needs collision
           handling like the aram replay path.
       (c) leave them. The design places without this.
+- [x] R.6a `row` MOVED: 7,672 -> 7,587 (**-85**), 19/32 EBR, Fmax 39.71
+      -> 40.65. VSTR 32 -> 64 (one spare block) with the word plumbing
+      widened to six bits; row becomes w_row, loaded at V_LD word 32 and
+      stored at V_ST. Both blockers the review raised dissolved: `dbg`
+      is simulator-only (top.sv, top_tangnano20k.sv and
+      target_harness.sv all leave .psg_dbg() unconnected - only
+      top_simulator.sv wires it, for --psg-trace), and it wants exactly
+      what $10-$17 wants, so ONE four-entry audible mirror serves both
+      and no four-slot read survives. The PICO-8 manual specifies
+      stat(46..53) as "a history of mixer state at each tick to give a
+      higher resolution estimate of the currently audible state" - a
+      sampled view - so refreshing the mirror as each slot's visit ends
+      is faithful at 120 Hz, against the legacy indices' ~20.
+      Trap: the record read issued at vcnt lands at vcnt+1, so the new
+      word is issued at 6 and consumed at 7. Issuing at 7 loads the
+      previous word and fails 34 tests at once.
+      psg_tb's record probes hard-code the stride - they were changed to
+      a VSTR localparam that must move with psg.sv's, or they read the
+      wrong words silently.
+- [ ] R.6b `sfx_id` NOT moved: it prices out as a wash. Unlike row it has
+      two asynchronous writers - the CPU at $10-$13 and ML_L0..L3 - so
+      it needs four-entry staging (24 flops) on top of the audible
+      mirror (24) and the working register (6), which is 54 against the
+      46 the array costs. Only worth revisiting if ML writes the record
+      directly (an eng_wa slot override) AND the staging can be shared
+      with trg_row/trg_len, neither of which is obviously free.
 - [ ] R.7 Next, if more is wanted: the campaign's own goal is 5,500. The
       NEW fact since the campaign paused is EBR headroom: REVERB=0 uses
       11 of 32 blocks, where the old ceiling was 15 and `record 32/32

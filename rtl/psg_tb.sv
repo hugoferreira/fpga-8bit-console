@@ -227,11 +227,19 @@ module psg_tb;
 
   // The instrument playhead's row moved into the PSG's scheduled state store,
   // so it is no longer an addressable `ins_row[v]`. Word 5 of slot v holds
+  // Words per slot in psg.sv's record. It grew from 32 to 64 when the
+  // per-slot arrays moved in; every probe below indexes through it, so
+  // this constant and psg.sv's VSTR must move together.
+  localparam int VSTR = 64;
+
   // {ins_vol, ins_wave, ins_row, ins_id, bf_damp} - mirror of psg.sv's vpack(),
   // which is the definition to re-check if this ever stops matching. The record
   // is written back at the end of each visit, so it is current between walks.
+  function automatic logic [4:0] row_of(input int v);
+    row_of = dut.state_m[v * VSTR + 32][4:0];
+  endfunction
   function automatic logic [4:0] ins_row_of(input int v);
-    ins_row_of = dut.state_m[v * 32 + 5][9:5];
+    ins_row_of = dut.state_m[v * VSTR + 5][9:5];
   endfunction
 
   // State in the PSG's unified store. The active sounding bank begins at word
@@ -239,31 +247,31 @@ module psg_tb;
   function automatic logic [23:0] eff_inc_of(input int v);
     int b;
     begin
-      b = v * 32 + (dut.spar_bank ? 28 : 24);
+      b = v * VSTR + (dut.spar_bank ? 28 : 24);
       eff_inc_of = {dut.state_m[b+1][7:0], dut.state_m[b+0]};
     end
   endfunction
   function automatic logic [23:0] phase2_of(input int v);
-    phase2_of = {dut.state_m[v*32+13][7:0], dut.state_m[v*32+12]};
+    phase2_of = {dut.state_m[v*VSTR+13][7:0], dut.state_m[v*VSTR+12]};
   endfunction
   function automatic logic snd_wt_of(input int v);
     int b;
     begin
-      b = v * 32 + (dut.spar_bank ? 28 : 24);
+      b = v * VSTR + (dut.spar_bank ? 28 : 24);
       snd_wt_of = dut.state_m[b+1][11];
     end
   endfunction
   function automatic logic [11:0] eff_vol_of(input int v);
     int b;
     begin
-      b = v * 32 + (dut.spar_bank ? 28 : 24);
+      b = v * VSTR + (dut.spar_bank ? 28 : 24);
       eff_vol_of = dut.state_m[b+3][11:0];
     end
   endfunction
   function automatic logic [1:0] ch_damp_of(input int v);
     int b;
     begin
-      b = v * 32 + (dut.spar_bank ? 28 : 24);
+      b = v * VSTR + (dut.spar_bank ? 28 : 24);
       ch_damp_of = dut.state_m[b+2][13:12];
     end
   endfunction
@@ -735,12 +743,12 @@ module psg_tb;
 
       // Pattern 3 runs sfx 6 on every channel, and sfx 6 is speed 1 - one row
       // per tick - so the music slot's row is direct evidence that the covered
-      // song kept running. (The per-tick counters now live in the BRAM record
-      // and are only visible in the working copy, so `row`, which stays in
-      // flops for the status reads, is the observable to use here.)
-      t0 = {3'b0, dut.row[4]};
+      // song kept running. Read it from the record: `row` moved in there with
+      // the rest of the per-slot arrays, and the $10-$17 mirror answers for
+      // the AUDIBLE slot, which is the foreground one here by construction.
+      t0 = {3'b0, row_of(4)};
       ticks(6);                          // outlast the 4-tick effect
-      check({3'b0, dut.row[4]} != t0, "the covered music advanced while inaudible");
+      check({3'b0, row_of(4)} != t0, "the covered music advanced while inaudible");
       check(!dut.playing[0], "the effect finished");
       rd(8'h14, q);
       check(q[7] && q[5:0] == mus_sfx,
