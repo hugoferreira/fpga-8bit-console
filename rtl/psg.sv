@@ -456,7 +456,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     T_FL, T_SP, T_LS, T_LE, T_NL, T_NH, T_LD,
     K_ADV, K_NL, K_NH, K_LD, K_ARP, K_ARPC,
     K_PF0, K_FX,
-    K_SLP0, K_SLP1, K_SLP2, K_SLPM,
+    K_SL0, K_SL1, K_SL2, K_SL3, K_SL4, K_SL5, K_SL6, K_SL7, K_SL8,
     // The tick engine's advance sequence, one for both banks (abank picks
     // note words 0..2 or instrument words 6..8), and the effect staging
     // steps that replace the e_sp/e_tcnt/e_fcnt bank muxes.
@@ -698,14 +698,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // The three pitch lookups an evaluation needs (this note, the previous
   // one for slide, the arpeggio row) are prefetched into registers by the
   // K_PF states before K_FX runs.
-  logic [5:0]  pinc_addr;
+  // Eight bits: the slide's affine table lives in words 64..111 of the
+  // same constants ROM (four per chromatic, base from pitch word 36+c).
+  logic [7:0]  pinc_addr;
   logic [15:0] crom_q;
   // Every pitch increment is dp << 8 with dp in 13 bits, so the 24-bit
   // value is a wiring reconstruction of the constants word.
   wire [23:0] pinc_q = {3'b000, crom_q[12:0], 8'h00};
   logic [15:0] recip_q;
   logic [23:0] arp_r;
-  logic [5:0] slide_addr;
   wire signed [8:0] arp_raw =
       e_insfx ? ($signed({3'b0, w_cur_pitch}) + $signed({3'b0, arp_p}) - 9'sd24)
     : ins_use ? ($signed({3'b0, arp_p}) + $signed({3'b0, w_ins_pitch}) - 9'sd24)
@@ -720,15 +721,21 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       // window lets pinc_q drift to e_pitch before the capture - a latent,
       // deterministic hazard the reference renders share. Fixing it changes
       // renders and is its own adjudicated stage.
-      K_PF0:   pinc_addr = e_arp;
-      K_SLP0:  pinc_addr = slide_addr;
-      K_SLP1:  pinc_addr = (slide_addr == 6'd63)
-                              ? 6'd63 : slide_addr + 1'b1;
-      default: pinc_addr = e_pitch;
+      K_PF0:   pinc_addr = {2'b0, e_arp};
+      // Four affine words per chromatic, then the octave-3 pitch word
+      // that IS base_c.
+      K_SL2:   pinc_addr = 8'd64 + {sl_chr[3:0], 2'd0};
+      K_SL3:   pinc_addr = 8'd64 + {sl_chr[3:0], 2'd1};
+      K_SL4:   pinc_addr = 8'd64 + {sl_chr[3:0], 2'd2};
+      K_SL5,
+      K_SL6:   pinc_addr = 8'd64 + {sl_chr[3:0], 2'd3};
+      K_SL7,
+      K_SL8:   pinc_addr = 8'd36 + {2'b0, sl_chr};
+      default: pinc_addr = {2'b0, e_pitch};
     endcase
   end
   always_ff @(posedge clk) begin
-    crom_q  <= crom[{2'b00, pinc_addr}];
+    crom_q  <= crom[pinc_addr];
     recip_q <= recip[eff_sp];
   end
 
@@ -804,6 +811,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire  [9:0]  d_sub = {1'b0, d_rsh} - {2'b0, d_d};
   wire         d_fit = !d_sub[9];
   wire  [23:0] d_res = d_p[23:0];
+  wire  [7:0]  d_rem = d_p[31:24];
   wire         d_busy = (d_cnt != 0);
   logic [23:0] div_n;
   logic [7:0]  div_d;
@@ -847,15 +855,54 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
                             - $signed({1'b0, e_prevp});
   wire               slp_neg = slp_d[6];
   wire [5:0]         slp_mag = slp_neg ? 6'(-slp_d) : 6'(slp_d);
-  // One chain here too: +/- m_res[15:0] as xor-and-carry, not two adders.
-  wire signed [15:0] slp_q8 = $signed(
-      {2'b0, e_prevp, 8'b0}
-      + (slp_neg ? ~m_res[15:0] : m_res[15:0])
-      + {15'b0, slp_neg});
-  wire signed [8:0] slp_whole = {slp_q8[15], slp_q8[15:8]};
-  wire [5:0] slp_int = pclamp(slp_whole);
-  wire [7:0] slp_frac = (slp_whole < 0 || slp_whole > 9'sd62)
-                          ? 8'd0 : slp_q8[7:0];
+  // The slide's pitch is 16.16, not Q8 (3.2). p_1616 = ps + tz(t*D, d)
+  // with D the signed semitone delta, and the whole quotient splits as
+  // (q1 << 16) + tz((r1 << 16), d) over the divider's own remainder -
+  // two 24-bit dividends where the literal numerator needs 30 bits. A
+  // negative delta truncates toward zero the other way, so its second
+  // numerator carries the d-1 round-up.
+  logic [5:0]  sl_q1;                 // whole semitones of the delta
+  logic [5:0]  sl_int;                // p_1616[21:16], always in 0..63
+  logic [15:0] sl_frac;               // p_1616[15:0]
+  wire  [15:0] sl_fmag = d_res[15:0];
+  wire  [5:0]  sl_int_n = slp_neg
+                            ? e_prevp - sl_q1 - 6'((|sl_fmag))
+                            : e_prevp + sl_q1;
+  // The octave and chromatic of an integer pitch: /12 and %12 as five
+  // compares and one subtract of a multiple of twelve.
+  wire [2:0] sl_oct = (sl_int >= 6'd60) ? 3'd5 : (sl_int >= 6'd48) ? 3'd4
+                    : (sl_int >= 6'd36) ? 3'd3 : (sl_int >= 6'd24) ? 3'd2
+                    : (sl_int >= 6'd12) ? 3'd1 : 3'd0;
+  wire [5:0] sl_chr = sl_int - {sl_oct, 3'b0} - {1'b0, sl_oct, 2'b0};
+  // dp_pre = base_c + ((r_c + frac*b_c) >> 29), proved exhaustively in
+  // psg_hw_forms as slide.affine_table. frac*b_c is two passes of the
+  // 12-bit B port; the low twelve bits of the first sum cannot carry
+  // across the >>29, which is why the second accumulate is 26 bits and
+  // not 38 (slide.affine_two_pass).
+  // r[28:16] and base_c are never registered: each is the LAST word its
+  // read address selects, and the address holds through the stall that
+  // waits on the product, so crom_q still carries it at the consume.
+  logic [8:0]  sl_bhi;                // b[20:12], for the second pass
+  logic [15:0] sl_rlo;                // r[15:0]
+  logic [17:0] sl_uhi;                // (r + frac*b[11:0]) >> 12
+  wire  [29:0] sl_u = {crom_q[12:0], sl_rlo} + {2'b0, m_res[27:0]};
+  wire  [25:0] sl_w = {8'b0, sl_uhi} + m_res[25:0];
+  wire  [12:0] sl_dp_pre = crom_q[12:0] + {5'b0, sl_w[25:17]};
+  // dx_for_note_fine's octave shift, folded onto the pre-octave value:
+  // nested floors compose, so shifting after the >>29 is the binary's
+  // own >> (3 - octave). Pitches 0..63 keep dp inside 13 bits and never
+  // reach either clamp bound (8 and 32768), so dx_clamped is inert here.
+  logic [12:0] sl_dp;
+  always_comb begin
+    case (sl_oct)
+      3'd0:    sl_dp = {3'b0, sl_dp_pre[12:3]};
+      3'd1:    sl_dp = {2'b0, sl_dp_pre[12:2]};
+      3'd2:    sl_dp = {1'b0, sl_dp_pre[12:1]};
+      3'd3:    sl_dp = sl_dp_pre;
+      3'd4:    sl_dp = {sl_dp_pre[11:0], 1'b0};
+      default: sl_dp = {sl_dp_pre[10:0], 2'b0};
+    endcase
+  end
 
   // Step results (fxv_next also feeds the last product's operand)
   wire [23:0] p24 = m_res[31:8];
@@ -888,11 +935,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       4'd0: begin mul_a = {8'b0, recip_q};     mul_b = {4'b0, eff_fcnt};
                   mul_go = 1'b1; end
       4'd1: if (e_fx == 3'd1) begin
+              // |semitone delta| * t: the numerator of the slide's exact
+              // pitch quotient, not a Q8 fraction to scale by.
               mul_a = {18'b0, slp_mag};
-              // Step 1 is entered on the cycle that publishes the row
-              // fraction.  Feed the just-completed product directly:
-              // u_r still contains the preceding tick until this edge.
-              mul_b = {4'b0, p8};
+              mul_b = {4'b0, eff_fcnt};
               mul_go = 1'b1;
             end
       // The volume NUMERATOR (3.1): the binary interpolates in the
@@ -942,17 +988,29 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // in m_res, on the same cycle the micro-PC advances - so each fires
   // exactly once, with its product settled. Step 6 is the effect's
   // divide by the speed; step 9 is the instrument's exact seventh.
-  assign div_start = !walk_frozen && sst == K_FX && !m_busy
-                     && (xs == 4'd6 || (xs == 4'd9 && ins_use));
+  // The slide adds two: its whole-semitone quotient launches on the same
+  // cycle the detour is taken (m_res still holds |D| * t), and the
+  // fraction's launches when that one lands.
+  assign div_start = !walk_frozen
+                     && ((sst == K_FX && !m_busy
+                          && (xs == 4'd6 || (xs == 4'd9 && ins_use)
+                              || (xs == 4'd2 && e_fx == 3'd1)))
+                         || (sst == K_SL0 && !d_busy));
 
   // A negative slide delta truncates the OTHER way - tz of a negative
   // quotient is -ceil of its magnitude - so that numerator carries the
   // d-1 round-up.
   always_comb begin
-    div_d = (xs == 4'd9) ? 8'd7 : eff_sp;
-    div_n = (xs != 4'd9 && e_fx == 3'd1 && vl_neg)
-              ? m_res[23:0] + {16'b0, eff_sp} - 24'd1
-              : m_res[23:0];
+    div_d = (sst == K_FX && xs == 4'd9) ? 8'd7 : eff_sp;
+    if (sst == K_SL0)
+      // r1 << 16, plus the d-1 that turns the floor into the ceil a
+      // negative delta needs.
+      div_n = {d_rem, 16'b0}
+            + (slp_neg ? ({16'b0, eff_sp} - 24'd1) : 24'd0);
+    else if (sst == K_FX && xs == 4'd6 && e_fx == 3'd1 && vl_neg)
+      div_n = m_res[23:0] + {16'b0, eff_sp} - 24'd1;
+    else
+      div_n = m_res[23:0];
   end
 
   always_comb begin
@@ -1587,12 +1645,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             default: ;
           endcase
           if (xs == 4'd2 && e_fx == 3'd1) begin
-            // Product 1 is |pitch delta| × Q8 row fraction. Convert the
-            // interpolated raw pitch to a table address before continuing the
-            // ordinary effect program; this is pitch-domain slide, not the
-            // former (incorrect) phase-increment interpolation.
-            slide_addr <= slp_int;
-            sst <= K_SLP0;
+            // Product 1 is |pitch delta| x t. The detour turns it into a
+            // 16.16 pitch and runs _get_dx_for_note_fine exactly, then
+            // rejoins the ordinary effect program.
+            sst <= K_SL0;
           end else if (xs == 4'd11) begin
               // Publication runs P_W0..P_W3, writing the four inactive
               // sounding words directly; arp_r, vol_r, the final product
@@ -1603,23 +1659,34 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
             xs    <= xs + 1;
           end
         end
-        K_SLP0: sst <= K_SLP1;       // issue/read the lower semitone
-        K_SLP1: begin
-          // _get_dx_for_note_fine linearly interpolates the two adjacent
-          // integer-note increments using the fractional 16.16 pitch. Our row
-          // fraction is Q8, so retain those eight useful fractional bits and
-          // borrow a second synchronous table read.
-          arp_r <= pinc_q;
-          sst <= K_SLP2;
+        // ---- slide: the exact 16.16 pitch and its fine increment -----
+        // The binary interpolates the NOTE_DX TABLE by the 16-bit
+        // fraction and only then applies the reciprocal and the octave
+        // shift; interpolating final increments - what this detour used
+        // to do, at Q8 - is a different function. Two divides make the
+        // fraction, four ROM words plus one multiply make the increment.
+        K_SL0: if (!d_busy) begin
+          sl_q1 <= d_res[5:0];            // whole semitones of the delta
+          sst   <= K_SL1;                 // the fraction's divide launches
         end
-        K_SLP2: begin
-          // pinc_q is the upper semitone. Reuse the iterative multiplier for
-          // (upper-lower)*fraction; this trades 8 clocks for the combinational
-          // fine-pitch network PICO-8's software implementation can afford.
-          sst   <= K_SLPM;
+        K_SL1: if (!d_busy) begin
+          // Negating the magnitude borrows into the integer part exactly
+          // when the fraction is nonzero.
+          sl_frac <= slp_neg ? (16'd0 - sl_fmag) : sl_fmag;
+          sl_int  <= sl_int_n;
+          sst     <= K_SL2;
         end
-        K_SLPM: if (!m_busy) begin
-          arp_r <= arp_r + p24;
+        K_SL2: sst <= K_SL3;              // b[11:0] issued
+        K_SL3: sst <= K_SL4;              // it lands, and pass 1 launches
+        K_SL4: begin sl_bhi <= crom_q[8:0]; sst <= K_SL5; end
+        K_SL5: begin sl_rlo <= crom_q;     sst <= K_SL6; end
+        K_SL6: if (!m_busy) begin
+          sl_uhi <= sl_u[29:12];          // (r + frac*b[11:0]) >> 12
+          sst    <= K_SL7;                // pass 2 launches
+        end
+        K_SL7: sst <= K_SL8;              // base_c issued
+        K_SL8: if (!m_busy) begin
+          arp_r <= {3'b0, sl_dp, 8'b0};
           // Resume after micro-op 2 by starting its current-volume product.
           xs    <= 4'd3;
           sst   <= K_FX;
@@ -2625,10 +2692,18 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           mul_start_b = mul_b;
           mul_start_mode = mul_md;
         end
-        K_SLP2: if (!m_busy) begin
+        // The affine multiply, one 12-bit pass each side of the split.
+        K_SL3: if (!m_busy) begin
           mul_start   = 1'b1;
-          mul_start_a = pinc_q - arp_r;
-          mul_start_b = {2'b0, slp_frac};
+          mul_start_a = {8'b0, sl_frac};
+          mul_start_b = crom_q[11:0];
+          mul_start_mode = 2'd2;
+        end
+        K_SL6: if (!m_busy) begin
+          mul_start   = 1'b1;
+          mul_start_a = {8'b0, sl_frac};
+          mul_start_b = {3'b0, sl_bhi};
+          mul_start_mode = 2'd2;
         end
         // The music pattern's tick length, launched fire-and-forget; the
         // ungated capture in the sequencer picks m_res up when it lands.

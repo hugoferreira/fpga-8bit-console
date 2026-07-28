@@ -214,6 +214,81 @@ def sec_slide() -> None:
     print(f"  note   pre-octave dp spans [{dps[0]:,d}, {dps[-1]:,d}] "
           f"({dps[-1].bit_length()} bits before the octave shifts)")
 
+    # The AFFINE-TABLE route, which beats every split above on a fabric
+    # with no DSP and no LC to spare. blended*K is affine in the 16-bit
+    # fraction, so per chromatic the whole 57-bit product collapses to
+    #   dp_pre = base_c + ((r_c + frac*b_c) >> 29)
+    # with base/r/b precomputed. That is ONE 16-bit multiply instead of
+    # three or six service passes, and no 56-bit accumulator: the price
+    # is 12 table entries, which the constants ROM already has free.
+    tab = slide_affine_table()
+    if tab is None:
+        report("slide.affine_table", False,
+               "no feasible (r, b) at scale 29")
+        return
+    print(f"  note   affine table: base <= "
+          f"{max(t[0] for t in tab).bit_length()} bits, r <= "
+          f"{max(t[1] for t in tab).bit_length()} bits, b <= "
+          f"{max(t[2] for t in tab).bit_length()} bits, 12 entries")
+
+    # Exhaustive against the model's own dx_clamped, over every pitch and
+    # every fraction the slide can reach - including the octave shift and
+    # the two-pass split of frac*b that the 12-bit B port forces.
+    bad = None
+    u_max = w_max = 0
+    for p in range(64):
+        octave, c = divmod(p, 12)
+        base, r, b = tab[c]
+        b_lo, b_hi = b & 0xFFF, b >> 12
+        for frac in range(0x10000):
+            u = r + frac * b_lo                    # 30 bits
+            w = (u >> 12) + frac * b_hi            # 25 bits
+            dp_pre = base + (w >> 17)
+            dp = (dp_pre >> (3 - octave) if octave < 3
+                  else dp_pre << (octave - 3))
+            if dp != M.dx_clamped((p << 16) | frac):
+                bad = (p, frac, dp, M.dx_clamped((p << 16) | frac))
+                break
+            u_max, w_max = max(u_max, u), max(w_max, w)
+        if bad:
+            break
+    report("slide.affine_table", bad is None,
+           "dp = base_c + ((r_c + frac*b_c) >> 29), octave shift folded: "
+           "exhaustive over 64 pitches x 65,536 fractions"
+           if bad is None else f"first counterexample {bad}")
+    # The 12-bit B port splits frac*b as (frac*b[11:0]) + (frac*b[20:12]
+    # << 12); the low 12 bits of that first sum cannot carry across the
+    # >>29, which is what lets the second add be 25 bits and not 37.
+    report("slide.affine_two_pass", bad is None,
+           f"two 16x12 passes, {u_max.bit_length()}-bit then "
+           f"{w_max.bit_length()}-bit accumulate - no wide product")
+
+
+def slide_affine_table() -> list[tuple[int, int, int]] | None:
+    """Per-chromatic (base, r, b) for dp_pre = base + ((r + frac*b) >> 29).
+
+    Scale 29 is minimal: below it no integer (r, b) reproduces every
+    floor boundary, because the slope needs ~16 significant bits to place
+    all 184 of them. b is then chosen as the truncated or rounded slope,
+    and r from the feasible interval the floor constraints leave.
+    """
+    K = 0x2F8DF18F
+    out = []
+    for c in range(12):
+        a = (M.NOTE_DX[c] << 16) * K
+        d = (M.NOTE_DX[c + 1] - M.NOTE_DX[c]) * K
+        base = a >> 44
+        steps = [((a + f * d) >> 44) - base for f in range(0x10000)]
+        for b in (d >> 15, (d >> 15) + 1):
+            lo = max((g << 29) - f * b for f, g in enumerate(steps))
+            hi = min(((g + 1) << 29) - 1 - f * b for f, g in enumerate(steps))
+            if lo <= hi and hi >= 0:
+                out.append((base, max(lo, 0), b))
+                break
+        else:
+            return None
+    return out
+
 
 # --- svc: the amplitude product on the m-service ----------------------------
 

@@ -14,6 +14,8 @@ virtual sample rate, so they are independent of the system clock):
   rtl/psg_recip.hex  256 x 16-bit, 65536/speed for Q8 row progress
 """
 import math
+import os
+import sys
 
 
 def pitch_hz(p):
@@ -99,14 +101,35 @@ with open("rtl/psg_pitch.hex", "w") as f:
 # The constants block RAM (rtl/psg_const.hex): one 256x16 EBR in the block
 # freed by the computed waveforms. Words 0..63 hold the pitch increment's
 # effective bits - every pinc is dp << 8 and dp fits 13 bits, so the RTL
-# reconstructs {3'b0, word[12:0], 8'b0}. Words 64..255 are reserved for
-# microcode and scheduled tables (design section 6).
+# reconstructs {3'b0, word[12:0], 8'b0}.
+#
+# Words 64..111 hold the SLIDE's affine table, four words per chromatic:
+# _get_dx_for_note_fine's 57-bit product is affine in the 16-bit
+# fraction, so per chromatic it collapses to
+#   dp_pre = base_c + ((r_c + frac*b_c) >> 29)
+# and the RTL needs one 16-bit multiply instead of three service passes
+# against a 56-bit accumulator. The words are split exactly as the two
+# 12-bit multiplier passes consume them. base_c needs no word of its own:
+# octave 3 applies no shift, so base_c IS word 36+c. The derivation and
+# its exhaustive proof live in tools/psg_hw_forms.py (slide.affine_table)
+# and are imported rather than restated here.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from psg_hw_forms import slide_affine_table            # noqa: E402
+
+AFFINE = slide_affine_table()
+assert AFFINE is not None, "no feasible slide affine table"
 with open("rtl/psg_const.hex", "w") as f:
     for p in range(64):
         dp = pico8_phase_increment(p) >> 8
         assert dp < (1 << 13)
         f.write(f"{dp:04x}\n")
-    for _ in range(64, 256):
+    for c, (base, r, b) in enumerate(AFFINE):
+        assert base == pico8_phase_increment(36 + c) >> 8, (
+            "base_c must equal the octave-3 pitch word")
+        assert r < (1 << 29) and b < (1 << 21)
+        for w in (b & 0xFFF, b >> 12, r & 0xFFFF, r >> 16):
+            f.write(f"{w:04x}\n")
+    for _ in range(64 + 4 * len(AFFINE), 256):
         f.write("0000\n")
 
 with open("rtl/psg_waves.hex", "w") as f:

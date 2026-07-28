@@ -110,8 +110,28 @@
       a_pub must read a REGISTER: publication spans four cycles a sample
       walk can freeze, and the synthesis products reuse the m service
       from PWORK+4, so a live m_res slice reads the walk's arithmetic
-- [ ] 3.2 Adopt the slide including its fine path; retire the extra
-      8-fractional-bit increment extension it replaces
+- [x] 3.2 Adopt the slide including its fine path; retire the extra
+      8-fractional-bit increment extension it replaces (COMPLETE). Two
+      halves. (a) The 16.16 pitch: p_1616 = ps + tz(t*D, d) split as
+      (q1 << 16) + tz(r1 << 16, d) over the divider's OWN remainder -
+      two 24-bit dividends where the literal numerator needs 30, with
+      the d-1 round-up on the second when D is negative. (b) The fine
+      increment: the binary interpolates the NOTE_DX TABLE by the 16-bit
+      fraction and only then applies the reciprocal and octave shift, so
+      interpolating final increments (what the detour did, at Q8) is a
+      DIFFERENT function - it is not a precision bug. blended*K is
+      affine in the fraction, so per chromatic the whole 57-bit product
+      collapses to dp_pre = base_c + ((r_c + frac*b_c) >> 29): ONE
+      16-bit multiply as two 12-bit passes, no 56-bit accumulator, and
+      base_c needs no storage because octave 3 applies no shift and so
+      base_c IS pitch word 36+c. Table in const words 64..111; proved
+      exhaustively over 64 pitches x 65,536 fractions as
+      slide.affine_table / slide.affine_two_pass in psg_hw_forms, and
+      generated FROM that function so there is one derivation. r[28:16]
+      and base_c are never registered - each is the last word its
+      address selects and the address holds through the product stall.
+      slide_addr, slp_q8, the pclamp and K_SLP0-K_SLPM all retire.
+      **57/57 deterministic cases byte-exact, 0 red**
 - [ ] 3.2a With 3.1/3.2 the row-progress reciprocal has no consumer:
       `recip[s] = round(65536/s)` is not exact truncated division
       (2,538/32,640 (t,d) pairs differ - psg_buffers levers) and the
