@@ -11,10 +11,15 @@ here can be transcribed to SystemVerilog with no further fidelity risk.
 
 Sections:
   div   - constant divisors as shift + small magnitude reciprocal
-  mix   - the soft-add compressor's //5 identity
-  slide - the fine-path reciprocal: reachable domain, limb split,
-          constant-precision floor
+  mix   - the soft-add compressor's //5 identity, and the minimal
+          reciprocal for the reachable excess domain
+  slide - the fine-path reciprocal: reachable domain, limb splits
+          (6-pass and 3-pass), constant-precision floor
   svc   - the G*z product as two passes of the 24x10 m-service shape
+  tzpow - the biased-arithmetic-shift idiom for every tz-by-2^k site
+  blend - the crossfade as one multiply instead of two
+  dq    - the seven per-wave dq constants as add/ceil forms
+  amp   - G, the detune boost and vibrato as pure shift-adds
   bound - exact worst-case interval propagation through the whole
           pipeline (comb feedback to its fixpoint), and the int16 verdict
   rom   - packing notes for the small tables
@@ -124,6 +129,12 @@ def sec_mix() -> None:
     report("mix.excess_div5", ok,
            f"tz(e*52429/2^18) == e//5 on [0, {e_max:,d}] exhaustively - "
            "the 29-bit product is not real hardware")
+    # the reachable excess: two comb-fixpoint voices into one soft_add
+    reach = 2 * 53_759 - M.SOFT_TH
+    s5 = find_reciprocal(5, reach)
+    report("mix.min_reciprocal", s5 is not None,
+           f"reachable excess <= {reach:,d}: minimal exact form is "
+           f"n*{s5[1]}>>{s5[0]}" if s5 else "no (shift, mult) found")
 
 
 # --- slide: the fine-path reciprocal ----------------------------------------
@@ -164,6 +175,20 @@ def sec_slide() -> None:
            f"(truncating bit {kept + 1 if kept is not None else 0} breaks)"
            if kept is not None else "full precision required")
 
+    # 3-pass split: blended's top 3 bits leave the 24-bit port; bh*K is
+    # a shift-add correction (bh <= 4: at most two adds), the low 24
+    # bits take three 24x10 service passes.
+    ok = True
+    for b in dom:
+        bh, bl = b >> 24, b & 0xFFFFFF
+        acc = (bh * K << 24) + ((bl * k2) << 20) + ((bl * k1) << 10) + bl * k0
+        if acc != b * K:
+            ok = False
+            break
+    report("slide.three_pass", ok,
+           "bh*K (bh<=4, shift-adds) + three 24x10 passes on bl - halves "
+           "the 6-limb schedule, whole domain")
+
     dps = sorted({(b * K) >> 44 for b in dom})
     print(f"  note   pre-octave dp spans [{dps[0]:,d}, {dps[-1]:,d}] "
           f"({dps[-1].bit_length()} bits before the octave shifts)")
@@ -189,6 +214,92 @@ def sec_svc() -> None:
     report("svc.two_pass_G", ok,
            "G = gh*128+gl: two passes (24x5 then 24x7) accumulate to the "
            "exact 28-bit product, grid + corners")
+
+
+# --- tzpow: tz by a power of two as one biased arithmetic shift -------------
+
+def sec_tzpow() -> None:
+    print("tzpow: tz(x/2^k) == (x + (x<0 ? 2^k-1 : 0)) >> k  (arithmetic)")
+    # k values used by the pipeline: /2 /4 /8 (wave secondaries, comb,
+    # dampen), /64 (blend). Domains: band around zero plus every
+    # boundary multiple across the widest accumulator range.
+    for k, span in ((1, 120_000), (2, 3_500_000), (3, 160_000),
+                    (6, 3_500_000)):
+        pts = list(range(-600_001, 600_002))
+        step = 1 << k
+        pts += [v + d for v in range(-span, span + 1, step)
+                for d in (-1, 0, 1)]
+        ok = all(M.tz(x, step)
+                 == (x + ((step - 1) if x < 0 else 0)) >> k
+                 for x in pts)
+        report(f"tzpow.k{k}", ok,
+               f"{len(pts):,d} points incl. every multiple of {step} with "
+               f"neighbours to +/-{span:,d}")
+
+
+# --- blend: the crossfade with one multiply ---------------------------------
+
+def sec_blend() -> None:
+    print("blend: i*new + (64-i)*old == (old<<6) + i*(new-old)")
+    vals = list(range(-53_759, 53_760, 997)) + [-53_759, -1, 0, 1, 53_339]
+    ok = True
+    for i in range(65):
+        for old in vals:
+            for new in (vals[0], vals[-1], old, -old,
+                        vals[len(vals) // 2]):
+                a = i * new + (64 - i) * old
+                if a != (old << 6) + i * (new - old):
+                    ok = False
+                    break
+    report("blend.one_multiply", ok,
+           "identical accumulator, so identical tz(acc/64): the blend "
+           "needs one 7x18 product (i * (new-old)), not two")
+
+
+# --- dq: the per-wave secondary increments as add/ceil forms ----------------
+
+def sec_dq() -> None:
+    print("dq: tz(dp*K/256) for every K in the map, dp in [8, 32768]")
+    forms = {
+        256: ("dp", lambda dp: dp),
+        255: ("dp - ceil(dp/256)", lambda dp: dp - ((dp + 255) >> 8)),
+        254: ("dp - ceil(dp/128)", lambda dp: dp - ((dp + 127) >> 7)),
+        250: ("dp - ceil(6dp/256)", lambda dp: dp - ((6 * dp + 255) >> 8)),
+        193: ("(dp<<7 + dp<<6 + dp) >> 8", lambda dp: (193 * dp) >> 8),
+        384: ("dp + (dp>>1)", lambda dp: dp + (dp >> 1)),
+        508: ("2dp - ceil(dp/64)", lambda dp: 2 * dp - ((dp + 63) >> 6)),
+    }
+    for k, (label, fn) in forms.items():
+        ok = all(M.tz(dp * k, 256) == fn(dp) for dp in range(8, 32769))
+        report(f"dq.k{k}", ok, f"== {label}, exhaustively")
+    print("  note   every dq is at most two adds and one shift - the "
+          "109/110 serial chain has no successor")
+
+
+# --- amp: amplitude ladder and vibrato as shift-adds ------------------------
+
+def sec_amp() -> None:
+    print("amp: the per-tick amplitude arithmetic")
+    ok = all(M.tz(3 * a, 2) == a + (a >> 1) for a in range(2241))
+    report("amp.G_shiftadd", ok,
+           "G = tz(3a/2) == a + (a>>1) on the full ladder")
+    ok = all(M.tz(5 * a, 4) == a + (a >> 2) for a in range(2241))
+    report("amp.boost_shiftadd", ok,
+           "tz(5a/4) == a + (a>>2) on the full ladder")
+    ok = True
+    for dx in range(8, 32769):
+        for s in (-2, -1, 0, 1, 2):
+            want = (dx * (128 + s)) >> 7
+            got = (dx + ((dx * s) >> 7) if s >= 0
+                   else dx - ((dx * -s + 127) >> 7))
+            if want != got:
+                ok = False
+                break
+        if not ok:
+            break
+    report("amp.vibrato", ok,
+           "(dx*(128+s))>>7 == dx +/- small term, s in [-2,2], "
+           "dx in [8, 32768] exhaustively")
 
 
 # --- bound: exact worst-case interval propagation ---------------------------
@@ -291,7 +402,9 @@ def sec_rom() -> None:
 
 
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
-            "svc": sec_svc, "bound": sec_bound, "rom": sec_rom}
+            "svc": sec_svc, "tzpow": sec_tzpow, "blend": sec_blend,
+            "dq": sec_dq, "amp": sec_amp, "bound": sec_bound,
+            "rom": sec_rom}
 
 
 def main() -> int:

@@ -199,6 +199,29 @@ transcribed to RTL with no fidelity risk.
   10-bit base + 12 six-bit gaps = 82 bits); vibrato's eight
   multipliers are 128+s with s in [-2, 2].
 
+Second tier (31/31 total after the follow-up sweep):
+
+- The tz-by-2^k idiom for RTL: `tz(x/2^k) == (x + (x<0 ? 2^k-1 : 0))
+  >> k` arithmetic shift, proven at k = 1,2,3,6 across every boundary
+  multiple of the widest accumulator ranges - the sign-handling form
+  every per-sample site (wave secondaries, comb /4, dampen, blend /64)
+  transcribes to.
+- The crossfade needs ONE multiply, not two: `i*new + (64-i)*old ==
+  (old<<6) + i*(new-old)` - a 7x18 product per blend sample.
+- Every dq constant is at most two adds and one shift: K=255 is
+  `dp - ceil(dp/256)`, 254 `dp - ceil(dp/128)`, 250 `dp -
+  ceil(6dp/256)`, 193 `(dp<<7 + dp<<6 + dp)>>8`, 384 `dp + (dp>>1)`,
+  508 `2dp - ceil(dp/64)` - exhaustive over the clamped dp range. The
+  109/110 serial chain has no successor.
+- The amplitude ladder is pure shift-adds: `G = a + (a>>1)`, boost
+  `a + (a>>2)`; vibrato is `dx +/- ` a ceil term, all exhaustive.
+- Slide improves to a 3-pass schedule: blended's top 3 bits (bh <= 4)
+  leave the 24-bit port as a shift-add correction `bh*K`, the low 24
+  bits take three 24x10 service passes - halving the 6-limb form.
+- The binary's compressor constant is already minimal: even on the
+  true reachable excess domain (<= 82,942 = 2x53,759 - 24,576), no
+  reciprocal smaller than 52429>>18 is exact.
+
 Constraints inherited from `reduce-psg-ice40-area`, which pauses at its
 6,199-cell / 15-EBR checkpoint until this change lands: the 15-EBR
 ceiling, the 1,275-clock sample budget (pre-run depth is a free constant),
