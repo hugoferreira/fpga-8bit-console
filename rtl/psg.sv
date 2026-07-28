@@ -62,6 +62,7 @@
 // to arrive through this file; each is include-guarded, so listing one
 // explicitly alongside psg.sv stays harmless.
 `include "psg_timing.sv"
+`include "psg_aram.sv"
 
 module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
              parameter REALTIME_PREVIEW = 0, parameter DBG_PORT = 1)
@@ -79,10 +80,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
            // fidelity complaint was allocation, sequencing or synthesis
            // without seeing inside.
            output logic [63:0] dbg);
-
-  // Audio RAM: PICO-8 $3100-$42FF (music 0..255, SFX records 256..4607)
-  logic [7:0] aram[0:4607];
-  logic [15:0] wraddr;
 
   // Every waveform is computed (adopt-pico8-integer-audio 2.2): the wave
   // ROM retires. The constants block keeps the pitch increments; words
@@ -512,19 +509,15 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
       arp_idx = (eff_sp <= 8) ? eff_tcnt[3:2] : eff_tcnt[4:3];
   end
 
-  // Audio RAM read port, shared: the sequencer owns it except on the one
-  // cycle per sample per wavetable voice that the synthesiser borrows it.
-  // A borrow overwrites the byte the sequencer was waiting on, so the FSM
-  // freezes for that cycle and for one more while the address it issued
-  // last is replayed. There is exactly one unconditional read of aram, so
-  // it still infers as a block RAM.
-  logic [12:0] last_addr;
+  // Audio RAM read port, shared: u_aram (rtl/psg_aram.sv) owns the array and
+  // the borrow/replay contract; these are the wires the two requesters and
+  // the freeze aggregation below need.
   wire  [12:0] seq_addr;
-  logic [7:0]  seq_q;
-  logic        syn_rd, replay;
+  wire  [7:0]  seq_q;
+  logic        syn_rd;
   logic [12:0] syn_addr;
   logic        prun;
-  wire         seq_frozen = syn_rd | replay;
+  wire         seq_frozen;
   // A sample owns the scheduled state store for its complete bounded walk.
   // Tick-first ordering gives the 120 Hz microprogram an uncontested port on
   // the boundary where its result matters; ordinary trigger work can wait one
@@ -556,7 +549,12 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     else
       state_replay <= prun;
   end
-  wire  [12:0] aram_addr  = syn_rd ? syn_addr : replay ? last_addr : seq_addr;
+
+  psg_aram u_aram(
+    .clk(clk), .reset(reset),
+    .cs(cs), .rw(rw), .addr(addr), .di(di),
+    .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
+    .seq_q(seq_q), .seq_frozen(seq_frozen));
 
   // One adder, not one per state. Every SFX-record address is the same shape -
   // a record base plus a byte offset - but writing it out per state built a
@@ -609,16 +607,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     endcase
   end
   assign seq_addr = sa_pat ? sa_pataddr : (sa_base + {5'b0, sa_off});
-  always_ff @(posedge clk) begin
-    seq_q <= aram[aram_addr];
-    if (reset) begin
-      replay <= 0;
-      last_addr <= 0;
-    end else begin
-      replay <= syn_rd;              // a borrow costs a replay cycle
-      if (!seq_frozen) last_addr <= seq_addr;
-    end
-  end
 
   // Filter-byte decode, valid when seq_q holds the byte at record offset
   // 64: noiz=bit1, buzz=bit2, and the top five bits are the base-3 digits
@@ -3534,24 +3522,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   end
 
   // ------------------------------------------------------------------
-  // CPU interface: upload port, music mask, status reads
+  // CPU interface: music mask and status reads
   // ------------------------------------------------------------------
-  wire [15:0] up_idx = wraddr - 16'h3100;
-
+  // The upload port ($00/$01/$02) is u_aram's: it writes the array, so it
+  // owns the address register that walks it.
   always_ff @(posedge clk) begin
     if (reset) begin
-      wraddr <= 16'h3100;
       mus_mask <= 4'h0;
       dout <= 0;
     end else if (cs && rw) begin
       case (addr)
-        8'h00: wraddr[7:0] <= di;
-        8'h01: wraddr[15:8] <= di;
-        8'h02: begin
-          if (up_idx < 16'd4608)
-            aram[up_idx[12:0]] <= di;
-          wraddr <= wraddr + 1;
-        end
         8'h21: mus_mask <= di[3:0];
         default: ;
       endcase
