@@ -45,7 +45,6 @@ module psg_seq (input  bit   clk,
                 input  logic walk_frozen,
                 output logic spar_bank,
                 output logic [PSG_NV-1:0] clr_tog,
-                input  logic [PSG_NV-1:0] clr_ack,
                 output logic bank_ready,
                 // Audio RAM
                 output logic [12:0] seq_addr,
@@ -211,7 +210,6 @@ module psg_seq (input  bit   clk,
   logic        join_stage;
   logic [15:0] vwdata;
   logic [3:0]  vcnt;                           // word within the record
-  logic [6:0]  pph;                            // sample micro-phase
 
   // The working copy: the record of the slot the walk is visiting. The
   // counter/loop family (tcnt/fcnt, sp, lps/lpe, play_len, both banks) has
@@ -670,8 +668,6 @@ module psg_seq (input  bit   clk,
   end
 
   // Step results (fxv_next also feeds the last product's operand)
-  wire [23:0] p24 = m_res[31:8];
-  wire [7:0]  p8  = m_res[15:8];
   // Vibrato and DROP corrections on ONE 24-bit carry chain. The old spelling
   // built three: vib_ceil's round-up increment, an add and a subtract behind
   // the sign mux, and DROP's own subtract. All of them are the same modular
@@ -844,7 +840,13 @@ module psg_seq (input  bit   clk,
                          (w_cur_fx == 3'd1
                           || (ins_use && fx_dfl && w_ins_fx == 3'd1)),
                          w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz,
-                         w_ch_noiz, e_pitch};
+                         w_ch_noiz,
+                         // The sounding pitch used to be published here and
+                         // loaded into the walk's s_snd_pitch, which nothing
+                         // ever read: the walk renders from the increment,
+                         // not from the note. Field kept as zero so the word
+                         // layout does not move.
+                         6'b0};
       default: pub_wd = {(ins_use && fx_dfl
                           && (w_ins_fx == 3'd0
                               || w_ins_fx == 3'd4

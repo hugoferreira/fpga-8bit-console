@@ -96,7 +96,6 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // put every increment (vibrato included) under 2^21, but the adds
   // between them launder that bound out of synthesis's sight.
   logic [2:0]  s_snd_id;
-  logic [5:0]  s_snd_pitch;
   logic        s_ch_noiz;
   logic [1:0]  s_ch_rev, s_ch_damp;
   logic [11:0] s_eff_a;
@@ -435,13 +434,12 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
                             : {1'b0, s_eff_a};
   wire [12:0] g_live = g_a + {1'b0, g_a[12:1]};
 
-  logic        mx_play;
   logic signed [16:0] mx_filt;        // post-comb, post-dampen sample
   logic [9:0]  ring_rp;               // global ring position, per sample
-  // Whether this slot is HEARD, as opposed to merely running. A music
-  // slot is silenced while its channel's foreground effect plays, but it
-  // still renders; only the mixer leaf is zeroed. mx_play (does it run)
-  // and mx_aud (is it audible) must stay separate.
+  // Whether this slot is HEARD, as opposed to merely running. A music slot
+  // is silenced while its channel's foreground effect plays, but it still
+  // renders; only the mixer leaf is zeroed. The companion mx_play (does it
+  // run) is gone - it had no reader.
   logic        mx_aud;
   logic        mxs_new, mxs_old;      // saved z signs for the G products
   logic [24:0] g_part;                // the recip3-hi partial
@@ -831,7 +829,6 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // foreground effect plays, but only the mixer leaf is zeroed.
   task stage_leaf();
     mxs_new <= z_new_c[17];
-    mx_play <= play_bits[pc_ch];
     mx_aud  <= play_bits[pc_ch]
                & ~(is_mus(pc_ch) & play_bits[{1'b0, pc_ch[1:0]}]);
   endtask
@@ -970,7 +967,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               <= {state_q[14:8], state_q[4:0]};
           7'(PLOSC + 3):
             {s_ch_damp, s_ch_rev, s_ch_det, s_ch_buzz,
-             s_ch_noiz, s_snd_pitch} <= state_q[13:0];
+             s_ch_noiz} <= state_q[13:6];
           7'(PLOSC + 4):
             s_eff_a <= state_q[11:0];
           default: ;

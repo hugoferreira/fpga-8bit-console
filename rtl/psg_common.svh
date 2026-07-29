@@ -64,13 +64,11 @@ endfunction
 localparam int PSG_TREC = 10;                        // tick/note words per slot
 localparam int PSG_SPAR = 4;                         // sounding parameter words
 localparam int PSG_SOSC = 14;                        // oscillator-state words
-localparam int PSG_VREC = PSG_TREC + PSG_SPAR;       // tick load/store visit
 // 64 words per slot, not 32: the tick/oscillator/parameter families filled
 // the first 32 exactly, and the per-slot arrays need a home. REVERB=0
 // leaves the blocks for it - this costs one.
 localparam int PSG_VSTR = 64;                        // all records for one slot
 localparam int PSG_VADR = PSG_VW + 6;
-localparam logic [5:0] PSG_V_TICK = 6'd0;
 localparam logic [5:0] PSG_V_OSC  = 6'd10;
 localparam logic [5:0] PSG_V_PAR0 = 6'd24;
 localparam logic [5:0] PSG_V_PAR1 = 6'd28;
