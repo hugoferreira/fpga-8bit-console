@@ -247,6 +247,53 @@ $(PSG_WAV): rtl/psg.sv sim/psg_wav.cpp
 		--exe $(abspath sim/psg_wav.cpp) -o psg_wav --build -j 8 \
 		-Mdir build/obj_psg -CFLAGS "-O2"
 
+# The SAME model built with the simulator's REALTIME_PREVIEW schedule, which is
+# the only schedule `make run` ever executes and the one nothing used to gate.
+# The oracle cannot cover it: the oracle builds REALTIME_PREVIEW=0, so everything
+# inside `if (REALTIME_PREVIEW)` is invisible to it BY CONSTRUCTION. That blind
+# spot let the preview path go first out of tune (5bdead3 left its oscillator
+# store map on the pre-crossfade layout) and then silent (4658091 stopped
+# deferring an overrun sample boundary), across a whole campaign of green gates.
+#
+# CLK_HZ is a variable, not the console's 3,506,580: rendering preview at the
+# hardware clock separates "is the preview schedule CORRECT" from "does it FIT
+# the console's 159 clocks per sample". Those are different questions and
+# conflating them wasted a bisect.
+PSG_PV_CLK ?= 28125000
+# Object dir carries the clock: a correctness run (28.125 MHz) and a fit run
+# (3,506,580, what the console supplies) must coexist without rebuilding.
+PSG_WAV_PV  = build/obj_psg_pv_$(PSG_PV_CLK)/psg_wav
+
+$(PSG_WAV_PV): rtl/psg.sv sim/psg_wav.cpp
+	verilator --cc rtl/psg.sv --top-module psg -Irtl -O3 \
+		--x-assign fast --x-initial fast \
+		-Wno-DEFOVERRIDE -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+		-GREALTIME_PREVIEW=1 -GCLK_HZ=$(PSG_PV_CLK) \
+		--exe $(abspath sim/psg_wav.cpp) -o psg_wav --build -j 8 \
+		-Mdir build/obj_psg_pv_$(PSG_PV_CLK) -CFLAGS "-O2"
+
+psg-wav-preview: $(PSG_WAV_PV)
+	@test -n "$(CART)" || { echo "usage: make psg-wav-preview CART=<cart.p8.png> [MUSIC=n|SFX=n]"; exit 1; }
+	@mkdir -p build
+	@python3 -c "import sys; sys.path.insert(0,'tools'); \
+	  from p8_audio import rom_from_png; \
+	  open('build/psg_audio.bin','wb').write(rom_from_png('$(CART)')[0x3100:0x4300])"
+	$(PSG_WAV_PV) --audio build/psg_audio.bin --mask $(MASK) --seconds $(SECONDS) \
+	  --clk $(PSG_PV_CLK) \
+	  $(if $(SFX),--sfx $(SFX),--music $(MUSIC)) --out $(WAV)
+
+# The preview path's gate: does the simulator play the same TUNE as the hardware
+# schedule? Pitch agreement, not byte equality - the preview is deliberately an
+# approximation, so a byte gate would be false-red on every legitimate preview
+# change, while "plays the same notes" is exactly the property that broke.
+#   make test-psg-preview CART=~/Stuff/carts/celeste-15133.p8.png
+# The hardware reference model is built by tools/psg_oracle_render.py at the
+# matching -GCLK_HZ; $(PSG_WAV) cannot serve, it is compiled for the default clock.
+test-psg-preview: $(PSG_WAV_PV)
+	@test -n "$(CART)" || { echo "usage: make test-psg-preview CART=<cart.p8.png>"; exit 1; }
+	python3 tools/psg_preview_check.py --cart $(CART) \
+	  --preview $(PSG_WAV_PV) --preview-clk $(PSG_PV_CLK) $(PSG_PV_ARGS)
+
 psg-wav: $(PSG_WAV)
 	@test -n "$(CART)" || { echo "usage: make psg-wav CART=<cart.p8.png> [MUSIC=n|SFX=n]"; exit 1; }
 	@mkdir -p build
