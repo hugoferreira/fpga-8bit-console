@@ -128,7 +128,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // Declared here because walk_frozen must hold the tick sequencer while the
   // post-walk fold chain still owns the phase ALU and the m service idle slot.
   logic [3:0]  fmc;                  // fold micro-cycle, 0 = idle
-  assign fold_busy = (fmc != 4'd0);
+  // Either flavour's fold keeps the sequencer off the ALU until dry16 lands.
+  assign fold_busy = REALTIME_PREVIEW ? (mxs != 2'd0) : (fmc != 4'd0);
   assign state_sample_read = prun && pph < 7'(PLOSC + PSG_SPAR);
   // Exactly the oscillator record: PLAST may extend past the last store
   // (the product chain's tail phases), so the window is bounded by PSG_SOSC,
@@ -187,8 +188,17 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   always_comb begin
     if (REALTIME_PREVIEW) begin
       case (s_stw)
-        4'd0:    sosc_wd = s_phase[15:0];
-        4'd1:    sosc_wd = {s_nz_hold, s_phase[23:16]};
+        // Word 0 carries s_phase[23:8], NOT [15:0]. The load is shared with
+        // the hardware map (`s_phase <= {state_q, 8'b0}`), and when the
+        // crossfade landed (5bdead3) it moved to that window while word 1's
+        // phase byte became old_q0 - a hardware-only crossfade field. This
+        // store map was left on the pre-crossfade layout, so the preview
+        // wrote the phase's LOW half and read it back as its HIGH half every
+        // sample. The oscillator phase was scrambled and the simulator
+        // rendered noise instead of a melody. Word 1's low byte is old_q0's
+        // in the shared load and unused here, so it stores zero.
+        4'd0:    sosc_wd = s_phase[23:8];
+        4'd1:    sosc_wd = {s_nz_hold, 8'b0};
         4'd2:    sosc_wd = s_phase2[15:0];
         4'd3:    sosc_wd = {4'b0, s_nz_ph, s_phase2[23:16]};
         4'd4:    sosc_wd = {3'b0, s_brown};
@@ -528,11 +538,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
     wmul_mode  = 2'd0;
     if (prun && !m_busy) begin
       if (REALTIME_PREVIEW) begin
-        if (pph == 7'(PWORK + 2)) begin
-          wmul_start   = 1'b1;
-          wmul_a = 25'(z_new_c);
-          wmul_b = {4'b0, s_eff_a[11:4]};
-        end
+        // Preview no longer uses the multiply service at all (pv_full above), so
+        // its request bundle is identically zero and psg.sv's one-requester
+        // merge assertion holds trivially.
       end else begin
         // The G*z product runs as two limb passes per voice
         // (svc.two_pass_G): |z| x G[12:7] then |z| x G[6:0], the partial
@@ -616,10 +624,29 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // The mixer consumes the STORED cell value: the binary keeps one
   // int16 block per voice, so the wrap the ring applies is what the
   // tree reads too (the fixpoint ladder convicts unbounded feed).
+  // Preview's sample x volume, as a plain product instead of 8 iterations on the
+  // shared shift-add service. Two reasons, and the second is a bug fix:
+  //
+  //  - the service's 8-cycle latency is what pinned PFOLD/PLAST at 23 (launch at
+  //    PWORK+2, product not ready until 23);
+  //  - the launch read z_new_c COMBINATIONALLY in the same cycle `smp_b <= ...`
+  //    was assigned, so z_new_c = smp_a + smp_b used the PRE-EDGE smp_b - the
+  //    previously visited slot's sample. Output therefore depended on visit
+  //    order, which is also what made the slot skip change the render.
+  //
+  // The truncation is replicated exactly, including the silent discard of product
+  // bits 23 and up: psg_mulsvc forms |z_new_c| (21-bit magnitude, sign stripped at
+  // launch) times s_eff_a[11:4] and holds it IN PLACE, and mix_prod took
+  // m_res[22:7]. A wider or "cleaner" slice changes the sound.
+  wire [20:0]  pv_mag   = z_new_c[17] ? (21'd0 - 21'(z_new_c)) : 21'(z_new_c);
+  wire [28:0]  pv_full  = pv_mag * {13'b0, s_eff_a[11:4]};
+  wire [15:0]  pv_slice = pv_full[22:7];
+  logic [15:0] pv_prod_r;             // captured with its sign at PWORK+3
+
   wire signed [16:0] mix_prod =
       REALTIME_PREVIEW
-        ? (mxs_new ? -$signed({1'b0, m_res[22:7]})
-                   :  $signed({1'b0, m_res[22:7]}))
+        ? (mxs_new ? -$signed({1'b0, pv_prod_r})
+                   :  $signed({1'b0, pv_prod_r}))
         : {mx_filt[15], mx_filt[15:0]};
   wire signed [17:0] n_contrib = {mix_prod[16], mix_prod};
   // This slot's leaf in the reduction tree: its sample, or an explicit zero
@@ -688,6 +715,64 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // (TH + (2*32768 - TH)/5 = 32768 exactly), so every stack value is
   // <= |32768| and every raw pair sum <= |65536| - 18-bit signed
   // carries both with a bit to spare.
+  // ------------------------------------------------------------------
+  // The preview flavour's fold, as ONE combinational soft_add reused by a
+  // level-1-in-the-walk / levels-2-and-3-after-it schedule. This is the shape
+  // the chip had before 587494f serialized the tree onto the phase ALU FOR
+  // FPGA AREA - a cost the simulator does not pay.
+  //
+  // It is not an optimisation, it is a correctness fix. The serial engine takes
+  // 11 cycles per node and the tree has SEVEN nodes; today ~44 of those 77
+  // cycles hide inside 24-phase slots. A skipped slot's visit is 2 cycles, so a
+  // skipped ODD slot's fold_launch lands 4 cycles into the previous chain and
+  // overwrites fmc/fsel/fpend/ffin mid-flight, while a skipped EVEN slot's leaf
+  // push can clobber the stack index that chain owns (slot 3's chain holds
+  // fdsti==1; slot 4 pushes fstk[1]). The compression then never commits and the
+  // raw sum survives. Hardware cannot reach this - 109-phase slots leave a
+  // 109-clock gap - but the slot skip made it reachable in preview.
+  //
+  // The arithmetic mirrors the serial engine's fmc steps EXACTLY, including
+  // truncations: fmc1 the plain sum; fmc2/3 the two threshold compares; fmc4-6
+  // the (excess * 52429) >> 18 series as three shifted adds; fmc7/8 the
+  // remainder; fmc9 rebuilds TH + q with the >=5 rounding riding the carry-in;
+  // fmc10 negates the underflow side. Same widths (18-bit), same threshold,
+  // no final shift - so a render with no aborted chain must be BYTE-IDENTICAL
+  // to the serial engine, which is how this is verified.
+  function automatic signed [17:0] soft_add(input signed [17:0] a,
+                                            input signed [17:0] b);
+    logic signed [18:0] s;
+    logic over, under;
+    logic [17:0] ex, t0, t1, t2, q4, rem5;
+    logic [3:0]  rem;
+    begin
+      s     = $signed({a[17], a}) + $signed({b[17], b});
+      over  = (s >=  19'sd24576);
+      under = (s <= -19'sd24576);
+      ex    = over  ? 18'(s - 19'sd24576)
+            : under ? 18'(-19'sd24576 - s)
+                    : 18'd0;
+      t0    = {1'b0, ex[17:1]} + {2'b0, ex[17:2]};      // fmc4
+      t1    = t0 + {4'b0, t0[17:4]};                    // fmc5
+      t2    = t1 + {8'b0, t1[17:8]};                    // fmc6
+      q4    = {2'b0, t2[17:2]};                         // the quotient, ex/5
+      rem5  = ex - {t2[17:2], 2'b00} - q4;              // fmc7 then fmc8
+      rem   = rem5[3:0];
+      // fmc9: TH + q, +1 when the remainder rounds up. fmc10 negates.
+      q4    = q4 + 18'((rem >= 4'd5) ? 1 : 0);
+      soft_add = over  ?  18'(18'(SA_TH) + q4)
+               : under ? -18'(18'(SA_TH) + q4)
+                       :  18'(s);
+    end
+  endfunction
+
+  // Level 1 lands inside the walk (one node per odd slot), levels 2 and 3 in
+  // three post-walk cycles - the same division of labour the pre-587494f chip
+  // had, so walk_frozen still holds the sequencer until dry16 is written.
+  logic signed [17:0] sa_hold;        // the even leaf, waiting for its partner
+  logic signed [17:0] l1[0:3];        // level-1 results
+  logic signed [17:0] l2a, l2b;       // level-2 results
+  logic [1:0]  mxs;                   // post-walk reduction step, 0 = idle
+
   logic signed [17:0] fstk[0:2];      // S0, S1, S2
   logic [2:0]  fsel;                  // active fold: see fda/fdb below
   logic [1:0]  fpend;                 // folds still queued in this chain
@@ -839,7 +924,13 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // slot that is running but suppressed, which is deliberate - the
   // tree's zero leaves are part of the function.
   task fold_launch();
-    if (pc_ch[0] == 1'b0)
+    if (REALTIME_PREVIEW) begin
+      // Level 1, complete in this one cycle: hold the even slot's leaf, then
+      // combine it with the odd slot's. Nothing is left in flight, so a
+      // 2-cycle skipped visit cannot abort anything.
+      if (pc_ch[0] == 1'b0) sa_hold        <= mix_leaf;
+      else                  l1[pc_ch[2:1]] <= soft_add(sa_hold, mix_leaf);
+    end else if (pc_ch[0] == 1'b0)
       fstk[(pc_ch == 3'd0) ? 2'd0
          : (pc_ch == 3'd6) ? 2'd2 : 2'd1] <= mix_leaf;
     else begin
@@ -861,6 +952,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       pph <= 0;
       clr_ack <= 0;
       fmc <= 0;
+      mxs <= 0;                        // preview's fold step: validity control
       fpend <= 0;
       ffin <= 0;
       dry_valid <= 0;
@@ -873,12 +965,29 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
     end else begin
       dry_valid <= 0;
 
+      // Preview's levels 2 and 3: three cycles after the walk on the one
+      // combinational soft_add. The walk has already left the four level-1
+      // results in l1[]. dry16 carries no final shift, matching the serial
+      // engine's `16'($signed(fstk[0]))` - SA_TH is the binary's at 1x.
+      if (REALTIME_PREVIEW) begin
+        case (mxs)
+          2'd1: begin l2a <= soft_add(l1[0], l1[1]); mxs <= 2'd2; end
+          2'd2: begin l2b <= soft_add(l1[2], l1[3]); mxs <= 2'd3; end
+          2'd3: begin
+            dry16     <= 16'($signed(soft_add(l2a, l2b)));
+            dry_valid <= 1;
+            mxs       <= 2'd0;
+          end
+          default: ;
+        endcase
+      end
+
       // The serial soft_add fold: one phase-ALU micro-op per cycle. A chain
       // launched at an odd slot's PFOLD runs into the following visit's
       // record-load phases - the ALU is idle there - and the slot-7 chain
       // runs on past the walk, with walk_frozen holding the tick sequencer
       // until the final fold lands in dry16.
-      if (fmc != 4'd0) begin
+      if (!REALTIME_PREVIEW && fmc != 4'd0) begin
         case (fmc)
           4'd1:  begin fstk[fdsti] <= phase_alu_y[17:0]; fmc <= 4'd2; end
           4'd2:  begin
@@ -916,7 +1025,14 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
         endcase
       end
 
-      if (sample_en) begin
+      // A walk that has not finished must never be restarted from slot 0: it
+      // would then never reach slot 7, dry16 would never be written and the
+      // chip would render a flat zero rather than degraded audio. Hardware
+      // cannot hit this - the sample interval is 1275 clocks against a walk
+      // of 906 - but the simulator's compact lowering has only 159, so the
+      // preview schedule takes the honest failure mode. A dropped sample_en
+      // costs that sample's render; it does not corrupt any state.
+      if (sample_en && !(REALTIME_PREVIEW && (prun || fold_busy))) begin
         prun <= 1;
         pc_ch <= 0;
         pph <= 0;
@@ -978,14 +1094,43 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           // Slot 7's fold chain was launched at its PFOLD and finishes after
           // the walk; fold_busy keeps the tick sequencer off the ALU until
           // the final fold has landed in dry16.
-          if (pc_ch == PSG_VW'(PSG_NV-1))
+          if (pc_ch == PSG_VW'(PSG_NV-1)) begin
             prun <= 0;
+            // Slot 7's level-1 fold completed in its own PFOLD cycle, so the
+            // tree's remaining two levels start here rather than trailing a
+            // 33-cycle chain.
+            if (REALTIME_PREVIEW) mxs <= 2'd1;
+          end
           pc_ch <= pc_ch + 1;
         end else
           pph <= pph + 1;
 
         if (REALTIME_PREVIEW) begin
           case (pph)
+            // A slot that is not playing streams its seven oscillator words
+            // in, leaves every one of them alone - each action below is
+            // gated on play_bits - and writes the same seven back. The whole
+            // 24-phase visit is a no-op, so skip to the fold and contribute
+            // the zero leaf the reduction tree expects. Eight slots at 24
+            // phases plus the 30-clock fold tail is 222 clocks against the
+            // simulator's 159 per sample; the four slots a mask-7 cart
+            // actually sounds cost 134, which fits.
+            //
+            // A pending filter clear is the one thing a stopped slot still
+            // owes: noise_filt_step's clr arm zeroes the streamed copies and
+            // acknowledges the sequencer, and that needs the full visit to
+            // store them back. So do not skip while one is outstanding.
+            7'd0: if (!play_bits[pc_ch]
+                      && clr_tog[pc_ch] == clr_ack[pc_ch]) begin
+                    stage_leaf();          // mx_aud follows play_bits: zero
+                    // The lfsr is stepped once per slot per sample at PWORK,
+                    // deliberately, so the noise sequence does not depend on
+                    // pipeline timing. A skipped visit never reaches PWORK, so
+                    // step it here too - otherwise WHICH slots are silent would
+                    // change the noise every other voice hears.
+                    lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
+                    pph <= 7'(PFOLD);
+                  end
             7'(PWORK): begin
               lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
               if (play_bits[pc_ch] && s_eff_a != 0)
@@ -1006,6 +1151,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             end
             7'(PWORK + 2): begin
               smp_b <= s_snd_wt ? 18'($signed(seq_q)) : z_eval;
+            end
+            // One phase later than smp_b's write, so z_new_c is a function of
+            // THIS slot's two samples rather than of the previous slot's.
+            7'(PWORK + 3): begin
+              pv_prod_r <= pv_slice;
               stage_leaf();
             end
             7'(PFOLD): fold_launch();
