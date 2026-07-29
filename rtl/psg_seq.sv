@@ -304,26 +304,35 @@ module psg_seq (input  bit   clk,
   logic [1:0]  fade_dir;             // 0 none, 1 fading in, 2 fading out
   logic [15:0] fade_acc;
   logic [12:0] fade_step;
-  function automatic logic [12:0] fstep(input logic [4:0] n);  // 4096/n
-    case (n)
-      5'd1:  fstep = 13'd4096;  5'd2:  fstep = 13'd2048;
-      5'd3:  fstep = 13'd1365;  5'd4:  fstep = 13'd1024;
-      5'd5:  fstep = 13'd819;   5'd6:  fstep = 13'd682;
-      5'd7:  fstep = 13'd585;   5'd8:  fstep = 13'd512;
-      5'd9:  fstep = 13'd455;   5'd10: fstep = 13'd409;
-      5'd11: fstep = 13'd372;   5'd12: fstep = 13'd341;
-      5'd13: fstep = 13'd315;   5'd14: fstep = 13'd292;
-      5'd15: fstep = 13'd273;   5'd16: fstep = 13'd256;
-      5'd17: fstep = 13'd240;   5'd18: fstep = 13'd227;
-      5'd19: fstep = 13'd215;   5'd20: fstep = 13'd204;
-      5'd21: fstep = 13'd195;   5'd22: fstep = 13'd186;
-      5'd23: fstep = 13'd178;   5'd24: fstep = 13'd170;
-      5'd25: fstep = 13'd163;   5'd26: fstep = 13'd157;
-      5'd27: fstep = 13'd151;   5'd28: fstep = 13'd146;
-      5'd29: fstep = 13'd141;   5'd30: fstep = 13'd136;
-      5'd31: fstep = 13'd132;   default: fstep = 13'd8191;
-    endcase
-  endfunction
+  // 4096/n, as a block ROM rather than 13 five-input LUT decodes. The
+  // address is combinational, not registered off fade_len: the $22 write
+  // that sets the length and the $20 write that consumes the step can be
+  // adjacent CPU cycles, so the ROM has to see the NEW length on the very
+  // cycle it is written. With this form fstep_q is valid exactly when
+  // fade_len is - one cycle after the $22 write - and the two can never
+  // disagree.
+  (* ram_style = "block" *) logic [12:0] fstep_rom[0:31];
+  initial begin
+    fstep_rom[0]  = 13'd8191; fstep_rom[1]  = 13'd4096;
+    fstep_rom[2]  = 13'd2048; fstep_rom[3]  = 13'd1365;
+    fstep_rom[4]  = 13'd1024; fstep_rom[5]  = 13'd819;
+    fstep_rom[6]  = 13'd682;  fstep_rom[7]  = 13'd585;
+    fstep_rom[8]  = 13'd512;  fstep_rom[9]  = 13'd455;
+    fstep_rom[10] = 13'd409;  fstep_rom[11] = 13'd372;
+    fstep_rom[12] = 13'd341;  fstep_rom[13] = 13'd315;
+    fstep_rom[14] = 13'd292;  fstep_rom[15] = 13'd273;
+    fstep_rom[16] = 13'd256;  fstep_rom[17] = 13'd240;
+    fstep_rom[18] = 13'd227;  fstep_rom[19] = 13'd215;
+    fstep_rom[20] = 13'd204;  fstep_rom[21] = 13'd195;
+    fstep_rom[22] = 13'd186;  fstep_rom[23] = 13'd178;
+    fstep_rom[24] = 13'd170;  fstep_rom[25] = 13'd163;
+    fstep_rom[26] = 13'd157;  fstep_rom[27] = 13'd151;
+    fstep_rom[28] = 13'd146;  fstep_rom[29] = 13'd141;
+    fstep_rom[30] = 13'd136;  fstep_rom[31] = 13'd132;
+  end
+  wire [4:0] fstep_a = (cs && rw && addr == 8'h22) ? di[7:3] : fade_len[7:3];
+  logic [12:0] fstep_q;
+  always_ff @(posedge clk) fstep_q <= fstep_rom[fstep_a];
 
   // ------------------------------------------------------------------
   // Sequencer FSM (note fetch, per-tick effects, music flow control)
@@ -1672,7 +1681,7 @@ module psg_seq (input  bit   clk,
           if (fade_len >= 8'd8) begin        // music(-1, fade): fade out
             fade_dir <= 2'd2;
             fade_acc <= 0;
-            fade_step <= fstep(fade_len[7:3]);
+            fade_step <= fstep_q;
             fade_len <= 0;
           end else begin
             mus_playing <= 0;
@@ -1687,7 +1696,7 @@ module psg_seq (input  bit   clk,
           if (fade_len >= 8'd8) begin        // music(n, fade): fade in
             fade_dir <= 2'd1;
             fade_acc <= 0;
-            fade_step <= fstep(fade_len[7:3]);
+            fade_step <= fstep_q;
             mus_gain <= 0;
             fade_len <= 0;
           end else begin
