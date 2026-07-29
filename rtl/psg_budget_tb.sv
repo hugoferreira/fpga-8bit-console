@@ -1,3 +1,22 @@
+// PSG CYCLE-BUDGET testbench: psg_tb with demand-side instrumentation and a
+// parameterised clock, for answering "what does the audio actually need?"
+// rather than "does it fit the clock we happen to have".
+//
+//   Run it with the usual binary build, adding -GCLKHZ_P=<hz>:
+//     --binary --timing -j 4 -Irtl rtl/psg_budget_tb.sv rtl/psg.sv
+//     rtl/dsigma.sv --top-module psg_budget_tb -GCLKHZ_P=26000000
+//   (the tool's name cannot start a comment line here - a `//` whose first
+//    word is the tool's name is parsed as a metacomment and errors)
+//
+// It counts clocks the sequencer FSM actually ADVANCES, clocks the walk owns,
+// and per-state-group occupancy - all properties of the program, so they do
+// not move with the clock. Results and the derivation are in
+// docs/hardware-gaps.md, "What the audio actually needs".
+//
+// NOTE its deadline checks share psg_tb's blind spot: they pass at clocks
+// where the oracle renders differ. The margin gate is the oracle clock sweep,
+// not this. Everything below this line is psg_tb's.
+//
 // Standalone PSG v2 testbench. Uploads a constructed PICO-8 audio RAM
 // image through the CPU port, then checks: row timing against speed,
 // loop and length-only conventions, slide/drop/fade/arpeggio effect
@@ -21,14 +40,11 @@
 // build has to come out silent.
 `timescale 1ns/1ps
 
-module psg_tb;
+module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000);
   // Exercise the board's actual divide-by-four PSG clock. Test runtime is not
   // a synthesis constraint: only declared-clock cycles between sample_en
-  // pulses matter, and the hardware provides 1275 of them - against a
-  // MEASURED requirement of 1190-1201, a 6-7% margin, not the 4x the old
-  // "comfortably enough" comment claimed (docs/hardware-gaps.md, "What the
-  // audio actually needs").
-  localparam CLKHZ = 32'd28_125_000;
+  // pulses matter, and the hardware provides at least 1275 of them.
+  localparam CLKHZ = CLKHZ_P;
   localparam CLKS_PER_TICK = 233_418;  // floor(CLKHZ * 183 / 22050)
 
   bit clk = 0;
@@ -66,11 +82,36 @@ module psg_tb;
   bit tick_window_active = 0;
   bit tick_busy_at_pretick = 0;
   int late_flips = 0;
+  // ---- demand-side budget instrumentation -------------------------------
+  // fsm_own: clocks the sequencer FSM actually ADVANCES (not idle, not
+  // frozen). walk_own: clocks prun is high. Both are properties of the
+  // program, independent of the clock rate - which is the whole point.
+  longint fsm_own = 0, walk_own = 0, frozen_seq = 0, total_clk = 0, samples = 0;
+  longint st_clk[0:63];
+  int tick_own = 0, max_tick_own = 0;
+  int walk_run = 0, max_walk_run = 0;
 
   // Hardware-deadline accounting, independent of host runtime. A job is complete
   // only after all eight slot visits and the three post-walk soft-add levels
   // have produced dry_valid; reaching another sample_en first is an overrun.
   always @(negedge clk) begin
+    if (!reset) begin
+      total_clk++;
+      if (dut.sample_en) samples++;
+      st_clk[dut.u_seq.sst]++;
+      if (dut.prun) begin walk_own++; walk_run++; end
+      else begin
+        if (walk_run > max_walk_run) max_walk_run = walk_run;
+        walk_run = 0;
+      end
+      if (dut.u_seq.sst != 0) begin
+        if (dut.u_seq.walk_frozen) frozen_seq++;
+        else begin fsm_own++; tick_own++; end
+      end else begin
+        if (tick_own > max_tick_own) max_tick_own = tick_own;
+        tick_own = 0;
+      end
+    end
     if (reset) begin
       sample_job_clocks = 0;
       max_sample_job_clocks = 0;
@@ -950,18 +991,48 @@ module psg_tb;
     check(ch_damp_of(3) == 2'd0, "filter byte 224 decodes dampen 0");
     wr(8'h13, 8'h80);
 
-    // NECESSARY, NOT SUFFICIENT - do not read this as the margin. Measured
-    // 2026-07-29 by sweeping the oracle's clock: at 26.0 MHz this check
-    // still passes with room to spare while FOUR of the 59 byte-exact
-    // renders are wrong. The stimulus below is not the worst case (the
-    // oracle's mix-four is), and completing the walk is not the only
-    // schedule constraint the audio has. The margin measurement is the
-    // oracle clock sweep in docs/hardware-gaps.md; this is a smoke test.
-    $display("  synthesis deadline: worst %0d / %0d clocks (smoke test - the",
-             max_sample_job_clocks, CLKHZ / 22050);
-    $display("    real requirement is 1190-1201 clocks/sample, see"); 
-    $display("    docs/hardware-gaps.md 'What the audio actually needs')");
-    check(max_sample_job_clocks > 0 && max_sample_job_clocks < CLKHZ / 22050,
+    $display("");
+    $display("  ---- demand-side budget (clock-rate independent) ----");
+    $display("  clock %0d Hz, %0d clocks/sample", CLKHZ, CLKHZ / 22050);
+    $display("  samples rendered      %0d", samples);
+    $display("  walk clocks total     %0d  (%0d per sample avg, %0d worst run)",
+             walk_own, (samples != 0) ? walk_own / samples : 64'd0, max_walk_run);
+    $display("  seq FSM own clocks    %0d  (%0d worst uninterrupted tick job)",
+             fsm_own, max_tick_own);
+    $display("  seq frozen clocks     %0d", frozen_seq);
+    $display("  TOTAL busy per sample %0d of %0d",
+             (samples != 0) ? (walk_own + fsm_own) / samples : 64'd0, CLKHZ / 22050);
+    $display("  ---- sequencer clocks by state group ----");
+    begin
+      longint g_note, g_eff, g_slide, g_eng, g_pub, g_ins, g_ldst, g_mus;
+      g_note = st_clk[1]+st_clk[2]+st_clk[3]+st_clk[4]+st_clk[5]+st_clk[6]+st_clk[7]
+             + st_clk[8]+st_clk[9]+st_clk[10]+st_clk[11]+st_clk[12]+st_clk[13];
+      g_eff  = st_clk[14]+st_clk[15];
+      g_slide= st_clk[16]+st_clk[17]+st_clk[18]+st_clk[19]+st_clk[20]
+             + st_clk[21]+st_clk[22]+st_clk[23]+st_clk[24];
+      g_eng  = st_clk[25]+st_clk[26]+st_clk[27]+st_clk[28]+st_clk[29]+st_clk[30]
+             + st_clk[31]+st_clk[32]+st_clk[33];
+      g_pub  = st_clk[34]+st_clk[35]+st_clk[36]+st_clk[37]
+             + st_clk[38]+st_clk[39]+st_clk[40]+st_clk[41];
+      g_ins  = st_clk[42]+st_clk[43]+st_clk[44]+st_clk[45]+st_clk[46]
+             + st_clk[47]+st_clk[48]+st_clk[49]+st_clk[50];
+      g_ldst = st_clk[52]+st_clk[53]+st_clk[54];
+      g_mus  = st_clk[51]+st_clk[55]+st_clk[56]+st_clk[57]+st_clk[58]
+             + st_clk[59]+st_clk[60]+st_clk[61]+st_clk[62];
+      $display("  note fetch T_*/K_*    %0d", g_note);
+      $display("  EFFECT K_PF0/K_FX     %0d", g_eff);
+      $display("  slide detour K_SL*    %0d", g_slide);
+      $display("  tick engine EA*/ES*   %0d", g_eng);
+      $display("  publication P_W*/PC*  %0d", g_pub);
+      $display("  instrument I_*        %0d", g_ins);
+      $display("  record V_LD/V_ST/ROT  %0d", g_ldst);
+      $display("  music flow ML_*/MS_*  %0d", g_mus);
+      $display("  idle S_IDLE           %0d", st_clk[0]);
+    end
+    $display("");
+    $display("  synthesis deadline: worst %0d / 1275 clocks",
+             max_sample_job_clocks);
+    check(max_sample_job_clocks > 0 && max_sample_job_clocks < 1275,
           "all slot and mix work completes before the next sample");
     $display("  tick pre-run: worst %0d / %0d clocks after pre_tick, %0d spare, %0d late flips",
              max_tick_job_clocks, tick_window,

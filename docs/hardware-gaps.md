@@ -88,6 +88,12 @@ palette fades/flashes, chain multiplier, sudden death, and pervasive SFX.
    give inverse-video and one-pixel outlines for free. Suggested while porting
    NEMO's title screen.
 
+   **Where it lands now (2026-07-25, refactor-ppu-core).** The display path is
+   `rtl/ppu_display.sv`, and the mix is the `if (ovl_en && ovl_rdata[...])` at
+   the bottom of it. A combining mode is a change to that expression and to the
+   registers feeding it; it does not touch the engine FSM, the fetch or the
+   blit. That was the point of the split.
+
 9. **Layer priority for the overlay, and the fill-rate ceiling behind it.**
    OPEN, but **no longer needed for the case that raised it** - the clouds were
    solved by sprites instead. The sprite list is ordered, the behind-split at
@@ -103,10 +109,27 @@ palette fades/flashes, chain multiplier, sudden death, and pervasive SFX.
    shape of problem.
 
    The overlay is the console's framebuffer layer and it very nearly does the
-   job. What stops it is one line: `sprite_compositor.sv:317` mixes it with a
-   single mux, so it is always ABOVE tiles and sprites and always one colour.
-   Clouds need to be behind, in colour 1; the HUD needs to be in front, in
-   white; there is one plane and one priority, so they cannot coexist.
+   job. What stops it is one expression: the mix at the bottom of
+   `rtl/ppu_display.sv` is a single mux, so the overlay is always ABOVE tiles
+   and sprites and always one colour. Clouds need to be behind, in colour 1;
+   the HUD needs to be in front, in white; there is one plane and one priority,
+   so they cannot coexist.
+
+   **Two measurements from refactor-ppu-core that this entry needs.**
+
+   - **There is no spare block RAM.** The PPU is 16 of the hx8k's 32 and the
+     PSG is the other 16. A second overlay plane is +5, and eleven of the PPU's
+     sixteen are capacity-forced with no slack to reclaim (design.md of
+     refactor-ppu-core costs both width-forced consumers and rejects both).
+     The plane is affordable only against a device with more block RAM, or
+     against the 64 KB `ram_async` array being dealt with first - which is the
+     real blocker, since the chip does not place at all today.
+   - **The overlay's read multiplexer is now the PPU's critical path**: 2.15 ns
+     of block-RAM clock-to-q plus five LUT levels selecting between the five
+     blocks the 2560-byte array is spread across, into the colour register. A
+     second plane makes that mux wider, not narrower. Whatever closes this gap
+     should register the block select or narrow the array, not just add a
+     second one beside it.
 
    Cheapest fixes, in order:
    - **An overlay priority bit** (`$4005` bit 2): composite the overlay below
@@ -214,6 +237,29 @@ palette fades/flashes, chain multiplier, sudden death, and pervasive SFX.
     (8x8/8x16), SNES (two selectable sizes), **Mega Drive (1-4 cells per axis in
     one attribute-table entry)**, GBA (shape+size to 64x64). A fixed 8x8 entry
     is the TMS9918/2600 model, and this console inherited it.
+
+11. **Neither draw palette nor screen palette reads back.** OPEN, found
+    2026-07-25 by the golden-frame harness the first time anything asserted the
+    register map instead of reading it. `$4010-$401F` (draw palette) return the
+    corresponding **screen** palette entry, and `$4020-$402F` return 0.
+
+    One `casez` arm does both: it is `6'b01????`, which matches `$10-$1F` only,
+    and inside that range `addr[4]` - the bit the arm uses to choose between the
+    two palettes - is always 1. `$20-$2F` are `6'b10????` and match no arm at
+    all, so they fall through to the default. The discriminator wanted is
+    `addr[5:4]`: `01` -> draw, `10` -> screen.
+
+    **Writes are unaffected** and always have been - both palettes take their
+    values correctly, and the golden scenes render through them - so nothing on
+    screen is wrong and no port is affected. It is a readback decode bug only,
+    which is exactly why it survived: nothing had ever read them back.
+
+    Not fixed in `refactor-ppu-core`, deliberately: that change is
+    behaviour-preserving and its whole method is that every pixel and every
+    register value is identical before and after. Slipping a real change inside
+    it would defeat the point. `rtl/ppu_golden_tb.sv` asserts the behaviour **as
+    it is**, with a comment pointing here, so whoever fixes it will see the test
+    fail and know it is the assertion that has to move.
 
 ## Audio fidelity: what has been ruled out
 
@@ -691,6 +737,9 @@ still comfortably enough for the sixteen BRAM-streamed voices that
 `refactor-psg-voice-pool/design.md` budgets at ~320 clocks — so the voice-pool
 plan survives, but its headroom claim does not.
 
+> **SUPERSEDED 2026-07-29 — the "comfortably enough" above is wrong too, and
+> by an order of magnitude.** See "What the audio actually needs" below.
+
 **Not fixed here, deliberately.** Two candidate fixes, both owned by
 `refactor-psg-voice-pool` and both gated on its render comparison
 (`make psg-wav` must stay bit-identical):
@@ -706,3 +755,163 @@ Do not change `rtl/clocks.sv` without that gate.
 **Device-specific.** This is an HX8K result. The Tang Nano 20K's GW2AR-18C is a
 different fabric with hardware multipliers the PSG's volume multiply already
 infers, so the number does not carry over; it needs re-measuring there.
+
+## The PICO-8 binary is an exact oracle; the tolerance gates absorb OUR layers
+
+Established 2026-07-27 from the pre-5.1 diagnostic set
+(`build/psg_oracle/area-final/results.json`) and
+`/Applications/PICO-8.app/Contents/MacOS/pico8-psg-re.md`:
+
+1. **No hidden output filter.** wave-3-square, wave-4-pulse and length-only
+   match the PICO-8 exports at correlation 1.000000 / NRMSE 0.00001 - the two
+   shapes our RTL computes exactly pass the whole capture pipeline at
+   quantization level. A low/high-pass would deform square hardest, not least.
+2. **One mis-recovered constant.** All table waves sit at a systematic fitted
+   gain of +0.8%; pre-5.1 saw was the outlier at 1.0289, and our effective
+   slope times that fit is 0.6666. The binary's saw is exactly
+   `tz((x - 32768) / 4)` on the 16-bit phase; the generator's 0.653 is a
+   mis-recovery of 2/3's effect through the common scale.
+3. **The universal second phase.** Every waveform is `wave(p)/4 + wave(q0)/8`
+   with a 17-bit secondary phase and the common stage
+   `scale(z) = tz(G*z/3072)`, `G = tz(3a/2)` (noise divides by 2048). The RE
+   notes state outright that a single-phase textbook waveform cannot be
+   bit-equivalent. Our 256-entry single-period tables cannot bake the q0
+   term; that is the likely floor under the uniform ~1.5% post-fit NRMSE
+   while the two-phase detune probes sit at 0.0005.
+4. **Drop/dampen is the gate nearest its limit** (NRMSE 0.066-0.073 against
+   0.08) and the largest true shape divergence; the binary's exact recurrences
+   are in the RE notes, unmined. It is what rejected the triangle formula in
+   task 5.1.
+
+Consequence worth a proposal: the binary's native integer forms are cheaper
+than our approximations of them (truncating shifts, thresholds, one shared
+divide by 3072). Adopting its wave pipeline - 16-bit phase in, its exact
+formulas, G*z/3072 through the shared product service - could deliver
+byte-level wave exactness and compete on area, while widening the drop-gate
+headroom that currently constrains every wave decision.
+
+## Arithmetic shift right (measured 2026-07-28)
+
+The 6502 has no ASR, so every corpus that halves a signed value open-codes one
+out of `cmp #$80 / ror` - the compare exists only to put the sign bit into
+carry so `ror` can rotate it back into bit 7.
+
+Measured across all three corpora:
+
+| Shape | Sequence | celeste | nemo | breakout | total |
+| --- | --- | ---: | ---: | ---: | ---: |
+| accumulator | `cmp #$80` / `ror` | 3 | 0 | 4 | 7 |
+| word | `lda X+1` / `cmp #$80` / `ror X+1` / `ror X` | 2 | 0 | 0 | 2 |
+
+Nine sites over two corpora. Adopted in source as the `asr`/`asrw` pseudo-ops
+(`openspec/changes/add-isa-width-suffixes`), which are byte-identical to the
+sequences above, so both ROM images are unchanged by the migration.
+
+The projection, on this core's timings rather than NMOS: `ASR A` at 1 byte and
+2 cycles against 3 and 4 saves 2 bytes and 2 cycles per site; `ASRW zp` at 2
+bytes and a claimed 8-10 cycles against 8 and 13 saves 6 bytes and 3-5 cycles.
+The accumulator form is also the rarer kind of gap - the expansion's final
+flags already equal what the hardware instruction would produce, so adopting
+the instruction later changes no behaviour at all. The word form is not: it
+must load the high byte to test the sign, so as a pseudo-op it clobbers `A` and
+leaves `Z`/`N` from the low byte, where hardware would preserve `A` and set
+them from the 16-bit result.
+
+
+## What the audio actually needs, derived from the audio (2026-07-29)
+
+Every clock number in this file until now was derived from the SUPPLY side:
+the PLL runs at 112.5 MHz, /4 is the first division that closes, therefore the
+PSG has 1275 clocks per sample, therefore (it was assumed) plenty. The demand
+side — how many clocks does rendering 22050 Hz of PICO-8 audio actually
+require — had never been measured. It has now, two ways.
+
+### The requirement, bisected against the byte-exact oracle
+
+The oracle matrix renders 59 cases and compares every sample byte-for-byte
+against the frozen `adopt-exact` set. Re-running it at a swept `--clock` asks
+the only question that matters: at what rate does the chip stop producing the
+same audio?
+
+| clock | clocks/sample | oracle |
+| --- | --- | --- |
+| 28.125 MHz (shipping) | 1275 | 59/59 |
+| 27.0 MHz | 1224 | 59/59 |
+| 26.5 MHz | 1201 | **59/59** |
+| 26.25 MHz | 1190 | 58/59 — `mix-four` diverges |
+| 26.0 MHz | 1179 | 55/59 — `mix-four`, `pattern-chain`, both `filter-reverb-*` |
+
+**The PSG needs between 1190 and 1201 clocks per sample. It is given 1275.
+The real margin is 6-7%, not the 4x that "1275 against a ~320-clock budget"
+implies.** The binding case is `mix-four` — four voices sounding at once — and
+it is a SAMPLE-side limit, not a sequencer one.
+
+Restated as a frequency requirement, from first principles rather than from
+the PLL: **f_min = 22050 x 1201 = 26.48 MHz.** The shipping 28.125 MHz clears
+it by 6.2%. Routed Fmax is 36.19 MHz, so the design also has 29% of TIMING
+margin above the rate it runs at — two different margins that had been
+conflated.
+
+### psg_tb's deadline checks do not cover the binding constraint
+
+At 26.0 MHz `psg_tb` reports zero deadline failures — `synthesis deadline:
+worst 906 / 1275` — while four of the 59 oracle renders are wrong. Its
+accounting measures the walk's completion and the tick pre-run's bank flip;
+neither is what breaks first. The failures that do appear at 26 MHz are the
+slide trajectory checks, which are value checks, not deadline checks.
+
+So the "worst 906 / 1275" figure is real but it is not the margin: **the
+test's own stimulus is not the worst case, and its deadline definition is
+necessary but not sufficient.** Treat the oracle clock sweep as the margin
+measurement; treat psg_tb's deadline lines as a smoke test.
+
+### Where the clocks actually go
+
+Measured over 116,860 rendered samples (instrumented `psg_tb`, counters that
+are properties of the PROGRAM and so independent of the clock rate):
+
+| | clocks | share of all clocks |
+| --- | --- | --- |
+| synthesis walk (`prun` high) | 101,901,920 | **68.4%** |
+| sequencer FSM advancing | 144,033 | **0.097%** |
+| sequencer frozen behind the walk | 38,811 | 0.026% |
+| idle | ~46.9M | 31.5% |
+
+The walk averages **872 clocks per sample** and peaks at 906 under this
+stimulus. The sequencer's ENTIRE per-tick program averages **1.23 clocks per
+sample**.
+
+Sequencer occupancy by state group, over 638 ticks (includes frozen cycles):
+
+| group | clocks | per tick |
+| --- | --- | --- |
+| record streaming `V_LD`/`V_ST`/`K_ROT` | 79,854 | 125 |
+| **effect microprogram `K_PF0`/`K_FX`** | **36,957** | **58** |
+| slide detour `K_SL0..8` | 24,194 | 38 |
+| publication `P_W*`/`PC*` | 22,662 | 36 |
+| note fetch `T_*`/`K_NL`/`K_NH`/`K_LD`/`K_ARP*` | 10,670 | 17 |
+| tick engine `EA*`/`ES*` | 7,436 | 12 |
+| music flow `ML_*`/`MS_*` | 754 | 1.2 |
+| instrument `I_*` | 317 | 0.5 |
+
+**The effect microprogram is 58 clocks per tick — 20% of the sequencer's work
+and 0.02% of the chip's clocks — for a module that is 33% of its LUT4s.** The
+record streaming above it is more than twice as expensive in cycles and is the
+first thing to look at if the sequencer is ever re-serialised.
+
+### What this means for time-for-space trades
+
+The two margins point opposite ways and must not be confused:
+
+- **Cycle margin on the sample side is 6-7%, not 4x.** The walk cannot absorb
+  a serialisation that costs it more than ~70 clocks per sample without
+  raising the clock, and raising the clock is not free (see PSGDIV above).
+- **Cycle margin on the tick side is enormous** — the sequencer uses 0.1% of
+  the clocks for 33% of the logic. Anything traded there is nearly free in
+  time and expensive in area today, which is exactly backwards.
+
+So: further time-for-space work belongs in `psg_seq`, and essentially nowhere
+else. And it should take the form that this fabric rewards — moving selection
+and constants onto BRAM ports, which have no per-bit input muxes — rather than
+slicing wide ALUs into narrow ones, which has been measured to lose here
+repeatedly (see `openspec/changes/reduce-psg-ice40-area/design.md`).
