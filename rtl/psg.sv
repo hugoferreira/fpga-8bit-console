@@ -155,9 +155,33 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire         prun, fold_busy;
   wire         walk_frozen = seq_frozen | prun | state_replay | fold_busy;
 
+  // ------------------------------------------------------------------
+  // One write, one effect.
+  //
+  // The CPU bus arrives as a LEVEL, from a clock that need not be this one, and
+  // every write consumer in this chip acts on `cs && rw` in THIS domain. The
+  // interactive simulator clocks the core at HALF the PSG's rate
+  // (rtl/top_simulator.sv's PSGSIMDIV = 2), so one store stayed visible across
+  // two PSG clocks and executed TWICE. On the upload port that advanced the
+  // address by two per byte, so the cart's audio image landed in alternate
+  // bytes and every pattern row and SFX record was left half stale - while the
+  // source blob was still byte-exact, and psg_wav (one clock domain, one clock
+  // per write) still rendered perfectly. That is the whole reason `make run`
+  // sounded corrupted with every render, oracle case and gate green.
+  //
+  // Reads are idempotent and keep the raw level; only writes are strobed.
+  //
+  // One pulse per write needs cs to fall between two writes, which it does: cs
+  // is an address decode, and consecutive stores are separated by instruction
+  // fetches outside the PSG's window. A future bus that can hold cs across
+  // back-to-back writes would need a real handshake here instead.
+  logic cs_wr_q;
+  always_ff @(posedge clk) cs_wr_q <= cs && rw;
+  wire  cs_wr = (cs && rw) && !cs_wr_q;
+
   psg_aram u_aram(
     .clk(clk), .reset(reset),
-    .cs(cs), .rw(rw), .addr(addr), .di(di),
+    .cs(cs_wr), .rw(rw), .addr(addr), .di(di),
     .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
     .seq_q(seq_q), .seq_frozen(seq_frozen));
 
@@ -309,7 +333,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // and the CPU's control writes.
   psg_seq u_seq(
     .clk(clk), .reset(reset),
-    .cs(cs), .rw(rw), .addr(addr), .di(di),
+    .cs(cs_wr), .rw(rw), .addr(addr), .di(di),
     .play_bits(play_bits), .trig_req(trig_req),
     .aud_sfx_bits(aud_sfx_bits), .aud_row_bits(aud_row_bits),
     .mus_playing(mus_playing), .mus_pat(mus_pat), .mus_mask(mus_mask),

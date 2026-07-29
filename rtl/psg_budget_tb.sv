@@ -40,7 +40,8 @@
 // build has to come out silent.
 `timescale 1ns/1ps
 
-module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000);
+module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
+                       parameter int PREVIEW_P = 0);
   // Exercise the board's actual divide-by-four PSG clock. Test runtime is not
   // a synthesis constraint: only declared-clock cycles between sample_en
   // pulses matter, and the hardware provides at least 1275 of them.
@@ -56,7 +57,18 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000);
   logic [7:0] dout;
   logic signed [15:0] pcm;   // the PSG is 16-bit now
 
-  psg #(.CLK_HZ(CLKHZ)) dut(
+  // PREVIEW_P forwards REALTIME_PREVIEW to the DUT, so the demand numbers can be
+  // read on the schedule that `make run` actually executes and not only on the
+  // hardware one. docs/psg-preview-handover.md asks for exactly this measurement
+  // and it was not possible before: this instantiation hardcoded the hardware
+  // schedule, so every "what does the audio need" figure in the docs describes a
+  // program the interactive console does not run.
+  //
+  // Expect psg_tb's functional checks to complain at PREVIEW_P=1: the preview
+  // schedule is a deliberate approximation (it skips the old-state crossfade and
+  // folds fewer terms), so it is the COUNTERS that are meaningful here, not the
+  // pass/fail. Correctness of the preview schedule is tools/psg_preview_check.py.
+  psg #(.CLK_HZ(CLKHZ), .REALTIME_PREVIEW(PREVIEW_P)) dut(
     .clk(clk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di),
     .dout(dout), .pcm(pcm),
@@ -1030,9 +1042,14 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000);
       $display("  idle S_IDLE           %0d", st_clk[0]);
     end
     $display("");
-    $display("  synthesis deadline: worst %0d / 1275 clocks",
-             max_sample_job_clocks);
-    check(max_sample_job_clocks > 0 && max_sample_job_clocks < 1275,
+    // Against the budget THIS clock supplies, not the board's 1275. The
+    // hardcoded 1275 made the check vacuous at every lower clock - at the
+    // console's 3,506,580 the real budget is 159, so a walk overrunning it by
+    // eight times still reported "ok", which is precisely the comfort a fit
+    // investigation must not be given.
+    $display("  synthesis deadline: worst %0d / %0d clocks",
+             max_sample_job_clocks, CLKHZ / 22050);
+    check(max_sample_job_clocks > 0 && max_sample_job_clocks < CLKHZ / 22050,
           "all slot and mix work completes before the next sample");
     $display("  tick pre-run: worst %0d / %0d clocks after pre_tick, %0d spare, %0d late flips",
              max_tick_job_clocks, tick_window,

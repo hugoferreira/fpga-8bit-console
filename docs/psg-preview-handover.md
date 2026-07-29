@@ -3,6 +3,25 @@
 Goal: retire `PSGSIMDIV = 2` from `rtl/top_simulator.sv`, so `make run` gets
 correct audio at ~80 fps instead of correct audio at 46 fps.
 
+> **Correction (2026-07-30).** "Correct audio at 46 fps" was not true when this
+> was written. The clock split it describes made the CPU run at *half* the PSG's
+> rate, and every write consumer in the chip acted on `cs && rw` as a level in
+> the PSG's domain - so each store executed **twice**, the upload port advanced
+> its address by two per byte, and the cart's audio image landed in alternate
+> bytes of `psg_aram`. `make run` played a corrupted image of Celeste's music
+> while the source blob was byte-exact, the 59-case oracle was byte-identical,
+> and `psg_wav` (one clock domain, one clock per write) rendered perfectly.
+> Fixed by strobing the write in `rtl/psg.sv`; the oracle stays 59/59.
+>
+> Nothing could see it because nothing could hear the console: `psg_wav` has no
+> CPU and no game, and the oracle builds `REALTIME_PREVIEW=0`. The console now
+> dumps its own audio - `build/obj_dir/console --audio-wav out.wav` - and
+> `tools/p8_music_wav.py` records real PICO-8 for a whole track to diff it
+> against, via `tools/psg_ref_check.py`. Use those on any audio claim about
+> `make run`; the `--audio-trace` distinct-level/effective-bit numbers this doc
+> cites as a gate read as HEALTHY throughout the corruption (15.3 bits, 40k
+> levels) and cannot be used to tell correct audio from garbage.
+
 Prior work: `c8a2007` (the preview gate), `6f9429b` (five preview bugs, hardware
 bit-identical), `64dbc0a` (the clock-split stopgap and the numbers behind it).
 

@@ -50,9 +50,18 @@ static void tick() {
 // NOTE: `rw` is wired to the bus's mem_write in chip.sv, so rw HIGH is a
 // WRITE. Getting that backwards produces a chip that accepts nothing and
 // renders silence, which looks exactly like a synthesis bug.
+// How many PSG clocks the write is held for. One is what a single-clock-domain
+// CPU produces. The interactive console runs the CPU at HALF the PSG's clock
+// (rtl/top_simulator.sv, PSGSIMDIV = 2), so its writes are visible for TWO PSG
+// clocks - and every write consumer in the chip acts on `cs && rw` as a level,
+// so each one executes twice. `--wr-hold 2` reproduces the console's audio here,
+// where it can be rendered and diffed; it is the regression knob for that class
+// of bug, not a normal setting.
+static int wr_hold = 1;
+
 static void wr(uint8_t addr, uint8_t data) {
     dut->cs = 1; dut->rw = 1; dut->addr = addr; dut->di = data;
-    tick();
+    for (int i = 0; i < wr_hold; i++) tick();
     dut->cs = 0; dut->rw = 0; dut->addr = 0; dut->di = 0;
     tick();
 }
@@ -88,6 +97,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--seconds") && i + 1 < argc) seconds = atof(argv[++i]);
         else if (!strcmp(argv[i], "--samples") && i + 1 < argc) samples = atol(argv[++i]);
         else if (!strcmp(argv[i], "--clk") && i + 1 < argc) CLK_HZ = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--wr-hold") && i + 1 < argc) wr_hold = atoi(argv[++i]);
     }
     if (!audio) { fprintf(stderr, "need --audio <4608-byte image>\n"); return 1; }
     capture_dec = (long)CLK_HZ - RATE;

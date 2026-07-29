@@ -78,6 +78,33 @@ static std::string resolve_symbol(uint32_t addr) {
 }
 
 // Framebuffer -> binary PPM, so a headless run can be inspected.
+// Dump the console's own audio, which is the ONLY way to hear what `make run`
+// plays. sim/psg_wav.cpp renders the PSG with no CPU, no game and no video, so
+// it cannot see anything the game's register writes do; the PSG oracle cannot
+// see the preview schedule at all. A render that is right in both still reaches
+// the speakers through this path.
+static void write_wav(const char* path, const std::vector<int16_t>& pcm,
+                      int rate) {
+    FILE* f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "cannot write %s\n", path); return; }
+    uint32_t bytes = (uint32_t)(pcm.size() * sizeof(int16_t));
+    auto u32 = [&](uint32_t v) { fwrite(&v, 4, 1, f); };
+    auto u16 = [&](uint16_t v) { fwrite(&v, 2, 1, f); };
+    fwrite("RIFF", 1, 4, f);  u32(36 + bytes);  fwrite("WAVE", 1, 4, f);
+    fwrite("fmt ", 1, 4, f);  u32(16);
+    u16(1);                   // PCM
+    u16(1);                   // mono
+    u32((uint32_t)rate);
+    u32((uint32_t)rate * 2);  // byte rate
+    u16(2);                   // block align
+    u16(16);                  // bits
+    fwrite("data", 1, 4, f);  u32(bytes);
+    fwrite(pcm.data(), 1, bytes, f);
+    fclose(f);
+    printf("wrote %s (%zu samples, %d Hz, %.2fs)\n", path, pcm.size(), rate,
+           (double)pcm.size() / rate);
+}
+
 static void write_ppm(const char* path, const std::vector<uint32_t>& fb,
                       int w, int h) {
     FILE* f = fopen(path, "wb");
@@ -102,6 +129,7 @@ int main(int argc, char** argv) {
     long max_frames = 0;                  // 0 = run until quit
     const char* shot = nullptr;
     bool audio_trace = false;             // per-frame audio energy to stdout
+    const char* audio_wav = nullptr;      // dump what the console actually plays
     bool psg_trace = false;               // per-frame PSG channel state
     const char* sym_path = nullptr;
     const char* resolve_addr = nullptr;
@@ -113,6 +141,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc)
             shot = argv[++i];
         else if (!strcmp(argv[i], "--audio-trace")) audio_trace = true;
+        else if (!strcmp(argv[i], "--audio-wav") && i + 1 < argc)
+            audio_wav = argv[++i];
         else if (!strcmp(argv[i], "--psg-trace")) psg_trace = true;
         else if (!strcmp(argv[i], "--sym") && i + 1 < argc)
             sym_path = argv[++i];
@@ -174,6 +204,9 @@ int main(int argc, char** argv) {
     std::vector<uint32_t> fb(W * H, 0);
     std::vector<int16_t> abuf;
     abuf.reserve(1024);
+    std::vector<int16_t> wavbuf;          // every sample the console produced
+    long adropped = 0, aqueued = 0;       // frames handed to SDL, and thrown away
+    long aunderrun = 0;                   // frames where the queue had run dry
     long aerr = 0;                        // 735 samples per 19481 pixels
     long asamples = 0, anonzero = 0;      // headless audio activity check
     int amin = 32767, amax = -32768;
@@ -205,6 +238,7 @@ int main(int argc, char** argv) {
             // sign has to be put back explicitly.
             int16_t smp = (int16_t)tb->audio;
             abuf.push_back(smp);
+            if (audio_wav) wavbuf.push_back(smp);
             asamples++;
             if (smp != 0) anonzero++;
             if (smp < amin) amin = smp;
@@ -272,9 +306,19 @@ int main(int argc, char** argv) {
             if (max_frames && (long)frame >= max_frames) running = false;
 
             if (adev) {
-                if (SDL_GetQueuedAudioSize(adev) < 4 * 735 * 2)
+                // The queue running dry is what a listener hears as crackle:
+                // the device plays silence until the next frame arrives. The
+                // drop on the other side is silent too - the frame's samples
+                // are discarded, not deferred, so the music skips forward.
+                Uint32 queued = SDL_GetQueuedAudioSize(adev);
+                if (queued < (Uint32)(2 * 735 * 2)) aunderrun++;
+                if (queued < 4 * 735 * 2) {
                     SDL_QueueAudio(adev, abuf.data(),
                                    (Uint32)(abuf.size() * sizeof(int16_t)));
+                    aqueued++;
+                } else {
+                    adropped++;
+                }
                 abuf.clear();
             }
             if (!headless) {
@@ -324,6 +368,18 @@ int main(int argc, char** argv) {
                asamples, anonzero,
                asamples ? 100.0 * anonzero / asamples : 0.0, amin, amax,
                adistinct, adistinct > 1 ? log2((double)adistinct) : 0.0);
+    if (adev) {
+        // 44100 Hz consumed against 735 samples per EMULATED frame: a sim that
+        // does not hold 60 fps cannot keep the device fed, however correct the
+        // samples are.
+        double secs = std::chrono::duration<double>(clockk::now() - t0).count();
+        printf("audio delivery: %ld frames queued, %ld dropped (queue full), "
+               "%ld frames with the queue near-dry; produced %.0f samples/s for "
+               "a %d Hz device (%.0f%% of real time)\n",
+               aqueued, adropped, aunderrun, secs > 0 ? asamples / secs : 0.0,
+               44100, secs > 0 ? 100.0 * asamples / secs / 44100 : 0.0);
+    }
+    if (audio_wav) write_wav(audio_wav, wavbuf, 44100);
     if (shot) write_ppm(shot, fb, W, H);
     if (adev) SDL_CloseAudioDevice(adev);
     if (tex) SDL_DestroyTexture(tex);
