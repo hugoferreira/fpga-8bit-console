@@ -841,10 +841,21 @@ same audio?
 | 26.25 MHz | 1190 | 58/59 — `mix-four` diverges |
 | 26.0 MHz | 1179 | 55/59 — `mix-four`, `pattern-chain`, both `filter-reverb-*` |
 
-**The PSG needs between 1190 and 1201 clocks per sample. It is given 1275.
-The real margin is 6-7%, not the 4x that "1275 against a ~320-clock budget"
-implies.** The binding case is `mix-four` — four voices sounding at once — and
-it is a SAMPLE-side limit, not a sequencer one.
+**For these 59 cases the PSG needs between 1190 and 1201 clocks per sample. It
+is given 1275 — a 6-7% margin, not the 4x that "1275 against a ~320-clock
+budget" implies.** The binding case is `mix-four`.
+
+It is NOT a sample-side limit, despite `mix-four` being a mixing case. The
+walk's length is a constant: `pph` runs 0..PLAST for each of eight slots, so
+the walk is exactly 8 x 109 = **872 clocks regardless of content** — which is
+precisely the average AND the maximum the instrumented run measured. Add the
+post-walk fold and the sample side is a flat 906. Nothing about it varies, so
+nothing about it can be what breaks first. The variable is the tick program,
+which spans up to six sample intervals and is frozen for 872 of every 1275
+clocks in each of them.
+
+**And the 1190-1201 figure only describes these 59 cases. A real cart does not
+behave this way at all — see below.**
 
 Restated as a frequency requirement, from first principles rather than from
 the PLL: **f_min = 22050 x 1201 = 26.48 MHz.** The shipping 28.125 MHz clears
@@ -915,3 +926,60 @@ else. And it should take the form that this fabric rewards — moving selection
 and constants onto BRAM ports, which have no per-bit input muxes — rather than
 slicing wide ALUs into narrow ones, which has been measured to lose here
 repeatedly (see `openspec/changes/reduce-psg-ice40-area/design.md`).
+
+
+## A real cart is not clock-invariant AT ALL (2026-07-29)
+
+The oracle's 59 cases are one to three seconds each and mostly exercise a
+single event. Celeste is the obvious next question, and the answer is worse
+than a margin.
+
+Rendering `celeste-15133.p8.png` music 0 for 60 s (`sim/psg_wav.cpp` built at
+`-GCLK_HZ=<f>`, `--clk <f>`) and byte-comparing every pair:
+
+| pair | first difference | samples differing |
+| --- | --- | --- |
+| 28.125 vs 30.0 MHz | 8.4982 s | 79.6% |
+| 28.125 vs 27.0 MHz | 8.4985 s | 66.2% |
+| 28.125 vs 26.5 MHz | 8.4985 s | 66.2% |
+| 30.0 vs 27.0 MHz | 8.4982 s | 60.6% |
+| 27.0 vs 26.5 MHz | 9.3036 s | 35.1% |
+
+**Every clock renders differently, including 30 MHz — MORE clocks per sample
+than the shipping 28.125.** So this cannot be a shortage of cycles. The
+differences are not small and not a timing shift: peak deviation is 197% of
+the signal's own peak, the difference RMS exceeds the signal RMS, and testing
+alignments from -40 to +40 samples confirms shift 0 is the best fit. The two
+renders are identical sample-for-sample until the divergence and then simply
+play different audio.
+
+The divergence instant is not arbitrary. 187,392 samples is **tick 1024.000
+exactly** — a tick boundary, and for Celeste's music 0 a pattern-chain event.
+Corroborating it from the other direction: of the four oracle cases that break
+first at 26 MHz, one is `pattern-chain`, the only case in the matrix that
+chains patterns at all.
+
+**Prime suspect, not yet root-caused:** the deferred pattern-length capture in
+`rtl/psg_seq.sv`. It is deliberately ungated by `walk_frozen` — the product is
+launched fire-and-forget at `T_NL` and picked up "before that sample's own
+PWORK+4 product reuses `m_res`", a race the comment prices at nine cycles of
+margin. That margin is denominated in clocks while the thing it races is
+positioned by clocks-per-SAMPLE, so changing the clock in EITHER direction
+re-phases it. The existing `$error` guard covers only the launch being blocked
+by a busy multiplier, not the capture losing its race.
+
+**What this means, and it is not a margin statement:** 28.125 MHz is not a
+floor that the design clears with 6%. For real cart content it is a FIXED
+POINT that the rendered audio is pinned to. The oracle's byte-exact gate
+cannot see this because its cases are too short to reach a pattern chain.
+
+Consequences to take seriously:
+
+- The `psgclk` divider cannot be changed - in either direction - without
+  re-adjudicating every render. `PSGDIV` was already documented as one-way for
+  a different reason; this makes it one-way for a stronger one.
+- Porting to another board is affected. The Tang Nano 20K path has its own PLL
+  and its own achievable frequencies; on this evidence it will not render the
+  same audio unless it is given exactly 1275 clocks per sample.
+- The oracle matrix should grow a long, pattern-chaining case. It is the one
+  class of content its 59 cases do not cover, and it is the class that fails.
