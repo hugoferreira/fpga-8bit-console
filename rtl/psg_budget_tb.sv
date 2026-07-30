@@ -46,7 +46,12 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   // a synthesis constraint: only declared-clock cycles between sample_en
   // pulses matter, and the hardware provides at least 1275 of them.
   localparam CLKHZ = CLKHZ_P;
-  localparam CLKS_PER_TICK = 233_418;  // floor(CLKHZ * 183 / 22050)
+  // floor(CLKHZ * 183 / 22050), DERIVED - it used to be the literal 233_418,
+  // which is that expression for 28.125 MHz only. At any other -GCLKHZ_P every
+  // `ticks(n)` ran for the wrong span (at the console's 3,506,580, eight times
+  // too long), so timing results away from the default clock meant nothing. The
+  // widening matters: CLKHZ * 183 overflows 32 bits at this clock.
+  localparam int CLKS_PER_TICK = int'(longint'(CLKHZ) * 183 / 22050);
 
   bit clk = 0;
   always #5 clk = ~clk;
@@ -102,6 +107,14 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   longint st_clk[0:63];
   int tick_own = 0, max_tick_own = 0;
   int walk_run = 0, max_walk_run = 0;
+  // Writes the store DROPPED. rtl/psg_state_mem.sv resolves a collision as
+  // `state_wa = wlk_we ? wlk_wa : etk_wa`, so a tick-engine write coincident
+  // with a walk write is lost, not stalled - safe only while every sequencer
+  // request is gated on !walk_frozen. Nothing checked that, and a lost write
+  // corrupts oscillator state without costing a clock, so no budget or deadline
+  // counter here can see it. That is the shape of failure left when the audio is
+  // wrong at a clock whose budget demonstrably fits.
+  longint state_wr_lost = 0;
 
   // Hardware-deadline accounting, independent of host runtime. A job is complete
   // only after all eight slot visits and the three post-walk soft-add levels
@@ -111,6 +124,7 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
       total_clk++;
       if (dut.sample_en) samples++;
       st_clk[dut.u_seq.sst]++;
+      if (dut.u_state.wlk_we && dut.u_state.etk_we) state_wr_lost++;
       if (dut.prun) begin walk_own++; walk_run++; end
       else begin
         if (walk_run > max_walk_run) max_walk_run = walk_run;
@@ -357,8 +371,132 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   int seen_rows[0:63];
   int nrows;
 
+  // Zero the counters without resetting the DUT. Reset would wipe the uploaded
+  // audio image, so the cart profile cannot use it to exclude the ~9k clocks the
+  // 4608-byte upload itself takes.
+  task zero_counters;
+    for (int i = 0; i < 64; i++) st_clk[i] = 0;
+    fsm_own = 0; walk_own = 0; frozen_seq = 0; total_clk = 0; samples = 0;
+    tick_own = 0; max_tick_own = 0; walk_run = 0; max_walk_run = 0;
+    sample_job_clocks = 0; max_sample_job_clocks = 0; sample_job_active = 0;
+    tick_job_clocks = 0; max_tick_job_clocks = 0; tick_job_active = 0;
+    tick_window_clocks = 0; tick_window = 0; tick_window_active = 0;
+    tick_busy_at_pretick = 0; late_flips = 0;
+  endtask
+
+  // ---- a REAL cart's demand ----------------------------------------------
+  // +audio=<hex> profiles an actual cart's audio image instead of the test bank
+  // this file constructs. That matters for the fit work: the handover's target is
+  // a cart's demand - Celeste's - while every state-group figure in the docs
+  // describes the test bank, which is a pile of one-assumption probes and sounds
+  // nothing like a song. Shrinking a state group the cart barely enters buys the
+  // console nothing.
+  //
+  // The image is the 4608 bytes tools/p8_audio.py extracts ($3100-$42FF), as hex
+  // one byte per line ($readmemh, this repo's idiom for rtl/ram.hex, rather than
+  // $fread):
+  //   python3 -c "import sys; [print('%02x' % b) for b in open(sys.argv[1],'rb').read()]" \
+  //     build/p8ref/celeste-audio.bin > build/p8ref/celeste-audio.hex
+  //
+  // Usage: +audio=<hex> [+music=<pattern>] [+ticks=<n>]  (a tick is ~1/120.5 s)
+  task cart_profile(input string path, input int pat, input int nticks);
+    $readmemh(path, img);
+    upload();
+    wr(8'h21, 8'h07);                    // channels 0-2 to music, as carts ask
+    wr(8'h20, 8'(pat));                  // start the pattern chain
+    ticks(2);                            // let the first tick land
+    zero_counters();                     // measure the SONG, not the upload
+    state_wr_lost = 0;
+    ticks(nticks);
+    $display("");
+    $display("=== cart demand profile: %s, music %0d, %0d ticks, %s schedule",
+             path, pat, nticks, (PREVIEW_P != 0) ? "PREVIEW" : "hardware");
+    report_demand();
+  endtask
+
+  // The whole demand report, so the cart profile below prints exactly what
+  // the test-bank run prints and the two can be compared line for line.
+  task report_demand;
+    $display("");
+    $display("  ---- demand-side budget (clock-rate independent) ----");
+    $display("  clock %0d Hz, %0d clocks/sample", CLKHZ, CLKHZ / 22050);
+    $display("  samples rendered      %0d", samples);
+    $display("  walk clocks total     %0d  (%0d per sample avg, %0d worst run)",
+             walk_own, (samples != 0) ? walk_own / samples : 64'd0, max_walk_run);
+    $display("  seq FSM own clocks    %0d  (%0d worst uninterrupted tick job)",
+             fsm_own, max_tick_own);
+    $display("  seq frozen clocks     %0d", frozen_seq);
+    $display("  TOTAL busy per sample %0d of %0d",
+             (samples != 0) ? (walk_own + fsm_own) / samples : 64'd0, CLKHZ / 22050);
+    $display("  state writes LOST     %0d  (walk/tick collision, silently dropped)",
+             state_wr_lost);
+    check(state_wr_lost == 0,
+          "no tick-engine write was dropped by a colliding walk write");
+    $display("  ---- sequencer clocks by state group ----");
+    begin
+      longint g_note, g_eff, g_slide, g_eng, g_pub, g_ins, g_ldst, g_mus;
+      g_note = st_clk[1]+st_clk[2]+st_clk[3]+st_clk[4]+st_clk[5]+st_clk[6]+st_clk[7]
+             + st_clk[8]+st_clk[9]+st_clk[10]+st_clk[11]+st_clk[12]+st_clk[13];
+      g_eff  = st_clk[14]+st_clk[15];
+      g_slide= st_clk[16]+st_clk[17]+st_clk[18]+st_clk[19]+st_clk[20]
+             + st_clk[21]+st_clk[22]+st_clk[23]+st_clk[24];
+      g_eng  = st_clk[25]+st_clk[26]+st_clk[27]+st_clk[28]+st_clk[29]+st_clk[30]
+             + st_clk[31]+st_clk[32]+st_clk[33];
+      g_pub  = st_clk[34]+st_clk[35]+st_clk[36]+st_clk[37]
+             + st_clk[38]+st_clk[39]+st_clk[40]+st_clk[41];
+      g_ins  = st_clk[42]+st_clk[43]+st_clk[44]+st_clk[45]+st_clk[46]
+             + st_clk[47]+st_clk[48]+st_clk[49]+st_clk[50];
+      g_ldst = st_clk[52]+st_clk[53]+st_clk[54];
+      g_mus  = st_clk[51]+st_clk[55]+st_clk[56]+st_clk[57]+st_clk[58]
+             + st_clk[59]+st_clk[60]+st_clk[61]+st_clk[62];
+      $display("  note fetch T_*/K_*    %0d", g_note);
+      $display("  EFFECT K_PF0/K_FX     %0d", g_eff);
+      $display("  slide detour K_SL*    %0d", g_slide);
+      $display("  tick engine EA*/ES*   %0d", g_eng);
+      $display("  publication P_W*/PC*  %0d", g_pub);
+      $display("  instrument I_*        %0d", g_ins);
+      $display("  record V_LD/V_ST/ROT  %0d", g_ldst);
+      $display("  music flow ML_*/MS_*  %0d", g_mus);
+      $display("  idle S_IDLE           %0d", st_clk[0]);
+    end
+    $display("");
+    // Against the budget THIS clock supplies, not the board's 1275. The
+    // hardcoded 1275 made the check vacuous at every lower clock - at the
+    // console's 3,506,580 the real budget is 159, so a walk overrunning it by
+    // eight times still reported "ok", which is precisely the comfort a fit
+    // investigation must not be given.
+    $display("  synthesis deadline: worst %0d / %0d clocks",
+             max_sample_job_clocks, CLKHZ / 22050);
+    check(max_sample_job_clocks > 0 && max_sample_job_clocks < CLKHZ / 22050,
+          "all slot and mix work completes before the next sample");
+    $display("  tick pre-run: worst %0d / %0d clocks after pre_tick, %0d spare, %0d late flips",
+             max_tick_job_clocks, tick_window,
+             tick_window - max_tick_job_clocks, late_flips);
+    check(max_tick_job_clocks > 0,
+          "each tick evaluation stages its bank before the boundary");
+    check(late_flips == 0,
+          "no boundary flip was delayed by a colliding trigger pass");
+  endtask
+
   initial begin
     for (int i = 0; i < 4608; i++) img[i] = 0;
+
+    // +audio takes over the run: the test bank below would overwrite the cart's
+    // image with its own probes, and its checks describe that bank, not a song.
+    begin
+      automatic string cart_path = "";
+      automatic int    cart_pat = 0, cart_ticks = 500;
+      if ($value$plusargs("audio=%s", cart_path)) begin
+        void'($value$plusargs("music=%d", cart_pat));
+        void'($value$plusargs("ticks=%d", cart_ticks));
+        repeat (8) @(posedge clk);
+        reset = 0;
+        cart_profile(cart_path, cart_pat, cart_ticks);
+        if (errors == 0) $display("ALL TESTS PASSED");
+        else             $display("%0d TEST(S) FAILED", errors);
+        $finish;
+      end
+    end
 
     // sfx0: loop test - speed 4, rows all audible, loop rows [2,6)
     for (int r = 0; r < 32; r++) set_note(0, r, 30 + r % 8, 0, 7, 0);
@@ -1003,61 +1141,7 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
     check(ch_damp_of(3) == 2'd0, "filter byte 224 decodes dampen 0");
     wr(8'h13, 8'h80);
 
-    $display("");
-    $display("  ---- demand-side budget (clock-rate independent) ----");
-    $display("  clock %0d Hz, %0d clocks/sample", CLKHZ, CLKHZ / 22050);
-    $display("  samples rendered      %0d", samples);
-    $display("  walk clocks total     %0d  (%0d per sample avg, %0d worst run)",
-             walk_own, (samples != 0) ? walk_own / samples : 64'd0, max_walk_run);
-    $display("  seq FSM own clocks    %0d  (%0d worst uninterrupted tick job)",
-             fsm_own, max_tick_own);
-    $display("  seq frozen clocks     %0d", frozen_seq);
-    $display("  TOTAL busy per sample %0d of %0d",
-             (samples != 0) ? (walk_own + fsm_own) / samples : 64'd0, CLKHZ / 22050);
-    $display("  ---- sequencer clocks by state group ----");
-    begin
-      longint g_note, g_eff, g_slide, g_eng, g_pub, g_ins, g_ldst, g_mus;
-      g_note = st_clk[1]+st_clk[2]+st_clk[3]+st_clk[4]+st_clk[5]+st_clk[6]+st_clk[7]
-             + st_clk[8]+st_clk[9]+st_clk[10]+st_clk[11]+st_clk[12]+st_clk[13];
-      g_eff  = st_clk[14]+st_clk[15];
-      g_slide= st_clk[16]+st_clk[17]+st_clk[18]+st_clk[19]+st_clk[20]
-             + st_clk[21]+st_clk[22]+st_clk[23]+st_clk[24];
-      g_eng  = st_clk[25]+st_clk[26]+st_clk[27]+st_clk[28]+st_clk[29]+st_clk[30]
-             + st_clk[31]+st_clk[32]+st_clk[33];
-      g_pub  = st_clk[34]+st_clk[35]+st_clk[36]+st_clk[37]
-             + st_clk[38]+st_clk[39]+st_clk[40]+st_clk[41];
-      g_ins  = st_clk[42]+st_clk[43]+st_clk[44]+st_clk[45]+st_clk[46]
-             + st_clk[47]+st_clk[48]+st_clk[49]+st_clk[50];
-      g_ldst = st_clk[52]+st_clk[53]+st_clk[54];
-      g_mus  = st_clk[51]+st_clk[55]+st_clk[56]+st_clk[57]+st_clk[58]
-             + st_clk[59]+st_clk[60]+st_clk[61]+st_clk[62];
-      $display("  note fetch T_*/K_*    %0d", g_note);
-      $display("  EFFECT K_PF0/K_FX     %0d", g_eff);
-      $display("  slide detour K_SL*    %0d", g_slide);
-      $display("  tick engine EA*/ES*   %0d", g_eng);
-      $display("  publication P_W*/PC*  %0d", g_pub);
-      $display("  instrument I_*        %0d", g_ins);
-      $display("  record V_LD/V_ST/ROT  %0d", g_ldst);
-      $display("  music flow ML_*/MS_*  %0d", g_mus);
-      $display("  idle S_IDLE           %0d", st_clk[0]);
-    end
-    $display("");
-    // Against the budget THIS clock supplies, not the board's 1275. The
-    // hardcoded 1275 made the check vacuous at every lower clock - at the
-    // console's 3,506,580 the real budget is 159, so a walk overrunning it by
-    // eight times still reported "ok", which is precisely the comfort a fit
-    // investigation must not be given.
-    $display("  synthesis deadline: worst %0d / %0d clocks",
-             max_sample_job_clocks, CLKHZ / 22050);
-    check(max_sample_job_clocks > 0 && max_sample_job_clocks < CLKHZ / 22050,
-          "all slot and mix work completes before the next sample");
-    $display("  tick pre-run: worst %0d / %0d clocks after pre_tick, %0d spare, %0d late flips",
-             max_tick_job_clocks, tick_window,
-             tick_window - max_tick_job_clocks, late_flips);
-    check(max_tick_job_clocks > 0,
-          "each tick evaluation stages its bank before the boundary");
-    check(late_flips == 0,
-          "no boundary flip was delayed by a colliding trigger pass");
+    report_demand();
 
     if (errors == 0)
       $display("ALL TESTS PASSED");
