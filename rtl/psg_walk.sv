@@ -157,6 +157,10 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   //        slot the ring is about to rotate it into, and step on
   // ------------------------------------------------------------------
   logic [14:0] lfsr;
+  // Sample parity for the noise walk's alternating step. One bit, flipped per
+  // sample rather than per slot, so every voice steps on the same samples - the
+  // binary keeps this per voice, but they advance in lockstep either way.
+  logic        nz_tog;
   logic [PSG_VW-1:0] pc_ch;
   // A slot's visit is deliberately long and serial. It loads the oscillator
   // words followed by the active four-word parameter bank, renders the new and
@@ -473,9 +477,26 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   //     multiply the hash would need.
   // tools/psg_fidelity_gate.py is what holds this to PICO-8.
   wire  [12:0] nz_dp   = einc[20:8];                  // PICO-8's dp
-  wire  signed [8:0] nz_rand = $signed({lfsr[7], lfsr[7:0]});
-  // step ~ +-J/2 with J = 8*dp: (rand/128) * 4*dp = rand*dp >> 5.
-  wire  signed [22:0] nz_step = ($signed({1'b0, nz_dp}) * nz_rand) >>> 5;
+  // The draw, ADVANCED 8 STEPS. The register shifts one bit per sample, so
+  // lfsr[7:0] shares seven bits with the previous sample's draw: successive
+  // steps are correlated and the walk drifts rather than jitters. Eight steps of
+  // this Fibonacci LFSR are eight successive feedback bits, so the decorrelated
+  // slice is 8 XORs of the register - the register itself is untouched, because
+  // its rate is shared with the S&H window, the brown integrator and the noise
+  // filter, and changing that would move all of them.
+  // Twelve bits, not eight: the binary draws a uniform integer over the whole of
+  // J, while an 8-bit draw quantises the step to J/256 and that quantisation is
+  // itself structure the walk integrates.
+  wire  [7:0] nz_adv = {lfsr[7] ^ lfsr[6], lfsr[8] ^ lfsr[7],
+                        lfsr[9] ^ lfsr[8], lfsr[10] ^ lfsr[9],
+                        lfsr[11] ^ lfsr[10], lfsr[12] ^ lfsr[11],
+                        lfsr[13] ^ lfsr[12], lfsr[14] ^ lfsr[13]};
+  wire  signed [8:0] nz_rand = $signed({nz_adv[7], nz_adv});
+  // J = 8*dp + 1120. The constant is a pitch-INDEPENDENT floor on the step, and
+  // dropping it (this was `rand*dp >> 5`, exactly 8*dp) left low notes diffusing
+  // too slowly, which shows up as the walk drifting instead of jittering.
+  wire  [16:0] nz_j = {1'b0, nz_dp, 3'b0} + 17'd1120;
+  wire  signed [25:0] nz_step = ($signed({1'b0, nz_j}) * nz_rand) >>> 8;
   // hit rate ~ (dp + 500)/3 out of 8192, as a threshold on an LFSR slice.
   wire  [16:0] nz_sum    = {4'b0, nz_dp} + 17'd500;
   wire  [12:0] nz_thresh = 13'(nz_sum / 17'd3);
@@ -485,18 +506,25 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       ? (($signed({{9{lfsr[14]}}, lfsr[14:7], 1'b0}) <<< 5)
          + ($signed({{9{lfsr[14]}}, lfsr[14:7], 1'b0}) <<< 4))
       : 18'sd0;
-  // Alternating samples: lfsr[0] is as good a toggle as a dedicated bit and
-  // costs no state.
+  // Alternating samples, from a real toggle. lfsr[0] was NOT "as good as a
+  // dedicated bit": it gates the step on a pseudorandom 50%, so steps arrive in
+  // clumps instead of every other sample, and clumped diffusion is drift. One
+  // flip-flop buys 113 -> 92 Hz of held-note wander in the model.
   wire  signed [17:0] nz_pre =
       $signed({{2{s_noise_lp[15]}}, s_noise_lp})
-      + (lfsr[0] ? 18'(nz_step) : 18'sd0)
+      + (nz_tog ? 18'(nz_step) : 18'sd0)
       + nz_kick;
   wire  signed [15:0] noise_next =
       (nz_pre > 18'sd6143)  ? 16'sd6143 :
       (nz_pre < -18'sd6143) ? -16'sd6143 : nz_pre[15:0];
-  // The pre-clamp value is what the output uses, scaled by the binary's k = 80
-  // (64 + 16) for the pitches a cart reaches.
-  wire  signed [17:0] nz_z = ((nz_pre >>> 6) <<< 6) + ((nz_pre >>> 6) <<< 4);
+  // The pre-clamp value is what the output uses, scaled by the binary's k. That
+  // is 80 below pitch 48 and floor(2048/(pitch+16)) + 48 above it, so it FALLS
+  // at the top of the range - 74 at pitch 52, 64 at pitch 60. A flat 80
+  // over-drives the loud end of a sweep. einc[20] is the cheap stand-in for
+  // "pitch is up there": it sets around pitch 50.
+  wire  signed [17:0] nz_r6 = nz_pre >>> 6;
+  wire  signed [17:0] nz_z  = einc[20] ? ((nz_r6 <<< 6) + (nz_r6 <<< 2))   // 68
+                                       : ((nz_r6 <<< 6) + (nz_r6 <<< 4));  // 80
 
   // The amplitude ladder (2.3): the bank publishes the binary's 12-bit
   // `a`; detuned voices of waves 0..5 take the tz(5a/4) boost, and
@@ -1014,6 +1042,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   always_ff @(posedge clk) begin
     if (reset) begin
       lfsr <= 15'h2A5F;
+      nz_tog <= 0;
       prun <= 0;
       pc_ch <= 0;
       pph <= 0;
@@ -1099,6 +1128,10 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       // of 906 - but the simulator's compact lowering has only 159, so the
       // preview schedule takes the honest failure mode. A dropped sample_en
       // costs that sample's render; it does not corrupt any state.
+      // Sample parity for the noise walk's alternating step, flipped on the
+      // sample the walk actually renders so a dropped sample cannot desync it.
+      if (sample_en) nz_tog <= ~nz_tog;
+
       if (sample_en && !(REALTIME_PREVIEW && (prun || fold_busy))) begin
         prun <= 1;
         pc_ch <= 0;

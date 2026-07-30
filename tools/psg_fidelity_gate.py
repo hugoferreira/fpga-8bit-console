@@ -39,6 +39,11 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 RATE = 22050
 PITCHES = (4, 12, 20, 28, 36, 44, 52, 60)
+# Two volumes, because the defect that prompted this check is only audible at
+# LOW volume: Celeste's track 30 runs its swept noise at volume 1, where the
+# generator wanders ~3.8x more than PICO-8, while at volume 7 it wanders 1.8x.
+# A probe at one volume is blind the same way a probe at one pitch was.
+VOLUMES = (7, 1)
 ROWS_PER_PITCH = 4
 SPEED = 16                      # ticks per row
 ROW_SAMPLES = SPEED * 183
@@ -52,18 +57,44 @@ REFERENCE = ROOT / "tests/psg/pico8-noise-sweep.wav"
 # same process differ run to run. The TREND tolerance is what carries the gate.
 PER_PITCH_TOL = 0.35
 TREND_TOL = 0.30
+# Held-note wander, ours over PICO-8's. CALIBRATED, not chosen: two PICO-8
+# recordings of this probe are byte-identical (its RNG is deterministic from
+# startup), so the reference carries no run-to-run noise, and the only sampling
+# error is the estimator's own. PICO-8's per-note wander spans 11..119 Hz with a
+# coefficient of variation of 0.45, so the mean over 16 notes carries ~11%; three
+# sigma is ~1.35. Anything above that is a real difference, not sampling.
+#
+# An earlier value of 2.0 was picked before measuring and happened to sit just
+# above the failure - the same habit that produced a gate which could not fail.
+WANDER_TOL = 1.35
+# ...and what the chip actually achieves today, 1.55x. The gap between the two is
+# a REAL, AUDIBLE defect that is not understood: our noise wanders more within a
+# held note than PICO-8's, which is heard as ragged pitch transitions on Celeste's
+# track 30. Four candidate causes were tested and refuted (kick gate timing, twice;
+# correlated step draws; draw resolution), and four derived corrections took it
+# from 1.94x to 1.55x without closing it.
+#
+# So the check carries two thresholds. Exceeding WANDER_TOL prints a KNOWN GAP and
+# does NOT fail: the alternative is a permanently red suite, which gets muted and
+# then ignored. Exceeding WANDER_GUARD fails, so the gap can never widen unnoticed
+# and any real improvement can be locked in by lowering it. Do not raise the guard
+# to make a change pass.
+WANDER_GUARD = 1.70
 
 
 def build_image(path: Path) -> None:
-    """One SFX: wave 6, volume 7, eight pitches, four rows each."""
+    """One SFX per volume: wave 6, eight pitches, four rows each, chained."""
     img = bytearray(4608)
-    img[0:4] = bytes([0x80, 0xC2, 0x43, 0x44])      # pattern 0, sfx0 on ch0
-    sfx = 0x100
-    for row in range(32):
-        pitch = PITCHES[row // ROWS_PER_PITCH]
-        word = (pitch & 0x3F) | (6 << 6) | (7 << 9)  # noise, volume 7
-        struct.pack_into("<H", img, sfx + 2 * row, word)
-    img[sfx + 65] = SPEED
+    for v in range(len(VOLUMES)):
+        first, last = v == 0, v == len(VOLUMES) - 1
+        img[4 * v:4 * v + 4] = bytes([(0x80 if first else 0) | v,
+                                      (0x80 if last else 0) | 0x42, 0x43, 0x44])
+        sfx = 0x100 + 68 * v
+        for row in range(32):
+            pitch = PITCHES[row // ROWS_PER_PITCH]
+            word = (pitch & 0x3F) | (6 << 6) | (VOLUMES[v] << 9)
+            struct.pack_into("<H", img, sfx + 2 * row, word)
+        img[sfx + 65] = SPEED
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(bytes(img))
 
@@ -74,13 +105,37 @@ def load(path: Path) -> np.ndarray:
                              dtype="<i2").astype(float)
 
 
+def held_note_wander(samples: np.ndarray, sub: int = 2205) -> list[float]:
+    """Timbre spread WITHIN each held pitch, in Hz of spectral centroid.
+
+    The per-pitch averages below can match while the sound still wobbles inside
+    a note, because averaging is exactly what hides that. PICO-8's noise holds a
+    steady character on a held note; a generator whose random kicks arrive in
+    clumps does not, and the lurching reads as ragged transitions even though
+    every average is right. Celeste's track 30 exposed this by ear before any
+    number here did.
+    """
+    out = []
+    for index in range(len(PITCHES) * len(VOLUMES)):
+        lo = (index * ROWS_PER_PITCH + 1) * ROW_SAMPLES
+        hi = (index * ROWS_PER_PITCH + ROWS_PER_PITCH) * ROW_SAMPLES
+        cents = []
+        for start in range(lo, hi - sub, sub):
+            seg = samples[start:start + sub]
+            spectrum = np.abs(np.fft.rfft(seg * np.hanning(len(seg))))
+            freqs = np.fft.rfftfreq(len(seg), 1 / RATE)
+            cents.append(float((spectrum * freqs).sum() / max(spectrum.sum(), 1e-9)))
+        out.append(max(cents) - min(cents) if len(cents) > 1 else 0.0)
+    return out
+
+
 def per_pitch(samples: np.ndarray) -> list[tuple[float, float]]:
     """(rms, spectral centroid) per pitch, skipping each group's first row.
 
     The first row of a group carries the note change, so it mixes two pitches.
     """
     out = []
-    for index in range(len(PITCHES)):
+    for index in range(len(PITCHES) * len(VOLUMES)):
         lo = (index * ROWS_PER_PITCH + 1) * ROW_SAMPLES
         hi = (index * ROWS_PER_PITCH + ROWS_PER_PITCH) * ROW_SAMPLES
         seg = samples[lo:hi]
@@ -96,7 +151,7 @@ def per_pitch(samples: np.ndarray) -> list[tuple[float, float]]:
 
 def record_reference(out: Path) -> None:
     build_image(IMAGE)
-    seconds = 32 * SPEED * 183 / RATE + 0.15
+    seconds = len(VOLUMES) * 32 * SPEED * 183 / RATE + 0.15
     out.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [sys.executable, str(ROOT / "tools/p8_music_wav.py"),
@@ -129,29 +184,51 @@ def main() -> int:
     ours = WORK / "noise-sweep-rtl.wav"
     subprocess.run(
         [str(binary), "--audio", str(IMAGE), "--music", "0", "--mask", "1",
-         "--samples", str(32 * ROW_SAMPLES), "--clk", str(CLOCK),
+         "--samples", str(len(VOLUMES) * 32 * ROW_SAMPLES), "--clk", str(CLOCK),
          "--out", str(ours)],
         cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     ref = per_pitch(load(args.reference))
     cand = per_pitch(load(ours))
 
-    print("pitch |    PICO-8 rms / centroid |       ours rms / centroid | ratios")
+    print(" vol pitch |    PICO-8 rms / centroid |       ours rms / centroid | ratios")
     failures = []
-    for index, pitch in enumerate(PITCHES):
-        (rr, rc), (cr, cc) = ref[index], cand[index]
-        rms_ratio = cr / rr if rr else float("inf")
-        cen_ratio = cc / rc if rc else float("inf")
-        bad = (abs(rms_ratio - 1) > PER_PITCH_TOL
-               or abs(cen_ratio - 1) > PER_PITCH_TOL)
-        print(f"{pitch:>5} | {rr:10.0f} / {rc:8.0f} | {cr:10.0f} / {cc:8.0f} | "
-              f"{rms_ratio:5.2f} {cen_ratio:5.2f}{'   MISMATCH' if bad else ''}")
-        if bad:
-            failures.append(f"pitch {pitch}")
+    for v, volume in enumerate(VOLUMES):
+        for k, pitch in enumerate(PITCHES):
+            index = v * len(PITCHES) + k
+            (rr, rc), (cr, cc) = ref[index], cand[index]
+            rms_ratio = cr / rr if rr else float("inf")
+            cen_ratio = cc / rc if rc else float("inf")
+            bad = (abs(rms_ratio - 1) > PER_PITCH_TOL
+                   or abs(cen_ratio - 1) > PER_PITCH_TOL)
+            print(f"{volume:>4} {pitch:>5} | {rr:10.0f} / {rc:8.0f} | "
+                  f"{cr:10.0f} / {cc:8.0f} | {rms_ratio:5.2f} {cen_ratio:5.2f}"
+                  f"{'   MISMATCH' if bad else ''}")
+            if bad:
+                failures.append(f"vol {volume} pitch {pitch}")
+
+    # Stability within a held note. Averages can all be right while the sound
+    # wobbles inside each note, and that wobble is what a listener calls abrupt.
+    ref_wander, cand_wander = held_note_wander(load(args.reference)), \
+        held_note_wander(load(ours))
+    for v, volume in enumerate(VOLUMES):
+        lo, hi = v * len(PITCHES), (v + 1) * len(PITCHES)
+        r_mean = float(np.mean(ref_wander[lo:hi]))
+        c_mean = float(np.mean(cand_wander[lo:hi]))
+        wander = c_mean / r_mean if r_mean else float("inf")
+        state = ("" if wander <= WANDER_TOL
+                 else "   KNOWN GAP" if wander <= WANDER_GUARD
+                 else "   FAIL (worse than the recorded gap)")
+        print(f"held-note wander, volume {volume}: PICO-8 {r_mean:5.0f} Hz, "
+              f"ours {c_mean:5.0f} Hz ({wander:.2f}x, target {WANDER_TOL:.2f}x, "
+              f"guard {WANDER_GUARD:.2f}x){state}")
+        if wander > WANDER_GUARD:
+            failures.append(f"held-note wander at volume {volume}")
 
     # The trend. This is the check the single-pitch probe could never make.
+    # Within the loudest bank: a trend across a volume change would mix the two.
     def trend(rows, field):
-        lo, hi = rows[0][field], rows[-1][field]
+        lo, hi = rows[0][field], rows[len(PITCHES) - 1][field]
         return hi / lo if lo else float("inf")
 
     for field, label in ((0, "rms"), (1, "centroid")):
