@@ -423,14 +423,63 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   wire signed [17:0] wt_z = 18'(wt_sum >>> 3);
 
   // Built-in noise is a stateful one-pole process, not a flat
-  // sample-and-hold. Q8 coefficient 15/16 gives the exported reference's
-  // short-lag decay. Statistical territory: the shared-RNG boundary.
-  wire signed [15:0] noise_target = $signed({lfsr[7:0], 8'b0});
+  // sample-and-hold. Statistical territory: the shared-RNG boundary.
+  //
+  // The coefficient TRACKS PITCH. It was a fixed 1/16, which gave every note the
+  // same timbre and the same loudness, while PICO-8's noise gets both brighter
+  // and louder as the note rises - measurably 2.2x in each across a pitch 4..60
+  // sweep. Celeste's track 30 is one noise voice whose pitch sweeps 50 -> 12 ->
+  // 52, so that sweep IS the sound, and we rendered it as a flat hiss at 0.45x
+  // the level. tools/psg_fidelity_gate.py is the gate for this.
+  //
+  // Driving it from the phase increment follows PICO-8, whose own noise step law
+  // derives from the increment rather than the note number. The index is einc's
+  // leading set bit, which spans 15..20 over the playable range (pitch 4 to 60),
+  // so a six-entry ladder covers it with a priority mux and no multiplier.
+  //
+  // The pair is not free to choose independently: a faster coefficient alone
+  // raises the level 4.6x across the sweep where PICO-8 raises it 2.2x, so the
+  // input gain compensates. Both are fitted to a PICO-8 recording, NOT derived -
+  // the exact generator is not recoverable (the RNG is shared across voices, so
+  // no sample-exact match exists even in principle). Gains are sixteenths built
+  // from shifts: 16/16 = x, 11/16 = x/2+x/8+x/16, 8/16 = x/2, 7/16 = x/2-x/16.
+  logic [2:0]        nz_shift;
+  logic signed [16:0] nz_gained;
+  // 17 bits, sign-extended: the shift-add gains below are evaluated at the
+  // lvalue's width, and a 16-bit operand there is a WIDTHEXPAND warning.
+  wire  signed [16:0] noise_raw = $signed({lfsr[7], lfsr[7:0], 8'b0});
+  always_comb begin
+    // PRIORITY, not unique: einc has many bits set, so this selects the leading
+    // one. `unique` asserted at runtime on the first note it ever saw.
+    priority case (1'b1)
+      einc[20]: begin                                    // 7/16
+        nz_shift  = 3'd1;
+        nz_gained = (noise_raw >>> 1) - (noise_raw >>> 4);
+      end
+      einc[19]: begin                                    // 8/16
+        nz_shift  = 3'd2;
+        nz_gained = noise_raw >>> 1;
+      end
+      einc[18]: begin                                    // 8/16
+        nz_shift  = 3'd3;
+        nz_gained = noise_raw >>> 1;
+      end
+      einc[17]: begin                                    // 11/16
+        nz_shift  = 3'd4;
+        nz_gained = (noise_raw >>> 1) + (noise_raw >>> 3) + (noise_raw >>> 4);
+      end
+      default: begin                                     // 16/16, bits 16 and below
+        nz_shift  = 3'd5;
+        nz_gained = noise_raw;
+      end
+    endcase
+  end
+  wire signed [15:0] noise_target = nz_gained[15:0];
   wire signed [16:0] noise_delta =
       $signed({noise_target[15], noise_target})
       - $signed({s_noise_lp[15], s_noise_lp});
   wire signed [16:0] noise_step =
-      $signed({s_noise_lp[15], s_noise_lp}) + (noise_delta >>> 4);
+      $signed({s_noise_lp[15], s_noise_lp}) + (noise_delta >>> nz_shift);
   wire signed [15:0] noise_next = noise_step[15:0];
 
   // The amplitude ladder (2.3): the bank publishes the binary's 12-bit
@@ -462,8 +511,15 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // combinational recip3 network the fabric could not afford. The q3
   // accumulator closes the >>19.
   wire [33:0] gz_q3acc = {g_part, 9'b0} + {9'b0, m_res_wide[24:0]};
+  // Noise takes gz_s1_r unhalved where it used to take /2048. The reference's
+  // divisor of 2048 applies to ITS accumulator, and the pitch-tracking one-pole
+  // above is a fit whose internal scale is not that accumulator's - so this
+  // constant belongs to our generator, and it is set by measurement: the shape
+  // (both trends, every centroid) matched PICO-8 at the old value while every
+  // level sat at 0.44x, which is one global scale, not a shape error.
+  // tools/psg_fidelity_gate.py holds it.
   wire [16:0] gz_scaled = (!s_snd_wt && s_snd_wave == 3'd6)
-                            ? {1'b0, gz_s1_r[16:1]}       // noise /2048
+                            ? gz_s1_r
                             : {2'b0, gz_q3acc[33:19]};
   wire [16:0] gz_old_scaled = (s_old_wave == 3'd6)
                             ? {1'b0, gz_s1_r[16:1]}
