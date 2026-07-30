@@ -395,7 +395,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   wire signed [17:0] z_noise =
       (s_ch_buzz && !s_ch_noiz)
         ? $signed({{2{s_brown[12]}}, s_brown, 3'b0})   // brown, x8 to z
-        : {{2{s_noise_lp[15]}}, s_noise_lp};
+        : nz_z;
   wire signed [17:0] z_new_c =
       (!s_snd_wt && s_snd_wave == 3'd6) ? z_noise
     : s_snd_wt ? (smp_a + tzs(smp_b, 2'd1))
@@ -443,44 +443,60 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // the exact generator is not recoverable (the RNG is shared across voices, so
   // no sample-exact match exists even in principle). Gains are sixteenths built
   // from shifts: 16/16 = x, 11/16 = x/2+x/8+x/16, 8/16 = x/2, 7/16 = x/2-x/16.
-  logic [2:0]        nz_shift;
-  logic signed [16:0] nz_gained;
-  // 17 bits, sign-extended: the shift-add gains below are evaluated at the
-  // lvalue's width, and a 16-bit operand there is a WIDTHEXPAND warning.
-  wire  signed [16:0] noise_raw = $signed({lfsr[7], lfsr[7:0], 8'b0});
-  always_comb begin
-    // PRIORITY, not unique: einc has many bits set, so this selects the leading
-    // one. `unique` asserted at runtime on the first note it ever saw.
-    priority case (1'b1)
-      einc[20]: begin                                    // 7/16
-        nz_shift  = 3'd1;
-        nz_gained = (noise_raw >>> 1) - (noise_raw >>> 4);
-      end
-      einc[19]: begin                                    // 8/16
-        nz_shift  = 3'd2;
-        nz_gained = noise_raw >>> 1;
-      end
-      einc[18]: begin                                    // 8/16
-        nz_shift  = 3'd3;
-        nz_gained = noise_raw >>> 1;
-      end
-      einc[17]: begin                                    // 11/16
-        nz_shift  = 3'd4;
-        nz_gained = (noise_raw >>> 1) + (noise_raw >>> 3) + (noise_raw >>> 4);
-      end
-      default: begin                                     // 16/16, bits 16 and below
-        nz_shift  = 3'd5;
-        nz_gained = noise_raw;
-      end
-    endcase
-  end
-  wire signed [15:0] noise_target = nz_gained[15:0];
-  wire signed [16:0] noise_delta =
-      $signed({noise_target[15], noise_target})
-      - $signed({s_noise_lp[15], s_noise_lp});
-  wire signed [16:0] noise_step =
-      $signed({s_noise_lp[15], s_noise_lp}) + (noise_delta >>> nz_shift);
-  wire signed [15:0] noise_next = noise_step[15:0];
+  // PICO-8's noise is a JITTERED, BOUNDED RANDOM WALK, not a one-pole. Derived
+  // from the vendor's PSG reverse-engineering notes in the app bundle and the
+  // disassembly they cite, after a fitted one-pole reproduced the statistics
+  // without being the mechanism.
+  //
+  //   step      taken on ALTERNATING samples, magnitude proportional to the
+  //             phase increment (the binary's J = 8*dp + 1120 over the playable
+  //             range, dp = einc >> 8), so high notes wander further per sample
+  //   kick      a full-range impulse on a phase-dependent test whose hit RATE
+  //             rises with the increment - ~3% of samples at pitch 4, ~27% at
+  //             pitch 60. This is what makes high notes both louder and brighter
+  //   clamp     the accumulator is bounded to +-6143 IN THE STATE
+  //   output    taken from the accumulator BEFORE that clamp
+  //
+  // The last line is the whole puzzle. Clamping first caps the output near 9975
+  // where PICO-8 measurably reaches 24641, and it is why PICO-8 looks
+  // simultaneously LOUDER and LESS saturated than any clamped model: the bound
+  // holds the stored state (so it rarely sits at the rails) while a kick landing
+  // on an already-large accumulator escapes through the output on that sample.
+  //
+  // Two deliberate departures, both statistical rather than structural, because
+  // a sample-exact match cannot exist here - PICO-8's RNG is shared across
+  // voices, so a muted noise voice still perturbs what the others produce:
+  //   * the step and kick draw on this chip's LFSR instead of that RNG, from
+  //     disjoint slices so they are not correlated within a sample;
+  //   * the kick's phase-derived hash becomes a comparison against the same
+  //     LFSR, which reproduces the RATE (the audible property) without the
+  //     multiply the hash would need.
+  // tools/psg_fidelity_gate.py is what holds this to PICO-8.
+  wire  [12:0] nz_dp   = einc[20:8];                  // PICO-8's dp
+  wire  signed [8:0] nz_rand = $signed({lfsr[7], lfsr[7:0]});
+  // step ~ +-J/2 with J = 8*dp: (rand/128) * 4*dp = rand*dp >> 5.
+  wire  signed [22:0] nz_step = ($signed({1'b0, nz_dp}) * nz_rand) >>> 5;
+  // hit rate ~ (dp + 500)/3 out of 8192, as a threshold on an LFSR slice.
+  wire  [16:0] nz_sum    = {4'b0, nz_dp} + 17'd500;
+  wire  [12:0] nz_thresh = 13'(nz_sum / 17'd3);
+  wire         nz_kick_en = {lfsr[14:7], lfsr[4:0]} < nz_thresh;
+  // kick magnitude +-6143, as 48 * an 8-bit signed draw (48 = 32 + 16).
+  wire  signed [17:0] nz_kick = nz_kick_en
+      ? (($signed({{9{lfsr[14]}}, lfsr[14:7], 1'b0}) <<< 5)
+         + ($signed({{9{lfsr[14]}}, lfsr[14:7], 1'b0}) <<< 4))
+      : 18'sd0;
+  // Alternating samples: lfsr[0] is as good a toggle as a dedicated bit and
+  // costs no state.
+  wire  signed [17:0] nz_pre =
+      $signed({{2{s_noise_lp[15]}}, s_noise_lp})
+      + (lfsr[0] ? 18'(nz_step) : 18'sd0)
+      + nz_kick;
+  wire  signed [15:0] noise_next =
+      (nz_pre > 18'sd6143)  ? 16'sd6143 :
+      (nz_pre < -18'sd6143) ? -16'sd6143 : nz_pre[15:0];
+  // The pre-clamp value is what the output uses, scaled by the binary's k = 80
+  // (64 + 16) for the pitches a cart reaches.
+  wire  signed [17:0] nz_z = ((nz_pre >>> 6) <<< 6) + ((nz_pre >>> 6) <<< 4);
 
   // The amplitude ladder (2.3): the bank publishes the binary's 12-bit
   // `a`; detuned voices of waves 0..5 take the tz(5a/4) boost, and
@@ -511,15 +527,10 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // combinational recip3 network the fabric could not afford. The q3
   // accumulator closes the >>19.
   wire [33:0] gz_q3acc = {g_part, 9'b0} + {9'b0, m_res_wide[24:0]};
-  // Noise takes gz_s1_r unhalved where it used to take /2048. The reference's
-  // divisor of 2048 applies to ITS accumulator, and the pitch-tracking one-pole
-  // above is a fit whose internal scale is not that accumulator's - so this
-  // constant belongs to our generator, and it is set by measurement: the shape
-  // (both trends, every centroid) matched PICO-8 at the old value while every
-  // level sat at 0.44x, which is one global scale, not a shape error.
-  // tools/psg_fidelity_gate.py holds it.
+  // Noise is back on the documented /2048: the walk above carries the binary's
+  // k = 80 explicitly, so the scaling no longer has to absorb a fitted constant.
   wire [16:0] gz_scaled = (!s_snd_wt && s_snd_wave == 3'd6)
-                            ? gz_s1_r
+                            ? {1'b0, gz_s1_r[16:1]}       // noise /2048
                             : {2'b0, gz_q3acc[33:19]};
   wire [16:0] gz_old_scaled = (s_old_wave == 3'd6)
                             ? {1'b0, gz_s1_r[16:1]}
