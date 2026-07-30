@@ -12,8 +12,11 @@ Scope: every deterministic path - waves 0-5, the comb-free phaser core
 (7), the wavetable voice (8), effects 0-7, the detune/buzz families, the
 dampen one-pole and the reverb history comb, meta-instruments, the
 per-tick 64-sample crossfade, the eight-leaf soft_add tree and the
-pattern-chain music flow. Only noise stays out: its samples consume the
-binary's shared RNG, so the sequence is inexact in principle.
+pattern-chain music flow. Wave-6 noise is the listing's legacy walk
+(pico8.x86_64.asm 0x1000f08bd..0x1000f0b14) driven by the real
+_codo_random; its MECHANISM is exact but its sample sequence is only
+reproducible when this model is the sole RNG consumer, so noise cases
+compare statistically, never byte-exactly.
 
 Usage:
   psg_binary_model.py render <case.bin> --ticks N --out out.wav
@@ -59,6 +62,27 @@ def tz(a: int, d: int) -> int:
 
 def u16(x: int) -> int:
     return x & 0xFFFF
+
+
+# --- the shared RNG ----------------------------------------------------------
+#
+# _codo_random (x86_64 L211719), verbatim: H = rol32(H,16) + L; L += H;
+# R(m) = H mod m, unsigned, R(0) = 0. ONE global stream shared by every
+# consumer - which is why noise sequences depend on what every other voice
+# did, and why byte-exact noise against a real cart is impossible in
+# principle. Seeds are the binary's static initial values.
+
+RNG_STATE = [0xDEADBEEF, 0x01234567]        # [H, L]
+
+
+def codo_random(m: int) -> int:
+    if m == 0:
+        return 0
+    h, low = RNG_STATE
+    h = (((h << 16) | (h >> 16)) + low) & 0xFFFFFFFF
+    low = (low + h) & 0xFFFFFFFF
+    RNG_STATE[0], RNG_STATE[1] = h, low
+    return h % m
 
 
 # --- phase increments -------------------------------------------------------
@@ -228,7 +252,8 @@ class OscState:
     """Everything _mix_osc_tick_new consumes for one tick's render."""
 
     __slots__ = ("wave", "dp", "dq", "g", "p", "q0", "mode", "alt",
-                 "table", "bass", "rev")
+                 "table", "bass", "rev",
+                 "nz_r", "nz_tog", "nz_pitch", "nz_amp")
 
     def __init__(self):
         self.wave = 0
@@ -241,6 +266,15 @@ class OscState:
         self.alt = False
         self.table = None
         self.bass = False
+        # Legacy-noise walk state: the accumulator (state[0x14]) and the
+        # alternating-step toggle (state[0x18]), plus the two scalar
+        # parameters its output stage reads - the integer pitch
+        # (state[0x24], for k's denominator) and the pre-G amplitude
+        # (state[0x28], the kick's scale).
+        self.nz_r = 0
+        self.nz_tog = 0
+        self.nz_pitch = 0
+        self.nz_amp = 0
         # The history selector lives in the OSCILLATOR state (RE notes:
         # "hmode = state[0x5c]"), which is why the crossfade's copied old
         # state combs at the level the previous SFX asked for - see
@@ -253,7 +287,56 @@ class OscState:
             setattr(o, f, getattr(self, f))
         return o
 
+    def render_noise(self, n: int) -> list[int]:
+        """The legacy (mode 0) noise walk, instruction-exact from
+        pico8.x86_64.asm 0x1000f08bd..0x1000f0b14. Runs even at g == 0:
+        a muted noise voice keeps stepping and keeps CONSUMING the shared
+        RNG (the write-up says so outright), only its kick arm is dead
+        because the stored amplitude is zero.
+
+        Per sample:
+          - flip the toggle; on the samples whose OLD toggle was even,
+            r += R(J) - J//2 with J = max(0, dp<79 ? 60dp-2988 : 8dp+1120)
+          - kick when amp != 0 and ((p+101)(p+317)) & 8191 < (dp+500)//3:
+            r += tz((R(12286)-6143) * amp / 1792)
+          - the OUTPUT reads r BEFORE the clamp: y = tz((r>>6)*G*k/2048),
+            arithmetic shift, k = max(16, 2048//den)+48 with den = 64
+            below pitch 48 and pitch+16 above; the buffer cell is int16
+            and WRAPS (movw), which big kick escapes at high pitch reach
+          - the clamp to +-6143 applies to the STORED accumulator only
+          - the 16-bit phase advances by dp exactly as other waves
+        """
+        if self.mode != 0:
+            raise NotImplementedError(
+                "held/interpolated noise (mode != 0) is not modelled")
+        d = self.dp
+        j = 60 * d - 2988 if d < 79 else 8 * d + 1120
+        if j < 0:
+            j = 0
+        half = j >> 1
+        thresh = (d + 500) // 3
+        den = 64 if self.nz_pitch < 48 else self.nz_pitch + 16
+        k = max(16, 2048 // den) + 48
+        out = []
+        for _ in range(n):
+            tog = self.nz_tog
+            self.nz_tog = (~tog) & 1
+            if not (tog & 1):
+                self.nz_r += codo_random(j) - half
+            if (self.nz_amp != 0
+                    and ((self.p + 101) * (self.p + 317)) & 8191 < thresh):
+                self.nz_r += tz((codo_random(12286) - 6143) * self.nz_amp,
+                                1792)
+            r_pre = self.nz_r
+            self.nz_r = max(-6143, min(6143, r_pre))
+            y = tz((r_pre >> 6) * self.g * k, 2048)
+            out.append(((y + 0x8000) & 0xFFFF) - 0x8000)
+            self.p = u16(self.p + self.dp)
+        return out
+
     def render(self, n: int) -> list[int]:
+        if self.wave == 6 and self.table is None:
+            return self.render_noise(n)
         out = []
         for _ in range(n):
             if self.g == 0:
@@ -375,6 +458,14 @@ def calc_tick_state(sfx: Sfx, pos: int, prev: OscState,
     if st.mode > 0 and st.wave <= 5:
         a = tz(5 * a, 4)
     st.g = tz(3 * a, 2)
+    # The legacy walk persists like the dampen pole: its accumulator and
+    # toggle survive every tick, INCLUDING muted ones (a muted noise
+    # voice keeps consuming the shared RNG). The output stage's scalars
+    # are this tick's: state[0x24] = integer pitch, state[0x28] = the
+    # post-boost amplitude (+0x1c's value).
+    st.nz_r, st.nz_tog = prev.nz_r, prev.nz_tog
+    st.nz_pitch = p_1616 >> 16
+    st.nz_amp = a
     probe("amp.G", st.g)
     probe("pinc.dp", st.dp)
     probe("pinc.dq", st.dq)
@@ -522,7 +613,10 @@ def calc_tick_custom(sfx: Sfx, get_sfx, pos: int, prev: OscState,
         if st.mode > 0 and st.wave <= 5:
             a = tz(5 * a, 4)
         st.g = tz(3 * a, 2)
+        st.nz_pitch = p_1616 >> 16
+        st.nz_amp = a
 
+    st.nz_r, st.nz_tog = prev.nz_r, prev.nz_tog
     probe("amp.G", st.g)
     probe("pinc.dp", st.dp)
     probe("pinc.dq", st.dq)

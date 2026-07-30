@@ -304,6 +304,18 @@ psg-wav-preview: $(PSG_WAV_PV)
 test-psg-fidelity:
 	python3 tools/psg_fidelity_gate.py $(if $(RECORD),--record,)
 
+# Full-track fidelity with candidate provenance. This target always renders the
+# current hardware-schedule RTL; it never accepts a pre-existing candidate WAV.
+#   make test-psg-track CART=... MUSIC=30 PSG_REFERENCE=build/p8ref/pico8-30.wav
+PSG_REFERENCE ?=
+test-psg-track:
+	@test -n "$(CART)" || { echo "usage: make test-psg-track CART=<cart.p8.png> MUSIC=n PSG_REFERENCE=<pico8.wav>"; exit 2; }
+	@test -n "$(PSG_REFERENCE)" || { echo "usage: make test-psg-track CART=<cart.p8.png> MUSIC=n PSG_REFERENCE=<pico8.wav>"; exit 2; }
+	python3 tools/psg_track_gate.py --cart "$(CART)" --music "$(MUSIC)" \
+	  --reference "$(PSG_REFERENCE)" \
+	  --candidate-out "build/psg_track_gate/music$(MUSIC)-current-rtl.wav" \
+	  --spectrogram-file "build/psg_track_gate/music$(MUSIC)-comparison.png"
+
 test-psg-preview: $(PSG_WAV_PV)
 	@test -n "$(CART)" || { echo "usage: make test-psg-preview CART=<cart.p8.png>"; exit 1; }
 	python3 tools/psg_preview_check.py --cart $(CART) \
@@ -354,8 +366,11 @@ debug: bin/sim_debug_${SIM_TOP}
 # declaration-after-use / cast issues Verilator tolerates), so it had not run
 # since the datapath refold. Kept as a target so that cannot happen quietly.
 test-psg: test-psg-fidelity
-	iverilog -g2012 -o build/psg_tb.vvp rtl/psg_tb.sv rtl/psg.sv rtl/dsigma.sv 2>&1 | grep -v 'sorry:' || true
-	vvp build/psg_tb.vvp | tail -3
+	python3 tools/test_psg_ref_check.py
+	verilator --binary --timing -Irtl -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+	  -Wno-PINMISSING -o psg_tb_bin rtl/psg_tb.sv rtl/psg.sv rtl/dsigma.sv \
+	  --Mdir build/obj_psgtb
+	build/obj_psgtb/psg_tb_bin
 
 # ------------------------------------------------------------------------------
 # PPU: golden-frame regression net, and its resource/timing report
@@ -548,7 +563,7 @@ clean:
 
 .PHONY: all games hex hex-ca65 asm asm-ca65 check-customasm-version run shot \
         timing stat upload clean font tools test \
-        sim debug test_ram test-nemo test-celeste metrics \
+        sim debug test_ram test-nemo test-celeste test-psg test-psg-track metrics \
         ppu-check ppu-lint ppu-synth ppu-probe ppu-timing
 
 # ------------------------------------------------------------------------------
@@ -794,9 +809,8 @@ $(SYNTH_DIR)/$(1).json: rtl/target_$(1).sv $$(SYNTH_DEPS)
 
 synth-$(1): $(SYNTH_DIR)/$(1).json
 	@echo "=== $(1) ==="
-	@# Three agents edit rtl/ concurrently, so a number without a fingerprint
-	@# is not reproducible and two runs of the same target can legitimately
-	@# disagree. Quote the fingerprint whenever a measurement is recorded.
+	@# A number without an RTL fingerprint is not reproducible across revisions.
+	@# Quote the fingerprint whenever a measurement is recorded.
 	@printf "  rtl %s @ %s\n" \
 	  "$$$$(cat rtl/*.sv rtl/*.v 2>/dev/null | shasum | cut -c1-12)" \
 	  "$$$$(git rev-parse --short HEAD 2>/dev/null || echo no-git)"

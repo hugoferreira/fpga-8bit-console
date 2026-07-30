@@ -157,6 +157,32 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   //        slot the ring is about to rotate it into, and step on
   // ------------------------------------------------------------------
   logic [14:0] lfsr;
+  // The kick-magnitude / old-walk generator: a second maximal 15-bit LFSR
+  // (x^15 + x^11, period 32767), advanced wherever lfsr is. The kick GATE
+  // keeps reading lfsr; drawing the kick's MAGNITUDE from that same register
+  // made the two dependent - the gate's compare forces lfsr[14:7] toward
+  // zero exactly when it fires, so every kick was a +-<700 nudge instead of
+  // the listing's +-6143 full-range impulse (traced: kicks of 96 and 480).
+  logic [14:0] lfsr2;
+  // Tick boundary, observed at the sample edge as the sequencer's parameter
+  // bank flip. The binary re-copies the whole oscillator state EVERY tick
+  // and crossfades against the copy; for deterministic waves an unchanged
+  // tick's copy renders identically (why the params-changed copy is
+  // byte-equivalent there), but for noise the copy and the live walk draw
+  // different randoms and DIVERGE - that per-tick two-walk blend is where
+  // PICO-8's 29%..6% repeated-sample slope and its tick-rate variance
+  // averaging come from, so noise must restart the blend on every flip.
+  logic        spar_last, nz_tick_r;
+  // The PUBLISHED noise outputs. z consumes these registers, never the
+  // combinational walk: the accumulator and both LFSRs advance at CTRL_W0,
+  // and a combinational read on any later cycle re-applies a freshly drawn
+  // step on top of the stored one. That double step is what erased the
+  // walk's holds and whitened the spectrum (measured on the fidelity probe:
+  // tog=0 samples matched the stored walk 97.6%, tog=1 samples 3.5%, and
+  // the phantom term was uniform up to exactly J/2). Same trap class as
+  // a_pub: publication must be a register.
+  logic signed [17:0] nz_out_r, nz_old_out_r;
+  logic        old_nz_r_on;
   // Sample parity for the noise walk's alternating step. One bit, flipped per
   // sample rather than per slot, so every voice steps on the same samples - the
   // binary keeps this per voice, but they advance in lockstep either way.
@@ -501,11 +527,22 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   wire  [16:0] nz_sum    = {4'b0, nz_dp} + 17'd500;
   wire  [12:0] nz_thresh = 13'(nz_sum / 17'd3);
   wire         nz_kick_en = {lfsr[14:7], lfsr[4:0]} < nz_thresh;
-  // kick magnitude +-6143, as 48 * an 8-bit signed draw (48 = 32 + 16).
-  wire  signed [17:0] nz_kick = nz_kick_en
-      ? (($signed({{9{lfsr[14]}}, lfsr[14:7], 1'b0}) <<< 5)
-         + ($signed({{9{lfsr[14]}}, lfsr[14:7], 1'b0}) <<< 4))
-      : 18'sd0;
+  // The kick's magnitude. The listing draws a FRESH full-range value and
+  // scales it by the amplitude: tz((R(12286) - 6143) * a / 1792). Two
+  // repairs against what stood here: the draw now comes from lfsr2, so it
+  // is independent of the gate's lfsr slice (the old form multiplied the
+  // gate's own near-zero top bits, see lfsr2's declaration); and it scales
+  // with amplitude as draw * q, q = a >> 8 - exact at whole volumes, a
+  // staircase inside fades. The +-880 base unit makes q = 7 land on
+  // +-6160, the listing's full range: draw = t11 - t11/8 - t11/64.
+  wire signed [11:0] nz_t11  = $signed({{2{~lfsr2[12]}}, lfsr2[11:2]});
+  wire signed [11:0] nz_draw = nz_t11 - (nz_t11 >>> 3) - (nz_t11 >>> 6);
+  wire        [2:0]  nz_q    = s_eff_a[10:8];
+  wire signed [14:0] nz_kick_m =
+      (nz_q[2] ? (15'(nz_draw) <<< 2) : 15'sd0)
+    + (nz_q[1] ? (15'(nz_draw) <<< 1) : 15'sd0)
+    + (nz_q[0] ?  15'(nz_draw)        : 15'sd0);
+  wire signed [17:0] nz_kick = nz_kick_en ? 18'(nz_kick_m) : 18'sd0;
   // Alternating samples, from a real toggle. lfsr[0] was NOT "as good as a
   // dedicated bit": it gates the step on a pseudorandom 50%, so steps arrive in
   // clumps instead of every other sample, and clumped diffusion is drift. One
@@ -521,10 +558,52 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // is 80 below pitch 48 and floor(2048/(pitch+16)) + 48 above it, so it FALLS
   // at the top of the range - 74 at pitch 52, 64 at pitch 60. A flat 80
   // over-drives the loud end of a sweep. einc[20] is the cheap stand-in for
-  // "pitch is up there": it sets around pitch 50.
-  wire  signed [17:0] nz_r6 = nz_pre >>> 6;
+  // "pitch is up there": it sets around pitch 50. (The exact k was modelled
+  // and gains nothing measurable over this two-level form.)
+  // nz_out_r, NOT nz_pre: the published register - see its declaration.
+  wire  signed [17:0] nz_r6 = nz_out_r >>> 6;
   wire  signed [17:0] nz_z  = einc[20] ? ((nz_r6 <<< 6) + (nz_r6 <<< 2))   // 68
                                        : ((nz_r6 <<< 6) + (nz_r6 <<< 4));  // 80
+
+  // ---- the old-state noise walk: the crossfade's other half -----------
+  // Runs in the hardware schedule only (the preview never blends). The old
+  // walk lives in the s_old_phase word - noise needs no old phase, the
+  // kick gate here is phase-free - so the record grows by nothing. It
+  // steps from lfsr2's advanced slice on the SHARED toggle (the binary
+  // copies the toggle with the state, so both walks step the same
+  // samples), takes the SAME kick value as the live walk (the binary
+  // draws independently; sharing keeps the blend zone's kick energy exact
+  // with no extra draws), and restarts from the live accumulator at every
+  // bank flip. Modelled as R2f in the noise-variants harness: repeat
+  // slope 29..5% vs PICO-8's 29..6%, centroid 0.998, rms 1.004, HF-share
+  // 1.002 of the recorded reference.
+  wire  [12:0] nz2_dp  = s_old_inc[20:8];
+  wire  [16:0] nz2_j   = {1'b0, nz2_dp, 3'b0} + 17'd1120;
+  wire  [7:0]  nz2_adv = {lfsr2[7] ^ lfsr2[6], lfsr2[8] ^ lfsr2[7],
+                          lfsr2[9] ^ lfsr2[8], lfsr2[10] ^ lfsr2[9],
+                          lfsr2[11] ^ lfsr2[10], lfsr2[12] ^ lfsr2[11],
+                          lfsr2[13] ^ lfsr2[12], lfsr2[14] ^ lfsr2[13]};
+  wire  signed [8:0]  nz2_rand = $signed({nz2_adv[7], nz2_adv});
+  wire  signed [25:0] nz2_step = ($signed({1'b0, nz2_j}) * nz2_rand) >>> 8;
+  // At the restart sample s_old_wave/old_alt_r are being copied this very
+  // cycle, so the decision reads the last-tick registers instead; the
+  // registered old_nz_r_on carries it to the later consume cycles.
+  wire old_nz_on = REALTIME_PREVIEW ? 1'b0
+                 : nz_tick_r ? (s_last_wave == 3'd6 && !last_alt_r)
+                             : (s_old_wave == 3'd6 && !old_alt_r);
+  wire [15:0] old_nz_base = nz_tick_r ? 16'(s_noise_lp) : s_old_phase[23:8];
+  wire signed [17:0] nz_old_pre =
+      $signed({{2{old_nz_base[15]}}, old_nz_base})
+      + (nz_tog ? 18'(nz2_step) : 18'sd0)
+      + nz_kick;
+  wire signed [15:0] nz_old_next =
+      (nz_old_pre > 18'sd6143)  ? 16'sd6143 :
+      (nz_old_pre < -18'sd6143) ? -16'sd6143 : nz_old_pre[15:0];
+  wire signed [17:0] nz_old_r6 = nz_old_out_r >>> 6;
+  wire signed [17:0] nz_old_z = s_old_inc[20]
+      ? ((nz_old_r6 <<< 6) + (nz_old_r6 <<< 2))   // 68
+      : ((nz_old_r6 <<< 6) + (nz_old_r6 <<< 4));  // 80
+  wire signed [17:0] z_old_sel = old_nz_r_on ? nz_old_z : z_old_c;
 
   // The amplitude ladder (2.3): the bank publishes the binary's 12-bit
   // `a`; detuned voices of waves 0..5 take the tz(5a/4) boost, and
@@ -677,7 +756,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           end
           4'd6: if (!s_snd_wt) begin
             wmul_start   = 1'b1;
-            wmul_a = 25'(z_old_c);
+            wmul_a = 25'(z_old_sel);
             wmul_b = 12'(s_old_G);
             wmul_mode = 2'd2;
           end
@@ -1000,8 +1079,25 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       s_brown <= clr ? 13'sd0
                      : s_brown - {{5{s_brown[12]}}, s_brown[12:5]}
                                + $signed({{5{lfsr[7]}}, lfsr[7:0]});
-    if ((run && s_snd_wave == 3'd6) || clr)
+    if ((run && s_snd_wave == 3'd6) || clr) begin
       s_noise_lp <= clr ? 16'sd0 : noise_next;
+      // The published output: consumed by nz_r6 on later cycles, when the
+      // combinational nz_pre has already moved on (see nz_out_r's decl).
+      nz_out_r   <= clr ? 18'sd0 : nz_pre;
+    end
+    if (!REALTIME_PREVIEW) begin
+      // The old-walk decision is stable only in THIS cycle (s_last_* and
+      // s_old_* both change mid-visit); the register carries it to the
+      // z_old consume and the CTRL_W5 advance-suppression below.
+      old_nz_r_on <= run && old_nz_on;
+      if (run && old_nz_on) begin
+        // Textually after CTRL_W0's params-changed copy in the caller, so
+        // this write WINS s_old_phase on restart samples - the alias IS
+        // the old walk's accumulator while the old arm renders noise.
+        s_old_phase  <= {nz_old_next, 8'b0};
+        nz_old_out_r <= nz_old_pre;
+      end
+    end
   endtask
 
   // Stage the mixer leaf: the z sign for the G product's consume step,
@@ -1042,6 +1138,12 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   always_ff @(posedge clk) begin
     if (reset) begin
       lfsr <= 15'h2A5F;
+      lfsr2 <= 15'h5117;
+      spar_last <= 0;
+      nz_tick_r <= 0;
+      nz_out_r <= '0;
+      nz_old_out_r <= '0;
+      old_nz_r_on <= 0;
       nz_tog <= 0;
       prun <= 0;
       pc_ch <= 0;
@@ -1130,7 +1232,14 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       // costs that sample's render; it does not corrupt any state.
       // Sample parity for the noise walk's alternating step, flipped on the
       // sample the walk actually renders so a dropped sample cannot desync it.
-      if (sample_en) nz_tog <= ~nz_tog;
+      // nz_tick_r marks the first sample after the sequencer's bank flip -
+      // one tick's parameters arrived - which is when the noise blend
+      // restarts from the live accumulator.
+      if (sample_en) begin
+        nz_tog    <= ~nz_tog;
+        nz_tick_r <= spar_bank != spar_last;
+        spar_last <= spar_bank;
+      end
 
       if (sample_en && !(REALTIME_PREVIEW && (prun || fold_busy))) begin
         prun <= 1;
@@ -1228,11 +1337,13 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
                     // pipeline timing. A skipped visit never reaches PWORK, so
                     // step it here too - otherwise WHICH slots are silent would
                     // change the noise every other voice hears.
-                    lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
+                    lfsr  <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
+                    lfsr2 <= {lfsr2[13:0], lfsr2[14] ^ lfsr2[10]};
                     pph <= 7'(PFOLD);
                   end
             7'(PWORK): begin
-              lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
+              lfsr  <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
+              lfsr2 <= {lfsr2[13:0], lfsr2[14] ^ lfsr2[10]};
               if (play_bits[pc_ch] && s_eff_a != 0)
                 s_phase <= s_phase + {3'b0, einc};
               else if (play_bits[pc_ch]) begin
@@ -1277,7 +1388,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             // silently changed what the noise sounded like. Stepping it here
             // gives every voice a fresh value every sample and makes the
             // noise independent of the pipeline's timing.
-            lfsr <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
+            lfsr  <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
+            lfsr2 <= {lfsr2[13:0], lfsr2[14] ^ lfsr2[10]};
             // `_mix_osc_tick_new` returns before touching oscillator state
             // when its amplitude is zero.  This is observable with repeated
             // fade-in rows: their silent first ticks freeze phase rather than
@@ -1309,7 +1421,14 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
                     || s_snd_wave != s_last_wave
                     || s_ch_det != last_mode_r
                     || s_ch_rev != last_rev_r
-                    || s_ch_buzz != last_alt_r)) begin
+                    || s_ch_buzz != last_alt_r
+                    // Noise restarts the blend EVERY tick, changed or not:
+                    // the binary's per-tick state copy is only identity for
+                    // deterministic waves. The old-walk task write (called
+                    // below) overrides this block's s_old_phase copy with
+                    // the live accumulator.
+                    || (s_snd_wave == 3'd6 && !s_snd_wt && !s_ch_buzz
+                        && nz_tick_r))) begin
               bl_cnt <= 7'd0;
               s_old_phase <= s_phase;
               old_q0 <= s_phase2[16:0];
@@ -1384,7 +1503,10 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             // The dq network serves the OLD context this cycle.
             if (!s_snd_wt) begin
               old_smpb <= z_eval;        // old secondary z
-              if (s_old_G != 0) begin
+              // Not while the old arm renders noise: s_old_phase is then
+              // the old WALK's accumulator (written at CTRL_W0), and this
+              // later-cycle phase advance would clobber it.
+              if (s_old_G != 0 && !old_nz_r_on) begin
                 s_old_phase <= pha_y;
                 old_q0 <= 17'(old_q0 + dq17);
               end
@@ -1407,7 +1529,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             // limb launches.
             if (!s_snd_wt) begin
               gz_s1_r <= m_res12[26:10];
-              mxs_old <= z_old_c[17];
+              mxs_old <= z_old_sel[17];
             end
           end
           ctrl_q[CTRL_W26]: begin

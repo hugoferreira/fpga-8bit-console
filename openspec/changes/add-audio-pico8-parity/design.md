@@ -562,6 +562,39 @@ Routed Fmax is 31.96 MHz against the subsystem target's 50 MHz constraint;
 the serialized soft-add reduction remains the critical path. No simulator
 wall-clock or fixed clocks-per-sample budget is used as a requirement.
 
+### Wave-6 publication, kick independence, and per-tick blend
+
+The final wave-6 residual was not a different stochastic distribution. The
+sample walk was computed correctly at `CTRL_W0`, but later mixer cycles consumed
+the combinational next value after both the accumulator and LFSR had advanced.
+Every step sample therefore acquired a second random step and the walk's held
+samples disappeared. Publishing `nz_out_r` and `nz_old_out_r` at `CTRL_W0`
+fixes the same register-publication class as the earlier amplitude bug.
+
+Two smaller defects were then visible. The kick gate and magnitude reused LFSR
+bits, so a successful gate forced the magnitude near zero; a second maximal
+15-bit generator now supplies independent magnitude bits. PICO-8 also copies
+the oscillator state and begins a 64-sample blend every tick. Deterministic
+waves render identical old/new copies on unchanged ticks, but stochastic noise
+does not. The old noise walk therefore aliases the unused old-phase word and
+restarts from the live accumulator at each parameter-bank flip without growing
+the record.
+
+The fidelity gate now uses overlapping 2205-sample centroid windows at a
+441-sample hop. Twelve exact-model seeds calibrate the 1.10 wander target and
+1.25 regression guard. Adjacent repeated-sample rate and >4 kHz power share
+have 0.75–1.25 ratio guards: current RTL measures 1.03/1.00 and 0.98/0.98 at
+volumes 7/1, while an isolated git-HEAD build measures 0.05/0.04 and 1.50/1.96
+and must-fails both instruments.
+
+Fresh verification is: structural PSG testbench all pass; 59/59 frozen RTL
+renders unchanged after the deliberate wave-6 re-freeze; 59/59 PICO-8 matrix
+diagnostic-clean; Celeste preview 36/38; both lint configurations clean; binary
+model 57/57 deterministic cases byte-exact with two shared-RNG skips. The
+iCE40 checkpoint at RTL fingerprint `1018ab414436` uses 8,327/7,680 LCs and
+22/32 EBRs and therefore does not place; that is recorded as area-campaign
+evidence rather than hidden as a fidelity failure.
+
 ## Risks / Trade-offs
 
 - Register-map change: `$21` semantics flip and its reset value changes.

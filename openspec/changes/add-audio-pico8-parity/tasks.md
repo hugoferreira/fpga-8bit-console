@@ -107,3 +107,34 @@
       identical PRNG sequences
 - [x] 9.4 Run `rtl/psg_tb.sv`, the complete oracle matrix and an iCE40
       synthesis/timing report; record remaining unsupported behaviour
+
+## 10. Close transition and secondary-oscillator residuals
+
+- [x] 10.1 Reproduce the repeated-slide, isolated/repeated-drop, high-pitch
+      DETUNE, compound SFX-instrument and wavetable-instrument cases from fresh
+      RTL renders, and localise their error by synthesis tick
+- [ ] 10.2 Correct the shared transition-state phase order for repeated slide,
+      drop and compound SFX-instrument boundaries
+- [ ] 10.3 Correct the remaining DETUNE and wavetable secondary-oscillator
+      scaling/rounding residuals
+- [ ] 10.4 Remove the case-specific composite tolerance and gate every named
+      residual with an explicit strict oracle threshold
+- [ ] 10.5 Run the structural PSG testbench, complete PICO-8 oracle matrix,
+      Celeste simulator build/run and iCE40 synthesis/timing report
+
+## 11. Close wave-6 noise fidelity
+
+- [x] 11.1 Replace the three-window max-minus-min wander estimator with
+      overlapping windows and centroid standard deviation; calibrate its target
+      and guard against the PICO-8 reference and the exact binary model's seed
+      spread
+- [x] 11.2 Gate repeated-sample rate and >4 kHz power share, the two stable
+      measurements that distinguish the published random walk from the former
+      combinational double-step bug
+- [x] 11.3 Prove the current RTL passes and the git-HEAD buggy walk fails the
+      new repeat-rate and HF-share gates
+- [x] 11.4 Re-freeze the deliberate `wave-6-noise` oracle change; run the PSG
+      testbench, preview/fidelity/oracle gates, lint, and the PSG synthesis
+      report
+- [x] 11.5 Deliberately resolve the `PSG_NOISE_DEBUG` hook and update the noise
+      fidelity documentation with the final gate and synthesis evidence

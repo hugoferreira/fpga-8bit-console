@@ -12,23 +12,32 @@ render starts on sample 0, so a raw sample-by-sample diff of two CORRECT renders
 still looks broken. The lag is estimated by cross-correlation and reported, so a
 wild lag is itself a finding rather than a silent fudge.
 
-Three numbers, because they fail independently:
+Independent measurements, because they fail independently:
   pitch     per-window autocorrelation pitch, agreeing within a semitone. Catches
             wrong notes, wrong octaves, detuned oscillators, scrambled phase.
   level     per-window RMS ratio. Catches a missing voice, a stuck envelope, or a
             channel mask that is off - all of which can leave pitch intact.
   spectrum  per-window log-magnitude cosine distance. Catches a wrong WAVEFORM at
             the right pitch and level, which the other two both pass.
+  bands     absolute candidate/reference level in four frequency bands, over the
+            whole track and the quietest reference windows. Catches spectral
+            tilt and a noise floor that fails to recede during quiet passages.
+On an UNPITCHED reference (noise, percussion) pitch and lock cannot succeed even
+for a perfect render, so they are withheld and contour is reported instead.
 
---spectrogram adds the picture those three numbers summarise: the reference and
-the render drawn side by side, same axes, same dB scale, so a missing voice or a
-wrong harmonic series is visible rather than inferred from a cosine. Frequency
-runs across and time runs UP, so the same instant sits at the same height in
-both panels and a note is a horizontal bar you can follow from one to the other;
-a long track then costs lines, which a terminal has, rather than columns, which
-it does not. It draws in the terminal; --spectrogram-file writes the same pair
-to an image at full STFT resolution, which is where vibrato and one-frame
-dropouts show up.
+--spectrogram adds the picture those numbers summarise: the panels drawn side by
+side, same axes, same dB scale, so a missing voice or a wrong harmonic series is
+visible rather than inferred from a cosine. Frequency runs across and time runs
+UP, so the same instant sits at the same height in every panel and a note is a
+horizontal bar you can follow from one to the next; a long track then costs
+lines, which a terminal has, rather than columns, which it does not.
+--spectrogram-file writes the same panels to an image at full STFT resolution,
+which is where vibrato and one-frame dropouts show up.
+
+Given ONE wav there is nothing to compare, so the spectrogram is the whole
+report and is drawn without being asked for. `-` reads a wav from stdin.
+With candidates, exit status 0 means every applicable gate passed, 1 means at
+least one comparison failed, and 2 means the invocation was invalid.
 
 Usage:
   psg_ref_check.py ref.wav cand.wav
@@ -36,14 +45,18 @@ Usage:
   psg_ref_check.py ref.wav cand.wav --spectrogram-file build/diff.png
   psg_ref_check.py ref.wav cand.wav --spectrogram --spectrogram-range 12:16
   psg_ref_check.py ref.wav hw.wav pv.wav --labels hardware,preview --verbose
+  psg_ref_check.py one.wav                      # just look at it
+  build/obj_dir/console --audio-wav - | psg_ref_check.py -
 """
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import shutil
 import sys
 import wave
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -52,12 +65,41 @@ WINDOW = 2205           # 0.1 s, as in tools/psg_preview_check.py
 VOICED = 0.30           # normalised autocorrelation floor for "has a pitch"
 TOLERANCE = 1.0         # semitones
 LO_HZ, HI_HZ = 70.0, 1200.0
+# Below this share of voiced reference windows the material is noise or
+# percussion, and pitch and lock stop meaning anything - see contour().
+PITCHED_MIN = 0.25
+
+# A cosine says whether two spectra have a similar SHAPE, but is deliberately
+# insensitive to a small, systematic excess spread over thousands of bins.
+# Celeste music 30 exposed that blind spot: total RMS and cosine passed while
+# 4..8 kHz energy stayed visibly and audibly high in every quiet passage.
+#
+# One-second windows reduce random-realisation variance; a half-second hop keeps
+# fades localized. "Quiet" is selected from the reference, never the candidate,
+# so a noisy candidate cannot move the goalposts by making itself look active.
+BAND_WINDOW = RATE
+BAND_HOP = RATE // 2
+BANDS = ((55.0, 250.0, "55-250 Hz"),
+         (250.0, 1000.0, "250 Hz-1 kHz"),
+         (1000.0, 4000.0, "1-4 kHz"),
+         (4000.0, 8000.0, "4-8 kHz"))
+BAND_MIN_SHARE = 0.005
+BAND_LIVE_POWER_FLOOR = 1e-6  # ignore true silence, 60 dB below the loudest window
+BAND_TOL_DB = 1.5             # 41% power: broad enough for RNG, below a 2x excess
+QUIET_QUANTILE = 0.35
+MIN_QUIET_WINDOWS = 3
+
+# Noise has no stable sample correlation. Align its smoothed power envelope
+# instead, at 5 ms resolution, before calculating windows or drawing panels.
+ENVELOPE_HOP = RATE // 200
 
 SPEC_FFT = 1024         # 46 ms, ~21.5 Hz bins: resolves a bass note's harmonics
 SPEC_LO_HZ, SPEC_HI_HZ = 55.0, 8000.0
 SPEC_DYNAMIC_DB = 60.0  # everything this far under the loudest cell reads as floor
 SPEC_LINES_PER_SEC = 2  # text lines per second of audio; each holds two slices
 SPEC_MAX_LINES = 120    # a minute of scrollback per panel is already a lot
+SPEC_GAP = 3            # blank columns between panels
+SPEC_GUTTER = 6         # "12.5s" plus the axis glyph
 # Black -> blue -> purple -> red -> orange -> yellow -> white, monotone in
 # luminance so the ramp still reads as "louder" on a terminal that renders the
 # 256-colour cube badly. 16 steps quantises 60 dB to ~4 dB; SPEC_RGB is the same
@@ -70,10 +112,20 @@ SPEC_ASCII = " .:-=+*#%@"
 # All 16 ways to split a 2x2 cell into foreground and background, indexed by
 # bits (upper-left 1, upper-right 2, lower-left 4, lower-right 8).
 SPEC_QUADRANTS = " ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█"
+TOO_SHORT = ("    spectrogram: less than %.0f ms of audio, nothing to draw"
+             % (SPEC_FFT / RATE * 1000))
 
+
+# ----------------------------------------------------------------- input ----
 
 def load(path):
-    with wave.open(path) as w:
+    """16-bit PCM at RATE as float64, mono. `-` reads stdin.
+
+    stdin is buffered into memory first: the wave module seeks, a pipe does not,
+    and a track is a few megabytes.
+    """
+    source = io.BytesIO(sys.stdin.buffer.read()) if path == "-" else path
+    with wave.open(source) as w:
         if w.getsampwidth() != 2:
             raise SystemExit(f"{path}: expected 16-bit PCM")
         pcm = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
@@ -85,6 +137,32 @@ def load(path):
     return pcm.astype(np.float64)
 
 
+def name(path):
+    return "stdin" if path == "-" else path.split("/")[-1]
+
+
+def describe(path, samples, indent=""):
+    print(f"{indent}{path}: {len(samples) / RATE:.2f}s, "
+          f"peak {np.abs(samples).max():.0f}, "
+          f"rms {np.sqrt(np.mean(samples ** 2)):.0f}")
+
+
+# --------------------------------------------------------------- metrics ----
+
+def correlation_lag(reference, candidate, span):
+    """Lag L with reference[i] ~ candidate[i + L] for arbitrary 1-D series."""
+    n = min(len(reference), len(candidate))
+    if n < 2:
+        return 0
+    a = reference[:n] - reference[:n].mean()
+    b = candidate[:n] - candidate[:n].mean()
+    size = 1 << int(np.ceil(np.log2(2 * n)))
+    span = min(span, size // 2)
+    corr = np.fft.irfft(np.fft.rfft(b, size) * np.conj(np.fft.rfft(a, size)), size)
+    lags = np.concatenate([np.arange(0, span + 1), np.arange(-span, 0)])
+    return int(lags[np.argmax(corr[lags])])
+
+
 def align(reference, candidate, span=RATE // 2):
     """Lag L with reference[i] ~ candidate[i + L], for shift() below.
 
@@ -93,12 +171,26 @@ def align(reference, candidate, span=RATE // 2):
     correlating at -0.10 and reads as total corruption.
     """
     n = min(len(reference), len(candidate), RATE * 8)
-    a = reference[:n] - reference[:n].mean()
-    b = candidate[:n] - candidate[:n].mean()
-    size = 1 << int(np.ceil(np.log2(2 * n)))
-    corr = np.fft.irfft(np.fft.rfft(b, size) * np.conj(np.fft.rfft(a, size)), size)
-    lags = np.concatenate([np.arange(0, span + 1), np.arange(-span, 0)])
-    return int(lags[np.argmax(corr[lags])])
+    if n < 2:
+        return 0
+    return correlation_lag(reference[:n], candidate[:n], span)
+
+
+def power_envelope(samples, window=WINDOW, hop=ENVELOPE_HOP):
+    """Windowed RMS envelope, sampled every `hop` samples."""
+    if len(samples) < window:
+        return np.zeros(0)
+    squared = samples.astype(np.float64) ** 2
+    summed = np.concatenate(([0.0], np.cumsum(squared)))
+    power = (summed[window:] - summed[:-window]) / window
+    return np.sqrt(np.maximum(power, 0.0))[::hop]
+
+
+def align_envelope(reference, candidate, span=RATE // 2):
+    """Align unpitched material by its deterministic loudness trajectory."""
+    a, b = power_envelope(reference), power_envelope(candidate)
+    lag = correlation_lag(a, b, max(1, span // ENVELOPE_HOP))
+    return lag * ENVELOPE_HOP
 
 
 def shift(candidate, lag):
@@ -139,11 +231,6 @@ def lock(reference, candidate, block=RATE // 2, span=8000):
     return rows
 
 
-# Below this share of voiced reference windows the material is noise or
-# percussion, and pitch and lock stop meaning anything - see contour().
-PITCHED_MIN = 0.25
-
-
 def contour(reference, candidate, window=WINDOW):
     """Correlation of the loudness and timbre TRAJECTORIES.
 
@@ -157,6 +244,7 @@ def contour(reference, candidate, window=WINDOW):
     n = min(len(reference), len(candidate)) // window
     if n < 4:
         return None
+
     def traj(x):
         rms, cen = [], []
         for i in range(n):
@@ -166,6 +254,7 @@ def contour(reference, candidate, window=WINDOW):
             rms.append(np.sqrt((seg ** 2).mean()))
             cen.append((mag * freqs).sum() / max(mag.sum(), 1e-9))
         return np.array(rms), np.array(cen)
+
     a_rms, a_cen = traj(reference)
     b_rms, b_cen = traj(candidate)
     if a_rms.std() == 0 or b_rms.std() == 0:
@@ -208,6 +297,121 @@ def spectrum(frame):
     mag = np.abs(np.fft.rfft(frame * np.hanning(len(frame))))
     return np.log1p(mag)
 
+
+def reference_pitchiness(samples):
+    """Fraction of complete analysis windows with a stable reference period."""
+    windows = len(samples) // WINDOW
+    if not windows:
+        return 0.0
+    voiced = sum(pitch(samples[i * WINDOW:(i + 1) * WINDOW])[1] >= VOICED
+                 for i in range(windows))
+    return voiced / windows
+
+
+def db_ratio(candidate_power, reference_power):
+    """Power ratio in dB, retaining infinities as an honest hard failure."""
+    if reference_power <= 0:
+        return None
+    if candidate_power <= 0:
+        return float("-inf")
+    return float(10.0 * np.log10(candidate_power / reference_power))
+
+
+@dataclass(frozen=True)
+class BandBalance:
+    label: str
+    whole_db: float | None
+    local_db: float | None
+    quiet_db: float | None
+    windows: int
+    quiet_windows: int
+
+    def failures(self, tolerance=BAND_TOL_DB):
+        failed = []
+        if self.whole_db is not None and abs(self.whole_db) > tolerance:
+            failed.append("whole")
+        if self.quiet_db is not None and abs(self.quiet_db) > tolerance:
+            failed.append("quiet")
+        return failed
+
+
+def band_balance(reference, candidate):
+    """Absolute spectral-level comparison, including reference-selected troughs.
+
+    Each row is measured independently before robust aggregation. A band must
+    carry at least BAND_MIN_SHARE of reference power in a window to participate;
+    this prevents near-empty harmonic bands from producing enormous meaningless
+    ratios. Whole-track values sum power, while local and quiet values are
+    medians so a single transition cannot dominate the verdict.
+    """
+    n = min(len(reference), len(candidate))
+    if n < BAND_WINDOW:
+        return []
+
+    window = np.hanning(BAND_WINDOW)
+    freqs = np.fft.rfftfreq(BAND_WINDOW, 1 / RATE)
+    rows = []
+    for start in range(0, n - BAND_WINDOW + 1, BAND_HOP):
+        ref = reference[start:start + BAND_WINDOW]
+        cand = candidate[start:start + BAND_WINDOW]
+        ref_power = np.abs(np.fft.rfft((ref - ref.mean()) * window)) ** 2
+        cand_power = np.abs(np.fft.rfft((cand - cand.mean()) * window)) ** 2
+        full = (freqs >= BANDS[0][0]) & (freqs < BANDS[-1][1])
+        total = float(ref_power[full].sum())
+        powers = []
+        for lo_hz, hi_hz, _ in BANDS:
+            mask = (freqs >= lo_hz) & (freqs < hi_hz)
+            powers.append((float(ref_power[mask].sum()),
+                           float(cand_power[mask].sum())))
+        rows.append((total, powers))
+
+    totals = np.array([row[0] for row in rows])
+    live = totals > max(float(totals.max()) * BAND_LIVE_POWER_FLOOR, 1e-9)
+    if not live.any():
+        return []
+    quiet_ceiling = float(np.quantile(totals[live], QUIET_QUANTILE))
+    quiet = live & (totals <= quiet_ceiling)
+
+    results = []
+    for band_index, (_, _, label) in enumerate(BANDS):
+        active = np.array(
+            [is_live and powers[band_index][0] >= BAND_MIN_SHARE * total
+             for is_live, (total, powers) in zip(live, rows)])
+        local = []
+        quiet_local = []
+        ref_sum = cand_sum = 0.0
+        for index, (_, powers) in enumerate(rows):
+            if not active[index]:
+                continue
+            ref_power, cand_power = powers[band_index]
+            value = db_ratio(cand_power, ref_power)
+            ref_sum += ref_power
+            cand_sum += cand_power
+            local.append(value)
+            if quiet[index]:
+                quiet_local.append(value)
+        quiet_value = (float(np.median(quiet_local))
+                       if len(quiet_local) >= MIN_QUIET_WINDOWS else None)
+        results.append(BandBalance(
+            label=label,
+            whole_db=db_ratio(cand_sum, ref_sum) if local else None,
+            local_db=float(np.median(local)) if local else None,
+            quiet_db=quiet_value,
+            windows=len(local),
+            quiet_windows=len(quiet_local),
+        ))
+    return results
+
+
+def note(hz):
+    if hz <= 0:
+        return "-"
+    midi = 69 + 12 * np.log2(hz / 440.0)
+    names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    return "%s%d" % (names[int(round(midi)) % 12], int(round(midi)) // 12 - 1)
+
+
+# ----------------------------------------------------- spectrogram data ----
 
 def stft(samples, size=SPEC_FFT):
     """(frames, bins) magnitude spectra, hop = size/2."""
@@ -257,6 +461,23 @@ def spectrogram(samples, times, bands):
     return 20 * np.log10(band @ group + 1e-9), edges
 
 
+def scale(panels):
+    """(floor, ceiling) dB shared by every panel.
+
+    ONE scale for all of them. Normalising each panel to its own peak would hide
+    exactly the fault the level metric exists to catch: a render at half the
+    reference's amplitude would draw identically to a correct one.
+    """
+    ceiling = max(float(db.max()) for db in panels)
+    # Averaging frames into slices lifts the floor, so a fixed 60 dB window
+    # leaves a third of the ramp unused and flattens the picture. Take the
+    # quietest cell any panel actually has, bounded by that window.
+    quietest = float(np.percentile(np.concatenate([db.ravel() for db in panels]), 1))
+    return max(ceiling - SPEC_DYNAMIC_DB, quietest), ceiling
+
+
+# ------------------------------------------------------ terminal drawing ----
+
 def truecolor():
     """Does the terminal advertise 24-bit colour? Force with COLORTERM=truecolor."""
     return os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit")
@@ -272,7 +493,7 @@ def rgb(values):
     return np.rint(table[lo] * (1 - frac) + table[hi] * frac).astype(int)
 
 
-def split(quad):
+def two_tone(quad):
     """Best two-colour approximation of each 2x2 cell.
 
     A character cell carries four subcells but only two colours, so each cell is
@@ -333,16 +554,16 @@ def panel(db, floor, ceiling, color):
     # matching the bit weights in SPEC_QUADRANTS. Time half 0 is the later slice
     # (rows are latest-first) and band half 0 is the lower frequency.
     quad = norm.reshape(lines, 2, cols, 2).transpose(0, 2, 1, 3).reshape(lines, cols, 4)
-    pattern, fore, back = split(quad)
+    pattern, fore, back = two_tone(quad)
 
     if truecolor():
-        paint = rgb
         escape = "\x1b[38;2;%d;%d;%d;48;2;%d;%d;%dm"
+        fore, back = rgb(fore), rgb(back)
     else:
-        ramp = np.array(SPEC_RAMP)
-        paint = lambda v: ramp[np.rint(v * (len(SPEC_RAMP) - 1)).astype(int)][..., None]
         escape = "\x1b[38;5;%d;48;5;%dm"
-    fore, back = paint(fore), paint(back)
+        steps = np.array(SPEC_RAMP)
+        fore, back = (steps[np.rint(v * (len(SPEC_RAMP) - 1)).astype(int)][..., None]
+                      for v in (fore, back))
 
     out_lines = []
     for i in range(lines):
@@ -365,60 +586,13 @@ def hz_label(hz):
     return "%d" % round(hz)
 
 
-def draw(left, right, labels, start, seconds, color, out=sys.stdout):
-    """Two spectrograms side by side: frequency across, time UP the page.
+def ruler(edges, cols):
+    """(axis line, label line) for the frequency axis, cols wide.
 
-    Rotated because the comparison is between the two panels, and the eye
-    compares two things that sit at the same height far better than two things
-    that sit at the same horizontal offset. It also lifts the length limit: a
-    long track gets more LINES, and a terminal has unlimited scrollback but a
-    fixed width.
+    Octaves of A, dropped where two labels would collide, so a wrong octave is
+    read off the axis rather than counted in decades.
     """
-    width = shutil.get_terminal_size((100, 24)).columns
-    # 4 indent + two panels of (5-char time label + axis + cells) + 3 gap.
-    cols = max(16, min(90, (width - 19) // 2))          # characters per panel
-    lines = int(min(SPEC_MAX_LINES, max(6, round(seconds * SPEC_LINES_PER_SEC))))
-    bands = cols * 2 if color else cols                 # quadrants split columns
-
-    a = spectrogram(left, lines * 2, bands)
-    b = spectrogram(right, lines * 2, bands)
-    if a is None or b is None:
-        print("    spectrogram: less than %.0f ms of overlap, nothing to draw"
-              % (SPEC_FFT / RATE * 1000), file=out)
-        return
-    # (bands, times) -> (times, bands), newest slice first so it lands on top.
-    (adb, edges), (bdb, _) = (a[0].T[::-1], a[1]), (b[0].T[::-1], b[1])
-
-    # ONE scale for both panels. Normalising each panel to its own peak would
-    # hide exactly the fault the level metric exists to catch: a render at half
-    # the reference's amplitude would draw identically to a correct one.
-    ceiling = max(adb.max(), bdb.max())
-    # Averaging frames into columns lifts the floor, so a fixed 60 dB window
-    # leaves a third of the ramp unused and flattens the picture. Take the
-    # quietest cell either panel actually has, bounded by that window.
-    floor = max(ceiling - SPEC_DYNAMIC_DB,
-                float(np.percentile(np.concatenate([adb.ravel(), bdb.ravel()]), 1)))
-    left_lines = panel(adb, floor, ceiling, color)
-    right_lines = panel(bdb, floor, ceiling, color)
-
-    def title(text):
-        text = text if len(text) <= cols else text[:cols - 1] + "…"
-        return text.center(cols)
-
-    print("    %s   %s" % (" " * 6 + title(labels[0]), " " * 6 + title(labels[1])),
-          file=out)
-    # A time label every ~5 lines: one per line is unreadable on a long track.
-    every = max(1, round(lines / 10))
-    for i, (l, r) in enumerate(zip(left_lines, right_lines)):
-        # Line i holds slices 2i and 2i+1 counted back from the end, so its top
-        # edge is at (lines - i) / lines of the way through.
-        tick = ("%.1fs" % (start + seconds * (lines - i) / lines)
-                if i % every == 0 else "")
-        gutter = "%5s┤" % tick
-        print("    %s%s   %s%s" % (gutter, l, gutter, r), file=out)
-
-    # Frequency ruler: octaves of A, dropped where two labels would collide.
-    marks, ruler = [" "] * cols, ["─"] * cols
+    marks, axis = [" "] * cols, ["─"] * cols
     span = np.log(edges[-1] / edges[0])
     used = -1
     for hz in (55 * 2 ** k for k in range(9)):
@@ -429,37 +603,88 @@ def draw(left, right, labels, start, seconds, color, out=sys.stdout):
         if at <= used or at + len(text) > cols:
             continue
         marks[at:at + len(text)] = list(text)
-        ruler[at] = "┬"
+        axis[at] = "┬"
         used = at + len(text)
-    # The corner sits UNDER THE GUTTER, in the column the data lines spend on
-    # the axis glyph - it is not one of the `cols` cells. Folding it into the
-    # ruler instead cost the last cell, put every tick one column left of its
-    # label, and shifted the right panel's axis off its own panel.
-    # The gutter labels the TOP edge of each line, so the bottom edge - the
-    # start of the range - belongs here, or the axis has no origin.
-    origin = "%.1fs" % start
-    print("    %5s└%s   %5s└%s"
-          % (origin, "".join(ruler), origin, "".join(ruler)), file=out)
-    print("    %6s%s   %6s%s" % ("", "".join(marks), "", "".join(marks)), file=out)
+    return "".join(axis), "".join(marks)
 
+
+def legend(color):
     if color and truecolor():
         steps = rgb(np.linspace(0.0, 1.0, 24))
-        bar = "".join("\x1b[38;2;%d;%d;%dm█" % tuple(c) for c in steps) + "\x1b[0m"
-    elif color:
-        bar = "".join("\x1b[38;5;%dm█" % c for c in SPEC_RAMP) + "\x1b[0m"
-    else:
-        bar = SPEC_ASCII
-    print("    %6s%s %+.0f dB .. %+.0f dB (Hz across, time up, scale shared "
-          "by both panels)" % ("", bar, floor - ceiling, 0.0), file=out)
+        return "".join("\x1b[38;2;%d;%d;%dm█" % tuple(c) for c in steps) + "\x1b[0m"
+    if color:
+        return "".join("\x1b[38;5;%dm█" % c for c in SPEC_RAMP) + "\x1b[0m"
+    return SPEC_ASCII
 
 
-def draw_file(left, right, labels, start, path, out=sys.stdout):
-    """The same two panels as draw(), at full STFT resolution, into a file.
+def draw(panels, start, seconds, color, out=sys.stdout):
+    """Spectrograms side by side: frequency across, time UP the page.
 
-    Same data, same shared dB scale, different medium: 12 text lines cannot show
-    a vibrato or a one-frame dropout, and 43 columns per second can. Matplotlib
-    is imported here rather than at module scope so the terminal panels, the
-    metrics and the exit code all still work without it installed.
+    `panels` is [(label, samples)] - one panel when there is nothing to compare
+    against, two for a diff, more if several renders are being judged at once.
+
+    Rotated because the comparison is BETWEEN panels, and the eye compares two
+    things at the same height far better than two at the same horizontal offset.
+    It also lifts the length limit: a long track gets more LINES, and a terminal
+    has unlimited scrollback but a fixed width.
+    """
+    width = shutil.get_terminal_size((100, 24)).columns
+    n = len(panels)
+    cols = (width - 4 - SPEC_GAP * (n - 1) - SPEC_GUTTER * n) // n
+    cols = max(16, min(110, cols))
+    lines = int(min(SPEC_MAX_LINES, max(6, round(seconds * SPEC_LINES_PER_SEC))))
+    bands = cols * 2 if color else cols          # quadrants split each column
+
+    grids = [spectrogram(samples, lines * 2, bands) for _, samples in panels]
+    if any(g is None for g in grids):
+        print(TOO_SHORT, file=out)
+        return
+    # (bands, times) -> (times, bands), newest slice first so it lands on top.
+    decibels = [g[0].T[::-1] for g in grids]
+    edges = grids[0][1]
+
+    floor, ceiling = scale(decibels)
+    drawn = [panel(db, floor, ceiling, color) for db in decibels]
+    gap = " " * SPEC_GAP
+
+    def row(cells, gutter):
+        return "    " + gap.join(gutter(i) + cell for i, cell in enumerate(cells))
+
+    titles = [(label if len(label) <= cols else label[:cols - 1] + "…").center(cols)
+              for label, _ in panels]
+    print(row(titles, lambda i: " " * SPEC_GUTTER), file=out)
+
+    # A time label every ~10 lines: one per line is unreadable on a long track.
+    every = max(1, round(lines / 10))
+    for i in range(lines):
+        # Line i holds slices 2i and 2i+1 counted back from the end, so its top
+        # edge is at (lines - i) / lines of the way through.
+        tick = ("%.1fs" % (start + seconds * (lines - i) / lines)
+                if i % every == 0 else "")
+        print(row([d[i] for d in drawn], lambda _: "%5s┤" % tick), file=out)
+
+    axis, marks = ruler(edges, cols)
+    # The corner sits UNDER THE GUTTER, in the column the data lines spend on
+    # the axis glyph - it is not one of the `cols` cells. Folding it into the
+    # axis instead costs the last cell and puts every tick one column left of
+    # its label. The gutter labels the TOP edge of each line, so the bottom
+    # edge - the start of the range - belongs here, or the axis has no origin.
+    print(row([axis] * n, lambda _: "%5s└" % ("%.1fs" % start)), file=out)
+    print(row([marks] * n, lambda _: " " * SPEC_GUTTER), file=out)
+    print("    %s%s %+.0f dB .. %+.0f dB (Hz across, time up%s)"
+          % (" " * SPEC_GUTTER, legend(color), floor - ceiling, 0.0,
+             ", scale shared by all panels" if n > 1 else ""), file=out)
+
+
+# --------------------------------------------------------- image drawing ----
+
+def draw_file(panels, start, path, out=sys.stdout):
+    """The same panels as draw(), at full STFT resolution, into a file.
+
+    Same data, same shared dB scale, different medium: a dozen text lines cannot
+    show a vibrato or a one-frame dropout, and 43 columns per second can.
+    Matplotlib is imported here rather than at module scope so the terminal
+    panels, the metrics and the exit code all still work without it installed.
     """
     try:
         import matplotlib
@@ -469,66 +694,97 @@ def draw_file(left, right, labels, start, path, out=sys.stdout):
         raise SystemExit("--spectrogram-file needs matplotlib "
                          "(pip install matplotlib), or use --spectrogram")
 
-    panels = [stft(left), stft(right)]
-    if any(not len(m) for m in panels):
-        print("    spectrogram: less than %.0f ms of overlap, nothing to draw"
-              % (SPEC_FFT / RATE * 1000), file=out)
+    mags = [stft(samples) for _, samples in panels]
+    if any(not len(m) for m in mags):
+        print(TOO_SHORT, file=out)
         return
     # Drop the DC bin: it carries no pitch and a log frequency axis cannot plot 0.
-    freqs = (np.arange(panels[0].shape[1]) * RATE / SPEC_FFT)[1:]
-    decibels = [20 * np.log10(m[:, 1:].T + 1e-9) for m in panels]
-
-    # One scale, and here the fixed window is right: at full resolution nothing
-    # averages the floor up, so the quiet cells are really that quiet.
+    freqs = (np.arange(mags[0].shape[1]) * RATE / SPEC_FFT)[1:]
+    # At full resolution nothing averages the floor up, so the quiet cells are
+    # really that quiet and the fixed dynamic window is the honest one.
+    decibels = [20 * np.log10(m[:, 1:] + 1e-9) for m in mags]
     ceiling = max(float(db.max()) for db in decibels)
     floor = ceiling - SPEC_DYNAMIC_DB
 
     # Same orientation as the terminal panels: frequency across, time up. The
     # figure grows with the track instead of squeezing a minute of music into a
-    # fixed width, and the two panels stay comparable line by line.
-    duration = (len(panels[0]) * (SPEC_FFT // 2)) / RATE
-    fig, axes = plt.subplots(1, 2, figsize=(9.5, min(40.0, max(4.5, duration * 0.5))),
-                             sharex=True, sharey=True, constrained_layout=True)
-    for ax, db, label, mag, role in zip(axes, decibels, labels, panels,
-                                        ("reference", "render")):
-        seconds = start + (np.arange(len(mag)) * (SPEC_FFT // 2)
-                           + SPEC_FFT / 2) / RATE
+    # fixed height, and the panels stay comparable line by line.
+    seconds = len(mags[0]) * (SPEC_FFT // 2) / RATE
+    roles = ("reference", "render") if len(panels) == 2 else ("",) * len(panels)
+    fig, axes = plt.subplots(1, len(panels), squeeze=False, sharex=True, sharey=True,
+                             constrained_layout=True,
+                             figsize=(5.0 + 4.5 * len(panels),
+                                      min(40.0, max(4.5, seconds * 0.5))))
+    for ax, db, (label, _), mag, role in zip(axes[0], decibels, panels, mags, roles):
+        when = start + (np.arange(len(mag)) * (SPEC_FFT // 2) + SPEC_FFT / 2) / RATE
         # Plot relative to the shared ceiling: an absolute dB axis on int16
         # magnitudes is a number nobody can act on.
-        mesh = ax.pcolormesh(freqs, seconds, (db - ceiling).T,
-                             vmin=floor - ceiling, vmax=0.0, cmap="magma",
-                             shading="nearest", rasterized=True)
+        mesh = ax.pcolormesh(freqs, when, db - ceiling, vmin=floor - ceiling,
+                             vmax=0.0, cmap="magma", shading="nearest",
+                             rasterized=True)
         ax.set_xscale("log")
         ax.set_xlim(SPEC_LO_HZ, min(SPEC_HI_HZ, RATE / 2))
-        # Octaves of A, so a wrong octave is read off the axis rather than
-        # counted in decades.
         ticks = [55 * 2 ** k for k in range(8)
                  if SPEC_LO_HZ <= 55 * 2 ** k <= min(SPEC_HI_HZ, RATE / 2)]
         ax.set_xticks(ticks)
         ax.set_xticklabels([hz_label(t) for t in ticks])
-        ax.set_title(f"{role}: {label}", fontsize=10)
+        ax.set_title(f"{role}: {label}" if role else label, fontsize=10)
         ax.set_xlabel("Hz")
-    axes[0].set_ylabel("seconds")
-    fig.colorbar(mesh, ax=axes,
-                 label="dB below the loudest cell of either panel")
+    axes[0][0].set_ylabel("seconds")
+    fig.colorbar(mesh, ax=axes, label="dB below the loudest cell drawn")
     fig.savefig(path)
     plt.close(fig)
     print(f"    spectrogram written to {path}", file=out)
 
 
-def note(hz):
-    if hz <= 0:
-        return "-"
-    midi = 69 + 12 * np.log2(hz / 440.0)
-    names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-    return "%s%d" % (names[int(round(midi)) % 12], int(round(midi)) // 12 - 1)
+# ------------------------------------------------------------- the views ----
+
+@dataclass
+class View:
+    """Where the spectrogram goes, so the report takes one argument, not four."""
+    terminal: bool = False
+    path: str | None = None
+    window: tuple[float, float | None] | None = None
+    color: bool = True
+
+    def wanted(self):
+        return self.terminal or bool(self.path)
+
+    def show(self, panels):
+        """Draw `panels` wherever this view asks, over its time window."""
+        total = min(len(samples) for _, samples in panels)
+        lo, hi = 0, total
+        if self.window is not None:
+            lo = min(max(int(self.window[0] * RATE), 0), total)
+            hi = total if self.window[1] is None else min(int(self.window[1] * RATE),
+                                                          total)
+        if hi - lo < SPEC_FFT:
+            print("    spectrogram: range holds %d samples, need %d"
+                  % (max(hi - lo, 0), SPEC_FFT))
+            return
+        clipped = [(label, samples[lo:hi]) for label, samples in panels]
+        if self.terminal:
+            draw(clipped, lo / RATE, (hi - lo) / RATE, self.color)
+        if self.path:
+            draw_file(clipped, lo / RATE, self.path)
 
 
-def compare(reference, candidate, label, verbose, spec=False, spec_range=None,
-            ref_label="reference", color=True, spec_file=None):
-    lag = align(reference, candidate)
+# ---------------------------------------------------------- the report ----
+
+def compare(reference, candidate, label, verbose, view, ref_label="reference"):
+    pitchiness = reference_pitchiness(reference)
+    pitched = pitchiness >= PITCHED_MIN
+    lag = (align(reference, candidate) if pitched
+           else align_envelope(reference, candidate))
     shifted = shift(candidate, lag)
     windows = min(len(reference), len(shifted)) // WINDOW
+    if windows < 1:
+        # Every metric below reduces over the windows, and reducing over none of
+        # them is a median of an empty array, not a verdict.
+        print(f"  {label}: {min(len(reference), len(shifted)) / RATE:.3f}s of "
+              f"overlap is under one {WINDOW / RATE:.1f} s window - "
+              f"nothing to compare")
+        return 0.0
 
     ref_hz, cand_hz = [], []
     rows, compared, agreed = [], 0, 0
@@ -567,15 +823,14 @@ def compare(reference, candidate, label, verbose, spec=False, spec_range=None,
         settled += any(h > 0 and abs(12 * np.log2(h / cand_hz[i])) <= TOLERANCE
                        for h in near)
 
-    # Is the REFERENCE pitched at all? On a noise or percussion track neither
-    # pitch nor lock can succeed even for a perfect render, and printing them
-    # anyway hands the reader a red verdict with no way to know it is vacuous.
-    # That happened: Celeste's track 30 is one swept noise voice, and a render
-    # tracking its contour at 0.99 reported "33% pitch" and "LOST LOCK".
-    pitched = windows > 0 and (compared / windows) >= PITCHED_MIN
+    # Is the REFERENCE pitched at all? On noise or percussion, waveform
+    # correlation follows the random realization rather than sequencer time.
+    # Use the smoothed power envelope selected above for both metrics and views.
+    shape = None if pitched else contour(reference, shifted)
 
-    print(f"  {label}: lag {lag:+d} samples ({lag / RATE * 1000:+.1f} ms)"
-          f"{'' if pitched else ' - MEANINGLESS here, see below'}, "
+    alignment = "sample" if pitched else "envelope"
+    print(f"  {label}: {alignment} lag {lag:+d} samples "
+          f"({lag / RATE * 1000:+.1f} ms), "
           f"{windows} windows of 0.1 s")
     if not pitched:
         print(f"    UNPITCHED reference: only {compared}/{windows} windows have "
@@ -586,10 +841,6 @@ def compare(reference, candidate, label, verbose, spec=False, spec_range=None,
                "samples to equal")
         print( "             PICO-8's, which needs its RNG and that RNG's "
                "cross-voice draw order.")
-        # The RAW candidate: `lag` came from cross-correlating waveforms, and on
-        # noise that is an arbitrary peak (-6233 samples on track 30). Shifting
-        # by it smears the trajectory and scored a 0.99 contour as 0.55.
-        shape = contour(reference, candidate)
         if shape is not None:
             print(f"    contour  loudness {shape[0]:.3f}, timbre {shape[1]:.3f} "
                   f"(1.000 is the ceiling; this is the metric that applies)")
@@ -615,6 +866,23 @@ def compare(reference, candidate, label, verbose, spec=False, spec_range=None,
     print(f"    spectrum cosine median {np.median(cos):.3f} "
           f"(p10 {np.percentile(cos, 10):.3f})")
 
+    balance = band_balance(reference, shifted)
+    band_failures = []
+    if balance:
+        print(f"    band level, dB render/reference (guard +/-{BAND_TOL_DB:.1f} dB; "
+              f"quiet = lowest {100 * QUIET_QUANTILE:.0f}% of reference windows)")
+        print("      band            whole   local   quiet")
+        for result in balance:
+            failed = result.failures()
+            band_failures.extend(f"{result.label} {scope}" for scope in failed)
+
+            def value(number):
+                return "   n/a" if number is None else f"{number:+6.2f}"
+
+            verdict = "" if not failed else f"   FAIL ({', '.join(failed)})"
+            print(f"      {result.label:<14} {value(result.whole_db)} "
+                  f"{value(result.local_db)} {value(result.quiet_db)}{verdict}")
+
     locks = lock(reference, candidate) if pitched else []
     if locks:
         held = [c for _, _, c in locks]
@@ -638,25 +906,11 @@ def compare(reference, candidate, label, verbose, spec=False, spec_range=None,
     if bad and compared and pitched:
         print(f"    first mismatch at {bad[0][0] * 0.1:.1f}s "
               f"(reference {note(bad[0][1])}, render {note(bad[0][2])})")
-    if spec or spec_file:
-        # The SHIFTED candidate, so the two panels share a timebase: drawing the
-        # raw candidate would smear every difference by the reported lag and
-        # read as a sequencer slip on a render that is merely late.
-        n = min(len(reference), len(shifted))
-        lo, hi = 0, n
-        if spec_range is not None:
-            lo = min(max(int(spec_range[0] * RATE), 0), n)
-            hi = n if spec_range[1] is None else min(int(spec_range[1] * RATE), n)
-        if hi - lo < SPEC_FFT:
-            print("    spectrogram: range holds %d samples, need %d"
-                  % (max(hi - lo, 0), SPEC_FFT))
-        else:
-            if spec:
-                draw(reference[lo:hi], shifted[lo:hi], (ref_label, label),
-                     lo / RATE, (hi - lo) / RATE, color)
-            if spec_file:
-                draw_file(reference[lo:hi], shifted[lo:hi], (ref_label, label),
-                          lo / RATE, spec_file)
+    if view.wanted():
+        # The SHIFTED candidate, so the panels share a timebase: drawing the raw
+        # candidate would smear every difference by the reported lag and read as
+        # a sequencer slip on a render that is merely late.
+        view.show([(ref_label, reference), (label, shifted)])
 
     if verbose:
         print("      t/s     ref      render   err/st  rms ref/cand   cos")
@@ -670,13 +924,13 @@ def compare(reference, candidate, label, verbose, spec=False, spec_range=None,
     if not pitched:
         # Score the trajectory, so an unpitched track can still pass or fail on
         # something real rather than being scored 0 by a metric that never applied.
-        # The RAW candidate: `lag` came from cross-correlating waveforms, and on
-        # noise that is an arbitrary peak (-6233 samples on track 30). Shifting
-        # by it smears the trajectory and scored a 0.99 contour as 0.55.
-        shape = contour(reference, candidate)
-        return min(shape) if shape is not None else 0.0
-    return (agreed / compared) if compared else 0.0
+        score = min(shape) if shape is not None else 0.0
+    else:
+        score = (agreed / compared) if compared else 0.0
+    return 0.0 if band_failures else score
 
+
+# ------------------------------------------------------------------- CLI ----
 
 def parse_range(text):
     """'12:16' -> (12.0, 16.0); '12:' -> (12.0, None); ':4' -> (0.0, 4.0)."""
@@ -695,17 +949,27 @@ def parse_range(text):
     return start, end
 
 
+def image_path(base, label, many):
+    """One image per candidate, so renders do not overwrite each other."""
+    if not base or not many:
+        return base
+    stem, ext = os.path.splitext(base)
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in label)
+    return f"{stem}-{safe}{ext}"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("reference", help="wav recorded from real PICO-8")
-    ap.add_argument("candidate", nargs="+")
+    ap.add_argument("reference", help="wav recorded from real PICO-8, or `-` for "
+                                      "stdin. Alone, it is just drawn")
+    ap.add_argument("candidate", nargs="*", help="renders to judge against it")
     ap.add_argument("--labels", help="comma-separated names for the candidates")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--spectrogram", action="store_true",
-                    help="draw reference and render side by side, shared dB scale")
+                    help="draw the panels side by side, shared dB scale")
     ap.add_argument("--spectrogram-file", metavar="PATH",
-                    help="write the same pair to an image (png/pdf/svg by "
+                    help="write the same panels to an image (png/pdf/svg by "
                          "extension) at full resolution; needs matplotlib. With "
                          "several candidates the label is inserted into the name")
     ap.add_argument("--spectrogram-range", metavar="LO:HI",
@@ -717,36 +981,46 @@ def main():
                          "otherwise 16 steps of the 256-colour cube")
     args = ap.parse_args()
 
-    spec_range = parse_range(args.spectrogram_range)
-    color = (args.color == "always"
-             or (args.color == "auto" and sys.stdout.isatty()
-                 and not os.environ.get("NO_COLOR")))
+    paths = [args.reference] + args.candidate
+    if paths.count("-") > 1:
+        raise SystemExit("only one input can come from stdin")
+    view = View(terminal=args.spectrogram, path=args.spectrogram_file,
+                window=parse_range(args.spectrogram_range),
+                color=(args.color == "always"
+                       or (args.color == "auto" and sys.stdout.isatty()
+                           and not os.environ.get("NO_COLOR"))))
 
     reference = load(args.reference)
+    if not args.candidate:
+        # Nothing to compare against, so the picture IS the report: draw it even
+        # though --spectrogram was not asked for, since there is nothing else to
+        # print. An explicit --spectrogram-file alone still just writes the file.
+        describe(args.reference, reference)
+        view.terminal = view.terminal or not view.path
+        view.show([(name(args.reference), reference)])
+        return 0
+
     labels = (args.labels.split(",") if args.labels
-              else [c.split("/")[-1] for c in args.candidate])
-    print(f"reference {args.reference}: {len(reference) / RATE:.2f}s, "
-          f"peak {np.abs(reference).max():.0f}, "
-          f"rms {np.sqrt(np.mean(reference ** 2)):.0f}")
+              else [name(c) for c in args.candidate])
+    describe(args.reference, reference, indent="reference ")
     worst = 1.0
     for path, label in zip(args.candidate, labels):
         cand = load(path)
-        print(f"  {label} {path}: {len(cand) / RATE:.2f}s, "
-              f"peak {np.abs(cand).max():.0f}, "
-              f"rms {np.sqrt(np.mean(cand ** 2)):.0f}")
-        # One image per candidate, so a three-way comparison does not have each
-        # render silently overwrite the last one's picture.
-        spec_file = args.spectrogram_file
-        if spec_file and len(args.candidate) > 1:
-            stem, ext = os.path.splitext(spec_file)
-            safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in label)
-            spec_file = f"{stem}-{safe}{ext}"
-        worst = min(worst, compare(reference, cand, label, args.verbose,
-                                   spec=args.spectrogram, spec_range=spec_range,
-                                   ref_label=args.reference.split("/")[-1],
-                                   color=color, spec_file=spec_file))
+        describe(path, cand, indent=f"  {label} ")
+        view.path = image_path(args.spectrogram_file, label,
+                               len(args.candidate) > 1)
+        worst = min(worst, compare(reference, cand, label, args.verbose, view,
+                                   ref_label=name(args.reference)))
     return 0 if worst >= 0.85 else 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        # `psg_ref_check.py long.wav | head` closes the pipe under us. Die like a
+        # unix tool instead of dumping a traceback the shell then hides anyway.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(141)
+    except KeyboardInterrupt:
+        sys.exit(130)

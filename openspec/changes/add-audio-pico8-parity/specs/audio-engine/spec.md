@@ -24,6 +24,9 @@ speed SHALL NOT serve as fidelity or hardware-cycle oracles.
   contain different PRNG sequences
 - **THEN** both exports can pass the same timing, block-energy,
   zero-crossing and autocorrelation tolerances without requiring byte identity
+- **AND** a held-note pitch sweep compares overlapping-window centroid
+  deviation, adjacent repeated-sample rate and the fraction of signal power
+  above 4 kHz against model-calibrated guards
 
 #### Scenario: Hardware clock is the scheduling constraint
 

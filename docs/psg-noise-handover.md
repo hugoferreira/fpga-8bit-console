@@ -1,150 +1,193 @@
-# Handover: close the noise fidelity gap
+# Handover: noise fidelity — COMPLETE
 
-Goal: make wave-6 noise match real PICO-8 statistically. It is close and it is
-not there. The gap is audible — a listener described it as "the high pitch noise
-is higher in our implementation", and as vertical lines in a spectrogram that
-PICO-8 does not have.
+Status 2026-07-30, all work UNCOMMITTED in the working tree. The three defects
+below are explained, fixed in RTL, measured, and protected by the synthetic
+noise-sweep gates. Full-track Celeste music 30 also passes the localized
+spectral-balance gate described below.
 
-Prior work: `a09d8a6` (the bounded random walk, derived), `9de52e9` (four derived
-corrections), `c9efd38` (the fidelity gate), `dec5b8c` (metrics that withhold
-themselves on unpitched material).
+## Post-closeout correction: the first full-track comparison was stale
 
-## Where it stands
+The side-by-side spectrogram showed the PICO-8 reference darkening much more
+than the candidate during quiet passages. The old full-track report still passed:
+total RMS ratio 1.00, loudness contour 0.995, timbre contour 0.983, and spectrum
+cosine 0.996. Those statistics preserve trajectory or normalized shape and can
+therefore hide a persistent absolute band-level error.
 
-`make test-psg-fidelity` PASSES with a recorded KNOWN GAP. Also green: the
-regression gate at 59/59, the preview gate at 40/40, zero lint warnings in both
-flavours.
+`tools/psg_ref_check.py` now measures four absolute power bands in overlapping
+one-second windows. It reports integrated whole-track level, median local level,
+and the median over the quietest 35% of reference windows. Bands carrying less
+than 0.5% of reference-window power are excluded, true silence is ignored, and
+the fixed guard is +/-1.5 dB. Unpitched material is aligned by its smoothed power
+envelope rather than meaningless waveform correlation.
 
-Celeste's track 30 is the audible case — one noise voice whose pitch sweeps
-50 → 12 → 52, so the sweep IS the sound:
+The new metric correctly failed `hw28-30-v3.wav`:
 
-| | level | held-note wander | contour (loud/timbre) |
-| --- | --- | --- | --- |
-| unpitched noise (the original bug) | 0.49x | 4.33x | 0.619 / 0.116 |
-| fitted one-pole | 0.83x | 3.26x | 0.909 / 0.948 |
-| derived walk | 1.00x | 2.30x | 0.995 / 0.983 |
-| + the four corrections (HEAD) | 1.00x | 2.15x | 0.995 / 0.983 |
+- 250 Hz-1 kHz whole-track: -1.63 dB;
+- 4-8 kHz whole-track: +2.98 dB;
+- 4-8 kHz quiet windows: +3.95 dB.
 
-## What is established
+That last value is nearly 2.5x reference power, but it was not a remaining RTL
+defect: `hw28-30-v3.wav` was written at 17:43, while the final noise fixes in
+`rtl/psg_walk.sv` were written at 22:48. The image labelled a five-hour-old
+intermediate render as "Current RTL". A fresh render from the actual source
+passes: -0.09/+0.16/+0.07/+0.14 dB whole-track across the four bands, with
+-0.04 dB in the quiet-window 4-8 kHz band.
 
-Noise is a **jittered, bounded random walk** (the vendor's PSG notes in the
-PICO-8 app bundle call it the legacy mode, and the disassembly they cite
-confirms a plain wave-6 note with no filter bits takes it — the mode field is
-the OR of two bits, and only a non-zero mode plus a global counter at 12
-promotes it to the interpolated mode):
-
-- the step is taken on ALTERNATING samples, gated by a toggle in the state
-- its magnitude tracks the phase increment, `J = 8*dp + 1120` for the playable
-  range, with `dp = einc >> 8`
-- a full-range kick is added when a phase-derived test passes, at a rate rising
-  with the increment (~3% of samples at pitch 4, ~27% at pitch 60)
-- the accumulator is clamped to +-6143 **in the state**
-- the OUTPUT is taken from the accumulator BEFORE that clamp, then scaled by
-  `G * k / 2048` with `k = 80` below pitch 48 and falling above it
-
-That last line is the one that unlocks the whole thing. Clamping first caps the
-output near 9975 where PICO-8 measurably reaches 24641, and it explains what
-looks contradictory for as long as you assume otherwise: PICO-8 is
-simultaneously LOUDER and LESS SATURATED than any clamped model, because the
-bound holds the stored state while a kick landing on an already-large
-accumulator escapes through the output on that sample.
-
-Sample-exactness is **not reachable** and is not the target: PICO-8's RNG is
-shared across voices, so even a muted noise voice perturbs what the others
-produce. The gate measures statistics and their pitch dependence instead.
-
-## The residual, characterised
-
-Our walk's spectrum is **too white**. Three measurements say it:
-
-- PICO-8 repeats a consecutive output sample 10..29% of the time; we repeat
-  0.4..2.8%. Its walk HOLDS between steps; ours changes almost every sample.
-- Rail occupancy runs 0.1% → 13.3% across the pitch sweep for PICO-8 and only
-  1.5% → 2.9% for us. Its step has a far steeper pitch slope than `8*dp + 1120`
-  produces here.
-- Energy above 4 kHz is 2.0..2.3x PICO-8's share, below 200 Hz it is 0.89x.
-  Held-note wander reads 1.55x against a calibrated target of 1.35x.
-
-Separately, our noise carries ~102 narrow spectral peaks against PICO-8's 30,
-the shared ones 2-4x stronger. The 15-bit LFSR is too short and too structured
-to sound like noise; PICO-8 draws from 64 bits of state.
-
-## The map: every lever trades one metric for another
-
-This is why the obvious fixes are not in the tree. Each was built, measured, and
-reverted.
-
-| change | what it fixes | what it breaks |
-| --- | --- | --- |
-| second co-prime generator | peaks 102 → 17 | centroid 1.29 → 1.67, wander 2.25x |
-| clamp widened 2x | centroid 0.98..1.08 | rms trend collapses to 0.66 |
-| step every 4th sample | centroid 1.01..1.06 | wander 2.72x at volume 7 |
-| step x 11/16 | — | volume-1 wander 2.27x |
-| `dp` scale doubled | centroid 1.02 at high pitch | per-pitch rms fails widely |
-
-**The trap in row one.** A PERIODIC noise scores BETTER on held-note wander,
-because repeating content varies less between windows. Part of HEAD's 1.55x is
-tonality, not stability, so that metric alone would prefer the worse-sounding
-build. Do not optimise wander in isolation.
-
-## Refuted — do not re-run
-
-- kick gated on the phase, slice XOR and xorshift-mixed: both WORSE (2.19x,
-  3.10x). A slowly advancing phase makes a weak hash LATCH.
-- kick magnitude scaled by amplitude: no change to the centroid excess.
-- kick disabled entirely: changes the band ratios by 0.02 and wander by 0.04.
-  The kick is not involved in any of this.
-- decorrelated step draws alone: worse (the walk advances the LFSR once per
-  SLOT, and skipped slots advance it too, so draws were already ~8 apart).
-- 12-bit draw resolution: worse than 8.
-- step magnitude halved: overshoots (low band 1.43x, HF 0.68x).
-- two `noise_filt_step` call sites firing per sample: they are in different
-  schedule arms, only one is live.
-
-**A Python model of the walk MISPREDICTS.** It said the deterministic toggle and
-the `+1120` floor would improve wander; in RTL they did the opposite at first,
-because the model assumed one LFSR advance per sample. Measure the RTL.
-
-## What I would do next
-
-Establish how PICO-8's walk produces its HOLDS, by reading the noise output path
-in the disassembly rather than inferring it from the notes. Everything above says
-the missing ingredient is qualitative — no single scalar reproduces both the
-holds and the level rise — and the holds are the one behaviour whose mechanism I
-took from the prose instead of the listings.
-
-The rail-occupancy slope is the sharpest clue: whatever sets the step must grow
-much faster with pitch than `8*dp` does, while staying SMALLER than ours at the
-bottom of the range.
-
-## Gates
+`tools/psg_track_gate.py` prevents that provenance error. It always renders the
+current hardware-schedule RTL, fingerprints every PSG source plus the cart audio
+and reference, writes those hashes beside the candidate WAV, and then invokes
+the full-track comparison. The reproducible gate is:
 
 ```sh
-make test-psg-fidelity          # statistics + their pitch dependence, vs PICO-8
-make test-psg-fidelity RECORD=1 # re-capture the reference (needs PICO-8, real time)
-python3 tools/psg_oracle_bytecheck.py   # REGRESSION only - we vs our frozen renders
-make test-psg-preview CART=~/Stuff/carts/celeste-15133.p8.png
-verilator --lint-only rtl/psg.sv --top-module psg -Irtl -Wno-DEFOVERRIDE
-verilator --lint-only rtl/psg.sv --top-module psg -Irtl -Wno-DEFOVERRIDE -GREALTIME_PREVIEW=1
+make test-psg-track \
+  CART=~/Stuff/carts/celeste-15133.p8.png \
+  MUSIC=30 \
+  PSG_REFERENCE=build/p8ref/pico8-30.wav
 ```
 
-`psg_oracle_bytecheck` compares us against frozen renders of OUR OWN RTL. Green
-means "nothing changed", never "matches PICO-8" — that is how unpitched noise
-survived every change. A deliberate noise change makes `wave-6-noise` differ;
-re-freeze it only after `test-psg-fidelity` says the change is right.
+`tools/test_psg_ref_check.py` protects the analysis with an equal-RMS
+spectral-tilt case, a quiet-only excess that passes the whole-track average,
+inactive-band handling, envelope alignment, and process-level exit status
+checks.
 
-The fidelity gate carries two thresholds. Above 1.35x it prints KNOWN GAP and
-does not fail, because a permanently red suite gets muted and then ignored.
-Above 1.70x it FAILS. **Do not raise the guard to make a change pass** — lower it
-when a change earns it.
+## The three defects (all fixed in rtl/psg_walk.sv)
 
-## Tooling
+1. **Publication bug — the entire measured residual.** `noise_filt_step`
+   updates `s_noise_lp` and advances the LFSR at CTRL_W0 (pph 19); the mixer
+   consumed the COMBINATIONAL `nz_pre` on later cycles, by which time it had
+   re-evaluated as (updated accumulator + a FRESHLY DRAWN step on the same
+   toggle arm). Every step-parity sample carried two different steps; holds
+   never reached the output. Proof: on the fidelity probe, tog=0 samples
+   matched the stored walk 97.6%, tog=1 samples 3.5%, and the phantom term
+   was uniform up to exactly J/2. A Python replica of the bug (R0) reproduces
+   the old RTL's signature to 3 significant figures (centroid 1.192 vs
+   measured 1.193, HF share 2.001 vs 2.040, repeats collapsed). Fix: the
+   output now reads registers `nz_out_r`/`nz_old_out_r` written at CTRL_W0 —
+   the same trap class as a_pub ("publication must be a register").
+2. **Kick emasculated.** The gate compare `{lfsr[14:7],lfsr[4:0]} < thresh`
+   and the magnitude draw shared the same lfsr bits, so firing FORCED the
+   top slice toward zero: every kick was ±<700 (traced values 96, 480)
+   instead of the listing's ±6143 amp-scaled impulse. That is why "kick
+   disabled entirely" measured as a no-op — it effectively was one. Fix:
+   second maximal 15-bit LFSR `lfsr2` (x^15+x^11, seed 0x5117, advanced at
+   all three lfsr sites); draw = t11 − t11/8 − t11/64 (±880 base unit) from
+   lfsr2[12:2]; kick = draw·q with q = s_eff_a[10:8] (exact at whole
+   volumes, staircase inside fades; q=7 lands ±6160).
+3. **Missing per-tick blend for noise.** The binary copies the WHOLE osc
+   state EVERY tick and crossfades 64 samples against the copy
+   (RE write-up "Per-tick smoothing", listing 0x1000f1c87–0x1000f1d70). For
+   deterministic waves the unchanged-tick copy renders identically — the
+   RTL's params-changed-only copy was byte-equivalent there — but for noise
+   the copy and the live walk draw different randoms and DIVERGE. That
+   two-walk blend is where PICO-8's repeated-sample slope (29%→6% across the
+   pitch sweep) and its tick-rate variance averaging come from. Fix: when
+   the old arm renders plain noise, the old walk LIVES IN the s_old_phase
+   word (record grows by nothing); steps from lfsr2's advanced slice on the
+   SHARED toggle; takes the SAME kick value as the live walk; restarts from
+   the live accumulator at every bank flip (`nz_tick_r` = spar_bank edge at
+   the sample boundary). `z_old_sel` muxes it into the arm-4'd6 launch and
+   the CTRL_W17 sign capture; CTRL_W5's old-phase advance is suppressed via
+   `old_nz_r_on` while the alias is live. Blend restart = the params-changed
+   condition extended with `(wave==6 && !wt && !buzz && nz_tick_r)`.
 
-- `tools/psg_ref_check.py ref.wav cand.wav [--spectrogram]` — a whole track
-  against a PICO-8 recording. On unpitched material it WITHHOLDS pitch and lock
-  (neither can succeed without PICO-8's RNG) and reports contour instead.
-- `tools/p8_music_wav.py --image <4608-byte image>` — record a CONSTRUCTED probe
-  from real PICO-8, one assumption at a time.
-- `build/obj_dir/console --audio-wav out.wav` — what `make run` actually plays.
-  `--audio-trace`'s distinct-level and effective-bit numbers cannot tell a tune
-  from garbage; they read healthy through total corruption.
+## Listing facts settled this session (pico8.x86_64.asm)
+
+- Legacy walk decoded instruction-by-instruction at 0x1000f08bd..0x1000f0b14;
+  the write-up's prose had the clamp order WRONG — the listing reads r
+  pre-clamp (`sarl $6` on a copy taken before the clamp cmovs), clamps only
+  the stored state. HEAD already had this right.
+- The kick-arm guard `-0x50(%rbp)` is `state[0x54]` = the BUZZ flag: legacy
+  noise under buzz runs kick-free. Not the old-block flag it was guessed to be.
+- `_codo_random` verbatim: H = rol32(H,16)+L; L += H; R(m) = H mod m,
+  unsigned, R(0)=0.
+- k = max(16, 2048/den)+48, den = pitch<48 ? 64 : pitch+16. Exact k was
+  modelled (variant R3): NO measurable gain over the RTL's 80/68 two-level
+  form. Do not spend record bits on it.
+
+## Model work (tools/psg_binary_model.py, modified, uncommitted)
+
+Wave-6 legacy noise is now IN the byte-exact model: `render_noise` is
+instruction-exact from the listing, driven by the real shared RNG
+(`codo_random`, module state RNG_STATE), runs at g==0 (muted voices consume
+draws), int16-wraps the buffer cell. OscState carries nz_r/nz_tog/nz_pitch/
+nz_amp; both calc_tick paths set them. On the fidelity probe the model
+matches the recorded reference at rms 0.995 / centroid 0.997 / repeat curve
+exact / escapes exact / band shares within 5% — the decoded mechanism IS
+PICO-8's. Deterministic sweep unaffected (noise was previously out of scope;
+g==0 wave-6 output is unchanged zero).
+
+## Where the fixed RTL measures (vs tests/psg/pico8-noise-sweep.wav)
+
+repeats 29/28/26/23/20/16/11/7 vs ref 29/27/25/24/20/15/10/6; rms 1.002,
+centroid 0.998, HF-share 1.022, LF-share 0.984; all 16 per-pitch rows within
+rms 0.92–1.06 and centroid 0.97–1.03; trends 0.98 (rms) / 0.94 (centroid).
+Scratch harness (session scratchpad noise_variants.py, results reproduced in
+this doc): R2f = the shipped design.
+
+## Final verification
+
+- `psg_oracle_bytecheck`: **59/59 unchanged** after deliberately re-freezing
+  `wave-6-noise` to SHA-256 `1294cd1069c0839369b2ef209e5d0adabab503d633bc065466ae0fdeea5f473d`.
+  The frozen set is under ignored `build/`, so this is a local regression
+  baseline, not fidelity evidence.
+- The complete real-PICO-8 oracle matrix is **59/59 diagnostic-clean**.
+- `psg_tb` **ALL TESTS PASSED**, including the schedule-budget check. TRAP: the
+  memorized build command lacks `-Irtl` and dies on includes; piping through
+  `tail` masks the failure and a STALE binary "passes". Use:
+  `verilator --binary --timing -Irtl -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC
+  -Wno-PINMISSING -o psg_tb_bin rtl/psg_tb.sv rtl/psg.sv rtl/dsigma.sv
+  --Mdir build/obj_psgtb`
+- `make test-psg-preview CART=~/Stuff/carts/celeste-15133.p8.png`: PASS 36/38.
+- Lint clean, both flavours.
+- `python3 tools/psg_binary_model.py sweep`: 57/57 deterministic cases
+  byte-exact; the two shared-RNG cases are correctly skipped.
+
+## Fidelity-gate closeout
+
+`tools/psg_fidelity_gate.py` now uses 2205-sample centroid windows at a
+441-sample hop and the standard deviation of all overlapping windows. The
+reference measures 59.4/39.3 Hz at volumes 7/1; twelve exact-model RNG seeds
+span 47.8–62.0/31.4–41.9 Hz; current RTL measures 59.1/34.3 Hz. The target is
+1.10x and the regression guard 1.25x, calibrated above the model's measured
+upper spread rather than raised around an RTL result.
+
+Two sharp gates now protect the defect class:
+
+- repeat-rate ratios: 1.03x / 1.00x at volumes 7/1;
+- >4 kHz power-share ratios: 0.98x / 0.98x.
+
+Both use a deliberately broad 0.75–1.25x guard. An isolated rebuild of git
+`HEAD` (the buggy publication path) must-failed at 0.05x/0.04x repeats and
+1.50x/1.96x HF share. It also failed low-volume wander at 1.92x. The fixed RTL
+passes every fidelity check.
+
+## Area result and deliberate cleanup
+
+`make synth-psg`, RTL fingerprint `1018ab414436`, reports 8,327/7,680 iCE40
+logic cells (108%) and 22/32 RAM blocks; placement fails on logic. This is the
+requested delta measurement for the area campaign. The target still builds
+with REVERB=1, so compare it with the memory note's REVERB caveat before
+attributing the whole number to noise.
+
+The `PSG_NOISE_DEBUG` `$display` was removed after the must-fail proof. The
+three project memory notes were updated with the fixed mechanism, final gates,
+and instruction-exact model boundary.
+
+## Re-examine before trusting: the old refuted list
+
+EVERY experiment in the previous handover's "Refuted — do not re-run" table
+was measured THROUGH the publication bug, whose double-step dominated every
+statistic those experiments read. Known now-invalid conclusions: "kick
+magnitude scaled by amplitude: no change" (kicks were near-zero regardless);
+"kick disabled entirely: no effect" (same reason); the second-generator
+centroid trade (measured on the whitened spectrum). The trap note about
+periodic noise scoring better on wander remains TRUE and matters for the
+gate rework.
+
+## Recording-path facts (for anyone re-recording the reference)
+
+The reference is PICO-8's own recorder = engine-true samples; ~65-sample
+lead-in; a small drifting DC (~−82) puts VALUES off the 105-per-quantum
+lattice while preserving deltas and repeats. Two recordings are
+byte-identical (deterministic RNG from startup), so the reference is ONE
+realization of a heavy-tailed estimator — which is the whole wander story.
