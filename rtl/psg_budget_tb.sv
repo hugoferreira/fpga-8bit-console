@@ -115,6 +115,17 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   // counter here can see it. That is the shape of failure left when the audio is
   // wrong at a clock whose budget demonstrably fits.
   longint state_wr_lost = 0;
+  // The two overlaps docs/psg-preview-handover.md asks for. A sample boundary
+  // arriving while the walk is still running (prun) or its reduction tree is
+  // still folding (fold_busy) is the shape of failure that costs no clock and
+  // breaks no deadline: the contribution is simply not in the mix yet. It would
+  // show up as a render at the right pitch and the wrong AMPLITUDE, which is
+  // exactly what 159 clk/sample produces (rms 2010 against 7050).
+  longint samp_over_prun = 0, samp_over_fold = 0;
+  // Per-slot sounding time. A render with the right fundamental at a third of
+  // the amplitude is what FEWER VOICES sounds like, so count them per slot
+  // rather than inferring from the mix.
+  longint slot_play[0:7];
 
   // Hardware-deadline accounting, independent of host runtime. A job is complete
   // only after all eight slot visits and the three post-walk soft-add levels
@@ -125,6 +136,11 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
       if (dut.sample_en) samples++;
       st_clk[dut.u_seq.sst]++;
       if (dut.u_state.wlk_we && dut.u_state.etk_we) state_wr_lost++;
+      if (dut.sample_en && dut.prun)      samp_over_prun++;
+      if (dut.sample_en && dut.fold_busy) samp_over_fold++;
+      if (dut.sample_en)
+        for (int sl = 0; sl < 8; sl++)
+          if (dut.u_seq.play_bits[sl]) slot_play[sl]++;
       if (dut.prun) begin walk_own++; walk_run++; end
       else begin
         if (walk_run > max_walk_run) max_walk_run = walk_run;
@@ -406,7 +422,8 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
     wr(8'h20, 8'(pat));                  // start the pattern chain
     ticks(2);                            // let the first tick land
     zero_counters();                     // measure the SONG, not the upload
-    state_wr_lost = 0;
+    state_wr_lost = 0; samp_over_prun = 0; samp_over_fold = 0;
+    for (int sl = 0; sl < 8; sl++) slot_play[sl] = 0;
     ticks(nticks);
     $display("");
     $display("=== cart demand profile: %s, music %0d, %0d ticks, %s schedule",
@@ -432,6 +449,13 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
              state_wr_lost);
     check(state_wr_lost == 0,
           "no tick-engine write was dropped by a colliding walk write");
+    $display("  slot sounding samples  %0d %0d %0d %0d | %0d %0d %0d %0d  (fg 0-3 | music 4-7)",
+             slot_play[0], slot_play[1], slot_play[2], slot_play[3],
+             slot_play[4], slot_play[5], slot_play[6], slot_play[7]);
+    $display("  sample_en during walk  %0d prun, %0d fold_busy  (of %0d samples)",
+             samp_over_prun, samp_over_fold, samples);
+    check(samp_over_prun == 0 && samp_over_fold == 0,
+          "no sample boundary landed inside the walk or its fold");
     $display("  ---- sequencer clocks by state group ----");
     begin
       longint g_note, g_eff, g_slide, g_eng, g_pub, g_ins, g_ldst, g_mus;
