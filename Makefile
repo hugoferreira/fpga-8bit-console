@@ -195,7 +195,9 @@ bin/toplevel.json: ${TOP_LEVEL} ${INCLUDE_FILES} ${PLL_FILE} rtl/pll.v ${FONT_HE
 # C++ / SDL2 simulator runner
 # ------------------------------------------------------------------------------
 SIM_BIN = build/obj_dir/console
-$(SIM_BIN): sim/console.cpp rtl/*.sv rtl/*.bin rtl/*.hex
+# rtl/*.svh as well as rtl/*.sv: psg_common.svh is `include'd, so without it a
+# change to the PSG's shared parameters left the console binary stale.
+$(SIM_BIN): sim/console.cpp rtl/*.sv rtl/*.svh rtl/*.bin rtl/*.hex
 	verilator --cc rtl/top_simulator.sv --top-module top -Irtl -O3 \
 		--x-assign fast --x-initial fast -Wno-DEFOVERRIDE \
 		--exe $(abspath sim/console.cpp) -o console --build -j 8 \
@@ -239,8 +241,11 @@ SFX     ?=
 SECONDS ?= 12
 WAV     ?= build/psg.wav
 PSG_WAV  = build/obj_psg/psg_wav
+PSG_RTL  = rtl/psg.sv rtl/psg_common.svh rtl/psg_timing.sv \
+	rtl/psg_aram.sv rtl/psg_mulsvc.sv rtl/psg_divsvc.sv \
+	rtl/psg_state_mem.sv rtl/psg_wave.sv rtl/psg_walk.sv rtl/psg_seq.sv
 
-$(PSG_WAV): rtl/psg.sv sim/psg_wav.cpp
+$(PSG_WAV): $(PSG_RTL) sim/psg_wav.cpp
 	verilator --cc rtl/psg.sv --top-module psg -Irtl -O3 \
 		--x-assign fast --x-initial fast \
 		-Wno-DEFOVERRIDE -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
@@ -264,7 +269,7 @@ PSG_PV_CLK ?= 28125000
 # (3,506,580, what the console supplies) must coexist without rebuilding.
 PSG_WAV_PV  = build/obj_psg_pv_$(PSG_PV_CLK)/psg_wav
 
-$(PSG_WAV_PV): rtl/psg.sv sim/psg_wav.cpp
+$(PSG_WAV_PV): $(PSG_RTL) sim/psg_wav.cpp
 	verilator --cc rtl/psg.sv --top-module psg -Irtl -O3 \
 		--x-assign fast --x-initial fast \
 		-Wno-DEFOVERRIDE -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \

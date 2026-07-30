@@ -3,6 +3,22 @@
 Goal: retire `PSGSIMDIV = 2` from `rtl/top_simulator.sv`, so `make run` gets
 correct audio at ~80 fps instead of correct audio at 46 fps.
 
+> **Resolved (2026-07-30).** The claimed ~230-clock correctness threshold and
+> the 159-clock amplitude collapse below were build artifacts, not PSG
+> behaviour. The clock-specific `psg_wav` targets depended on `rtl/psg.sv` but
+> not the nine implementation files it textually includes. Consequently the
+> 159- and 1275-clock object directories could contain different revisions of
+> the supposedly clock-independent datapath. The original collapsed
+> `/tmp/d159.wav` came from such a stale executable; a fresh 159-clock build is
+> full-level and passes 40/40 voiced pitch windows. A direct `sample_en` trace
+> from `psg_budget_tb` is also sample-for-sample identical to `psg_wav`, ruling
+> out renderer sampling phase.
+>
+> The Make targets now depend on every included PSG source, and
+> `PSGSIMDIV = 1` runs the preview PSG on the core clock. A 300-frame Celeste
+> headless run measured 58.59 fps with full-range audio. The sequencer-shrinking
+> plan below is retained only as historical context and should not be executed.
+
 > **Correction (2026-07-30).** "Correct audio at 46 fps" was not true when this
 > was written. The clock split it describes made the CPU run at *half* the PSG's
 > rate, and every write consumer in the chip acted on `cs && rw` as a level in

@@ -14,7 +14,16 @@ DEFAULT_CLK = 28_125_000
 def build(clock_hz: int, build_dir: Path, jobs: int) -> Path:
     object_dir = build_dir / f"obj_{clock_hz}"
     binary = object_dir / "psg_wav"
-    sources = (ROOT / "rtl/psg.sv", ROOT / "sim/psg_wav.cpp")
+    # EVERY file psg.sv textually includes, not just psg.sv. Listing only the
+    # top file let this cache hand back an executable built from a different
+    # revision of the datapath, and this builder feeds
+    # tools/psg_oracle_bytecheck.py - the 59/59 gate - and the hardware
+    # reference in tools/psg_preview_check.py. A stale binary there does not
+    # fail; it agrees with itself and reports a green gate. The same defect in
+    # the Makefile's psg_wav targets invented a "159 clocks/sample collapses"
+    # result that cost a full investigation.
+    sources = (ROOT / "sim/psg_wav.cpp", *sorted(ROOT.glob("rtl/psg*.sv")),
+               *sorted(ROOT.glob("rtl/psg*.svh")))
     if binary.exists() and binary.stat().st_mtime >= max(
             source.stat().st_mtime for source in sources):
         return binary

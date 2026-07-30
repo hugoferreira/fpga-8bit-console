@@ -19,22 +19,19 @@ module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
   // Pixel clock: divide by 3. The PPU display pipeline needs 3 clocks per
   // pixel (read, capture, stable); the old /4 dated from the retired
   // textbuffer's 4-state renderer and cost 25% more simulation work.
-  // The PSG gets the raw input clock; everything else runs at half of it. The
-  // single-domain lowering this replaced gave the PSG 159 clocks per 22050 Hz
-  // sample, and its synthesis walk has not fitted in that since the tick
-  // engine stopped deferring a sample boundary it overran (4658091) - the
-  // chip then renders silence, which is what `make run` had been doing. The
-  // compact preview walk needs ~225; PSGSIMDIV = 2 gives 318.
+  // The core runs at half the model input clock. The compact preview walk now
+  // fits that same clock (worst 86 of 159 clocks/sample), so the PSG no longer
+  // needs the raw input clock's duplicate edges.
   //
   // This is the simulator's analogue of rtl/clocks.sv's PSGDIV, inverted:
-  // hardware divides the PLL DOWN to the PSG, the simulator divides the input
-  // clock down to the core and hands the PSG the undivided one. Both keep the
-  // two clocks phase-locked bits of one counter, so there is still no
-  // asynchronous crossing and no synchroniser.
-  localparam int PSGSIMDIV = 2;
+  // hardware divides the PLL DOWN to the PSG; the simulator selects either
+  // the phase-locked input clock or the core clock. PSGSIMDIV is the resulting
+  // PSG/core ratio and also scales the declared PSG frequency below.
+  localparam int PSGSIMDIV = 1;
 
-  logic coreclk = 0;                    // clk_i / PSGSIMDIV: CPU, PPU, video
+  logic coreclk = 0;                    // clk_i / 2: CPU, PPU, video
   always_ff @(posedge clk_i) coreclk <= ~coreclk;
+  wire psgclk = (PSGSIMDIV == 1) ? coreclk : clk_i;
 
   // Pixel clock: divide the CORE clock by 3. The PPU display pipeline needs 3
   // clocks per pixel (read, capture, stable); the old /4 dated from the
@@ -60,12 +57,13 @@ module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
   // affordable without imposing the simulator's clocks-per-sample on hardware
   // or the PICO-8 oracle renderer - but it must be told the rate it is
   // actually clocked at, or its sample divider detunes: CLK_HZ is the core
-  // rate times PSGSIMDIV, so 318 psgclks per 22050 Hz sample.
+  // rate times PSGSIMDIV, so the current single-domain setting supplies 159
+  // PSG clocks per 22050 Hz sample.
   chip #(.RED(8), .GREEN(8), .BLUE(8), .FILE("palette888.bin"),
          .PSG_PREVIEW(1), .CLK_HZ(32'd3_506_580 * PSGSIMDIV)) chip(
     .clk(coreclk),
     .cpuclk(coreclk), // Use the same clock for CPU
-    .psgclk(clk_i),
+    .psgclk(psgclk),
     .reset(rst_i), 
     .vsync, 
     .hsync, 

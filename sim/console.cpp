@@ -17,10 +17,10 @@
 #include <sstream>
 
 static const int W = 160, H = 120, SCALE = 4;   // V_DISPLAY is 120
-// Three core clocks per pixel, and rtl/top_simulator.sv divides clk_i by
-// PSGSIMDIV = 2 to get the core clock (the PSG runs on the undivided one), so
-// a pixel is six input-clock edges. Emulated video time is unchanged by that
-// divider, which is why the 44100 Hz audio Bresenham below still lines up.
+// Three core clocks per pixel, and rtl/top_simulator.sv divides clk_i by two
+// to get the core clock, so a pixel is six input-clock edges. The PSG now uses
+// that same core clock; emulated video time is unchanged, which is why the
+// 44100 Hz audio Bresenham below still lines up.
 static const int CLKS_PER_PIXEL = 3 * 2;
 
 // Scripted input for headless runs: hold `mask` for HOLD frames from `frame`.

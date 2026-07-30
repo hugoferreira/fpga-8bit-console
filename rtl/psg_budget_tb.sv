@@ -119,13 +119,17 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   // arriving while the walk is still running (prun) or its reduction tree is
   // still folding (fold_busy) is the shape of failure that costs no clock and
   // breaks no deadline: the contribution is simply not in the mix yet. It would
-  // show up as a render at the right pitch and the wrong AMPLITUDE, which is
-  // exactly what 159 clk/sample produces (rms 2010 against 7050).
+  // show up as a render at the right pitch and the wrong amplitude, which was
+  // the signature originally reported by a stale 159-clock renderer build.
   longint samp_over_prun = 0, samp_over_fold = 0;
   // Per-slot sounding time. A render with the right fundamental at a third of
   // the amplitude is what FEWER VOICES sounds like, so count them per slot
   // rather than inferring from the mix.
   longint slot_play[0:7];
+  // Optional sample-domain trace for checking an external renderer against the
+  // chip's own strobe.  Text keeps the probe deliberately simple:
+  //   Vpsg_budget_tb +audio=... +pcm=/tmp/pcm.txt +renderer_samples=22050
+  string pcm_trace_path = "";
 
   // Hardware-deadline accounting, independent of host runtime. A job is complete
   // only after all eight slot visits and the three post-walk soft-add levels
@@ -431,6 +435,57 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
     report_demand();
   endtask
 
+  // Reproduce sim/psg_wav.cpp's setup and export phase cycle-for-cycle, but
+  // sample pcm on this testbench's direct view of the RTL sample_en strobe.
+  // This separates a renderer phase bug from a clock-dependent chip result:
+  //   Vpsg_budget_tb +audio=... +music=40 +pcm=/tmp/pcm.txt \
+  //     +renderer_samples=22050
+  task renderer_trace(input string path, input int pat, input int nsamples);
+    int captured;
+    integer trace_fd;
+    bit primed;
+    $readmemh(path, img);
+
+    repeat (16) @(negedge clk);
+    reset = 0;
+    repeat (16) @(negedge clk);
+    upload();
+
+    // Loading is setup rather than emulated time. This is the same canonical
+    // divider/sample-counter phase established by psg_wav after its upload.
+    reset = 1;
+    repeat (16) @(negedge clk);
+    reset = 0;
+    repeat (16) @(negedge clk);
+    do @(negedge clk); while (!dut.sample_en);
+    @(negedge clk);
+
+    wr(8'h21, 8'h07);
+    wr(8'h20, 8'(pat));
+
+    trace_fd = $fopen(pcm_trace_path, "w");
+    if (trace_fd == 0) begin
+      $display("FAIL: cannot open PCM trace %s", pcm_trace_path);
+      errors++;
+      return;
+    end
+    captured = 0;
+    primed = 0;
+    while (captured < nsamples) begin
+      @(negedge clk);
+      if (dut.sample_en) begin
+        if (!primed)
+          primed = 1;
+        else begin
+          $fdisplay(trace_fd, "%0d", $signed(pcm));
+          captured++;
+        end
+      end
+    end
+    $fclose(trace_fd);
+    $display("PCM renderer trace samples %0d -> %s", captured, pcm_trace_path);
+  endtask
+
   // The whole demand report, so the cart profile below prints exactly what
   // the test-bank run prints and the two can be compared line for line.
   task report_demand;
@@ -510,12 +565,23 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
     begin
       automatic string cart_path = "";
       automatic int    cart_pat = 0, cart_ticks = 500;
+      automatic int    renderer_samples = 0;
       if ($value$plusargs("audio=%s", cart_path)) begin
         void'($value$plusargs("music=%d", cart_pat));
         void'($value$plusargs("ticks=%d", cart_ticks));
-        repeat (8) @(posedge clk);
-        reset = 0;
-        cart_profile(cart_path, cart_pat, cart_ticks);
+        void'($value$plusargs("pcm=%s", pcm_trace_path));
+        void'($value$plusargs("renderer_samples=%d", renderer_samples));
+        if (renderer_samples > 0) begin
+          if (pcm_trace_path == "") begin
+            $display("FAIL: +renderer_samples requires +pcm=<path>");
+            errors++;
+          end else
+            renderer_trace(cart_path, cart_pat, renderer_samples);
+        end else begin
+          repeat (8) @(posedge clk);
+          reset = 0;
+          cart_profile(cart_path, cart_pat, cart_ticks);
+        end
         if (errors == 0) $display("ALL TESTS PASSED");
         else             $display("%0d TEST(S) FAILED", errors);
         $finish;
