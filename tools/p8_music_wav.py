@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 import shutil
 import signal
 import subprocess
@@ -45,6 +46,7 @@ from p8_unpack import sfx_section, music_section
 
 PICO8 = "/Applications/PICO-8.app/Contents/MacOS/pico8"
 MUSIC_BASE, SFX_BASE = 0x3100, 0x3200
+AUDIO_BYTES = 0x4300 - 0x3100   # 4608: 64 patterns + 64 SFX records
 RATE = 22050
 # One PICO-8 audio tick is 183 samples at 22050 Hz; a row lasts `speed` ticks
 # and a pattern is 32 rows.
@@ -118,8 +120,24 @@ def make_cart(rom, path, pattern, mask, frames):
                 f.write("\n" + sec + "\n" + "\n".join(rows) + "\n")
 
 
-def record(cart_png, pattern, mask, seconds, out, volume, grace):
-    rom = rom_from_png(cart_png)
+def rom_from_image(path):
+    """Splice a raw 4608-byte audio image ($3100-$42FF) into an empty ROM.
+
+    Lets a CONSTRUCTED probe be recorded from real PICO-8, not just a cart's own
+    audio - which is how you get ground truth for one synthesis assumption at a
+    time (a waveform swept across pitches, say) instead of inferring it from a
+    song where every voice moves at once.
+    """
+    image = Path(path).read_bytes()
+    if len(image) != AUDIO_BYTES:
+        raise SystemExit(f"{path}: expected {AUDIO_BYTES} bytes, got {len(image)}")
+    rom = bytearray(0x8000)
+    rom[MUSIC_BASE:MUSIC_BASE + AUDIO_BYTES] = image
+    return rom
+
+
+def record(cart_png, pattern, mask, seconds, out, volume, grace, image=None):
+    rom = rom_from_image(image) if image else rom_from_png(cart_png)
     frames = int(round(seconds * 30))
     home = tempfile.mkdtemp(prefix="p8-music-wav.")
     drop = tempfile.mkdtemp(prefix="p8-music-out.")
@@ -177,7 +195,8 @@ def record(cart_png, pattern, mask, seconds, out, volume, grace):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("cart")
+    ap.add_argument("cart", nargs="?")
+    ap.add_argument("--image", help="raw 4608-byte audio image instead of a cart")
     ap.add_argument("--pattern", type=int, help="track head pattern")
     ap.add_argument("--mask", type=int, default=7, help="channel mask (default 7)")
     ap.add_argument("--out")
@@ -198,7 +217,9 @@ def main():
                     help="list track heads with lengths, record nothing")
     args = ap.parse_args()
 
-    rom = rom_from_png(args.cart)
+    if not args.cart and not args.image:
+        ap.error("need a cart or --image")
+    rom = rom_from_image(args.image) if args.image else rom_from_png(args.cart)
     if args.tracks:
         for head in tracks(rom):
             pats, total = track_plan(rom, head)
@@ -213,7 +234,7 @@ def main():
         _, total = track_plan(rom, args.pattern)
         seconds = total * args.loops
     path = record(args.cart, args.pattern, args.mask, seconds, args.out,
-                  args.volume, args.grace)
+                  args.volume, args.grace, image=args.image)
     with wave.open(path) as w:
         print(f"{path}: {w.getnframes()} frames, {w.getframerate()} Hz, "
               f"{w.getnchannels()} ch, {w.getnframes() / w.getframerate():.2f}s")

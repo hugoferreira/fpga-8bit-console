@@ -294,6 +294,16 @@ psg-wav-preview: $(PSG_WAV_PV)
 #   make test-psg-preview CART=~/Stuff/carts/celeste-15133.p8.png
 # The hardware reference model is built by tools/psg_oracle_render.py at the
 # matching -GCLK_HZ; $(PSG_WAV) cannot serve, it is compiled for the default clock.
+# FIDELITY against real PICO-8, where bytes cannot be compared. psg-bytecheck is
+# a regression gate - it diffs our RTL against frozen renders of our own RTL - so
+# it cannot see a fault that was already present when the set was frozen. This
+# can: it sweeps pitch through a noise SFX and compares the statistics AND their
+# pitch dependence against a PICO-8 recording committed under tests/psg.
+#   make test-psg-fidelity              # gate
+#   make test-psg-fidelity RECORD=1     # re-capture the reference (needs PICO-8)
+test-psg-fidelity:
+	python3 tools/psg_fidelity_gate.py $(if $(RECORD),--record,)
+
 test-psg-preview: $(PSG_WAV_PV)
 	@test -n "$(CART)" || { echo "usage: make test-psg-preview CART=<cart.p8.png>"; exit 1; }
 	python3 tools/psg_preview_check.py --cart $(CART) \
@@ -343,7 +353,7 @@ debug: bin/sim_debug_${SIM_TOP}
 # The PSG's own regression suite. It had stopped building under iverilog (two
 # declaration-after-use / cast issues Verilator tolerates), so it had not run
 # since the datapath refold. Kept as a target so that cannot happen quietly.
-test-psg:
+test-psg: test-psg-fidelity
 	iverilog -g2012 -o build/psg_tb.vvp rtl/psg_tb.sv rtl/psg.sv rtl/dsigma.sv 2>&1 | grep -v 'sorry:' || true
 	vvp build/psg_tb.vvp | tail -3
 

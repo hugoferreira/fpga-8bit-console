@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
-"""Render every oracle case's RTL side at the hardware clock and byte-compare
-it against the frozen adopt-exact renders.
+"""REGRESSION gate: has the RTL's output changed since the set was frozen?
 
-This is the "hardware is bit-identical" gate, and it needs no PICO-8: the
-frozen set IS the reference. tools/psg_oracle_matrix.py cannot serve here
-because it re-exports the PICO-8 reference (which fails headless) unless the
-reference file already exists.
+Read the next paragraph before quoting this gate's result as evidence of
+anything. The frozen set IS the reference, and it is a render of OUR OWN RTL -
+so a green run proves "nothing changed", NOT "the chip matches PICO-8". Anything
+already wrong when the set was frozen stays wrong and stays green, forever.
+
+That is not hypothetical: wave-6 noise ignores the note pitch entirely, and this
+gate reported byte-identical 59/59 across every change while it did. It also
+ignores each case's `stochastic` flag and byte-compares everything, which is
+sound for a regression check and worthless as a fidelity one - a noise case can
+never be byte-compared against PICO-8, whose RNG is shared across voices.
+
+For fidelity against real PICO-8 use tools/psg_fidelity_gate.py (statistics and
+their pitch dependence) and tools/psg_ref_check.py (a full track against a
+recording). Keep this one: catching an unintended change is exactly what it is
+good at, and it needs no PICO-8 to run.
 """
 import json, subprocess, sys, filecmp
 from pathlib import Path
@@ -46,6 +56,8 @@ for i, case in enumerate(cases, 1):
         diff += 1
         print(f"[{i}/{len(cases)}] {name}: BYTES DIFFER")
 
-print(f"\nbyte-identical {same}/{len(cases)}   differing {diff}   "
+print(f"\nunchanged vs frozen {same}/{len(cases)}   differing {diff}   "
       f"no-reference {missing}")
+print("this is a REGRESSION result against our own frozen renders - it says "
+      "nothing about PICO-8 fidelity (tools/psg_fidelity_gate.py does)")
 sys.exit(1 if diff else 0)
