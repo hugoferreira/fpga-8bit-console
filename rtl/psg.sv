@@ -240,7 +240,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .m_res(m_res), .m_res_wide(m_res_wide), .m_res12(m_res12),
     .m_busy(m_busy),
     .wmul_start(wmul_start), .wmul_a(wmul_a), .wmul_b(wmul_b),
-    .wmul_mode(wmul_mode),
+    .wmul_mode(wmul_mode), .wmul_short(wmul_short),
     .iss_sec(iss_sec), .iss_om(iss_om), .iss_os(iss_os),
     .dq_old_ctx(dq_old_ctx),
     .s_snd_wave(s_snd_wave), .s_snd_wt(s_snd_wt), .s_ch_det(s_ch_det),
@@ -262,6 +262,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire signed [24:0] wmul_a;
   wire [11:0] wmul_b;
   wire [1:0]  wmul_mode;
+  wire        wmul_short;
   wire        iss_sec, iss_om, iss_os, dq_old_ctx;
   wire [2:0]  s_snd_wave, s_old_wave;
   wire        s_snd_wt, s_ch_buzz;
@@ -318,6 +319,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire signed [24:0] mul_start_a = wmul_a | smul_a;
   wire [11:0] mul_start_b        = wmul_b | smul_b;
   wire [1:0]  mul_start_mode     = wmul_mode | smul_mode;
+  wire        mul_start_short    = wmul_short | smul_short;
 `ifndef SYNTHESIS
   always @(posedge clk) if (!reset && wmul_start && smul_start)
     $fatal(1, "psg: both multiply requesters asserted in the same cycle");
@@ -327,6 +329,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .clk(clk), .reset(reset),
     .mul_start(mul_start), .mul_start_a(mul_start_a),
     .mul_start_b(mul_start_b), .mul_start_mode(mul_start_mode),
+    .mul_start_short(mul_start_short),
     .m_res(m_res), .m_res_wide(m_res_wide), .m_res12(m_res12),
     .m_busy(m_busy));
 
@@ -350,7 +353,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .etk_ra(etk_ra), .etk_we(etk_we), .etk_wa(etk_wa), .etk_wd(etk_wd),
     .m_res(m_res), .m_busy(m_busy),
     .smul_start(smul_start), .smul_a(smul_a), .smul_b(smul_b),
-    .smul_mode(smul_mode),
+    .smul_mode(smul_mode), .smul_short(smul_short),
     .div_start(div_start), .div_n(div_n), .div_d(div_d),
     .d_res(d_res), .d_rem(d_rem), .d_busy(d_busy),
     .ctrl_read(prun), .ctrl_addr(ctrl_addr), .ctrl_q(ctrl_q));
@@ -374,6 +377,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire signed [24:0] smul_a;
   wire [11:0] smul_b;
   wire [1:0]  smul_mode;
+  wire        smul_short;
 
   // Output stage: the mixed sum is the PCM - the adopted reverb is
   // per-voice, pre-mix (the rings above); the old shared post-mix

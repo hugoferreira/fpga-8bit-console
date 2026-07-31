@@ -1040,6 +1040,42 @@ entry points (0, 10, 20, 30 and 40) from the same RTL fingerprint; music 0
 retains only the previously documented fidelity divergence reserved for the
 later fidelity pass.
 
+### 19. Stop charging eight iterations for six-bit products
+
+The blend position and pattern-row operands are both six bits, but mode 0
+charged each eight iterations. The retained service adds one explicit
+`mul_start_short` request bit. A short request runs six iterations while
+retaining mode 1's existing ten-bit accumulator alignment, so its product
+lands four bits left of the natural position; the two named consumers select
+the correspondingly shifted slices. The iterative add/shift datapath and all
+ordinary mode timings are unchanged. The cycle model checks 24,302
+multiplicands and proves the shifted product exact.
+
+This deliberately creates capacity without retiming the walker. The hardware
+visit remains 85 phases and `psg_tb` remains 714/1,275 sample clocks and
+3,555/7,654 tick-preparation clocks. The visualizer now reports a 30-clock
+multiply-data depth, 53 clocks on the one shared service, and two phases of
+completed-product hold before the fixed blend consume. It attributes both
+hold phases rather than reporting unexplained empty cycles.
+
+Fingerprint `2ecf587b7999` maps 7,142 LUT4s, 1,677 carries, 1,549 flip-flops
+and 19 EBRs; nextpnr attempts 8,138 placed cells. Relative to section 18 this
+is +29 LUT4s, -5 carries, no flip-flop or EBR change and +14 placed cells. The
+small area trade is accepted for the two recovered service iterations.
+
+Two superficially passing retimes were rejected by a new full-track
+byte-comparison against section 18. Moving the fixed walker consume two phases
+earlier first diverged in Celeste music 20 at 21.246 s (433,450 differing
+samples, maximum delta 20,144). Reassigning all sequencer byte products to a
+nine-iteration mode first diverged at 42.493 s (128,895 differing samples,
+maximum delta 20,144). Both had passed the 59-case oracle and ordinary
+full-track tolerance gate, demonstrating why the direct prior-RTL comparison
+is required for schedule work. The retained explicit-short form is
+byte-identical for all 1,226,752 music-20 samples, passes `make test-psg`, and
+is 59/59 unchanged against the frozen matrix. The provenance-bound final gate
+passes Celeste entry points 0, 10, 20, 30 and 40 from source fingerprint
+`a11f43ccbe2f`.
+
 ## Risks / Trade-offs
 
 - **[Single-store contention]** Tick and sample work can request the voice EBR

@@ -14,8 +14,8 @@ This answers that question without touching the RTL:
   python3 tools/psg_mul_model.py                 # run the gate
   python3 tools/psg_mul_model.py --explain 171   # what each mode does to a value
 
-The iteration counts are read from psg_mulsvc.sv rather than written here, so
-a retuned service fails the gate instead of silently invalidating it.
+The fixed iteration counts are read from psg_mulsvc.sv; the explicit short
+request is modelled separately.
 """
 import argparse
 import os
@@ -77,15 +77,23 @@ def parse_iters(path=MULSVC_SV):
 SHIFT = {0: 8, 1: 10, 2: 12, 3: 9}
 
 
-def mulsvc(a, b, mode, iters=None, shift=None):
+def service_shape(b, mode, short=False):
+    """Return the live iteration count and accumulator shift for one request."""
+    if short:
+        return 6, SHIFT[mode]
+    return parse_iters()[mode], SHIFT[mode]
+
+
+def mulsvc(a, b, mode, iters=None, shift=None, short=False):
     """One complete service transaction. Returns (m_res, m_res_wide, m_res12).
 
     Mirrors the always_ff exactly: strip the sign into m_a, load m_p with B,
     then for each iteration add m_a into the accumulator slice when m_p[0] is
     set and shift the whole register right by one.
     """
-    it = iters if iters is not None else parse_iters()[mode]
-    sh = shift if shift is not None else SHIFT[mode]
+    live_it, live_sh = service_shape(b, mode, short)
+    it = iters if iters is not None else live_it
+    sh = shift if shift is not None else live_sh
     m_a = abs(a) & mask(A_BITS)
     m_p = b & mask(B_BITS)
     for _ in range(it):
@@ -131,8 +139,9 @@ def check(name, ok, detail=""):
 
 def gate():
     iters = parse_iters()
-    print(f"psg_mulsvc iteration counts (read from RTL): "
-          + ", ".join(f"mode {k}={v}" for k, v in iters.items()))
+    print("psg_mulsvc iteration counts (read from RTL): "
+          + ", ".join(f"mode {k}={v}" for k, v in iters.items())
+          + "; explicit short=6")
     for mode, it in iters.items():
         if SHIFT.get(mode) != it:
             print(f"  note: mode {mode} loads {it} iterations but this model "
@@ -177,11 +186,11 @@ def gate():
     #     trap the gate exists to catch, so assert it happens.
     ok &= check("a B wider than its mode is corrupted (the trap)",
                 mulsvc(7, 341, 0)[0] != 7 * 341,
-                "341 at mode 0 gives 596, not 2387")
+                "341 cannot be evaluated by mode 0's byte ceiling")
 
-    # 2. The measured claim: 171 fits 8 bits, so mode 0 is enough.
-    bad, n = equivalent(171, 1, 0, values=vals)
-    ok &= check("171 at mode 0 == mode 1 (2 iterations recoverable)",
+    # 2. Mode 0 remains the original eight-cycle path for byte operands.
+    bad, n = equivalent(255, 1, 0, values=vals)
+    ok &= check("8-bit sequencer B at mode 0 == mode 1",
                 not bad, f"{n} values of |A|, all three ports")
 
     # 2b. The reciprocal /3 limb program does not need a second product at
@@ -219,13 +228,21 @@ def gate():
     ok &= check("341 at mode 3 (9 iterations) == mode 1", not bad9,
                 f"{n9} values — exact nine-bit service mode")
 
-    # 5. And a 6-iteration mode would serve bl_cnt[5:0].
-    bad6, _ = equivalent(63, 0, None, iters_b=6, shift_b=6, values=vals)
-    ok &= check("6-bit B at a 6-iteration mode == mode 0", not bad6)
+    # 5. A short request runs six iterations without changing mode 1's ten-bit
+    # alignment, so its exact product is shifted left by four.
+    bad6 = []
+    for a in vals:
+        short = mulsvc(a, 63, 1, short=True)
+        exact = abs(a) * 63
+        if short[1] != exact << 4:
+            bad6.append(a)
+            break
+    ok &= check("short six-step product == exact product << 4", not bad6,
+                f"{len(vals)} values of |A|")
 
     # 6. Every constant the walk actually multiplies by, checked against the
     #    narrowest EXISTING mode that fits it.
-    for b in (171, 341):
+    for b in (341,):
         need = b.bit_length()
         fits = [m for m, it in sorted(iters.items(), key=lambda kv: kv[1])
                 if it >= need]
@@ -243,8 +260,9 @@ def explain(value):
     print(f"{value} = 0b{value:b} — {value.bit_length()} significant bits\n")
     print(f"  {'mode':<6}{'iters':<7}{'shift':<7}{'100000 x B':<14}{'exact?'}")
     for mode, it in iters.items():
+        it, sh = service_shape(value, mode)
         got = mulsvc(100000, value, mode)[0]
-        print(f"  {mode:<6}{it:<7}{SHIFT[mode]:<7}{got:<14}"
+        print(f"  {mode:<6}{it:<7}{sh:<7}{got:<14}"
               f"{'yes' if got == 100000 * value else 'NO — truncated'}")
     print("\nA mode is safe for B when its iteration count is at least B's bit "
           "length:\n  the loop consumes one bit of B per iteration, and the "

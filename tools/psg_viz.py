@@ -287,7 +287,9 @@ def resolve_pph(key, params):
         return None
 
 
-MUL_ITERS = {0: 8, 1: 10, 2: 12, 3: 9} # psg_mulsvc: mul_start_mode -> m_cnt
+# CAP_W75 explicitly requests six iterations while retaining mode 1's
+# accumulator alignment.
+MUL_ITERS = {0: 8, 1: 10, 2: 12, 3: 9}
 
 # ----------------------------------------------------------------------
 # Per-arm dependency audit (non-wavetable profile), done by reading the RTL.
@@ -419,7 +421,8 @@ def operand_width(expr, widths):
 def parse_mul_arms(lines):
     """Each multiply arm's guard and the iteration count(s) it launches.
 
-    psg_mulsvc loads m_cnt with 8, 9, 10 or 12 by mode and decrements once per
+    psg_mulsvc loads m_cnt with explicit short=6 or mode-selected 8/9/10/12
+    and decrements once per
     clock, so a request issued in phase p leaves m_busy high through
     p+iters and the product is readable in p+iters+1. That is the whole
     latency model, and psg_walk.sv states it independently for the preview
@@ -473,6 +476,7 @@ def parse_mul_arms(lines):
             arms[i] = {"cond": cond,
                        "modes": modes or [0],
                        "branches": branches,
+                       "short": bool(re.search(r"wmul_short\s*=\s*1'b1", body)),
                        "b_exprs": bs,
                        "a_exprs": as_}
     return arms
@@ -526,6 +530,8 @@ def mul_timeline(phases, mul_arms):
                     iters = MUL_ITERS[mode]
             if iters is None:
                 iters = max(MUL_ITERS[m] for m in arm["modes"])
+            if arm["short"]:
+                iters = 6
             p["mul_launch"].append({"profile": prof["key"], "iters": iters})
             for k in range(p["pph"] + 1, min(p["pph"] + iters + 1, len(phases))):
                 phases[k]["mul_busy"].append(prof["key"])
@@ -1036,7 +1042,8 @@ def attribute_ready_products(phases, mul_arms):
         arm = mul_arms.get(p.get("mul"))
         if not p.get("mul") or not arm:
             continue
-        for iters in sorted({MUL_ITERS[m] for m in arm["modes"]}):
+        arm_iters = {6} if arm["short"] else {MUL_ITERS[m] for m in arm["modes"]}
+        for iters in sorted(arm_iters):
             ready = p["pph"] + iters + 1
             nxt = next((c for c in consumers if c >= ready), None)
             if nxt is None:
@@ -1097,7 +1104,8 @@ def analyse(model):
         arm = walk["mul_arms"].get(str(p["mul"])) or walk["mul_arms"].get(p["mul"])
         if not p["mul"] or not arm:
             continue
-        for iters in sorted({MUL_ITERS[m] for m in arm["modes"]}):
+        arm_iters = {6} if arm["short"] else {MUL_ITERS[m] for m in arm["modes"]}
+        for iters in sorted(arm_iters):
             ready = p["pph"] + iters + 1
             nxt = [c for c in cons if c >= ready]
             slack = (nxt[0] - ready) if nxt else None
@@ -1113,7 +1121,8 @@ def analyse(model):
                  (f"multiply requests carry up to {worst} phases of slack"),
         "measure": {
             "requests measured": len(rows),
-            "latency model": "request + iters + 1 (m_cnt loads 8/9/10/12 and "
+            "latency model": "request + iters + 1 (m_cnt loads explicit "
+                             "short=6 or mode-selected 8/9/10/12 and "
                              "decrements once per clock)",
             "iterations by mode": ", ".join(f"mode {k}={v}"
                                             for k, v in MUL_ITERS.items()),
@@ -1158,8 +1167,8 @@ def analyse(model):
             mode = (arm["modes"][expr_i]
                     if len(arm["b_exprs"]) == len(arm["modes"])
                     else max(arm["modes"], key=MUL_ITERS.get))
-            charged = MUL_ITERS[mode]
-            fits = [it for it in sorted(set(MUL_ITERS.values()))
+            charged = 6 if arm["short"] else MUL_ITERS[mode]
+            fits = [it for it in sorted({6, *MUL_ITERS.values()})
                     if bits is not None and it >= bits]
             best = fits[0] if fits else None
             excess = (charged - best) if best is not None else None
@@ -1180,8 +1189,8 @@ def analyse(model):
         mode for arm in walk["mul_arms"].values() for mode in arm["modes"]
     })
     measure = {
-        "iteration ladder": ", ".join(f"mode {k} = {v}"
-                                      for k, v in MUL_ITERS.items()),
+        "iteration ladder": ("short = 6, " + ", ".join(
+            f"mode {k} = {v}" for k, v in MUL_ITERS.items())),
         "mode encodings used": f"{len(used_modes)} of 4 "
                                "(wmul_mode is 2 bits)",
     }
@@ -1201,7 +1210,7 @@ def analyse(model):
     # profile's requests form a serial chain, so the sum of narrower-mode
     # deltas bounds how much a correspondingly compressed chain could save.
     # Report it as potential, never as a saving caused by the mode change.
-    ladder = sorted(set(MUL_ITERS.values()))
+    ladder = sorted({6, *MUL_ITERS.values()})
     for prof in walk["profiles"]:
         delta = 0
         for p in S["phases"]:
@@ -1217,7 +1226,7 @@ def analyse(model):
                 mode = (arm["modes"][expr_i]
                         if len(arm["b_exprs"]) == len(arm["modes"])
                         else max(arm["modes"], key=MUL_ITERS.get))
-                charged = MUL_ITERS[mode]
+                charged = 6 if arm["short"] else MUL_ITERS[mode]
                 fits = [it for it in ladder if it >= bits]
                 if fits and fits[0] < charged:
                     delta += fits[0] - charged
@@ -1227,14 +1236,16 @@ def analyse(model):
                 f"up to {abs(delta)} phases = {abs(delta)*8} clocks/sample; "
                 "zero until request/consume actions are moved")
 
+    overcharged = len(provable) + len(declared)
     out.append({
         "id": "mul-width",
         "area": "walk",
-        "title": (f"{len(provable) + len(declared)} multiplier "
-                  f"operand{' is' if len(provable) + len(declared) == 1 else 's are'} "
+        "title": ("every multiplier operand uses a fitting service mode"
+                  if overcharged == 0 else
+                  f"{overcharged} multiplier "
+                  f"operand{' is' if overcharged == 1 else 's are'} "
                   "charged more iterations than "
-                  f"{'it has' if len(provable) + len(declared) == 1 else 'they have'} "
-                  "bits"),
+                  f"{'it has' if overcharged == 1 else 'they have'} bits"),
         "measure": measure,
         "body": "m_cnt is loaded from the mode, and each iteration consumes one "
                 "bit of B. An operand narrower than its mode still pays the "
@@ -1244,9 +1255,12 @@ def analyse(model):
                 "remove a phase, every dependent request and consume action "
                 "must be safely retimed and the shortened schedule verified."
                 "\n\n"
-                "Constants are provable: 171 needs 8 bits and mode 0 gives "
-                "exactly 8. 341 needs 9 and would truncate at mode 0, so the "
-                "retained mode 3 gives it exactly 9 iterations. "
+                "The live constants are provable: 341 needs 9 bits and would "
+                "truncate at mode 0, so mode 3 gives it exactly 9 iterations. "
+                "The explicit short request makes the six-bit blend take six "
+                "iterations; ordinary mode 1 remains the ten-bit service, "
+                "mode 3 remains the exact nine-bit service for 341, "
+                "and mode 0 retains the original eight-cycle sequencer timing. "
                 "Signal operands are only DECLARED widths here; narrowing one "
                 "needs a range argument this tool cannot make.\n\n"
                 "Changing a mode moves the accumulator slice as well as the "
@@ -1272,7 +1286,7 @@ def analyse(model):
         arm = walk["mul_arms"].get(p["mul"])
         if p["mul"] and arm and p["mul"] in MUL_DEPS:
             nowt = [c for c, mode in arm["branches"] if c == "!s_snd_wt"]
-            iters_of[p["mul"]] = (
+            iters_of[p["mul"]] = 6 if arm["short"] else (
                 MUL_ITERS[dict(arm["branches"])["!s_snd_wt"]] if nowt
                 else max(MUL_ITERS[m] for m in arm["modes"]))
 

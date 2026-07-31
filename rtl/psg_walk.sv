@@ -47,6 +47,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
                   output logic signed [24:0] wmul_a,
                   output logic [11:0] wmul_b,
                   output logic [1:0]  wmul_mode,
+                  output logic        wmul_short,
                   // The wave layer: context out, values back
                   output logic iss_sec,
                   output logic iss_om,
@@ -699,7 +700,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   wire signed [16:0] filt_y = (s_ch_damp != 2'd0) ? dmp_y : mx_prod;
   // The shared service forms |new-old| * blend_pos; dividing by 64 is a
   // wiring shift and the saved sign reproduces truncation toward zero.
-  wire [22:0] bl_res = m_res[22:0];
+  // The six-step mode-1 result retains that mode's ten-bit alignment, so it
+  // is the exact blend product shifted left by four.
+  wire [22:0] bl_res = m_res[26:4];
 
   // One physical request mux and one sequential write site make the effect
   // multiplier a PSG-wide service. A sample walk freezes the tick sequencer;
@@ -718,22 +721,20 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
     wmul_a     = 25'sd0;
     wmul_b     = 12'd0;
     wmul_mode  = 2'd0;
+    wmul_short = 1'b0;
     if (prun && !m_busy) begin
       if (REALTIME_PREVIEW) begin
         // Preview no longer uses the multiply service at all (pv_full above), so
         // its request bundle is identically zero and psg.sv's one-requester
         // merge assertion holds trivially.
       end else begin
-        // The G*z product runs as two limb passes per voice
-        // (svc.two_pass_G): |z| x G[12:7] then |z| x G[6:0], the partial
-        // captured between them and recombined by gz_mag at the consume
-        // step. New voice at +4/+17 (consumed +27), old continuation at
-        // +27/+40 (consumed +50), blend at +51 (consumed +60); the
-        // wavetable path lerps first and takes its G passes at +27/+40,
-        // consumed at +50.
-        // Product and capture are both functions of the same phase. Ten of
-        // eleven launches already coincide with a capture, so CAP_SEL is the
-        // sole phase identity; CAP_W75 names the launch-only blend step.
+        // Each G*z magnitude is one 12-bit-B service pass followed by the
+        // retained x*341 reciprocal limb. New voice at +4/+17 (consumed
+        // +27), old continuation at +27/+40 (consumed +50), blend at
+        // +51 (consumed +60); the wavetable path lerps first and takes its
+        // G/reciprocal passes at +27/+40, consumed at +50.
+        // Product and capture are functions of the same phase wherever a
+        // dependency allows; CAP_W75 names the sole launch-only blend step.
         case (ctrl_cap)
           CAP_W4: begin
             wmul_start = 1'b1;
@@ -748,10 +749,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               wmul_mode = 2'd2;
             end
           end
-          // /3 limb passes: m_res12 is the whole G*z magnitude. Arms 3/9
-          // are the new and old voices' hi limbs and 5/10 their lo limbs
-          // - identical launches, distinguished only by where the consume
-          // steps put the result.
+          // /3 reciprocal limb: m_res12 is the whole G*z magnitude.
+          // CAP_W17 and CAP_W40 launch the same retained x*341 operation
+          // for the new and old voice respectively.
           CAP_W17: if (!s_snd_wt) begin
             wmul_start   = 1'b1;
             wmul_a = {8'b0, m_res12[26:10]};
@@ -762,6 +762,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             wmul_start   = 1'b1;
             wmul_a = 25'(blend_diff);
             wmul_b = {6'b0, bl_cnt[5:0]};
+            wmul_mode = 2'd1;
+            wmul_short = 1'b1;
           end
           CAP_W15: if (s_snd_wt) begin
             wmul_start   = 1'b1;

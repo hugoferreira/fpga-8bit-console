@@ -530,3 +530,17 @@
       matrix remains 59/59 byte-identical. The provenance-bound final gate
       passes Celeste entry points 0, 10, 20, 30 and 40 from one source
       fingerprint, retaining only music 0's documented later-fidelity issue.
+- [x] R.25 Six-bit service requests: add an explicit short request for the
+      six-bit blend and pattern-length products. It runs six iterations using
+      mode 1's unchanged alignment; the two consumers compensate for the
+      exact product being shifted left four bits. The walker stays at 85
+      phases / 714 clocks per sample, but the visualizer now measures
+      30 clocks of data depth, 53 on one service, and two attributed
+      completed-product hold phases. Fingerprint `2ecf587b7999` maps 7,142
+      LUT4s, 1,677 carries, 1,549 flops, 19 EBRs and 8,138 placed cells
+      (+29/-5/0/0/+14 from R.24), an accepted service-capacity trade. A direct
+      1,226,752-sample Celeste music-20 comparison is byte-identical to R.24;
+      `make test-psg`, the frozen 59-case matrix, and the provenance-bound
+      Celeste 0/10/20/30/40 final gate all pass. The rejected 83-phase retime
+      and blanket nine-iteration sequencer remap first diverged at 21.246 s
+      and 42.493 s respectively despite passing the narrower gates.

@@ -63,6 +63,7 @@ module psg_seq (input  bit   clk,
                 output logic signed [24:0] smul_a,
                 output logic [11:0] smul_b,
                 output logic [1:0]  smul_mode,
+                output logic        smul_short,
                 // The divide service, whose only requester this is
                 output logic        div_start,
                 output logic [23:0] div_n,
@@ -981,7 +982,8 @@ module psg_seq (input  bit   clk,
         // m_res holds the product in place (m_res[k] is product bit k); the
         // [15:8] slice volume steps use is a semantic Q8 scale, not a
         // placement offset, so the 13-bit tick count is the low 13 bits.
-        ptick_tgt <= m_res[12:0];
+        // Six-step mode 1 leaves this product four places left.
+        ptick_tgt <= m_res[16:4];
         ptick_pend <= 0;
       end
 `ifndef SYNTHESIS
@@ -1877,6 +1879,7 @@ module psg_seq (input  bit   clk,
     smul_a     = 25'sd0;
     smul_b     = 12'd0;
     smul_mode  = 2'd0;
+    smul_short = 1'b0;
     if (!seq_hold) begin
       case (sst)
         // mul_go names the steps that actually have operands; the rest
@@ -1911,6 +1914,8 @@ module psg_seq (input  bit   clk,
           smul_start   = 1'b1;
           smul_a = {17'b0, wrd[7:0]};       // speed, staged at T_LS
           smul_b = {6'b0, pat_rows};
+          smul_mode = 2'd1;
+          smul_short = 1'b1;
         end
         default: ;
       endcase

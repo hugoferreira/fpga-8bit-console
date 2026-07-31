@@ -1,7 +1,7 @@
 // PSG multiply service: the one shift-add multiplier the whole chip shares.
 //
 // Every product the effect unit and the synthesis walk need is a magnitude
-// times a small unsigned multiplier, so one unit serves them all: 8/10/12
+// times a small unsigned multiplier, so one unit serves them all: 6/8/9/10/12
 // iterations of a 23-bit add, against the ~1500 LUTs parallel array
 // multipliers cost. An effect evaluation runs six of them, four channels 120
 // times a second - about 240 clocks in a tick.
@@ -23,6 +23,7 @@ module psg_mulsvc (input  bit          clk,
                    input  logic signed [24:0] mul_start_a,
                    input  logic [11:0] mul_start_b,
                    input  logic [1:0]  mul_start_mode,  // 0: 8-bit B, 3: 9, 1: 10, 2: 12
+                   input  logic        mul_start_short, // six steps, retaining mode alignment
                    output logic [31:0] m_res,
                    output logic [33:0] m_res_wide,
                    output logic [27:0] m_res12,
@@ -33,7 +34,11 @@ module psg_mulsvc (input  bit          clk,
   // peak at 18 bits. The accumulator and product register narrow with it
   // (products peak at 22 bits real, 33 structural).
   logic [20:0] m_a;
-  logic [33:0] m_p;                  // accumulator plus 8/10/12-bit multiplier
+  // A short request keeps mode 1's existing ten-bit accumulator alignment, so
+  // its six-step result lands four bits left of its natural position. Its two
+  // explicit consumers compensate in wiring; the iterative datapath remains
+  // unchanged and no wide launch mux or in-flight state bit is required.
+  logic [33:0] m_p;                  // accumulator plus 6/8/9/10/12-bit multiplier
   logic [3:0]  m_cnt;
   logic [1:0]  m_mode;
   // Reset contract: m_cnt is validity/control state and resets to idle.
@@ -72,9 +77,11 @@ module psg_mulsvc (input  bit          clk,
                                 : mul_start_a[20:0];
       m_p    <= {22'b0, mul_start_b};
       m_mode <= mul_start_mode;
-      m_cnt  <= (mul_start_mode == 2'd2) ? 4'd12
+      m_cnt  <= mul_start_short ? 4'd6
+              : (mul_start_mode == 2'd2) ? 4'd12
               : (mul_start_mode == 2'd1) ? 4'd10
-              : (mul_start_mode == 2'd3) ? 4'd9 : 4'd8;
+              : (mul_start_mode == 2'd3) ? 4'd9
+              : 4'd8;
     end
   end
 
