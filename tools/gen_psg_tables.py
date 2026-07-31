@@ -135,12 +135,12 @@ with open("rtl/psg_const.hex", "w") as f:
     for w in FSTEP:
         f.write(f"{w:04x}\n")
     # The sample walk freezes the sequencer, so its pph-indexed control words
-    # can borrow the same synchronous port. Only pph 0..PLAST is reachable;
-    # those 109 words exactly fit the constants block's free 144..252 range.
+    # can borrow the same synchronous port. Only pph 0..PLAST is reachable,
+    # so a shortened schedule releases the trailing words automatically.
     for w in CTRL[:PLAST + 1]:
         f.write(f"{w:04x}\n")
     used = 64 + 4 * len(AFFINE) + len(FSTEP) + PLAST + 1
-    assert used == 253
+    assert used <= 256
     for _ in range(used, 256):
         f.write("0000\n")
 

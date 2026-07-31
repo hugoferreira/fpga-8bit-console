@@ -223,7 +223,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // It owns prun and pph - the signals the freeze contract is written
   // against - and every streaming oscillator register.
   // REVERB is forced off for the preview schedule. The per-voice history rings
-  // (8 x 732 x int16) are read and written at pph PWORK+70/71/87, which PLAST=23
+  // (8 x 732 x int16) are read and written at pph PWORK+47/48/63, which PLAST=23
   // makes unreachable - so preview carries 93,696 bits of state and an `initial`
   // loop that can never affect a sample. Verified: forcing REVERB=0 leaves the
   // console's rendered audio byte-identical. With REALTIME_PREVIEW=0 the

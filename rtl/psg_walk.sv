@@ -88,9 +88,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // selection logic.
   localparam int PLOSC = REALTIME_PREVIEW ? 7  : PSG_SOSC;
   localparam int PWORK = REALTIME_PREVIEW ? 12 : 19;
-  localparam int PFOLD = REALTIME_PREVIEW ? 23 : 108;
+  localparam int PFOLD = REALTIME_PREVIEW ? 23 : 84;
   localparam int PSTOR = REALTIME_PREVIEW ? 16 : 52;
-  localparam int PLAST = REALTIME_PREVIEW ? 23 : 108;
+  localparam int PLAST = REALTIME_PREVIEW ? 23 : 84;
 
 
   // The synthesis walk's working copy: parameters and oscillator state loaded
@@ -137,11 +137,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // Exactly the oscillator record: PLAST may extend past the last store
   // (the product chain's tail phases), so the window is bounded by PSG_SOSC,
   // not by the visit's end.
-  // The dampen state is produced at +86, far past its word's store
+  // The dampen state is produced at +62, far past its word's store
   // slot, so it writes back through two dedicated late cycles.
   wire         state_lp_we = prun && !REALTIME_PREVIEW
-                               && (pph == 7'(PWORK + 87)
-                                   || pph == 7'(PWORK + 88));
+                               && (pph == 7'(PWORK + 63)
+                                   || pph == 7'(PWORK + 64));
   assign state_sample_we = (prun
                                && pph >= 7'(PSTOR)
                                && pph < 7'(PSTOR + PLOSC))
@@ -285,9 +285,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       wlk_ra = {pc_ch, PSG_V_OSC};
 
     if (state_lp_we) begin
-      wlk_wa = {pc_ch, (pph == 7'(PWORK + 87)) ? PSG_V_OSC + 5'd5
+      wlk_wa = {pc_ch, (pph == 7'(PWORK + 63)) ? PSG_V_OSC + 5'd5
                                                : PSG_V_OSC + 5'd4};
-      wlk_wd = (pph == 7'(PWORK + 87)) ? s_lp[15:0] : `PSG_OSC_W14;
+      wlk_wd = (pph == 7'(PWORK + 63)) ? s_lp[15:0] : `PSG_OSC_W14;
     end else begin
       wlk_wa = {pc_ch, PSG_V_OSC + 5'(s_stw)};
       wlk_wd = sosc_wd;
@@ -628,16 +628,20 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // run) is gone - it had no reader.
   logic        mx_aud;
   logic        mxs_new, mxs_old;      // saved z signs for the G products
-  logic [24:0] g_part;                // the recip3-hi partial
   logic [16:0] gz_s1_r;               // captured G*z >> 10 for /3
   // the noise bypass (>>11) is gz_s1_r >> 1: floor of floor.
   logic signed [16:0] mx_new, mx_old, mx_prod;
   // tz(G*z/3072): ONE 12-bit-B service pass forms the whole product
-  // magnitude (m_res12), then the /3 runs serially as two limb passes
-  // of the reciprocal (174763 = 341*2^9 + 171), replacing the
-  // combinational recip3 network the fabric could not afford. The q3
-  // accumulator closes the >>19.
-  wire [33:0] gz_q3acc = {g_part, 9'b0} + {9'b0, m_res_wide[24:0]};
+  // magnitude (m_res12), then the /3 reciprocal uses
+  // 174763 = 341*2^9 + 171. Only the x*341 limb needs the shared service:
+  // 171*x = (341*x + x)/2 exactly, and x*341 remains in m_p until the
+  // consume phase. This retires three redundant eight-iteration launches
+  // and the 25-bit register that used to hold the first product.
+  wire [25:0] gz_171_twice =
+      m_res_wide[25:0] + {9'b0, gz_s1_r};
+  wire [24:0] gz_171 = gz_171_twice[25:1];
+  wire [33:0] gz_q3acc =
+      {m_res_wide[24:0], 9'b0} + {9'b0, gz_171};
   // Noise is back on the documented /2048: the walk above carries the binary's
   // k = 80 explicitly, so the scaling no longer has to absorb a fitted constant.
   wire [16:0] gz_scaled = (!s_snd_wt && s_snd_wave == 3'd6)
@@ -723,9 +727,10 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
         // The G*z product runs as two limb passes per voice
         // (svc.two_pass_G): |z| x G[12:7] then |z| x G[6:0], the partial
         // captured between them and recombined by gz_mag at the consume
-        // step. New voice at +4/+13 (consumed +22), old continuation at
-        // +22/+31 (consumed +40), blend at +40 (consumed +49); the
-        // wavetable path lerps first and takes its G passes at +27/+36.
+        // step. New voice at +4/+17 (consumed +27), old continuation at
+        // +27/+40 (consumed +50), blend at +51 (consumed +60); the
+        // wavetable path lerps first and takes its G passes at +27/+40,
+        // consumed at +50.
         // Product and capture are both functions of the same phase. Ten of
         // eleven launches already coincide with a capture, so CAP_SEL is the
         // sole phase identity; CAP_W75 names the launch-only blend step.
@@ -747,24 +752,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           // are the new and old voices' hi limbs and 5/10 their lo limbs
           // - identical launches, distinguished only by where the consume
           // steps put the result.
-          CAP_W17, CAP_W52: if (!s_snd_wt) begin
+          CAP_W17: if (!s_snd_wt) begin
             wmul_start   = 1'b1;
             wmul_a = {8'b0, m_res12[26:10]};
             wmul_b = 12'd341;
-            wmul_mode = 2'd1;
-          end
-          CAP_W28, CAP_W63: if (!s_snd_wt) begin
-            wmul_start   = 1'b1;
-            wmul_a = {8'b0, gz_s1_r};
-            wmul_b = 12'd171;
-            // 171 is exactly eight bits; the default mode computes the same
-            // in-place product without two leading-zero iterations.
-          end
-          CAP_W39: if (!s_snd_wt) begin
-            wmul_start   = 1'b1;
-            wmul_a = 25'(z_old_sel);
-            wmul_b = 12'(s_old_G);
-            wmul_mode = 2'd2;
+            wmul_mode = 2'd3;
           end
           CAP_W75: if (bl_cnt != 7'd64) begin
             wmul_start   = 1'b1;
@@ -777,22 +769,17 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             wmul_b = {2'b0, wt_qf};
             wmul_mode = 2'd1;
           end
-          CAP_W27: if (s_snd_wt) begin
+          CAP_W27: begin
             wmul_start   = 1'b1;
-            wmul_a = 25'(z_new_c);
-            wmul_b = 12'(g_live);
+            wmul_a = s_snd_wt ? 25'(z_new_c) : 25'(z_old_sel);
+            wmul_b = s_snd_wt ? 12'(g_live) : 12'(s_old_G);
             wmul_mode = 2'd2;
           end
-          CAP_W40: if (s_snd_wt) begin
+          CAP_W40: begin
             wmul_start   = 1'b1;
             wmul_a = {8'b0, m_res12[26:10]};
             wmul_b = 12'd341;
-            wmul_mode = 2'd1;
-          end
-          CAP_W51: if (s_snd_wt) begin
-            wmul_start   = 1'b1;
-            wmul_a = {8'b0, gz_s1_r};
-            wmul_b = 12'd171;
+            wmul_mode = 2'd3;
           end
           default: ;
         endcase
@@ -1020,24 +1007,24 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
     logic [15:0] ring_rd;
     initial for (int i = 0; i < PSG_NV * 732; i++) ringm[i] = 16'd0;
     // Both blocks tap the same ring at their own lookback, so the two
-    // reads are sequenced onto ONE port: the new level at +70, the old
-    // at +71, both landing before the blend product launches at +75.
-    // Level 2's tap is the write cell itself; the write stays at +87,
+    // reads are sequenced onto ONE port: the new level at +47, the old
+    // at +48, both landing before the blend product launches at +51.
+    // Level 2's tap is the write cell itself; the write stays at +63,
     // so it is still read-before-write.
-    wire [1:0] ring_lvl = (pph == 7'(PWORK + 70)) ? s_ch_rev : old_rev_r;
+    wire [1:0] ring_lvl = (pph == 7'(PWORK + 47)) ? s_ch_rev : old_rev_r;
     wire [9:0] ring_tap =
         (ring_lvl == 2'd1)
           ? ((ring_rp >= 10'd366) ? ring_rp - 10'd366
                                   : ring_rp + 10'd366)
           : ring_rp;
     always_ff @(posedge clk) begin
-      if (prun && (pph == 7'(PWORK + 70) || pph == 7'(PWORK + 71)))
+      if (prun && (pph == 7'(PWORK + 47) || pph == 7'(PWORK + 48)))
         ring_rd <= ringm[{4'b0, pc_ch} * 732 + {3'b0, ring_tap}];
-      if (prun && pph == 7'(PWORK + 71))
+      if (prun && pph == 7'(PWORK + 48))
         ring_q <= $signed(ring_rd);
-      if (prun && pph == 7'(PWORK + 72))
+      if (prun && pph == 7'(PWORK + 49))
         ring_q_old <= $signed(ring_rd);
-      if (prun && pph == 7'(PWORK + 87) && play_bits[pc_ch])
+      if (prun && pph == 7'(PWORK + 63) && play_bits[pc_ch])
         ringm[{4'b0, pc_ch} * 732 + {3'b0, ring_rp}] <= mx_filt[15:0];
     end
   end else begin : g_noring
@@ -1566,41 +1553,23 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               smp_b <= wt_z;
           end
           CAP_W27: begin
-            if (s_snd_wt)
+            if (s_snd_wt) begin
               stage_leaf();
-          end
-          CAP_W28: begin
-            if (!s_snd_wt)
-              g_part <= m_res_wide[24:0];       // recip3-hi
-          end
-          CAP_W39: begin
-            // The /3-lo result is live: consume mx_new while the old
-            // voice's G pass launches.
-            if (!s_snd_wt)
+            end else begin
+              // The /3 result is live: consume the new voice while the
+              // independent old voice's G pass launches.
               mx_new <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
+            end
           end
           CAP_W40: begin
-            if (s_snd_wt)
-              gz_s1_r <= m_res12[26:10];
+            // Both profiles have just completed a G pass and launch the
+            // retained x*341 /3 limb from the captured magnitude.
+            gz_s1_r <= m_res12[26:10];
           end
           CAP_W51: begin
             if (s_snd_wt)
-              g_part <= m_res_wide[24:0];
-          end
-          CAP_W52: begin
-            if (!s_snd_wt)
-              gz_s1_r <= m_res12[26:10];        // old G*z
-          end
-          CAP_W62: begin
-            if (s_snd_wt)
               mx_new <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
-          end
-          CAP_W63: begin
-            if (!s_snd_wt)
-              g_part <= m_res_wide[24:0];       // old recip3-hi
-          end
-          CAP_W74: begin
-            if (!s_snd_wt)
+            else
               mx_old <= mxs_old ? -$signed(gz_old_scaled)
                                 : $signed(gz_old_scaled);
           end

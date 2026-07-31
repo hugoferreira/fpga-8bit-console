@@ -5,8 +5,8 @@ The hardware-flavour synthesis walk used to decode ~40 `pph == K`
 equalities and two big case trees every cycle. The schedule is a pure
 function of pph, so the decode is a ROM: 128 x 16-bit words, one per
 pph step, read at pph+1 so the word is registered exactly when its step
-executes. tools/gen_psg_tables.py embeds the live 0..108 range in unused
-words 144..252 of rtl/psg_const.hex, sharing that EBR with the sequencer.
+executes. tools/gen_psg_tables.py embeds the live 0..PLAST range from word
+144 onward in rtl/psg_const.hex, sharing that EBR with the sequencer.
 
 Bit layout (must match rtl/psg_walk.sv):
 
@@ -29,13 +29,13 @@ Bit layout (must match rtl/psg_walk.sv):
 # Hardware-flavour schedule constants (rtl/psg.sv, REALTIME_PREVIEW=0).
 PLOSC = 14
 PWORK = 19
-PFOLD = 108
+PFOLD = 84
 PSTOR = 52
-PLAST = 108
+PLAST = 84
 
 CAPS = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 15: 8, 17: 9,
-        26: 10, 27: 11, 28: 12, 39: 13, 40: 14, 51: 15, 52: 16,
-        62: 17, 63: 18, 74: 19, 84: 20, 86: 21, 75: 23}
+        26: 10, 27: 11, 40: 14, 50: 15, 51: 23, 60: 20,
+        62: 21}
 
 
 def build():
@@ -59,8 +59,8 @@ def build():
 
 def main():
     words = build()
-    print(f"{len(words)} control words; live range 0..{PLAST} fits "
-          "psg_const.hex words 144..252")
+    print(f"{len(words)} control words; live range 0..{PLAST} occupies "
+          f"psg_const.hex words 144..{144 + PLAST}")
 
 
 if __name__ == "__main__":

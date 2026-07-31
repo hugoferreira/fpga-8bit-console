@@ -511,3 +511,22 @@
       iteration reductions as retiming potential rather than automatic
       walker-clock savings, and identifies pph 92 as a completed-product hold
       before the fixed pph 93 consume rather than unexplained empty time.
+- [x] R.23 Reciprocal sibling elimination: retain `341*x` and reconstruct
+      `171*x` exactly as `(341*x + x) >> 1`, removing three multiplier
+      launches and the 25-bit `g_part` register. The exhaustive model proves
+      the identity for all 131,072 17-bit limb values. Before retiming,
+      fingerprint `2c95ddbe92d6` maps 7,112 LUT4s, 1,686 carries, 1,549 flops,
+      19 EBRs and 8,126 placed cells; `make test-psg` and the frozen matrix
+      remain exact.
+- [x] R.24 Multiplier-chain retiming: merge the mutually exclusive old-voice
+      and wavetable launch phases, assign constant 341 the spare exact
+      nine-iteration mode, and consume every product on its first readable
+      phase. The hardware visit falls 109 -> 85 phases, improving `psg_tb`
+      906 -> 714/1,275 sample clocks and 5,022 -> 3,555/7,654 tick clocks with
+      zero late flips. Fingerprint `bcb0ac999e8d` maps 7,113 LUT4s, 1,682
+      carries, 1,549 flops, 19 EBRs and 8,124 placed cells. The visualizer
+      measures 32 clocks of data depth versus 55 on one service, zero
+      request/consume slack, and no unexplained hardware phases; the frozen
+      matrix remains 59/59 byte-identical. The provenance-bound final gate
+      passes Celeste entry points 0, 10, 20, 30 and 40 from one source
+      fingerprint, retaining only music 0's documented later-fidelity issue.

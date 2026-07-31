@@ -22,7 +22,7 @@ module psg_mulsvc (input  bit          clk,
                    input  logic        mul_start,
                    input  logic signed [24:0] mul_start_a,
                    input  logic [11:0] mul_start_b,
-                   input  logic [1:0]  mul_start_mode,  // 0: 8-bit B, 1: 10, 2: 12
+                   input  logic [1:0]  mul_start_mode,  // 0: 8-bit B, 3: 9, 1: 10, 2: 12
                    output logic [31:0] m_res,
                    output logic [33:0] m_res_wide,
                    output logic [27:0] m_res12,
@@ -40,7 +40,8 @@ module psg_mulsvc (input  bit          clk,
   // m_a/m_p are datapath: every one is overwritten by the six-op program
   // before it is observed.
   wire  [21:0] m_acc = (m_mode == 2'd2) ? m_p[33:12]
-                     : (m_mode == 2'd1) ? m_p[31:10] : m_p[29:8];
+                     : (m_mode == 2'd1) ? m_p[31:10]
+                     : (m_mode == 2'd3) ? m_p[30:9] : m_p[29:8];
   wire  [22:0] m_sum = {1'b0, m_acc} + (m_p[0] ? {2'b0, m_a} : 23'd0);
 
   // m_res holds the product IN PLACE: bit k is product bit k. The
@@ -58,6 +59,7 @@ module psg_mulsvc (input  bit          clk,
     else if (m_cnt != 0) begin
       m_p   <= (m_mode == 2'd2) ? {m_sum, m_p[11:1]}
              : (m_mode == 2'd1) ? {2'b0, m_sum, m_p[9:1]}
+             : (m_mode == 2'd3) ? {3'b0, m_sum, m_p[8:1]}
                                 : {4'b0, m_sum, m_p[7:1]};
       m_cnt <= m_cnt - 1;
     end else if (mul_start) begin
@@ -71,7 +73,8 @@ module psg_mulsvc (input  bit          clk,
       m_p    <= {22'b0, mul_start_b};
       m_mode <= mul_start_mode;
       m_cnt  <= (mul_start_mode == 2'd2) ? 4'd12
-              : (mul_start_mode == 2'd1) ? 4'd10 : 4'd8;
+              : (mul_start_mode == 2'd1) ? 4'd10
+              : (mul_start_mode == 2'd3) ? 4'd9 : 4'd8;
     end
   end
 

@@ -991,6 +991,55 @@ multiply. In the retained schedule 46 phases perform work, 42 are
 multiply-busy on every profile, 18 are busy conditionally, three hold
 pipeline/completed-product state, and zero are unexplained.
 
+### 17. Derive the reciprocal sibling instead of multiplying it
+
+The `/3` reconstruction launched both `341*x` and `171*x` for the same
+17-bit limb. They are not independent products:
+
+```
+171*x = (341*x + x) / 2
+```
+
+The numerator on the right is always even, so this identity is exact before
+the existing truncation point. The walker now retains only `341*x`,
+reconstructs `171*x` from that result and the captured limb, and removes all
+three `171*x` launches plus the 25-bit `g_part` register. The cycle model
+checks all 131,072 possible limb values, not a sample set.
+
+Before retiming, fingerprint `2c95ddbe92d6` mapped 7,112 LUT4s, 1,686 carries,
+1,549 flip-flops and 19 EBRs; nextpnr attempted 8,126 placed cells. Relative
+to section 16 that is +13 LUT4s, +28 carries, -25 flip-flops and -25 placed
+cells. The arithmetic gate, `make test-psg`, and the frozen 59-case render
+matrix all pass byte-exactly.
+
+### 18. Spend the recovered service capacity on shorter visits
+
+Removing the sibling products makes the new- and old-voice chains independent.
+The control schedule now consumes each product on the first readable phase,
+launches the old voice in the wavetable path's mutually exclusive phase, and
+uses mode 3 as an exact nine-iteration service for the remaining constant
+`341` products. The exhaustive multiplier model proves mode 3 equivalent to
+the old ten-iteration mode across every relevant `A` value and all three
+result ports.
+
+The hardware visit falls from 109 to 85 phases, recovering 24 clocks per slot
+or 192 clocks per sample. `psg_tb` improves from 906 to 714 of 1,275 sample
+clocks and from 5,022 to 3,555 of 7,654 tick-preparation clocks, with zero late
+flips. The generated visualization finds zero request/consume slack, a
+32-clock true multiply-data depth versus 55 clocks on the one shared service,
+and no unexplained hardware phases.
+
+At fingerprint `bcb0ac999e8d`, Yosys maps 7,113 LUT4s, 1,682 carries, 1,549
+flip-flops and 19 EBRs; nextpnr attempts 8,124 placed cells. Relative to the
+unretimed algebraic form this is +1 LUT4, -4 carries, no flip-flop change and
+-2 placed cells while recovering the 192 sample clocks. Relative to section
+16 it is +14 LUT4s, +24 carries, -25 flip-flops and -27 placed cells.
+`make test-psg` passes, and the frozen render matrix remains 59/59
+byte-identical. The provenance-bound final gate also passes all five Celeste
+entry points (0, 10, 20, 30 and 40) from the same RTL fingerprint; music 0
+retains only the previously documented fidelity divergence reserved for the
+later fidelity pass.
+
 ## Risks / Trade-offs
 
 - **[Single-store contention]** Tick and sample work can request the voice EBR

@@ -60,10 +60,12 @@ def parse_iters(path=MULSVC_SV):
         out[int(cond)] = int(val)
     tail = re.findall(r":\s*4'd(\d+)\s*$", body)
     if tail:
-        for mode in range(4):
-            if mode not in out and len(out) < 3:
-                out.setdefault(mode, int(tail[0]))
-                break
+        missing = [mode for mode in range(4) if mode not in out]
+        if len(missing) != 1:
+            raise SystemExit(
+                f"{path}: expected one default mode in m_cnt load, got "
+                f"{missing} from {body!r}")
+        out[missing[0]] = int(tail[0])
     if not out:
         raise SystemExit(f"{path}: no iteration counts parsed from {body!r}")
     return dict(sorted(out.items()))
@@ -72,7 +74,7 @@ def parse_iters(path=MULSVC_SV):
 # The accumulator slice and the re-pack shift, both keyed by mode. These are
 # the halves people forget: changing the mode moves BOTH, which is why a
 # narrower mode is not obviously equivalent even for an operand that fits.
-SHIFT = {0: 8, 1: 10, 2: 12}
+SHIFT = {0: 8, 1: 10, 2: 12, 3: 9}
 
 
 def mulsvc(a, b, mode, iters=None, shift=None):
@@ -182,6 +184,30 @@ def gate():
     ok &= check("171 at mode 0 == mode 1 (2 iterations recoverable)",
                 not bad, f"{n} values of |A|, all three ports")
 
+    # 2b. The reciprocal /3 limb program does not need a second product at
+    # all. It currently evaluates x*341 and x*171, then forms
+    # `(low25(x*341)<<9) + low25(x*171)`. Since
+    #
+    #     171*x = (341*x + x) / 2
+    #
+    # and the sum is always even, the second product can be reconstructed
+    # exactly while the first product remains in m_p. Check the COMPLETE
+    # 17-bit x domain used by gz_s1_r, including the point where x*341 grows
+    # a 26th bit and the stored high partial truncates to 25.
+    m25, m34 = mask(25), mask(34)
+    bad_recip = []
+    for x in range(1 << 17):
+        p341 = 341 * x
+        legacy = (((p341 & m25) << 9) + ((171 * x) & m25)) & m34
+        derived171 = (p341 + x) >> 1
+        rebuilt = (((p341 & m25) << 9) + derived171) & m34
+        if legacy != rebuilt:
+            bad_recip.append(x)
+            break
+    ok &= check("reciprocal limb: derive 171*x from 341*x + x",
+                not bad_recip, "all 131072 values of the 17-bit limb"
+                if not bad_recip else f"first divergence at x={bad_recip[0]}")
+
     # 3. The counter-claim, which must FAIL - 341 needs 9 bits.
     bad341, _ = equivalent(341, 1, 0, values=vals[:400])
     ok &= check("341 at mode 0 differs from mode 1 (mode 0 truncates)",
@@ -189,9 +215,9 @@ def gate():
                 if bad341 else "no divergence — 341 would fit mode 0?!")
 
     # 4. The spare wmul_mode encoding: a 9-iteration mode would serve 341.
-    bad9, n9 = equivalent(341, 1, None, iters_b=9, shift_b=9, values=vals)
-    ok &= check("341 at a 9-iteration mode == mode 1", not bad9,
-                f"{n9} values — wmul_mode has one unused encoding")
+    bad9, n9 = equivalent(341, 1, 3, values=vals)
+    ok &= check("341 at mode 3 (9 iterations) == mode 1", not bad9,
+                f"{n9} values — exact nine-bit service mode")
 
     # 5. And a 6-iteration mode would serve bl_cnt[5:0].
     bad6, _ = equivalent(63, 0, None, iters_b=6, shift_b=6, values=vals)

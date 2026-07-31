@@ -11,8 +11,8 @@ diagram does: if a phase moves, the chart moves with it.
   python3 tools/psg_viz.py --json          # the extracted model, for diffing
 
 The walk has TWO schedules selected by the REALTIME_PREVIEW parameter, and
-both are extracted: the 109-phase hardware schedule that the oracle and the
-board run, and the 24-phase compact one that `make run` plays. They are
+both are extracted: the full hardware schedule that the oracle and the board
+run, and the 24-phase compact one that `make run` plays. They are
 different machines, and the preview half has historically been the one nothing
 looked at.
 """
@@ -287,7 +287,7 @@ def resolve_pph(key, params):
         return None
 
 
-MUL_ITERS = {0: 8, 1: 10, 2: 12}       # psg_mulsvc: mul_start_mode -> m_cnt
+MUL_ITERS = {0: 8, 1: 10, 2: 12, 3: 9} # psg_mulsvc: mul_start_mode -> m_cnt
 
 # ----------------------------------------------------------------------
 # Per-arm dependency audit (non-wavetable profile), done by reading the RTL.
@@ -308,21 +308,14 @@ MUL_DEPS = {
                 "record. Neither is a product — this is a chain head."},
     "CAP_W17": {"after": "CAP_W4", "a": "m_res12[26:10]", "b": "341",
          "why": "reads the service output directly: arm 1's product, hi limb."},
-    "CAP_W28": {"after": "CAP_W4", "a": "gz_s1_r", "b": "171",
-         "why": "gz_s1_r was captured from m_res12 at CAP_W17 (the same phase "
-                "arm 3 launches), so this is arm 1's product too — a SIBLING "
-                "of arm 3, not its successor."},
-    "CAP_W39": {"after": None, "a": "z_old_sel", "b": "s_old_G",
+    "CAP_W27": {"after": None, "a": "z_old_sel", "b": "s_old_G",
          "why": "z_old_sel = z_old_c = smp_b, holding the old-state wave "
                 "sample accumulated at CAP_W4/W5 from z_eval; s_old_G is a "
                 "record word. CAP_W26's product-derived write to smp_b is "
                 "guarded by s_snd_wt and does not apply here. Independent of "
                 "arms 1/3/5 — a second chain head."},
-    "CAP_W52": {"after": "CAP_W39", "a": "m_res12[26:10]", "b": "341",
-         "why": "arm 6's product, hi limb, read straight off the service."},
-    "CAP_W63": {"after": "CAP_W39", "a": "gz_s1_r", "b": "171",
-         "why": "gz_s1_r captured from m_res12 at CAP_W52 — arm 6's product. "
-                "Sibling of arm 9."},
+    "CAP_W40": {"after": "CAP_W27", "a": "m_res12[26:10]", "b": "341",
+         "why": "reads the old G*z product directly and launches its hi limb."},
     "CAP_W75": {"after": "both", "a": "blend_diff", "b": "bl_cnt[5:0]",
          "why": "blend_diff = cmb_new - cmb_old, and those descend from mx_new "
                 "(the new chain) and mx_old (the old chain). Joins both."},
@@ -332,7 +325,7 @@ MUL_DEPS = {
 def product_consumers(lines, cap_arms):
     """Which capture steps read a multiply result, directly or through a wire.
 
-    `CAP_W74` never names m_res - it reads `gz_old_scaled`, which is a wire
+    `CAP_W51` never names m_res - it reads `gz_old_scaled`, which is a wire
     over `m_res_wide`. Scanning for the port alone therefore misses real
     consumers and makes a tight schedule look slack, so the search runs over
     the combinational closure of the three result ports instead.
@@ -426,7 +419,7 @@ def operand_width(expr, widths):
 def parse_mul_arms(lines):
     """Each multiply arm's guard and the iteration count(s) it launches.
 
-    psg_mulsvc loads m_cnt with 8, 10 or 12 by mode and decrements once per
+    psg_mulsvc loads m_cnt with 8, 9, 10 or 12 by mode and decrements once per
     clock, so a request issued in phase p leaves m_busy high through
     p+iters and the product is readable in p+iters+1. That is the whole
     latency model, and psg_walk.sv states it independently for the preview
@@ -970,10 +963,10 @@ WAVE_CONE_STAGES = 2
 # listed that ends up unexplained is reported - a hand annotation must not be
 # able to hide a phase it no longer describes.
 AUDITED = {
-    ("hw", 104): {
+    ("hw", 80): {
         "holder": "combinational settling (dampen one-pole)",
-        "why": "mx_prod is registered at CAP_W84 (pph 103) and captured into "
-               "mx_filt at CAP_W86 (pph 105). Between them filt_y is pure "
+        "why": "mx_prod is registered at CAP_W84 (pph 79) and captured into "
+               "mx_filt at CAP_W86 (pph 81). Between them filt_y is pure "
                "combinational logic — dmp_mul -> dmp_acc -> dmp_tz -> dmp_y, "
                "three 19-bit adds deep — with no register. So the path is "
                "given two clock periods to settle rather than one.",
@@ -1017,7 +1010,7 @@ def attribute_pipelines(phases, params, variant):
         phases[i]["holders"].append(
             f"record port (oscillator write-back word {i - lo})")
     if variant == "hw":
-        for off in (87, 88):                 # state_lp_we, the late dampen pair
+        for off in (63, 64):                 # state_lp_we, the late dampen pair
             k = params["PWORK"] + off
             if 0 <= k < n:
                 phases[k]["holders"].append("record port (late dampen write-back)")
@@ -1120,7 +1113,7 @@ def analyse(model):
                  (f"multiply requests carry up to {worst} phases of slack"),
         "measure": {
             "requests measured": len(rows),
-            "latency model": "request + iters + 1 (m_cnt loads 8/10/12 and "
+            "latency model": "request + iters + 1 (m_cnt loads 8/9/10/12 and "
                              "decrements once per clock)",
             "iterations by mode": ", ".join(f"mode {k}={v}"
                                             for k, v in MUL_ITERS.items()),
@@ -1133,7 +1126,7 @@ def analyse(model):
                 "iterating — they are not reschedulable, and shortening them "
                 "means a wider multiplier, not a tighter timetable.\n\n"
                 "Consumers are found over the combinational closure of "
-                "m_res/m_res12/m_res_wide, because steps like CAP_W74 read the "
+                "m_res/m_res12/m_res_wide, because steps like CAP_W51 read the "
                 "product through a wire (gz_old_scaled) and a direct-name scan "
                 "would score a tight schedule as slack.",
         "table": {"cols": ["req", "arm", "iters", "ready", "consumed", "slack"],
@@ -1156,9 +1149,16 @@ def analyse(model):
         arm = walk["mul_arms"].get(p["mul"])
         if not p["mul"] or not arm:
             continue
-        for expr in arm["b_exprs"]:
+        for expr_i, expr in enumerate(arm["b_exprs"]):
             bits, kind, val = operand_width(expr, widths)
-            charged = max(MUL_ITERS[m] for m in arm["modes"])
+            # In a simple if/else request arm, assignments are emitted in the
+            # same order as their mode writes. Keep those pairs together:
+            # taking max(modes) for every operand falsely charged wt_pf's
+            # 10-bit branch for the unrelated 12-bit G branch.
+            mode = (arm["modes"][expr_i]
+                    if len(arm["b_exprs"]) == len(arm["modes"])
+                    else max(arm["modes"], key=MUL_ITERS.get))
+            charged = MUL_ITERS[mode]
             fits = [it for it in sorted(set(MUL_ITERS.values()))
                     if bits is not None and it >= bits]
             best = fits[0] if fits else None
@@ -1176,11 +1176,14 @@ def analyse(model):
             elif bits is not None and ideal:
                 declared.append((p["pph"], expr, bits, charged, kind, ideal))
 
+    used_modes = sorted({
+        mode for arm in walk["mul_arms"].values() for mode in arm["modes"]
+    })
     measure = {
         "iteration ladder": ", ".join(f"mode {k} = {v}"
                                       for k, v in MUL_ITERS.items()),
-        "mode encodings used": f"{len(set(MUL_ITERS))} of 4 "
-                               "(wmul_mode is 2 bits — one spare)",
+        "mode encodings used": f"{len(used_modes)} of 4 "
+                               "(wmul_mode is 2 bits)",
     }
     for val in sorted({r[1] for r in provable}):
         sites = [r for r in provable if r[1] == val]
@@ -1207,11 +1210,14 @@ def analyse(model):
                 continue
             if arm["cond"] not in ("", *prof["true"]):
                 continue
-            for expr in arm["b_exprs"]:
+            for expr_i, expr in enumerate(arm["b_exprs"]):
                 bits, kind, _ = operand_width(expr, widths)
                 if kind != "constant" or bits is None:
                     continue
-                charged = max(MUL_ITERS[m] for m in arm["modes"])
+                mode = (arm["modes"][expr_i]
+                        if len(arm["b_exprs"]) == len(arm["modes"])
+                        else max(arm["modes"], key=MUL_ITERS.get))
+                charged = MUL_ITERS[mode]
                 fits = [it for it in ladder if it >= bits]
                 if fits and fits[0] < charged:
                     delta += fits[0] - charged
@@ -1224,8 +1230,11 @@ def analyse(model):
     out.append({
         "id": "mul-width",
         "area": "walk",
-        "title": "some multiplier operands are charged more iterations than "
-                 "they have bits",
+        "title": (f"{len(provable) + len(declared)} multiplier "
+                  f"operand{' is' if len(provable) + len(declared) == 1 else 's are'} "
+                  "charged more iterations than "
+                  f"{'it has' if len(provable) + len(declared) == 1 else 'they have'} "
+                  "bits"),
         "measure": measure,
         "body": "m_cnt is loaded from the mode, and each iteration consumes one "
                 "bit of B. An operand narrower than its mode still pays the "
@@ -1236,16 +1245,16 @@ def analyse(model):
                 "must be safely retimed and the shortened schedule verified."
                 "\n\n"
                 "Constants are provable: 171 needs 8 bits and mode 0 gives "
-                "exactly 8. 341 needs 9 and would truncate at mode 0 — it needs "
-                "a 9-iteration mode, and wmul_mode has one spare encoding. "
+                "exactly 8. 341 needs 9 and would truncate at mode 0, so the "
+                "retained mode 3 gives it exactly 9 iterations. "
                 "Signal operands are only DECLARED widths here; narrowing one "
                 "needs a range argument this tool cannot make.\n\n"
                 "Changing a mode moves the accumulator slice as well as the "
                 "count, so equivalence is not obvious and must be checked "
-                "against the service, not assumed. The retained mode-only "
-                "×171 change is exact and frees service iterations for later "
-                "work or retiming, but maps 24 placed cells larger and does "
-                "not shorten the current fixed walk.",
+                "against the service, not assumed. The exhaustive multiplier "
+                "model proves the ×341 mode, and the dependent actions are "
+                "retimed so the narrower mode shortens every hardware visit "
+                "by two clocks.",
         "table": {"cols": ["pph", "arm", "B operand", "bits", "kind",
                            "charged", "fits mode", "excess now", "if exact"],
                   "rows": rows},
@@ -1270,15 +1279,16 @@ def analyse(model):
     def cost(a):
         return iters_of.get(a, 0) + 1
 
-    chain_new = ['CAP_W4', 'CAP_W17', 'CAP_W28']
-    chain_old = ['CAP_W39', 'CAP_W52', 'CAP_W63']
+    chain_new = ['CAP_W4', 'CAP_W17']
+    chain_old = ['CAP_W27', 'CAP_W40']
     one_service = sum(cost(a) for a in iters_of)
     # Two services: each chain on its own, the limbs still serialising there.
     two_service = max(sum(cost(a) for a in chain_new),
                       sum(cost(a) for a in chain_old)) + cost('CAP_W75')
-    # Unlimited: the true data depth - head, then the deeper of its siblings.
-    unlimited = (max(cost('CAP_W4') + max(cost('CAP_W17'), cost('CAP_W28')),
-                     cost('CAP_W39') + max(cost('CAP_W52'), cost('CAP_W63'))) + cost('CAP_W75'))
+    # Unlimited: the true data depth - each head and its sole remaining limb.
+    # The former x*171 siblings are reconstructed exactly from x*341 + x.
+    unlimited = (max(cost('CAP_W4') + cost('CAP_W17'),
+                     cost('CAP_W27') + cost('CAP_W40')) + cost('CAP_W75'))
     out.append({
         "id": "mul-deps",
         "area": "walk",
@@ -1290,10 +1300,10 @@ def analyse(model):
                              f"(−{one_service - two_service})",
             "unlimited services (data floor)":
                 f"{unlimited} clocks (−{one_service - unlimited})",
-            "the two chain heads": "CAP_W4 (new voice) and CAP_W39 (old "
+            "the two chain heads": "CAP_W4 (new voice) and CAP_W27 (old "
                                    "continuation) — neither reads a product",
-            "the sibling pairs": "W17 ∥ W28 both consume W4; W52 ∥ W63 "
-                                 "both consume W39",
+            "retired sibling products": "the three x*171 launches are gone; "
+                                        "171*x = (341*x + x)/2 exactly",
             "the join": "CAP_W75 (blend) needs both chains",
         },
         "body": "Audited by reading the RTL, arm by arm, for the "
@@ -1302,7 +1312,9 @@ def analyse(model):
                 f"ones that meet at the blend — so most of the {one_service} "
                 "clocks is "
                 "contention for the single shift-add service, not data "
-                "dependence.\n\n"
+                "dependence. The former x*171 sibling products are absent: "
+                "the consume cone reconstructs each exactly from the retained "
+                "x*341 product and x itself.\n\n"
                 "A flow-insensitive taint pass was tried first and rejected. "
                 "CAP_W26 writes smp_b from the wavetable lerp product, but "
                 "only under `if (s_snd_wt)`; a pass blind to that guard marks "
