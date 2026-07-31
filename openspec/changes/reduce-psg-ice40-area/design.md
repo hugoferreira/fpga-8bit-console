@@ -1300,6 +1300,64 @@ once, record-load case included, so the fabric stops existing. That needs a
 load-slot field the 16-bit word cannot hold, so two blocks (13 -> 15), still
 inside this change's EBR ceiling.
 
+### 23. The noise walk still has a PARALLEL multiplier, and it is 4% of the chip
+
+Census on the section-22 build puts `nz_out_r`'s cone at 480 LUT4s, the
+largest single family in the design, ahead of the whole tilted-saw
+reciprocal. It contains the one remaining `*` operator in the hardware
+lowering:
+
+```
+wire signed [25:0] nz_mul_full = ($signed({1'b0, nz_mul_j}) * nz_mul_rand) >>> 8;
+```
+
+A 17 x 8 signed parallel multiplier, on a chip whose entire arithmetic design
+is one shared iterative service and whose fabric has no DSP. R.14 already
+merged the live and old noise walks onto this ONE cone, which is why it reads
+as a single modest line; it is nevertheless a full array.
+
+Ablated by replacing the product with a same-width, non-constant wiring
+function of the same operands - downstream clamps, accumulator and publication
+untouched, so this is the multiply network alone: **8,078 -> 7,771 placed
+cells (-307), 7,065 -> 6,771 LUT4s (-294), 1,690 -> 1,653 carries, 13 EBRs
+unchanged; pre-mapping 16,089 -> 15,382 (-707).** It takes the standalone
+target from 105% to 101% of the HX8K, 91 cells from placing, and it is the
+largest single lever this change has measured.
+
+The destination is the existing service, not new hardware. |A| = `nz_mul_j`
+is 17 bits (inside the service's 2^21 ceiling) and B = |`nz_mul_rand`| <= 128
+fits mode 0's byte contract, so it is two ordinary eight-iteration requests
+per visit. Two things have to be got right:
+
+- **Semantics.** `(j * rand) >>> 8` is an arithmetic shift of a SIGNED product
+  - floor. The service works in the magnitude domain with consumer-side sign,
+  which truncates toward zero. They differ by one whenever the product is
+  negative and its low eight bits are nonzero, so the negative arm needs the
+  `+255` round-up. Exactly reproducible, and `tools/psg_mul_model.py` is the
+  place to prove it before any RTL moves.
+- **Schedule.** The live product is consumed at CAP_W0 and the old at CAP_W1,
+  but its operands only settle when the record load does (`s_eff_inc` at
+  PLOSC+1/+2, `s_old_inc` at pph 9/10; both LFSRs are stable until W0 steps
+  them). The service is IDLE through the whole load window - the walk's first
+  existing request is CAP_W4 - so the two requests fit there, and the consumes
+  need PWORK to move later by about eight phases. Shift PWORK, PSTOR, PFOLD
+  and PLAST by the same amount and every relative relationship in the visit is
+  preserved; the control ROM regenerates from those constants. Cost is about
+  eight phases per slot, 714 -> ~778 clocks per sample, against 561 spare.
+
+This is a schedule change on the most fidelity-delicate path in the chip, so
+it is R.25's danger zone by construction: gate it on the 400,000-sample
+music-20 byte comparison (an 80-second loop) before spending the full battery.
+
+Two neighbours priced at the same time, both already closed:
+
+- `nz_thresh = nz_sum / 3` ablates at -726 PRE-MAPPING cells and looks like a
+  bigger prize than the multiplier. It is not: R.15 already built the exact
+  replacement (`3g + 3 <= x`, which is an exact rewrite of `g < floor(x/3)`)
+  and measured **+57 LUT4s and +22 placed**. Structural cells are not LUT4s -
+  the same trap section 22 records for the pph fabric. Do not retry.
+- `nz_kick_m` is already a three-term masked shift-add, not a multiply.
+
 ## Risks / Trade-offs
 
 - **[Single-store contention]** Tick and sample work can request the voice EBR

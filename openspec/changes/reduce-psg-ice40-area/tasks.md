@@ -665,3 +665,39 @@
       actually stops existing. That needs a load-slot field the 16-bit word
       has no room for, hence two blocks (13 -> 15) - still inside this
       change's EBR ceiling, and the only version worth measuring next.
+- [ ] R.30 THE LARGEST REMAINING LEVER, measured: the noise walk evaluates
+      `(nz_mul_j * nz_mul_rand) >>> 8` on a 17 x 8 PARALLEL multiplier - the
+      one `*` left in the hardware lowering, on a chip built around one shared
+      iterative service. `nz_out_r`'s cone is the biggest LUT4 family in the
+      design at 480. Ablated (product replaced by a same-width non-constant
+      wiring function of the same operands; clamps, accumulator and
+      publication untouched): **8,078 -> 7,771 placed (-307), 7,065 -> 6,771
+      LUT4 (-294), 1,690 -> 1,653 carries, 13 EBR unchanged, pre-map 16,089 ->
+      15,382.** 105% -> 101% of the HX8K, 91 cells from placing.
+      Destination is the EXISTING service, not new hardware: |A| = nz_mul_j is
+      17 bits (inside the 2^21 ceiling), B = |nz_mul_rand| <= 128 fits mode 0.
+      Two requirements: (1) `>>> 8` on a signed product is FLOOR while the
+      service's magnitude domain truncates toward zero - the negative arm needs
+      the +255 round-up, provable in tools/psg_mul_model.py before any RTL
+      moves; (2) the operands only settle with the record load, so the two
+      requests go in the load window (the service is idle there - the first
+      existing request is CAP_W4) and PWORK/PSTOR/PFOLD/PLAST all shift later
+      by ~8 phases together, preserving every relative relationship. ~714 ->
+      ~778 clocks/sample against 561 spare. Schedule change on the most
+      fidelity-delicate path: gate on the 400k-sample music-20 byte comparison
+      (80-second loop) BEFORE the full battery.
+      Priced alongside and CLOSED: `nz_thresh = nz_sum / 3` ablates at -726
+      pre-mapping cells but R.15 already measured its exact replacement at +57
+      LUT4 / +22 placed - structural cells are not LUT4s. `nz_kick_m` is
+      already a masked shift-add.
+- [x] R.31 CAP_W75's two phases of slack, re-examined on request. It is the
+      only non-zero in the schedule: the short six-iteration blend request
+      launches at pph 70, is readable at 77, and CAP_W84 consumes it at 79.
+      Closing it is EXACTLY the retime R.25 built and rejected - "moving the
+      fixed walker consume two phases earlier" passed `make test-psg`, the
+      59-case oracle AND the spectral tolerance gate, then diverged in Celeste
+      music 20 at 21.246 s (433,450 differing samples, max delta 20,144). It
+      is also worth nothing binding: 2 phases x 8 slots = 16 clocks/sample
+      against 561 spare, and the slack is a WAIT, not service capacity - the
+      service is free from phase 77 either way. The schedule give it reveals is
+      better spent on R.30, which needs ~8 phases and returns 307 cells.
