@@ -1247,7 +1247,11 @@ module psg_seq (input  bit   clk,
           sst <= EA2;
         end
         EA2: begin                          // consume speed word, issue loops
-          wrd <= state_q;
+          // Word 2 is {2'b0, play_len[5:0], speed[7:0]} and both of its write
+          // sites - T_NH and EA5's explicit-length decrement - spell those two
+          // high bits as zero, so this slice IS the whole word. Say so, rather
+          // than leaving an implicit 16 -> 14 truncation for the linter.
+          wrd <= state_q[13:0];
           froll <= ta_ge;                   // fcnt+1 >= sp
           // The engine write this cycle puts the advanced counters back.
           sst <= EA3;
