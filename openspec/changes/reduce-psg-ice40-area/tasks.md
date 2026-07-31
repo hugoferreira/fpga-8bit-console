@@ -594,3 +594,57 @@
       100% of nine blocks (the PICO-8 audio image is exactly that size),
       `crom` uses 253 of 256 words, and `state_m`'s half-empty second block is
       the deliberate landing site for the record migrations.
+- [x] R.28 Control-word decode fold, and the defect it exposed. The walker
+      decoded a five-bit opcode into sixteen actions every cycle - logic
+      applied to a table value, paid for in R.16/R.17 when blocks were the
+      binding resource. Blocks are not scarce now, and the reversal is FREE
+      rather than costing one: there are exactly sixteen actions so one-hot is
+      the SAME 16-bit word on the SAME shared port; all six former flag bits
+      are aliases of an action's phase (SYN_A/W0, SYN_B+ISS_SEC/W1,
+      ISS_OLDMAIN/W2, ISS_OLDSEC/W3, DQ_OLD/W5); and CAP_FOLD's phase IS
+      PLAST, which the walk already tests. Both step decodes become
+      `(* parallel_case *) case (1'b1)` - R.9's measured spelling, since a
+      parallel IF chain builds a priority network (+154).
+      **The first attempt FAILED its gate and that is the valuable part.**
+      `make test-psg`, the 59-case matrix and the tolerance gate all passed;
+      the direct byte comparison against the previous RTL did not - music 20
+      diverged at 16.997 s, 39% of samples, max delta 41,475. Probing found
+      the cause: `ctrl_addr` is only selected onto the shared port while
+      `prun` is set, so the word registered for pph 0 was fetched a cycle
+      BEFORE the walk started, while the sequencer owned the port. Slot 0
+      reads a stale pitch word (measured: 0x00c2, decoding to CAP_W1) on the
+      first phase of EVERY visit and executes it against the previous slot's
+      state. Slots 1..7 are fine (pph_nxt wraps to 0 under prun). It was
+      invisible only because CAP_W1's writes are all overwritten or gated
+      before use - luck, not design, since the stale word is whichever pitch
+      word the sequencer last addressed. One-hot decodes the same garbage into
+      SEVERAL actions, which is not inert. Gating the word to zero at pph 0 is
+      exactly "the schedule has no action at pph 0", now asserted in
+      gen_psg_ctrl.py; applied to the UNCHANGED encoded design it is
+      byte-identical (music 20 identical over 1,226,752 samples, PICO-8
+      fidelity numbers unmoved), so it is a render-neutral prerequisite rather
+      than a render change. Fingerprint `12037fb1cc6e`: 8,092 -> 8,078 placed
+      LC (-14), Yosys maps 7,065 LUT4, 1,690 carries, 1,554 flops (-11/-3/0),
+      **13 EBR unchanged**, pre-map census 16,125 -> 16,089 (-36). The fold
+      alone is -45 LUT4 / -56 placed; the gate costs +34 LUT4 of it. The
+      placed delta is inside the mapping-noise band, so the cell claim rests
+      on the structural number - the real return is the defect and what it
+      unblocks. `make test-psg` remains at 714/1,275 and 3,555/7,654 with zero
+      late flips, the frozen matrix is 59/59 byte-exact, and all five Celeste
+      entry points are byte-identical.
+      Audited and found NOT foldable, so nobody re-derives it: `pinc`'s `<< 8`
+      is already folded (that is why it is stored in 13 bits), `fstep` feeds an
+      accumulator, the slide affine's r/b are variable-operand inputs, and
+      `recip`'s only nearby constant is applied after the mux with the
+      non-table tail path - folding it in would buy a second subtract.
+- [ ] R.29 PRICED, not taken: the rest of the walker's pph-derived fabric -
+      `wlk_ra`/`wlk_wa` comparators, subtracts and adds, `state_sample_read`,
+      `state_sample_we`, `state_lp_we` - as a 128 x 14 control word.
+      **-88 cells for +1 block** (16,080 -> 15,992 pre-map, carries 2,108 ->
+      2,081), leaving 14 of 32 blocks. Best block rate recorded in this change.
+      Measured as a shape ablation with arbitrary-but-distinct ROM contents:
+      the fabric delta is real, the contents are the implementation's problem.
+      Note the ROM covers the HARDWARE schedule only, so the preview flavour
+      keeps its expressions under `REALTIME_PREVIEW` (removed at elaboration
+      for the standalone target, so the measurement stands). It reads the
+      control word on exactly the phases R.28's gate now makes trustworthy.

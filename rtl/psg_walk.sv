@@ -306,30 +306,50 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // reads are mutually exclusive. The address is pph+1 so ctrl_q is registered
   // exactly when its step executes. The state-store replay cycle after prun
   // lets the constants port re-prime before the sequencer resumes.
-  localparam logic [4:0]
-      CAP_NONE = 0, CAP_W0 = 1, CAP_W1 = 2, CAP_W2 = 3, CAP_W3 = 4,
-      CAP_W4 = 5, CAP_W5 = 6, CAP_W6 = 7, CAP_W15 = 8, CAP_W17 = 9,
-      CAP_W26 = 10, CAP_W27 = 11, CAP_W28 = 12, CAP_W39 = 13,
-      CAP_W40 = 14, CAP_W51 = 15, CAP_W52 = 16, CAP_W62 = 17,
-      CAP_W63 = 18, CAP_W74 = 19, CAP_W84 = 20, CAP_W86 = 21,
-      CAP_FOLD = 22, CAP_W75 = 23;
+  // ONE-HOT, not an encoded opcode. The encoding existed to halve the word
+  // and so save a block, back when blocks were the binding resource - and the
+  // walk then paid ~50 logic cells decoding it every cycle. There are exactly
+  // sixteen actions, so one-hot fits the SAME 16-bit word on the SAME shared
+  // port, and the decode costs nothing.
+  localparam int
+      CAP_W0 = 0, CAP_W1 = 1, CAP_W2 = 2, CAP_W3 = 3,
+      CAP_W4 = 4, CAP_W5 = 5, CAP_W6 = 6, CAP_W15 = 7, CAP_W17 = 8,
+      CAP_W26 = 9, CAP_W27 = 10, CAP_W40 = 11, CAP_W51 = 12,
+      CAP_W75 = 13, CAP_W84 = 14, CAP_W86 = 15;
   wire [6:0] pph_nxt = (!prun || pph == 7'(PLAST)) ? 7'd0 : pph + 7'd1;
   always_comb ctrl_addr = 8'd144 + {1'b0, pph_nxt};
-  wire [4:0] ctrl_cap = ctrl_q[4:0];
+  // The visit's FIRST word is not a control word. ctrl_addr is only selected
+  // onto the shared port while `prun` is set, so the word registered for
+  // pph 0 was fetched on the cycle before the walk started - when the
+  // sequencer still owned the port - and slot 0 therefore reads a stale pitch
+  // word every sample. It has been executing whatever action those bits name;
+  // with the encoded field that landed on CAP_W1, whose writes are all
+  // overwritten before use, so the defect was inert and invisible. One-hot
+  // decodes the same garbage into SEVERAL actions, which is not inert - the
+  // gate below is what makes this encoding change render-exact.
+  //
+  // Slots 1..7 are unaffected either way: pph_nxt wraps to 0 under prun, so
+  // they read the true pph-0 word, which is zero. Gating to zero is therefore
+  // exactly "the schedule has no action at pph 0" - asserted in
+  // tools/gen_psg_ctrl.py so a future schedule cannot quietly rely on one.
+  wire [15:0] cap = (pph == 7'd0) ? 16'd0 : ctrl_q;
 
 
+  // The wave-pipe issues and the dq context sit on the same phases as W1/W2
+  // /W3 and W5, so one-hot spells them without bits of their own - the six
+  // former flag bits were all aliases of an action's phase.
   assign iss_sec = REALTIME_PREVIEW ? (pph == 7'(PWORK + 1))
-                                  : prun && ctrl_q[9];
+                                  : prun && cap[CAP_W1];
   assign iss_om  = REALTIME_PREVIEW ? (pph == 7'(PWORK + 2))
-                                  : prun && ctrl_q[10];
+                                  : prun && cap[CAP_W2];
   assign iss_os  = REALTIME_PREVIEW ? (pph == 7'(PWORK + 3))
-                                  : prun && ctrl_q[11];
+                                  : prun && cap[CAP_W3];
 
   // The one dq network serves both phase contexts: the live voice at
   // PWORK+6 and the old continuation at PWORK+5 (its wave/mode/dp are the
   // previous tick's, carried in the old fields).
   assign dq_old_ctx = REALTIME_PREVIEW ? (pph == 7'(PWORK + 5))
-                                     : prun && ctrl_q[12];
+                                     : prun && cap[CAP_W5];
 
   // The preview's own secondary-increment network below still reads the
   // live increment directly; u_wave carries its own copy of the same wire.
@@ -392,10 +412,10 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
     syn_rd   = 1'b0;
     syn_addr = 13'd0;
     if (prun && s_snd_wt && play_bits[pc_ch]) begin
-      if (REALTIME_PREVIEW ? (pph == 7'(PWORK)) : ctrl_q[13]) begin
+      if (REALTIME_PREVIEW ? (pph == 7'(PWORK)) : cap[CAP_W0]) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb + {7'b0, s_phase[23:18]};
-      end else if (!REALTIME_PREVIEW && ctrl_q[14]) begin
+      end else if (!REALTIME_PREVIEW && cap[CAP_W1]) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb
                  + {7'b0, s_phase[23:18] + 6'd1};
@@ -583,8 +603,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // The live sample is consumed after W0; the old continuation is not issued
   // until W2. Use that idle W1 between them to evaluate the old step through
   // the same variable multiplier instead of building two parallel products.
-  wire                 nz_mul_old = !REALTIME_PREVIEW
-                                  && ctrl_cap == CAP_W1;
+  wire                 nz_mul_old = !REALTIME_PREVIEW && cap[CAP_W1];
   wire        [16:0]   nz_mul_j = nz_mul_old ? nz2_j : nz_j;
   wire signed [8:0]    nz_mul_rand = nz_mul_old ? nz2_rand_r : nz_rand;
   wire signed [25:0]   nz_mul_full =
@@ -737,8 +756,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
         // G/reciprocal passes at +27/+40, consumed at +50.
         // Product and capture are functions of the same phase wherever a
         // dependency allows; CAP_W75 names the sole launch-only blend step.
-        case (ctrl_cap)
-          CAP_W4: begin
+        (* parallel_case *) case (1'b1)
+          cap[CAP_W4]: begin
             wmul_start = 1'b1;
             if (s_snd_wt) begin
               wmul_a = 25'(wt_pd);
@@ -755,32 +774,32 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           // so m_res[27:0] is the whole G*z magnitude.
           // CAP_W17 and CAP_W40 launch the same retained x*341 operation
           // for the new and old voice respectively.
-          CAP_W17: if (!s_snd_wt) begin
+          cap[CAP_W17]: if (!s_snd_wt) begin
             wmul_start   = 1'b1;
             wmul_a = {8'b0, m_res[26:10]};
             wmul_b = 12'd341;
             wmul_mode = 2'd3;
           end
-          CAP_W75: if (bl_cnt != 7'd64) begin
+          cap[CAP_W75]: if (bl_cnt != 7'd64) begin
             wmul_start   = 1'b1;
             wmul_a = 25'(blend_diff);
             wmul_b = {6'b0, bl_cnt[5:0]};
             wmul_mode = 2'd1;
             wmul_short = 1'b1;
           end
-          CAP_W15: if (s_snd_wt) begin
+          cap[CAP_W15]: if (s_snd_wt) begin
             wmul_start   = 1'b1;
             wmul_a = 25'(wt_qd);
             wmul_b = {2'b0, wt_qf};
             wmul_mode = 2'd1;
           end
-          CAP_W27: begin
+          cap[CAP_W27]: begin
             wmul_start   = 1'b1;
             wmul_a = s_snd_wt ? 25'(z_new_c) : 25'(z_old_sel);
             wmul_b = s_snd_wt ? 12'(g_live) : 12'(s_old_G);
             wmul_mode = 2'd2;
           end
-          CAP_W40: begin
+          cap[CAP_W40]: begin
             wmul_start   = 1'b1;
             wmul_a = {8'b0, m_res[26:10]};
             wmul_b = 12'd341;
@@ -1383,8 +1402,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
         end else begin
         // Step decode rides the control store. The action opcode replaces
         // the former 22-bit one-hot field, halving the control-store width.
-        case (ctrl_cap)
-          CAP_W0: begin               // advance phase(s), issue main read
+        (* parallel_case *) case (1'b1)
+          cap[CAP_W0]: begin               // advance phase(s), issue main read
             // One step per voice per sample. This used to free-run on the
             // system clock, which tied the noise sequence to how many clocks
             // the per-voice pipeline happened to take - so shortening the
@@ -1456,7 +1475,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               bl_cnt <= bl_cnt + 7'd1;
             noise_filt_step(play_bits[pc_ch] && s_eff_a != 0);
           end
-          CAP_W1: begin           // main-voice sample
+          cap[CAP_W1]: begin           // main-voice sample
             // W0 published the live noise walk. The old continuation is not
             // issued until W2, so W1 consumes the same multiplier with the
             // old pitch/random operands and completes that walk here.
@@ -1471,7 +1490,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             if (s_snd_wt)
               smp_a <= 18'($signed(seq_q));
           end
-          CAP_W2: begin           // second voice
+          cap[CAP_W2]: begin           // second voice
             if (s_snd_wt)
               wt_p1 <= $signed(seq_q);
             else
@@ -1487,13 +1506,13 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             last_alt_r <= s_ch_buzz;
             last_rev_r <= s_ch_rev;
           end
-          CAP_W3: begin           // preceding-state waveform sample
+          cap[CAP_W3]: begin           // preceding-state waveform sample
             if (s_snd_wt)
               smp_b <= 18'($signed(seq_q));
             else
               smp_b <= z_eval;           // secondary z
           end
-          CAP_W4: begin
+          cap[CAP_W4]: begin
             if (!s_snd_wt)
               // z_new_c was consumed by the product launched on this edge;
               // its smp_b component is now dead and can hold the old main z.
@@ -1510,13 +1529,13 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               // The first G*z limb pass launches this cycle.
               stage_leaf();
           end
-          CAP_W15: begin
+          cap[CAP_W15]: begin
             if (s_snd_wt) begin
               smp_a <= wt_z;
               mxs_new <= wt_qd[8];
             end
           end
-          CAP_W5: begin
+          cap[CAP_W5]: begin
             // The old waveform read has captured the pre-advance phase.
             // The dq network serves the OLD context this cycle.
             if (!s_snd_wt) begin
@@ -1533,7 +1552,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               end
             end
           end
-          CAP_W6: begin
+          cap[CAP_W6]: begin
             // All secondary waveform reads have captured the pre-advance
             // phase. The universal q0 advances for EVERY rendering voice -
             // the binary's `q0 = (q0 + dq) & 0x1ffff` - on a dedicated
@@ -1544,7 +1563,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             if (play_bits[pc_ch] && s_eff_a != 0)
               s_phase2 <= {7'b0, 17'(s_phase2[16:0] + dq17)};
           end
-          CAP_W17: begin
+          cap[CAP_W17]: begin
             // The G pass is done: capture the >>10 for the second /3
             // limb and the >>11 for the noise bypass while the first
             // limb launches.
@@ -1553,11 +1572,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               mxs_old <= z_old_sel[17];
             end
           end
-          CAP_W26: begin
+          cap[CAP_W26]: begin
             if (s_snd_wt)
               smp_b <= wt_z;
           end
-          CAP_W27: begin
+          cap[CAP_W27]: begin
             if (s_snd_wt) begin
               stage_leaf();
             end else begin
@@ -1566,19 +1585,19 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               mx_new <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
             end
           end
-          CAP_W40: begin
+          cap[CAP_W40]: begin
             // Both profiles have just completed a G pass and launch the
             // retained x*341 /3 limb from the captured magnitude.
             gz_s1_r <= m_res[26:10];
           end
-          CAP_W51: begin
+          cap[CAP_W51]: begin
             if (s_snd_wt)
               mx_new <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
             else
               mx_old <= mxs_old ? -$signed(gz_old_scaled)
                                 : $signed(gz_old_scaled);
           end
-          CAP_W86: begin
+          cap[CAP_W86]: begin
             // The dampen stage, on the already-combed and blended
             // sample; the dampen state advances only when its digit is
             // set, like the model's damp_y.
@@ -1586,7 +1605,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             if (s_ch_damp != 2'd0)
               s_lp <= dmp_y;
           end
-          CAP_W84: begin
+          cap[CAP_W84]: begin
             // Blend consume: tz((64*old + i*(new - old)) / 64) over the
             // COMBED blocks - the truncation is over the WHOLE
             // accumulator (blend.one_multiply + tzpow), not split across
@@ -1596,9 +1615,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             else
               mx_prod <= 17'(bl_acc_tz >>> 6);
           end
-          CAP_FOLD: fold_launch();      // fold into the tree
           default: ;
         endcase
+        // The fold's phase IS PLAST, the visit-close test above, so one-hot
+        // spends no bit on a condition the walk already decodes.
+        if (pph == 7'(PLAST)) fold_launch();
         end
       end
     end

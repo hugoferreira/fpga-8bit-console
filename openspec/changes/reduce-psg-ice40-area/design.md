@@ -1205,6 +1205,85 @@ exactly that size, so it cannot shrink without changing what a cart may
 contain. `crom` uses 253 of its 256 words. `state_m`'s two blocks are half
 spare BY DESIGN - that spare is what the record migrations are for.
 
+### 22. Fold the decode back into the table, and the defect that exposed
+
+The question section 21 raises is what else is LOGIC APPLIED TO A TABLE VALUE.
+Audited across all four memories, the genuine arithmetic is already folded or
+cannot be: `pinc` is stored in 13 bits precisely because its `<< 8` is folded
+into the wiring; `fstep` feeds an accumulator with no constant of its own; the
+slide affine's `r` and `b` are operands of a variable multiply and add; and
+`recip`'s remainder is one addend of a variable sum - the one constant near
+it, `div_out`'s -8192/-12286, is applied AFTER the mux that selects the
+non-table tail path, so folding it in would buy a second subtract.
+
+The control store is the exception, and a large one. Section 10 encoded the
+walker's one-hot actions as a five-bit opcode to halve the word and save a
+block, and section 11 then shared the port - together +84 placed cells, paid
+deliberately when blocks were the binding resource. Blocks are no longer the
+binding resource, and that decode is exactly logic applied to a table value.
+
+It reverses for FREE rather than for a block, on three coincidences:
+
+1. There are exactly SIXTEEN actions, so a one-hot field is a 16-bit word -
+   the width the encoded word already occupies in `psg_const.hex`, on the same
+   shared port. No block changes hands.
+2. All six former flag bits are ALIASES under one-hot, each sitting on a phase
+   that already carries an action: SYN_A and W0; SYN_B, ISS_SEC and W1;
+   ISS_OLDMAIN and W2; ISS_OLDSEC and W3; DQ_OLD and W5.
+3. CAP_FOLD's phase IS PLAST, which the walk already tests to close the visit,
+   so the seventeenth action needs no bit either.
+
+The two step decodes become `(* parallel_case *) case (1'b1)` over the one-hot
+bits - section 9's measured spelling; a parallel IF chain builds a priority
+network and cost +154 structural when it was tried.
+
+**And the first attempt failed its gate, which is the important part of this
+section.** `make test-psg`, the 59-case matrix and the ordinary tolerance gate
+all passed; the direct byte comparison against the previous RTL did not -
+Celeste music 20 diverged at 16.997 s, 39% of samples, maximum delta 41,475.
+That is the R.25 lesson repeating, and probing the walk found a real defect
+underneath it:
+
+**`ctrl_addr` is only selected onto the shared port while `prun` is set, so
+the word registered for pph 0 was fetched on the cycle BEFORE the walk started
+- when the sequencer still owned the port. Slot 0 reads a stale pitch word on
+the first phase of every visit and executes whatever action those bits name,
+against the previous slot's streamed state.** Measured at HEAD: `ctrl_q` =
+0x00c2 at slot 0 / pph 0, every sample, decoding to CAP_W1. Slots 1..7 are
+fine - `pph_nxt` wraps to 0 under `prun`, so they read the true pph-0 word,
+which is zero.
+
+The defect was INVISIBLE because it was inert: CAP_W1's writes (`s_phase`,
+`smp_a`, `s_old_phase`, `nz_old_out_r`) are each overwritten or gated before
+any consumer. That is luck, not design - the stale word is whichever pitch
+word the sequencer last addressed, so which action fires is cart data. One-hot
+decodes the same garbage into SEVERAL actions, and those are not inert.
+
+Gating the word to zero at pph 0 is exactly "the schedule has no action at
+pph 0", and `tools/gen_psg_ctrl.py` now asserts that so no future schedule can
+quietly depend on one. Applied to the UNCHANGED encoded design it is
+byte-identical - Celeste music 20 identical over all 1,226,752 samples, and
+the provenance-bound fidelity numbers against real PICO-8 unmoved to the last
+digit - which is what makes it a render-neutral prerequisite rather than a
+render change. With it in place the one-hot fold is byte-exact.
+
+At RTL fingerprint `12037fb1cc6e`: 8,092 -> 8,078 placed cells (-14), Yosys
+mapping 7,065 LUT4s (-11), 1,690 carries (-3), 1,554 flip-flops and 13 EBRs
+unchanged; pre-mapping census 16,125 -> 16,089 (-36). The fold alone is -45
+LUT4s and -56 placed; the gate costs +34 LUT4s of the saving. The placed delta
+is inside the mapping-noise band, so the cell claim rests on the structural
+number - and the real return is the defect and what it unblocks.
+
+**Priced and not yet taken:** the same argument covers the rest of the walker's
+pph-derived fabric - `wlk_ra`/`wlk_wa`'s comparators, subtracts and adds,
+`state_sample_read`, `state_sample_we`, `state_lp_we`. Replacing that fabric
+with a 128 x 14 control word measures **-88 cells for +1 block** (16,080 ->
+15,992, carries 2,108 -> 2,081), the best block rate recorded in this change,
+and would leave 14 of 32 blocks. Measured as a shape ablation with
+arbitrary-but-distinct contents, so the fabric delta is real and the contents
+are the implementation's problem. It reads the control word on exactly the
+phases the gate above now makes trustworthy.
+
 ## Risks / Trade-offs
 
 - **[Single-store contention]** Tick and sample work can request the voice EBR
