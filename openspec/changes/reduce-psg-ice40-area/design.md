@@ -1144,6 +1144,67 @@ both refute by the same mechanism:
   replacement, never to zero**: a constant ablation prices the cone plus
   everything it feeds, and reports a saving that cannot be realised.
 
+### 21. Fold the split identity onto its own remainder, and share one block
+
+The three reciprocal tables were seven of the nineteen blocks: `tab15`
+2048x7 mapped to four, `tab7` 1024x7 to two, `org3` 512x8 to one. Depth is
+what costs, not content - an EBR is 4 kbit whatever its shape, so a 2048-deep
+array is stuck in 2048x2 mode and a seven-bit value eats four blocks to use
+seven of the eight bits it can reach.
+
+The identity that built those tables applies to its own remainder, and the
+second application is the cheap one. Choosing k with 2^k = d + 1 makes the
+outer multiplier 1, so the recombine gains a bare add and no shift:
+
+```
+/15   y <= 1695,  k=4:  y/15 = (y>>4) + z/15,  z = (y>>4) + y[3:0] <= 120
+/7    y <=  847,  k=3:  y/7  = (y>>3) + z/7,   z = (y>>3) + y[2:0] <= 112
+/3    y <=  509,  k=2:  y/3  = (y>>2) + z/3,   z = (y>>2) + y[1:0] <= 129
+```
+
+Verified exhaustively end to end - every value of each shape's whole ramp,
+368,635 for tilted-saw high, 172,030 for tilted-saw low, 65,535 for the organ
+- against the plain quotient, before any RTL moved.
+
+Two folds are also the MINIMUM. One fold cannot reach an index below 256: it
+would need 2^k < 256, and then h = x >> k is itself in the thousands.
+
+Every index is now under 256 and every remainder under six bits, so the three
+tables become three FIELDS of one 256 x 16 word - 4 + 5 + 6 = 15 bits. The
+consuming shapes are wsel-exclusive per evaluation, so one read port serves
+all three: the stage-1 address selects the divisor and the stage-2 field
+select follows it, on exactly the selection the recombine already made.
+Entries above each divisor's index bound are truncated rather than wrong to
+read; they are never addressed, the same discipline the single-stage tables
+used for `7'(i/15)`.
+
+One divisor is live per evaluation, so one index add serves all three: the
+halves are selected and added once, rather than three adds racing to a mux.
+That form is 22 structural cells cheaper than the three-add one, and the
+second fold's quotient falls out of the same selection.
+
+At RTL fingerprint `b434542f3d01`: **19 -> 13 EBRs**, with Yosys mapping 7,076
+LUT4s, 1,693 carries and 1,554 flip-flops, and nextpnr attempting 8,092 placed
+cells. Relative to section 20 that is +67 LUT4s, +6 carries, +7 flip-flops and
++75 placed cells; the pre-mapping census moves 16,089 -> 16,125. This is the
+same explicit binding-BRAM trade sections 9 to 11 made, at a much better rate:
+**+12.5 placed cells per block freed against the +39 to +47 each of those
+stages paid for one.** It also takes the standalone target under the change's
+15-EBR ceiling for the first time, with six blocks of headroom for the state
+and decode migrations that are the remaining logic-cell levers.
+
+The arithmetic is proven, so the renders are unchanged: `make test-psg` stays
+at 714/1,275 sample clocks and 3,555/7,654 tick clocks with zero late flips,
+the frozen matrix is 59/59 byte-exact against PICO-8 and byte-identical
+against the anchor, and all five Celeste entry points render byte-identically
+to their section-20 WAVs.
+
+Not condensable, checked rather than assumed: `aram` is 4,608 x 8 = 36,864
+bits in nine blocks, which is 100% of nine EBRs - the PICO-8 audio image is
+exactly that size, so it cannot shrink without changing what a cart may
+contain. `crom` uses 253 of its 256 words. `state_m`'s two blocks are half
+spare BY DESIGN - that spare is what the record migrations are for.
+
 ## Risks / Trade-offs
 
 - **[Single-store contention]** Tick and sample work can request the voice EBR

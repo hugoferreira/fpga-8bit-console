@@ -74,22 +74,45 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
     wsec_r <= wsec;
     walt_r <= w_old_ctx ? old_alt_r : s_ch_buzz;
   end
-  // The split remainders, forced to blocks: as LUTs these ROMs cost more
-  // than the networks they replace, and REVERB=0 leaves the blocks idle.
-  (* ram_style = "block" *) logic [7:0] org3[0:511];
-  (* ram_style = "block" *) logic [6:0] tab7[0:1023];
-  (* ram_style = "block" *) logic [6:0] tab15[0:2047];
-  initial begin
-    for (int i = 0; i < 512;  i++) org3[i]  = 8'(i / 3);
-    for (int i = 0; i < 1024; i++) tab7[i]  = 7'(i / 7);
-    for (int i = 0; i < 2048; i++) tab15[i] = 7'(i / 15);
-  end
-  logic [7:0] org3_q;
-  logic [6:0] t7_q, t15_q;
+  // The split remainders, forced to a block: as LUTs these ROMs cost more
+  // than the networks they replace.
+  //
+  // ONE block, not seven. The identity that built these tables applies to
+  // its own remainder, and the second application is the cheap one: pick k
+  // with 2^k = d + 1 and the multiplier is 1, so the recombine gains a bare
+  // add and no shift.
+  //
+  //   /15  y <= 1695, k=4:  y/15 = (y>>4) + z/15,  z = (y>>4) + y[3:0] <= 120
+  //   /7   y <=  847, k=3:  y/7  = (y>>3) + z/7,   z = (y>>3) + y[2:0] <= 112
+  //   /3   y <=  509, k=2:  y/3  = (y>>2) + z/3,   z = (y>>2) + y[1:0] <= 129
+  //
+  // exhaustively exact end to end over each shape's whole ramp. Every index
+  // is then under 256 and every remainder under 6 bits, so the three tables
+  // become three FIELDS of one 256 x 16 word: 4 + 5 + 6 = 15 bits. The
+  // shapes are wsel-exclusive per evaluation, so the one read port serves
+  // all three - the address selects which divisor, the field select follows
+  // it one stage later. 2048x7 + 1024x7 + 512x8 was four, two and one block
+  // (deep-and-narrow wastes an EBR's width); this is one.
+  //
+  // Entries above each divisor's index bound above are TRUNCATED, not wrong
+  // to read - they are never addressed. Same discipline as the 7'(i/15) the
+  // single-stage tables used.
+  (* ram_style = "block" *) logic [14:0] recip[0:255];
+  initial
+    for (int i = 0; i < 256; i++)
+      recip[i] = {6'(i / 3), 5'(i / 7), 4'(i / 15)};
+  // One divisor is live per evaluation, so one index add serves all three:
+  // select the halves, then add once. The second-stage quotient is the same
+  // selection's high half, so it comes out of the same mux.
+  wire org_ctx1 = (wsel_r == 3'd5);
+  wire [6:0] rc_h2 = org_ctx1 ? org_h2 : (tilt_hi ? t_h2_15 : t_h2_7);
+  wire [3:0] rc_l2 = org_ctx1 ? org_l2 : (tilt_hi ? t_l2_15 : t_l2_7);
+  wire [7:0] rc_addr = {1'b0, rc_h2} + {4'b0, rc_l2};   // z <= 129
+  logic [14:0] recip_q;
+  logic [6:0]  rc_h2_r;
   always_ff @(posedge clk) begin
-    org3_q <= org3[org_ix];
-    t7_q   <= tab7[t_ix7];
-    t15_q  <= tab15[t_ix15];
+    recip_q <= recip[rc_addr];
+    rc_h2_r <= rc_h2;
   end
 
   // The cone is two REGISTERED stages so the reciprocal CSD networks do
@@ -142,6 +165,17 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   wire [9:0]  t_ix7 = t_h7 + {1'b0, t_pre[8:0]};
   wire [10:0] t_h15 = t_pre[18:8];
   wire [10:0] t_ix15 = t_h15 + {3'b0, t_pre[7:0]};
+  // The identity again, on its own remainder: t_ix7 <= 847 and
+  // t_ix15 <= 1695, so one more fold puts both indices under 256 and lets
+  // the two tables share the organ's block (see `recip` above). The second
+  // multiplier is 1, so this costs an index add and one more operand in the
+  // stage-2 recombine - no shift.
+  // Only the halves: the index add itself is shared, so mux its operands
+  // rather than three adds' results.
+  wire [6:0]  t_h2_7  = t_ix7[9:3];                    // <= 105
+  wire [3:0]  t_l2_7  = {1'b0, t_ix7[2:0]};
+  wire [6:0]  t_h2_15 = t_ix15[10:4];                  // <= 105
+  wire [3:0]  t_l2_15 = t_ix15[3:0];
   // saw: tz((x - 32768)/4); saw_alt folds in the half-rate copy.
   wire signed [15:0] saw_sx = $signed({~wx_r[15], wx_r[14:0]});
   wire signed [17:0] saw_v = tzs({{2{saw_sx[15]}}, saw_sx}, 2'd2);
@@ -161,6 +195,8 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   // register the cone already had, so no stage is added.
   wire [7:0] org_h = org_ramp[14:7];
   wire [8:0] org_ix = {1'b0, org_h} + {1'b0, org_ramp[6:0], 1'b0};
+  wire [6:0] org_h2 = org_ix[8:2];                     // <= 127
+  wire [3:0] org_l2 = {2'b0, org_ix[1:0]};
   wire signed [17:0] org_lin =
       !wx_r[14] ? ($signed({2'b0, wx_r}) - 18'sd8192)
                 : (18'sd24576 - $signed({2'b0, wx_r}));
@@ -214,8 +250,9 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   wire org_ctx = (wsel_r2 == 3'd5);
   wire [10:0] rc_h = org_ctx ? {3'b0, org_h_r}
                    : tilt_hi_r ? t_h15_r : {1'b0, t_h7_r};
-  wire [7:0] rc_q = org_ctx ? org3_q
-                  : tilt_hi_r ? {1'b0, t15_q} : {1'b0, t7_q};
+  // The shared word's three fields: /15 in [3:0], /7 in [8:4], /3 in [14:9].
+  wire [5:0] rc_q = org_ctx ? recip_q[14:9]
+                  : tilt_hi_r ? {2'b0, recip_q[3:0]} : {1'b0, recip_q[8:4]};
   wire rc_e6 = !tilt_hi_r || org_ctx;
   wire rc_e4 = tilt_hi_r || org_ctx;
   wire rc_e3 = !tilt_hi_r && !org_ctx;
@@ -225,7 +262,9 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
                  + (rc_e3 ? {3'b0, rc_h, 3'b0} : 17'd0)
                  + (rc_e2 ? {4'b0, rc_h, 2'b0} : 17'd0)
                  + {6'b0, rc_h}
-                 + {9'b0, rc_q};
+                 // The second fold's quotient, multiplier 1 by construction.
+                 + {10'b0, rc_h2_r}
+                 + {11'b0, rc_q};
   wire [14:0] t_div = (tilt_tail_r && !org_ctx) ? t_pre_r : rc[14:0];
   wire signed [17:0] div_out = $signed({3'b0, t_div})
                              - (org_ctx ? 18'sd8192 : 18'sd12286);

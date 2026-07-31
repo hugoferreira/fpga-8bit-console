@@ -569,3 +569,28 @@
       already folds it - the -158 a constant ablation reported was the
       downstream blend subtract collapsing). **Ablate to the proposed
       replacement, never to a constant.**
+- [x] R.27 Reciprocal-table condensation: apply the split identity a second
+      time to its own remainder, choosing k with 2^k = d + 1 so the outer
+      multiplier is 1 and the recombine gains a bare add rather than a shift.
+      Every index then falls under 256 and every remainder under six bits, so
+      `tab15` (2048x7, four blocks), `tab7` (1024x7, two) and `org3` (512x8,
+      one) become three fields - 4 + 5 + 6 = 15 bits - of ONE 256x16 word,
+      read through the single port the wsel-exclusive shapes already share.
+      Exhaustively verified end to end over each shape's whole ramp (368,635 /
+      172,030 / 65,535 values) before the RTL moved; two folds is also proven
+      minimal, since one cannot reach an index below 256. One divisor is live
+      per evaluation, so one index add serves all three - select the halves,
+      add once - which is 22 structural cells cheaper than three adds racing
+      to a mux. Fingerprint
+      `b434542f3d01`: **19 -> 13 EBR**, with the explicit trade 8,017 -> 8,092
+      placed LC (+75); Yosys maps 7,076 LUT4, 1,693 carries and 1,554 flops
+      (+67/+6/+7), pre-map census 16,089 -> 16,125. That is +12.5 placed cells
+      per block against the +39..+47 R.15/R.16/R.17 each paid, and it takes
+      the standalone target under this change's 15-EBR ceiling for the first
+      time. `make test-psg` remains at 714/1,275 sample and 3,555/7,654 tick
+      clocks with zero late flips, the frozen matrix is 59/59 byte-exact, and
+      all five Celeste entry points are byte-identical to R.26's renders.
+      Checked, not assumed, for the other three memories: `aram` is 4,608x8 =
+      100% of nine blocks (the PICO-8 audio image is exactly that size),
+      `crom` uses 253 of 256 words, and `state_m`'s half-empty second block is
+      the deliberate landing site for the record migrations.
