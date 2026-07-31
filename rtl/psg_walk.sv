@@ -68,6 +68,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
                   input  logic signed [17:0] z_eval,
                   input  logic [16:0] dq17,
                   input  logic [15:0] q16,
+                  // Shared constants/control ROM: psg_seq owns the one port.
+                  input  logic [15:0] ctrl_q,
+                  output logic [7:0]  ctrl_addr,
                   // The freeze contract's two walk-side terms
                   output logic        prun,
                   output logic        fold_busy,
@@ -199,13 +202,15 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // intentionally lowered chip clock; hardware and oracle builds use the full
   // schedule below. REALTIME_PREVIEW is a constant, so the unused schedule is
   // removed during lowering rather than becoming runtime selection logic.
-  // smp_a/smp_b/old_smp carry composed 16-bit z components (18-bit signed
-  // working width); in the wavetable path smp_a/smp_b hold the raw signed
-  // table bytes until the lerp lands the 16-bit z over them.
-  logic signed [17:0] smp_a, smp_b, old_smp, old_smpb;
+  // smp_a/smp_b carry composed 16-bit z components (18-bit signed working
+  // width). In the wavetable path they hold raw signed table bytes until the
+  // lerps land. In the built-in path the new-voice product consumes their sum
+  // at W4; smp_b is dead after that edge, so the old primary replaces it and
+  // W5 accumulates the old secondary in place. No old-only sample register is
+  // needed.
+  logic signed [17:0] smp_a, smp_b;
   logic signed [7:0] wt_p1, wt_q1;
   logic [9:0] wt_pf, wt_qf;
-  logic wi_neg;
 
   // Record streaming for the synthesis walk. Reads are issued on the load
   // cycles and land one cycle later; the oscillator write-back runs on the
@@ -291,49 +296,37 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
 
   // ---- the sample walk's control store -------------------------------
   // The hardware schedule is a pure function of pph, so its step decode
-  // is a ROM, not an equality fabric: 128 x 32 one-hot control words
-  // (two spare EBRs), read at pph+1 so ctrl_q is registered exactly
-  // when its step executes. tools/gen_psg_ctrl.py writes the image and
-  // documents the bit layout; the CTRL_* names here must match it.
-  // At most one capture bit and one MUL_SEL value are set per word -
-  // the generator asserts it - which is what lets the former case tree
-  // run as parallel ifs. The preview flavour keeps its own case tree
-  // and comparisons untouched; ctrl_q reads as zero there.
-  localparam int CTRL_W0 = 0,  CTRL_W1 = 1,  CTRL_W2 = 2,  CTRL_W3 = 3;
-  localparam int CTRL_W4 = 4,  CTRL_W5 = 5,  CTRL_W6 = 6,  CTRL_W15 = 7;
-  localparam int CTRL_W17 = 8, CTRL_W26 = 9, CTRL_W27 = 10, CTRL_W28 = 11;
-  localparam int CTRL_W39 = 12, CTRL_W40 = 13, CTRL_W51 = 14;
-  localparam int CTRL_W52 = 15, CTRL_W62 = 16, CTRL_W63 = 17;
-  localparam int CTRL_W74 = 18, CTRL_W84 = 19, CTRL_W86 = 20;
-  localparam int CTRL_FOLD = 21, CTRL_ISEC = 22, CTRL_IOM = 23;
-  localparam int CTRL_IOS = 24, CTRL_DQO = 25;
-  localparam int CTRL_SYNA = 30, CTRL_SYNB = 31;
-  logic [31:0] ctrl_q;
-  generate
-  if (!REALTIME_PREVIEW) begin : g_ctrl
-    (* ram_style = "block" *) logic [31:0] ctrl_rom[0:127];
-    initial $readmemh("./rtl/psg_ctrl.hex", ctrl_rom);
-    wire [6:0] pph_nxt = (!prun || pph == 7'(PLAST)) ? 7'd0 : pph + 7'd1;
-    always_ff @(posedge clk) ctrl_q <= ctrl_rom[pph_nxt];
-  end else begin : g_no_ctrl
-    always_comb ctrl_q = 32'b0;
-  end
-  endgenerate
-  wire [3:0] ctrl_mul = ctrl_q[29:26];
+  // is a ROM, not an equality fabric. The mutually exclusive capture actions
+  // are a five-bit opcode instead of 22 one-hot bits. The complete word fits
+  // in 16 bits, and the live pph range shares unused words 144..252 of the
+  // sequencer constants EBR: a sample walk freezes that sequencer, so their
+  // reads are mutually exclusive. The address is pph+1 so ctrl_q is registered
+  // exactly when its step executes. The state-store replay cycle after prun
+  // lets the constants port re-prime before the sequencer resumes.
+  localparam logic [4:0]
+      CAP_NONE = 0, CAP_W0 = 1, CAP_W1 = 2, CAP_W2 = 3, CAP_W3 = 4,
+      CAP_W4 = 5, CAP_W5 = 6, CAP_W6 = 7, CAP_W15 = 8, CAP_W17 = 9,
+      CAP_W26 = 10, CAP_W27 = 11, CAP_W28 = 12, CAP_W39 = 13,
+      CAP_W40 = 14, CAP_W51 = 15, CAP_W52 = 16, CAP_W62 = 17,
+      CAP_W63 = 18, CAP_W74 = 19, CAP_W84 = 20, CAP_W86 = 21,
+      CAP_FOLD = 22, CAP_W75 = 23;
+  wire [6:0] pph_nxt = (!prun || pph == 7'(PLAST)) ? 7'd0 : pph + 7'd1;
+  always_comb ctrl_addr = 8'd144 + {1'b0, pph_nxt};
+  wire [4:0] ctrl_cap = ctrl_q[4:0];
 
 
   assign iss_sec = REALTIME_PREVIEW ? (pph == 7'(PWORK + 1))
-                                  : ctrl_q[CTRL_ISEC];
+                                  : prun && ctrl_q[9];
   assign iss_om  = REALTIME_PREVIEW ? (pph == 7'(PWORK + 2))
-                                  : ctrl_q[CTRL_IOM];
+                                  : prun && ctrl_q[10];
   assign iss_os  = REALTIME_PREVIEW ? (pph == 7'(PWORK + 3))
-                                  : ctrl_q[CTRL_IOS];
+                                  : prun && ctrl_q[11];
 
   // The one dq network serves both phase contexts: the live voice at
   // PWORK+6 and the old continuation at PWORK+5 (its wave/mode/dp are the
   // previous tick's, carried in the old fields).
   assign dq_old_ctx = REALTIME_PREVIEW ? (pph == 7'(PWORK + 5))
-                                     : ctrl_q[CTRL_DQO];
+                                     : prun && ctrl_q[12];
 
   // The preview's own secondary-increment network below still reads the
   // live increment directly; u_wave carries its own copy of the same wire.
@@ -396,10 +389,10 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
     syn_rd   = 1'b0;
     syn_addr = 13'd0;
     if (prun && s_snd_wt && play_bits[pc_ch]) begin
-      if (REALTIME_PREVIEW ? (pph == 7'(PWORK)) : ctrl_q[CTRL_SYNA]) begin
+      if (REALTIME_PREVIEW ? (pph == 7'(PWORK)) : ctrl_q[13]) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb + {7'b0, s_phase[23:18]};
-      end else if (!REALTIME_PREVIEW && ctrl_q[CTRL_SYNB]) begin
+      end else if (!REALTIME_PREVIEW && ctrl_q[14]) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb
                  + {7'b0, s_phase[23:18] + 6'd1};
@@ -430,7 +423,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       (!s_snd_wt && s_snd_wave == 3'd6) ? z_noise
     : s_snd_wt ? (smp_a + tzs(smp_b, 2'd1))
                : (smp_a + smp_b);
-  wire signed [17:0] z_old_c = old_smp + old_smpb;
+  wire signed [17:0] z_old_c = smp_b;
 
   // Wavetable lerp, exact: z = (t0*1024 + (t1-t0)*f) >> 3 - the model's
   // (t << 7) load scale folded through the shift identity
@@ -442,8 +435,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   wire signed [8:0] wt_qd =
       $signed({wt_q1[7], wt_q1}) - $signed(smp_b[8:0]);
   wire signed [19:0] wt_prod =
-      wi_neg ? -$signed({1'b0, m_res_wide[18:0]})
-             :  $signed({1'b0, m_res_wide[18:0]});
+      mxs_new ? -$signed({1'b0, m_res_wide[18:0]})
+              :  $signed({1'b0, m_res_wide[18:0]});
   // The p-side consume (+15) bases on smp_a's table byte; the q-side
   // (+26) must base on smp_b's - by then smp_a already holds the p
   // RESULT, which is what a shared base compounded into garbage.
@@ -522,7 +515,6 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // dropping it (this was `rand*dp >> 5`, exactly 8*dp) left low notes diffusing
   // too slowly, which shows up as the walk drifting instead of jittering.
   wire  [16:0] nz_j = {1'b0, nz_dp, 3'b0} + 17'd1120;
-  wire  signed [25:0] nz_step = ($signed({1'b0, nz_j}) * nz_rand) >>> 8;
   // hit rate ~ (dp + 500)/3 out of 8192, as a threshold on an LFSR slice.
   wire  [16:0] nz_sum    = {4'b0, nz_dp} + 17'd500;
   wire  [12:0] nz_thresh = 13'(nz_sum / 17'd3);
@@ -584,18 +576,30 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
                           lfsr2[11] ^ lfsr2[10], lfsr2[12] ^ lfsr2[11],
                           lfsr2[13] ^ lfsr2[12], lfsr2[14] ^ lfsr2[13]};
   wire  signed [8:0]  nz2_rand = $signed({nz2_adv[7], nz2_adv});
-  wire  signed [25:0] nz2_step = ($signed({1'b0, nz2_j}) * nz2_rand) >>> 8;
+  logic signed [8:0]  nz2_rand_r;
+  // The live sample is consumed after W0; the old continuation is not issued
+  // until W2. Use that idle W1 between them to evaluate the old step through
+  // the same variable multiplier instead of building two parallel products.
+  wire                 nz_mul_old = !REALTIME_PREVIEW
+                                  && ctrl_cap == CAP_W1;
+  wire        [16:0]   nz_mul_j = nz_mul_old ? nz2_j : nz_j;
+  wire signed [8:0]    nz_mul_rand = nz_mul_old ? nz2_rand_r : nz_rand;
+  wire signed [25:0]   nz_mul_full =
+      ($signed({1'b0, nz_mul_j}) * nz_mul_rand) >>> 8;
+  wire signed [17:0]   nz_step = nz_mul_full[17:0];
   // At the restart sample s_old_wave/old_alt_r are being copied this very
   // cycle, so the decision reads the last-tick registers instead; the
   // registered old_nz_r_on carries it to the later consume cycles.
   wire old_nz_on = REALTIME_PREVIEW ? 1'b0
                  : nz_tick_r ? (s_last_wave == 3'd6 && !last_alt_r)
                              : (s_old_wave == 3'd6 && !old_alt_r);
-  wire [15:0] old_nz_base = nz_tick_r ? 16'(s_noise_lp) : s_old_phase[23:8];
+  wire [15:0] old_nz_seed_base =
+      nz_tick_r ? 16'(s_noise_lp) : s_old_phase[23:8];
+  wire signed [17:0] nz_old_seed =
+      $signed({{2{old_nz_seed_base[15]}}, old_nz_seed_base}) + nz_kick;
   wire signed [17:0] nz_old_pre =
-      $signed({{2{old_nz_base[15]}}, old_nz_base})
-      + (nz_tog ? 18'(nz2_step) : 18'sd0)
-      + nz_kick;
+      $signed({{2{s_old_phase[23]}}, s_old_phase[23:8]})
+      + (nz_tog ? nz_step : 18'sd0);
   wire signed [15:0] nz_old_next =
       (nz_old_pre > 18'sd6143)  ? 16'sd6143 :
       (nz_old_pre < -18'sd6143) ? -16'sd6143 : nz_old_pre[15:0];
@@ -722,10 +726,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
         // step. New voice at +4/+13 (consumed +22), old continuation at
         // +22/+31 (consumed +40), blend at +40 (consumed +49); the
         // wavetable path lerps first and takes its G passes at +27/+36.
-        // The step association lives in the control store's MUL_SEL
-        // field (tools/gen_psg_ctrl.py) - the arm ids below match it.
-        case (ctrl_mul)
-          4'd1: begin
+        // Product and capture are both functions of the same phase. Ten of
+        // eleven launches already coincide with a capture, so CAP_SEL is the
+        // sole phase identity; CAP_W75 names the launch-only blend step.
+        case (ctrl_cap)
+          CAP_W4: begin
             wmul_start = 1'b1;
             if (s_snd_wt) begin
               wmul_a = 25'(wt_pd);
@@ -742,52 +747,52 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           // are the new and old voices' hi limbs and 5/10 their lo limbs
           // - identical launches, distinguished only by where the consume
           // steps put the result.
-          4'd3, 4'd9: if (!s_snd_wt) begin
+          CAP_W17, CAP_W52: if (!s_snd_wt) begin
             wmul_start   = 1'b1;
             wmul_a = {8'b0, m_res12[26:10]};
             wmul_b = 12'd341;
             wmul_mode = 2'd1;
           end
-          4'd5, 4'd10: if (!s_snd_wt) begin
+          CAP_W28, CAP_W63: if (!s_snd_wt) begin
             wmul_start   = 1'b1;
             wmul_a = {8'b0, gz_s1_r};
             wmul_b = 12'd171;
-            wmul_mode = 2'd1;
+            // 171 is exactly eight bits; the default mode computes the same
+            // in-place product without two leading-zero iterations.
           end
-          4'd6: if (!s_snd_wt) begin
+          CAP_W39: if (!s_snd_wt) begin
             wmul_start   = 1'b1;
             wmul_a = 25'(z_old_sel);
             wmul_b = 12'(s_old_G);
             wmul_mode = 2'd2;
           end
-          4'd11: if (bl_cnt != 7'd64) begin
+          CAP_W75: if (bl_cnt != 7'd64) begin
             wmul_start   = 1'b1;
             wmul_a = 25'(blend_diff);
             wmul_b = {6'b0, bl_cnt[5:0]};
           end
-          4'd2: if (s_snd_wt) begin
+          CAP_W15: if (s_snd_wt) begin
             wmul_start   = 1'b1;
             wmul_a = 25'(wt_qd);
             wmul_b = {2'b0, wt_qf};
             wmul_mode = 2'd1;
           end
-          4'd4: if (s_snd_wt) begin
+          CAP_W27: if (s_snd_wt) begin
             wmul_start   = 1'b1;
             wmul_a = 25'(z_new_c);
             wmul_b = 12'(g_live);
             wmul_mode = 2'd2;
           end
-          4'd7: if (s_snd_wt) begin
+          CAP_W40: if (s_snd_wt) begin
             wmul_start   = 1'b1;
             wmul_a = {8'b0, m_res12[26:10]};
             wmul_b = 12'd341;
             wmul_mode = 2'd1;
           end
-          4'd8: if (s_snd_wt) begin
+          CAP_W51: if (s_snd_wt) begin
             wmul_start   = 1'b1;
             wmul_a = {8'b0, gz_s1_r};
             wmul_b = 12'd171;
-            wmul_mode = 2'd1;
           end
           default: ;
         endcase
@@ -953,8 +958,6 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   logic        ffin;                  // this chain ends in dry16
   logic        f_over, f_under;
   logic [17:0] fx_r;                  // |excess|, then the partial remainder
-  logic [17:0] ft2;                   // series accumulator (q << 2)
-  logic [3:0]  fr_r;                  // final remainder, 0..9
 
   // Fold operand selection: 0/1/2 combine a stack entry with the slot leaf,
   // 3 folds S1 into S0, 4 folds S2 into S1. fda is always the destination.
@@ -987,17 +990,17 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
                    fold_b = fda; fold_sub = 1'b1; end
       4'd4:  begin fold_a = {1'b0, fx_r[17:1]};
                    fold_b = {2'b0, fx_r[17:2]}; end
-      4'd5:  begin fold_a = ft2;
-                   fold_b = {4'b0, ft2[17:4]}; end
-      4'd6:  begin fold_a = ft2;
-                   fold_b = {8'b0, ft2[17:8]}; end
+      4'd5:  begin fold_a = fda;
+                   fold_b = {4'b0, fda[17:4]}; end
+      4'd6:  begin fold_a = fda;
+                   fold_b = {8'b0, fda[17:8]}; end
       4'd7:  begin fold_a = fx_r;
-                   fold_b = {ft2[17:2], 2'b00}; fold_sub = 1'b1; end
+                   fold_b = {fda[17:2], 2'b00}; fold_sub = 1'b1; end
       4'd8:  begin fold_a = fx_r;
-                   fold_b = {2'b0, ft2[17:2]}; fold_sub = 1'b1; end
+                   fold_b = {2'b0, fda[17:2]}; fold_sub = 1'b1; end
       4'd9:  begin fold_a = 18'(SA_TH);
-                   fold_b = {2'b0, ft2[17:2]};
-                   fold_cin = (fr_r >= 4'd5); end
+                   fold_b = {2'b0, fda[17:2]};
+                   fold_cin = (fx_r[3:0] >= 4'd5); end
       4'd10: begin fold_a = 18'd0;
                    fold_b = fda; fold_sub = 1'b1; end
       default: ;
@@ -1091,11 +1094,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       // z_old consume and the CTRL_W5 advance-suppression below.
       old_nz_r_on <= run && old_nz_on;
       if (run && old_nz_on) begin
+        // Seed the old arm with its base plus the shared kick. W1 adds its
+        // independently drawn step through the one noise multiplier.
         // Textually after CTRL_W0's params-changed copy in the caller, so
-        // this write WINS s_old_phase on restart samples - the alias IS
-        // the old walk's accumulator while the old arm renders noise.
-        s_old_phase  <= {nz_old_next, 8'b0};
-        nz_old_out_r <= nz_old_pre;
+        // this write wins on restart samples.
+        s_old_phase <= {nz_old_seed[15:0], 8'b0};
       end
     end
   endtask
@@ -1198,9 +1201,22 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             if (!phase_alu_y[17]) fx_r <= phase_alu_y[17:0];
             fmc <= 4'd4;
           end
-          4'd4, 4'd5, 4'd6: begin ft2 <= phase_alu_y[17:0]; fmc <= fmc + 1; end
+          4'd4, 4'd5, 4'd6: begin
+            // The destination stack word is dead after the threshold
+            // compares only when compression is active, and is overwritten
+            // with the final fold result at fmc9/10.  A linear fold must
+            // retain its plain sum, so do not run the scratch lifetime into
+            // that path.
+            if (f_over | f_under) fstk[fdsti] <= phase_alu_y[17:0];
+            fmc <= fmc + 1;
+          end
           4'd7:  begin fx_r <= phase_alu_y[17:0]; fmc <= 4'd8; end
-          4'd8:  begin fr_r <= phase_alu_y[3:0]; fmc <= 4'd9; end
+          4'd8:  begin
+            // The partial remainder in fx_r is dead here; keep the final
+            // 0..9 remainder in the same fold-local register for fmc9.
+            fx_r <= phase_alu_y[17:0];
+            fmc <= 4'd9;
+          end
           4'd9:  begin
             if (f_over | f_under) fstk[fdsti] <= phase_alu_y[17:0];
             fmc <= f_under ? 4'd10 : 4'd11;
@@ -1373,14 +1389,10 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             default: ;
           endcase
         end else begin
-        // Step decode rides the control store; the case is over the
-        // one-hot bits themselves, declared parallel so the arms map
-        // as a flat pmux. The generator asserts one capture bit per
-        // word - that invariant is what the attribute states, and a
-        // hand-edited hex that broke it would diverge sim vs synth.
-        (* parallel_case *)
-        case (1'b1)
-          ctrl_q[CTRL_W0]: begin               // advance phase(s), issue main read
+        // Step decode rides the control store. The action opcode replaces
+        // the former 22-bit one-hot field, halving the control-store width.
+        case (ctrl_cap)
+          CAP_W0: begin               // advance phase(s), issue main read
             // One step per voice per sample. This used to free-run on the
             // system clock, which tied the noise sequence to how many clocks
             // the per-voice pipeline happened to take - so shortening the
@@ -1390,6 +1402,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             // noise independent of the pipeline's timing.
             lfsr  <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};
             lfsr2 <= {lfsr2[13:0], lfsr2[14] ^ lfsr2[10]};
+            // Preserve the pre-advance old-walk draw for its serialized W1
+            // product; otherwise W1 would consume the next LFSR value.
+            nz2_rand_r <= nz2_rand;
             // `_mix_osc_tick_new` returns before touching oscillator state
             // when its amplitude is zero.  This is observable with repeated
             // fade-in rows: their silent first ticks freeze phase rather than
@@ -1449,7 +1464,14 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               bl_cnt <= bl_cnt + 7'd1;
             noise_filt_step(play_bits[pc_ch] && s_eff_a != 0);
           end
-          ctrl_q[CTRL_W1]: begin           // main-voice sample
+          CAP_W1: begin           // main-voice sample
+            // W0 published the live noise walk. The old continuation is not
+            // issued until W2, so W1 consumes the same multiplier with the
+            // old pitch/random operands and completes that walk here.
+            if (old_nz_r_on) begin
+              s_old_phase  <= {nz_old_next, 8'b0};
+              nz_old_out_r <= nz_old_pre;
+            end
             // Keep q's synchronous ROM address on the pre-advance phase,
             // matching PICO-8's render-then-advance oscillator ordering.
             if (play_bits[pc_ch] && s_eff_a != 0 && s_snd_wt)
@@ -1457,7 +1479,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             if (s_snd_wt)
               smp_a <= 18'($signed(seq_q));
           end
-          ctrl_q[CTRL_W2]: begin           // second voice
+          CAP_W2: begin           // second voice
             if (s_snd_wt)
               wt_p1 <= $signed(seq_q);
             else
@@ -1473,36 +1495,43 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             last_alt_r <= s_ch_buzz;
             last_rev_r <= s_ch_rev;
           end
-          ctrl_q[CTRL_W3]: begin           // preceding-state waveform sample
+          CAP_W3: begin           // preceding-state waveform sample
             if (s_snd_wt)
               smp_b <= 18'($signed(seq_q));
             else
               smp_b <= z_eval;           // secondary z
           end
-          ctrl_q[CTRL_W4]: begin
+          CAP_W4: begin
             if (!s_snd_wt)
-              old_smp <= z_eval;         // old main z
+              // z_new_c was consumed by the product launched on this edge;
+              // its smp_b component is now dead and can hold the old main z.
+              smp_b <= z_eval;
             if (s_snd_wt) begin
               // PICO-8 interpolates its 64 signed wavetable samples with ten
               // fractional phase bits. The PSG-wide product service evaluates
-              // p and then q; wi_neg reapplies floor rounding via the sign.
+              // p and then q. mxs_new is otherwise dead on this path until
+              // W27 stages the completed sample's sign, so it carries each
+              // interpolation sign without a dedicated lifetime register.
               wt_q1 <= $signed(seq_q);
-              wi_neg <= wt_pd[8];
+              mxs_new <= wt_pd[8];
             end else
               // The first G*z limb pass launches this cycle.
               stage_leaf();
           end
-          ctrl_q[CTRL_W15]: begin
+          CAP_W15: begin
             if (s_snd_wt) begin
               smp_a <= wt_z;
-              wi_neg <= wt_qd[8];
+              mxs_new <= wt_qd[8];
             end
           end
-          ctrl_q[CTRL_W5]: begin
+          CAP_W5: begin
             // The old waveform read has captured the pre-advance phase.
             // The dq network serves the OLD context this cycle.
             if (!s_snd_wt) begin
-              old_smpb <= z_eval;        // old secondary z
+              // W4 left the primary in smp_b. This is the only use of the
+              // old secondary, so accumulate it now instead of carrying a
+              // separate old-sample lifetime.
+              smp_b <= smp_b + z_eval;
               // Not while the old arm renders noise: s_old_phase is then
               // the old WALK's accumulator (written at CTRL_W0), and this
               // later-cycle phase advance would clobber it.
@@ -1512,7 +1541,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               end
             end
           end
-          ctrl_q[CTRL_W6]: begin
+          CAP_W6: begin
             // All secondary waveform reads have captured the pre-advance
             // phase. The universal q0 advances for EVERY rendering voice -
             // the binary's `q0 = (q0 + dq) & 0x1ffff` - on a dedicated
@@ -1523,7 +1552,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             if (play_bits[pc_ch] && s_eff_a != 0)
               s_phase2 <= {7'b0, 17'(s_phase2[16:0] + dq17)};
           end
-          ctrl_q[CTRL_W17]: begin
+          CAP_W17: begin
             // The G pass is done: capture the >>10 for the second /3
             // limb and the >>11 for the noise bypass while the first
             // limb launches.
@@ -1532,50 +1561,50 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               mxs_old <= z_old_sel[17];
             end
           end
-          ctrl_q[CTRL_W26]: begin
+          CAP_W26: begin
             if (s_snd_wt)
               smp_b <= wt_z;
           end
-          ctrl_q[CTRL_W27]: begin
+          CAP_W27: begin
             if (s_snd_wt)
               stage_leaf();
           end
-          ctrl_q[CTRL_W28]: begin
+          CAP_W28: begin
             if (!s_snd_wt)
               g_part <= m_res_wide[24:0];       // recip3-hi
           end
-          ctrl_q[CTRL_W39]: begin
+          CAP_W39: begin
             // The /3-lo result is live: consume mx_new while the old
             // voice's G pass launches.
             if (!s_snd_wt)
               mx_new <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
           end
-          ctrl_q[CTRL_W40]: begin
+          CAP_W40: begin
             if (s_snd_wt)
               gz_s1_r <= m_res12[26:10];
           end
-          ctrl_q[CTRL_W51]: begin
+          CAP_W51: begin
             if (s_snd_wt)
               g_part <= m_res_wide[24:0];
           end
-          ctrl_q[CTRL_W52]: begin
+          CAP_W52: begin
             if (!s_snd_wt)
               gz_s1_r <= m_res12[26:10];        // old G*z
           end
-          ctrl_q[CTRL_W62]: begin
+          CAP_W62: begin
             if (s_snd_wt)
               mx_new <= mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
           end
-          ctrl_q[CTRL_W63]: begin
+          CAP_W63: begin
             if (!s_snd_wt)
               g_part <= m_res_wide[24:0];       // old recip3-hi
           end
-          ctrl_q[CTRL_W74]: begin
+          CAP_W74: begin
             if (!s_snd_wt)
               mx_old <= mxs_old ? -$signed(gz_old_scaled)
                                 : $signed(gz_old_scaled);
           end
-          ctrl_q[CTRL_W86]: begin
+          CAP_W86: begin
             // The dampen stage, on the already-combed and blended
             // sample; the dampen state advances only when its digit is
             // set, like the model's damp_y.
@@ -1583,7 +1612,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             if (s_ch_damp != 2'd0)
               s_lp <= dmp_y;
           end
-          ctrl_q[CTRL_W84]: begin
+          CAP_W84: begin
             // Blend consume: tz((64*old + i*(new - old)) / 64) over the
             // COMBED blocks - the truncation is over the WHOLE
             // accumulator (blend.one_multiply + tzpow), not split across
@@ -1593,7 +1622,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             else
               mx_prod <= 17'(bl_acc_tz >>> 6);
           end
-          ctrl_q[CTRL_FOLD]: fold_launch();      // fold into the tree
+          CAP_FOLD: fold_launch();      // fold into the tree
           default: ;
         endcase
         end

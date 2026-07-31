@@ -1,0 +1,581 @@
+<meta charset="utf-8">
+<title>PSG — sample walk &amp; tick sequencer</title>
+<style>
+:root {
+  --bg:#0e1116; --panel:#151a22; --panel2:#1b212b; --line:#2a323f;
+  --fg:#dfe6f0; --dim:#8b97a8; --faint:#5d6878;
+  --accent:#6ea8fe; --warn:#e0a33e;
+  --load:#3d8f74; --cap:#4d7fd6; --mul:#b8683f; --wave:#8a6bc4;
+  --aram:#3f8fa8; --ev:#7c8596; --busy:#c2554e;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg:#f7f8fa; --panel:#fff; --panel2:#eef1f5; --line:#d5dbe4;
+          --fg:#1a1f27; --dim:#5b6675; --faint:#8b95a3; --accent:#2563c9; }
+}
+:root[data-theme="dark"] {
+  --bg:#0e1116; --panel:#151a22; --panel2:#1b212b; --line:#2a323f;
+  --fg:#dfe6f0; --dim:#8b97a8; --faint:#5d6878; --accent:#6ea8fe;
+}
+:root[data-theme="light"] {
+  --bg:#f7f8fa; --panel:#fff; --panel2:#eef1f5; --line:#d5dbe4;
+  --fg:#1a1f27; --dim:#5b6675; --faint:#8b95a3; --accent:#2563c9;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg);
+       font:13px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif; }
+h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.01em; }
+header { padding:14px 18px; border-bottom:1px solid var(--line);
+         display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+.sub { color:var(--dim); font-size:12px; }
+.tabs { display:flex; gap:2px; padding:0 18px; border-bottom:1px solid var(--line); }
+.tab { padding:9px 15px; cursor:pointer; color:var(--dim); font-size:13px;
+       border-bottom:2px solid transparent; user-select:none; }
+.tab:hover { color:var(--fg); }
+.tab.on { color:var(--fg); border-bottom-color:var(--accent); }
+.view { display:none; } .view.on { display:block; }
+.bar { padding:11px 18px; display:flex; gap:14px; align-items:center;
+       flex-wrap:wrap; border-bottom:1px solid var(--line); }
+.seg { display:flex; border:1px solid var(--line); border-radius:6px;
+       overflow:hidden; }
+.seg button { background:var(--panel); color:var(--dim); border:0;
+              padding:5px 12px; font:inherit; font-size:12px; cursor:pointer; }
+.seg button.on { background:var(--accent); color:#fff; }
+.legend { display:flex; gap:12px; flex-wrap:wrap; color:var(--dim);
+          font-size:11.5px; align-items:center; }
+.sw { display:inline-block; width:9px; height:9px; border-radius:2px;
+      margin-right:5px; vertical-align:-1px; }
+.split { display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:0;
+         align-items:start; }
+@media (max-width:1100px) { .split { grid-template-columns:1fr; } }
+.scroll { overflow-x:auto; padding:16px 18px 22px; }
+.detail { border-left:1px solid var(--line); padding:16px 18px;
+          position:sticky; top:0; max-height:100vh; overflow-y:auto; }
+@media (max-width:1100px) { .detail { border-left:0; border-top:1px solid var(--line);
+                                       position:static; max-height:none; } }
+.detail h2 { font-size:13px; margin:0 0 3px; font-family:var(--mono); }
+.detail .where { color:var(--faint); font-size:11.5px; font-family:var(--mono);
+                 margin-bottom:12px; }
+.doc { color:var(--dim); font-size:12.5px; white-space:pre-wrap;
+       margin-bottom:12px; }
+pre { background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+      padding:9px 11px; overflow-x:auto; font-family:var(--mono);
+      font-size:11.5px; line-height:1.45; margin:0 0 12px; color:var(--fg); }
+.k { color:var(--faint); font-size:11px; text-transform:uppercase;
+     letter-spacing:.06em; margin:14px 0 5px; }
+.empty { color:var(--faint); font-style:italic; }
+/* ---- walk lane chart ---- */
+table.lanes { border-collapse:collapse; font-family:var(--mono); font-size:10px; }
+table.lanes th.lane { text-align:right; padding:0 10px 0 0; color:var(--dim);
+   font-weight:400; font-size:11px; white-space:nowrap; position:sticky;
+   left:0; background:var(--bg); z-index:2; font-family:inherit; }
+table.lanes td { padding:0; }
+.ph { width:20px; height:19px; border-right:1px solid var(--bg);
+      cursor:pointer; position:relative; }
+.ph.on { outline:2px solid var(--accent); outline-offset:-2px; z-index:1; }
+.hd { color:var(--faint); text-align:center; height:16px; cursor:pointer;
+      border-bottom:1px solid var(--line); }
+.hd.mark { color:var(--accent); font-weight:700; }
+.hd.on { color:var(--fg); background:var(--panel2); }
+.cell { width:100%; height:100%; border-radius:2px; }
+.marks td { height:20px; color:var(--accent); font-size:9px; text-align:center;
+            white-space:nowrap; }
+/* ---- fsm graph ---- */
+.node rect { fill:var(--panel); stroke:var(--line); stroke-width:1; rx:5; }
+.node text { font-family:var(--mono); font-size:10.5px; fill:var(--fg); }
+.node { cursor:pointer; }
+.node.on rect { stroke:var(--accent); stroke-width:2; }
+.node.dim { opacity:.22; }
+.edge { fill:none; stroke:var(--faint); stroke-width:1.1; opacity:.42; }
+.edge.hot { stroke:var(--accent); opacity:1; stroke-width:1.9; }
+.edge.dim { opacity:.05; }
+.colhead { font-size:10.5px; fill:var(--dim); text-transform:uppercase;
+           letter-spacing:.06em; }
+.tr { font-family:var(--mono); font-size:11.5px; padding:4px 0;
+      border-bottom:1px solid var(--line); }
+.tr .g { color:var(--dim); }
+.tr a { color:var(--accent); text-decoration:none; cursor:pointer; }
+.tr a:hover { text-decoration:underline; }
+/* ---- findings ---- */
+#findings { padding:18px; display:grid; gap:16px;
+            grid-template-columns:repeat(auto-fill,minmax(430px,1fr)); }
+.finding { background:var(--panel); border:1px solid var(--line);
+           border-radius:8px; padding:15px 17px; }
+.finding h3 { font-size:13.5px; margin:0 0 3px; font-weight:600;
+              line-height:1.4; }
+.finding .where { color:var(--faint); font-size:11px; text-transform:uppercase;
+                  letter-spacing:.06em; margin-bottom:11px; }
+table.meas { border-collapse:collapse; width:100%; margin-bottom:12px;
+             font-size:12px; }
+table.meas td { padding:4px 0; border-bottom:1px solid var(--line);
+                vertical-align:top; }
+table.meas td:first-child { color:var(--dim); padding-right:14px;
+                            white-space:nowrap; width:1%; }
+table.meas td:last-child { font-family:var(--mono); font-size:11.5px; }
+.refs { display:flex; gap:7px; flex-wrap:wrap; }
+.refs a { font-family:var(--mono); font-size:11px; color:var(--accent);
+          border:1px solid var(--line); border-radius:4px; padding:2px 7px;
+          cursor:pointer; text-decoration:none; }
+.refs a:hover { border-color:var(--accent); }
+.tblwrap { overflow-x:auto; margin-bottom:12px; }
+table.grid { border-collapse:collapse; font-family:var(--mono); font-size:11px; }
+table.grid th { color:var(--faint); font-weight:400; text-align:right;
+                padding:3px 10px 3px 0; border-bottom:1px solid var(--line);
+                text-transform:uppercase; letter-spacing:.05em; }
+table.grid td { text-align:right; padding:2px 10px 2px 0;
+                border-bottom:1px solid var(--line); }
+table.grid td.zero { color:var(--load); font-weight:700; }
+</style>
+
+<header>
+  <h1>PSG — the sample walk and the tick sequencer</h1>
+  <span class="sub" id="prov"></span>
+</header>
+
+<div class="tabs">
+  <div class="tab on" data-v="walk">Sample walk (per sample)</div>
+  <div class="tab" data-v="fsm">Tick sequencer (per tick)</div>
+  <div class="tab" data-v="opt">Where the cycles go</div>
+</div>
+
+<section class="view on" id="v-walk">
+  <div class="bar">
+    <div class="seg" id="schedsel"></div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--load)"></i>record load</span>
+      <span><i class="sw" style="background:var(--cap)"></i>capture step</span>
+      <span><i class="sw" style="background:var(--mul)"></i>multiply request</span>
+      <span><i class="sw" style="background:var(--wave)"></i>wave-pipe issue</span>
+      <span><i class="sw" style="background:var(--aram)"></i>audio-RAM read</span>
+      <span><i class="sw" style="background:var(--ev)"></i>other pph site</span>
+      <span><i class="sw" style="background:var(--busy)"></i>multiply iterating
+        (all voice kinds)</span>
+      <span><i class="sw" style="background:var(--busy);opacity:.42"></i>…only
+        some voice kinds</span>
+    </div>
+    <span class="sub" id="schednote"></span>
+  </div>
+  <div class="split">
+    <div class="scroll" id="lanes"></div>
+    <div class="detail" id="wdet"></div>
+  </div>
+</section>
+
+<section class="view" id="v-fsm">
+  <div class="bar">
+    <div class="seg" id="famsel"></div>
+    <span class="sub" id="fsmnote"></span>
+  </div>
+  <div class="split">
+    <div class="scroll" id="graph"></div>
+    <div class="detail" id="fdet"></div>
+  </div>
+</section>
+
+<section class="view" id="v-opt">
+  <div class="bar">
+    <span class="sub">Measurements taken off the schedules, each with the
+      condition that would have to hold for it to become a saving. No entry
+      claims one: whether a phase can be reclaimed depends on data hazards
+      this tool does not model.</span>
+  </div>
+  <div id="findings"></div>
+</section>
+
+<script>
+const MODEL = /*__MODEL__*/null;
+const esc = s => (s==null?"":String(s)).replace(/[&<>]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+document.getElementById('prov').textContent =
+  `extracted from rtl/psg_walk.sv, rtl/psg_seq.sv, tools/gen_psg_ctrl.py — ` +
+  `${MODEL.seq.states.length} FSM states, ${MODEL.seq.extracted_count} transitions, ` +
+  `${MODEL.walk.schedules.hw.n} hardware phases`;
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x===t));
+  document.querySelectorAll('.view').forEach(v =>
+    v.classList.toggle('on', v.id === 'v-' + t.dataset.v));
+});
+
+/* ------------------------------------------------------------------ */
+/* Sample walk                                                         */
+/* ------------------------------------------------------------------ */
+const LANES = [
+  {k:'load',  label:'record load',  color:'var(--load)'},
+  {k:'cap',   label:'capture',      color:'var(--cap)'},
+  {k:'mul',   label:'multiply',     color:'var(--mul)'},
+  {k:'wave',  label:'wave pipe',    color:'var(--wave)'},
+  {k:'aram',  label:'audio RAM',    color:'var(--aram)'},
+  {k:'ev',    label:'other sites',  color:'var(--ev)'},
+  {k:'svc',   label:'multiply service', color:'var(--busy)'},
+];
+const WAVE_FLAGS = ['ISS_SEC','ISS_OLDMAIN','ISS_OLDSEC','DQ_OLD'];
+const ARAM_FLAGS = ['SYN_A','SYN_B'];
+const phaseHasWork = p => !!(p.cap || p.mul || (p.flags||[]).length
+  || (p.load||[]).length || (p.sched||[]).length || (p.events||[]).length);
+
+function laneHits(p, k) {
+  switch (k) {
+    case 'load': return p.load;
+    case 'cap':  return p.cap ? [p.cap] : [];
+    case 'mul':  return p.mul ? [p.mul_doc || ('mul arm ' + p.mul)] : [];
+    case 'wave': return (p.flags||[]).filter(f => WAVE_FLAGS.includes(f));
+    case 'aram': return (p.flags||[]).filter(f => ARAM_FLAGS.includes(f));
+    case 'ev':   return p.events;
+    case 'svc':  return p.mul_busy || [];
+  }
+  return [];
+}
+
+/* The service lane is shaded by how many profiles are iterating: solid when
+ * every voice kind is held there, faded when only some are. That difference
+ * IS the finding - a faded block is a phase some voices spend waiting for a
+ * product their path never launched. */
+function svcFill(p) {
+  const n = (p.mul_busy||[]).length, total = MODEL.walk.profiles.length;
+  if (!n) return '';
+  return `background:var(--busy);opacity:${n>=total ? 1 : 0.42}`;
+}
+
+const KLASS = {
+  work:        {label:'scheduled work'},
+  forced:      {label:'multiply busy — every profile'},
+  cond:        {label:'multiply busy — some profiles'},
+  pipeline:    {label:'pipeline or completed-product hold'},
+  unexplained: {label:'not explained by the multiply service'},
+};
+
+let sched = 'hw', selPh = null;
+
+function drawWalk() {
+  const S = MODEL.walk.schedules[sched], P = S.params;
+  const marks = {};
+  for (const [k,v] of Object.entries(P)) (marks[v] = marks[v]||[]).push(k);
+
+  let h = '<table class="lanes"><tr><th class="lane"></th>';
+  for (const p of S.phases)
+    h += `<td class="hd${marks[p.pph]?' mark':''}${selPh===p.pph?' on':''}" `
+       + `data-p="${p.pph}">${p.pph%5===0||marks[p.pph]?p.pph:''}</td>`;
+  h += '</tr>';
+
+  for (const L of LANES) {
+    h += `<tr><th class="lane">${L.label}</th>`;
+    for (const p of S.phases) {
+      const hits = laneHits(p, L.k);
+      const fill = L.k==='svc' ? svcFill(p)
+                 : hits.length ? `background:${L.color}` : '';
+      const title = hits.length
+        ? esc(`pph ${p.pph} — ` + hits.map(x =>
+            typeof x==='string' ? x : (x.key||x.expr||'')).join(', ')) : '';
+      h += `<td><div class="ph${selPh===p.pph?' on':''}" data-p="${p.pph}" `
+         + `title="${title}"><div class="cell" style="${fill}"></div></div></td>`;
+    }
+    h += '</tr>';
+  }
+  h += '<tr class="marks"><th class="lane"></th>';
+  for (const p of S.phases)
+    h += `<td>${marks[p.pph] ? '<div style="transform:rotate(0)">'
+         + marks[p.pph].join('<br>') + '</div>' : ''}</td>`;
+  h += '</tr></table>';
+
+  // An empty capture/multiply lane under the preview schedule is the truth,
+  // not a gap in the extraction: the control store decodes only the hardware
+  // schedule, and the preview one is plain `case (pph)` arms.
+  document.getElementById('schednote').textContent = sched === 'preview'
+    ? `${S.n} phases per slot · no control store — these steps are case arms, `
+      + `which is why the capture and multiply lanes are empty`
+    : `${S.n} phases per slot · capture and multiply lanes come from the `
+      + `control store (tools/gen_psg_ctrl.py)`;
+  document.getElementById('lanes').innerHTML = h;
+  document.querySelectorAll('#lanes [data-p]').forEach(e =>
+    e.onclick = () => { selPh = +e.dataset.p; drawWalk(); });
+  walkDetail();
+}
+
+function walkDetail() {
+  const S = MODEL.walk.schedules[sched];
+  const d = document.getElementById('wdet');
+  if (selPh === null) {
+    d.innerHTML = `<div class="doc">The ${sched==='hw'?'hardware':'preview'} `
+      + `schedule runs <b>${S.n}</b> micro-phases per slot, eight slots per `
+      + `sample. Landmarks: `
+      + Object.entries(S.params).map(([k,v]) => `${k}=${v}`).join(', ')
+      + `.<br><br>Click any phase to see what the RTL does there.</div>`;
+    return;
+  }
+  const p = S.phases[selPh];
+  let h = `<h2>pph ${p.pph}</h2><div class="where">`
+    + `offset W${p.off>=0?'+':''}${p.off} from PWORK`
+    + (p.word !== null ? ` · control word 0x${p.word.toString(16).padStart(4,'0')}` : '')
+    + ` · ${esc((KLASS[p.klass]||{}).label || p.klass)}</div>`;
+
+  if (p.mul_launch && p.mul_launch.length) {
+    h += `<div class="k">launches a product</div><div class="doc">`;
+    for (const l of p.mul_launch) {
+      const prof = MODEL.walk.profiles.find(x => x.key === l.profile);
+      h += `${esc(prof ? prof.label : l.profile)}: ${l.iters} iterations, `
+         + `readable at pph ${p.pph + l.iters + 1}<br>`;
+    }
+    h += `</div>`;
+  }
+  if (!phaseHasWork(p)) {
+    const idle = (p.idle_for||[]).map(k => {
+      const prof = MODEL.walk.profiles.find(x => x.key === k);
+      return prof ? prof.label : k;
+    });
+    h += `<div class="k">multiply service</div><div class="doc">`
+      + (p.mul_busy && p.mul_busy.length
+          ? `iterating for ${p.mul_busy.length} of `
+            + `${MODEL.walk.profiles.length} voice kinds. `
+          : `not iterating for any voice kind. `)
+      + (idle.length ? `Idle here for: ${esc(idle.join('; '))}.` : '')
+      + `</div>`;
+  }
+
+  if (p.cap) {
+    const a = (p.sched.find(s => s.kind==='cap')||{}).detail || {};
+    h += `<div class="k">capture step</div><b>${esc(p.cap)}</b>`;
+    if (a.inline) h += ` — <span class="doc">${esc(a.inline)}</span>`;
+    if (a.doc) h += `<div class="doc">${esc(a.doc)}</div>`;
+    if (a.body) h += `<pre>${esc(a.body)}</pre>`;
+  }
+  if (p.mul) h += `<div class="k">multiply request</div>`
+    + `<div class="doc">arm ${p.mul} — ${esc(p.mul_doc)}</div>`;
+  if (p.flags && p.flags.length) h += `<div class="k">control-word flags</div>`
+    + `<div class="doc">${p.flags.map(esc).join(', ')}</div>`;
+
+  for (const [lane, title] of [['load','record load'],['sched','schedule step']]) {
+    for (const a of (p[lane]||[])) {
+      if (a.kind !== 'arm') continue;
+      h += `<div class="k">${title} — case arm <code>7'${a.key}</code></div>`;
+      if (a.doc) h += `<div class="doc">${esc(a.doc)}</div>`;
+      h += `<pre>${esc(a.body)}</pre>`
+        + `<div class="where">rtl/psg_walk.sv:${a.line}</div>`;
+    }
+  }
+  if (p.events && p.events.length) {
+    h += `<div class="k">other <code>pph ==</code> sites</div>`;
+    for (const e of p.events)
+      h += `<pre>${esc(e.src)}</pre>`
+        + `<div class="where">rtl/psg_walk.sv:${e.line}</div>`;
+  }
+  if (!p.cap && !p.mul && !(p.flags||[]).length && !(p.load||[]).length
+      && !(p.sched||[]).length && !(p.events||[]).length)
+    h += `<div class="empty">No scheduled work: the control word is zero and `
+       + `no <code>pph</code> site names this phase. What holds it is the `
+       + `service state above — and where that is idle too, this tool does not `
+       + `know what the phase is for.</div>`;
+  d.innerHTML = h;
+}
+
+const ss = document.getElementById('schedsel');
+for (const [k,label] of [['hw','hardware (oracle + board)'],
+                         ['preview','preview (make run)']]) {
+  const b = document.createElement('button');
+  b.textContent = label; b.className = k===sched ? 'on' : '';
+  b.onclick = () => { sched = k; selPh = null;
+    [...ss.children].forEach(c => c.classList.toggle('on', c===b)); drawWalk(); };
+  ss.appendChild(b);
+}
+drawWalk();
+
+/* ------------------------------------------------------------------ */
+/* Tick sequencer FSM                                                  */
+/* ------------------------------------------------------------------ */
+const L = MODEL.seq.layout, byName = {};
+MODEL.seq.states.forEach(n => byName[n.name] = n);
+let selSt = null, famFilter = null;
+
+/* Three kinds of edge, because they mean three different things.
+ *
+ * Within a column the states form a microprogram's straight run, so those
+ * edges are drawn as a spine down the column. Rightward edges hand off to
+ * another microprogram. Leftward edges are the returns - to V_LD for the next
+ * slot, to V_ST, back to S_IDLE - and they get their own routing lanes under
+ * the graph so the returns stay legible instead of crossing the columns.
+ */
+let backLane = new Map();
+
+function assignBackLanes(T) {
+  backLane = new Map();
+  let i = 0;
+  for (const t of T) {
+    const a = byName[t.from], b = byName[t.to];
+    if (a && b && b.col < a.col) backLane.set(t.from + '>' + t.to + t.line, i++);
+  }
+  return i;
+}
+
+function edgePath(a, b, key) {
+  const midY = L.node_h / 2;
+  if (b.col > a.col) {
+    const x1 = a.x + L.node_w, y1 = a.y + midY, x2 = b.x, y2 = b.y + midY;
+    const dx = Math.max(26, (x2 - x1) / 2);
+    return `M${x1},${y1} C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}`;
+  }
+  if (b.col === a.col) {
+    if (b.y === a.y) return '';                    // self loop: nothing to draw
+    const down = b.y > a.y;
+    const y1 = a.y + (down ? L.node_h : 0);
+    const y2 = b.y + (down ? 0 : L.node_h);
+    // Nodes are drawn over the edges, so a connector inside the box would be
+    // invisible. Adjacent states get the straight drop through the row gap -
+    // the spine of a microprogram - and skips bow clear of the column.
+    if (Math.abs(b.y - a.y) <= L.node_h + L.row_gap + 1) {
+      const x = a.x + L.node_w * 0.5;
+      return `M${x},${y1} L${x},${y2}`;
+    }
+    const x = a.x + L.node_w, bow = 26;
+    return `M${x},${a.y+midY} C${x+bow},${a.y+midY} ${x+bow},${b.y+midY} `
+         + `${x},${b.y+midY}`;
+  }
+  // Leftward: out the left face, along a private lane, up into the right face.
+  const lane = L.height - L.lane_band + 10 + (backLane.get(key) || 0) * 6;
+  const x1 = a.x, y1 = a.y + midY, x2 = b.x + L.node_w, y2 = b.y + midY;
+  return `M${x1},${y1} C${x1-30},${y1} ${x1-30},${lane} ${x1-46},${lane} `
+       + `L${x2+46},${lane} C${x2+30},${lane} ${x2+30},${y2} ${x2},${y2}`;
+}
+
+function drawFsm() {
+  const T = MODEL.seq.transitions;
+  const nback = assignBackLanes(T);
+  L.lane_band = nback * 6 + 26;
+  L.height = L.node_rows_bottom + L.lane_band;
+  let s = `<svg width="${L.width}" height="${L.height}" `
+        + `viewBox="0 0 ${L.width} ${L.height}">`;
+  for (const c of L.columns)
+    s += `<text class="colhead" x="${c.x}" y="20">${esc(c.label)}</text>`;
+
+  const hot = t => selSt && (t.from===selSt || t.to===selSt);
+  for (const t of T) {
+    const a = byName[t.from], b = byName[t.to];
+    if (!a || !b) continue;
+    const d = edgePath(a, b, t.from + '>' + t.to + t.line);
+    if (!d) continue;
+    const cls = selSt ? (hot(t) ? 'edge hot' : 'edge dim') : 'edge';
+    s += `<path class="${cls}" d="${d}"></path>`;
+  }
+  for (const n of MODEL.seq.states) {
+    const rel = !selSt || n.name===selSt ||
+      T.some(t => (t.from===selSt && t.to===n.name) ||
+                  (t.to===selSt && t.from===n.name));
+    const cls = 'node' + (n.name===selSt ? ' on' : '') + (rel ? '' : ' dim');
+    s += `<g class="${cls}" data-n="${n.name}">`
+      + `<rect x="${n.x}" y="${n.y}" width="${L.node_w}" height="${L.node_h}"></rect>`
+      + `<text x="${n.x+L.node_w/2}" y="${n.y+L.node_h/2+3.5}" `
+      + `text-anchor="middle">${esc(n.name)}</text></g>`;
+  }
+  s += '</svg>';
+  document.getElementById('graph').innerHTML = s;
+  document.querySelectorAll('#graph .node').forEach(g =>
+    g.onclick = () => { selSt = g.dataset.n; drawFsm(); });
+  fsmDetail();
+}
+
+function guardText(t) {
+  if (!t.guards.length) return 'unconditional';
+  return t.guards.map(g => g.kind==='else' ? 'else' : g.cond).join(' ∧ ');
+}
+
+function fsmDetail() {
+  const d = document.getElementById('fdet');
+  if (!selSt) {
+    d.innerHTML = `<div class="doc">Every tick, the sequencer makes one pass `
+      + `over the eight playback slots: <code>V_LD</code> streams a slot's `
+      + `record into working registers, the microprograms work on that copy, `
+      + `and <code>V_ST</code> writes it back.<br><br>`
+      + `Columns are microprograms. Click a state to isolate its edges.</div>`;
+    return;
+  }
+  const n = byName[selSt], T = MODEL.seq.transitions;
+  const outs = T.filter(t => t.from===selSt), ins = T.filter(t => t.to===selSt);
+  let h = `<h2>${esc(n.name)}</h2><div class="where">${esc(n.family_label)}`
+        + (n.line ? ` · rtl/psg_seq.sv:${n.line}` : '') + `</div>`;
+  if (n.doc) h += `<div class="doc">${esc(n.doc)}</div>`;
+
+  h += `<div class="k">out (${outs.length})</div>`;
+  h += outs.length ? outs.map(t =>
+      `<div class="tr">→ <a data-go="${esc(t.to)}">${esc(t.to)}</a>`
+      + `<div class="g">${esc(guardText(t))}</div></div>`).join('')
+    : `<div class="empty">none — this state's successor is set elsewhere.</div>`;
+
+  h += `<div class="k">in (${ins.length})</div>`;
+  h += ins.length ? ins.map(t =>
+      `<div class="tr"><a data-go="${esc(t.from)}">${esc(t.from)}</a> →`
+      + `<div class="g">${esc(guardText(t))}</div></div>`).join('')
+    : `<div class="empty">none</div>`;
+
+  const TB = {aram:'audio-RAM address', eng_word:'record word read',
+              eng_write:'record write', pinc:'constants port', pub:'published word'};
+  for (const [k,label] of Object.entries(TB)) {
+    const rows = (n.tables||{})[k];
+    if (rows && rows.length)
+      h += `<div class="k">${label}</div><pre>${esc(rows.join('\n'))}</pre>`;
+  }
+  if (n.body) h += `<div class="k">case arm</div><pre>${esc(n.body)}</pre>`;
+  d.innerHTML = h;
+  d.querySelectorAll('[data-go]').forEach(a =>
+    a.onclick = () => { selSt = a.dataset.go; drawFsm();
+                        document.getElementById('graph').scrollIntoView(
+                          {block:'nearest'}); });
+}
+
+document.getElementById('fsmnote').textContent =
+  `${MODEL.seq.extracted_count} transitions, guards recovered from the RTL`;
+drawFsm();
+
+/* ------------------------------------------------------------------ */
+/* Where the cycles go                                                 */
+/* ------------------------------------------------------------------ */
+const AREA = {walk:'sample walk', seq:'tick sequencer', both:'both'};
+
+function drawFindings() {
+  let h = '';
+  for (const f of MODEL.findings) {
+    h += `<article class="finding"><h3>${esc(f.title)}</h3>`
+       + `<div class="where">${esc(AREA[f.area]||f.area)}</div>`
+       + `<table class="meas">`;
+    for (const [k,v] of Object.entries(f.measure))
+      h += `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`;
+    h += `</table>`;
+    if (f.table) {
+      h += `<div class="k">measured per request</div>`
+         + `<div class="tblwrap"><table class="grid"><tr>`
+         + f.table.cols.map(c => `<th>${esc(c)}</th>`).join('') + `</tr>`;
+      for (const r of f.table.rows)
+        h += `<tr>` + r.map((v,i) =>
+          `<td${i===r.length-1 && v===0 ? ' class="zero"' : ''}>${esc(v)}</td>`
+        ).join('') + `</tr>`;
+      h += `</table></div>`;
+    }
+    h += `<div class="doc">${esc(f.body)}</div>`;
+    if (f.refs.length) {
+      h += `<div class="k">go to</div><div class="refs">`;
+      for (const r of f.refs)
+        h += `<a data-kind="${r.kind}" data-key="${esc(r.key)}" `
+           + `data-variant="${esc(r.variant||'')}">${esc(r.label)}</a>`;
+      h += `</div>`;
+    }
+    h += `</article>`;
+  }
+  const el = document.getElementById('findings');
+  el.innerHTML = h;
+  el.querySelectorAll('.refs a').forEach(a => a.onclick = () => {
+    if (a.dataset.kind === 'phase') {
+      if (a.dataset.variant && a.dataset.variant !== sched) {
+        sched = a.dataset.variant;
+        [...ss.children].forEach((c,i) =>
+          c.classList.toggle('on', (i===0) === (sched==='hw')));
+      }
+      selPh = +a.dataset.key; drawWalk();
+      document.querySelector('.tab[data-v="walk"]').click();
+    } else {
+      selSt = a.dataset.key; drawFsm();
+      document.querySelector('.tab[data-v="fsm"]').click();
+    }
+    window.scrollTo({top:0});
+  });
+}
+drawFindings();
+</script>

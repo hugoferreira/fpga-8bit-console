@@ -572,8 +572,8 @@ CANDIDATES = [
 
 
 def rtl_fingerprint() -> str:
-    """The Makefile's fingerprint: three agents edit rtl/ concurrently, so
-    a block count without one is not reproducible (docs/build-targets.md)."""
+    """The Makefile's fingerprint: a block count without one is not
+    reproducible across RTL revisions (docs/build-targets.md)."""
     import hashlib
     h = hashlib.sha1()
     for p in sorted(Path("rtl").glob("*.sv")) + sorted(Path("rtl").glob("*.v")):
@@ -584,9 +584,8 @@ def rtl_fingerprint() -> str:
 def ebr_census() -> tuple[dict[str, int], str] | None:
     """The measured per-array EBR census of target_psg, from the netlist
     yosys already produced (make synth-psg), with a stamp saying which
-    netlist it was. The file is a shared build artifact another agent's
-    synth run may be rewriting, so a half-written JSON reads as absent
-    rather than as a smaller design."""
+    netlist it was. A half-written JSON reads as absent rather than as a
+    smaller design."""
     p = Path("build/targets/psg.json")
     if not p.exists():
         return None
@@ -727,8 +726,7 @@ def sec_levers() -> None:
              "(make synth-psg) - skipped")
         return
     census, stamp = got
-    note(f"block counts below are from the {stamp} - rtl/ is edited "
-         "concurrently by three agents, so re-measure before recording")
+    note(f"block counts below are from the {stamp} - re-measure after RTL changes")
     ring = blocks(LOOKBACK[2], 16, ICE40)
     ceiling = 15
     base = sum(census.values()) - census.get("wrom", 0) \

@@ -97,8 +97,8 @@
       and microcode constants without increasing the accepted BRAM count
       (pitch landed: 13-bit words in the constants EBR, 6,199 at the
       15-block ceiling, byte-identical; noise-gain deleted as dead code;
-      words 64..255 reserved as the microcode home; filter-decode and
-      fade-step remain)
+      fade-step landed in the same EBR at R.15; words 144..255 remain the
+      microcode home; filter-decode remains)
 
 ## 6. Final verification and evidence
 
@@ -401,3 +401,113 @@
       gave away free. The campaign's real wins were exactly the two
       things this theorem permits: retiring carry chains (identities,
       invisible-bound widths) and retiring whole-cell decode fabric.
+- [x] R.14 Sequencer/walker redundant-work pass after the wave-6 fidelity
+      closeout: the sequencer drops the unused `wrd[15:14]`, `tcnt[0]` effect
+      staging and zero-only pitch-table carrier bits. The walker evaluates
+      the live and old noise-walk variable products on W0/W1 through one
+      multiplier cone, retaining only a nine-bit pre-advance random staging
+      register so the old walk remains byte-exact. Fingerprint
+      `2c7196d957fd`: 8,327 -> 8,106 placed LC (-221), 22 EBR unchanged;
+      placement still fails because the design is 426 cells over the HX8K.
+      Yosys maps 7,043 LUT4, 1,656 carries and 1,619 flops. The frozen oracle
+      is 59/59 byte-identical, the PICO-8 noise-fidelity gate passes, and
+      `psg_tb` remains 906/1,275 clocks with tick pre-run 5,022/7,654.
+      Celeste music 30 also passes its provenance-bound full-track gate:
+      whole-track band deltas -0.09/+0.16/+0.07/+0.14 dB and quiet 4-8 kHz
+      -0.04 dB.
+- [x] R.15 Sequencer constant-store consolidation: the dedicated 32x13
+      `fstep_rom` moves into unused words 112..143 of the existing constants
+      EBR. A borrow/replay bit freezes and reissues a displaced pitch/slide
+      lookup, while `fstep_q` preserves the selected fade word for a later
+      `$20` command. Fingerprint `27f53a125e75`: 22 -> 21 EBR, with the
+      explicit BRAM trade 8,106 -> 8,153 placed LC (+47); Yosys maps 7,072
+      LUT4, 1,656 carries and 1,633 flops. `psg_tb` remains 906/1,275 sample
+      clocks and 5,022/7,654 tick clocks, the PICO-8 noise-fidelity gate
+      passes, and the frozen matrix is 59/59 byte-identical. Two exact
+      arithmetic rewrites were measured and reverted in the same pass:
+      replacing the noise threshold `/3` with `3g+3 <= x` was +57 LUT4 /
+      -16 carries / +22 placed LC; moving vibrato into its 13-bit published
+      quotient was +23 LUT4 / -9 carries / +17 placed LC; narrowing
+      `eff_rem` 12 -> 8 bits was +5 LUT4 / +3 carries / +8 placed LC.
+      The provenance-bound Celeste music-30 gate remains unchanged at
+      -0.09/+0.16/+0.07/+0.14 dB whole-track and -0.04 dB quiet 4-8 kHz.
+- [x] R.16 Walker control-store encoding: replace the mutually exclusive
+      22-bit one-hot action field with a five-bit opcode, retaining the
+      multiplier selector and issue/context flags in a 16-bit word. Fingerprint
+      `7de2f07ad0dc`: 21 -> 20 EBR, with the explicit decode trade 8,153 ->
+      8,198 placed LC (+45); Yosys maps 7,122 LUT4, 1,655 carries and 1,633
+      flops. The store now occupies one EBR instead of two without changing
+      the schedule: `psg_tb` remains 906/1,275 sample clocks and 5,022/7,654
+      tick clocks with zero late flips, the PICO-8 noise gate passes, and the
+      frozen matrix is 59/59 byte-identical. Celeste music 30 retains the same
+      -0.09/+0.16/+0.07/+0.14 dB whole-track deltas and -0.04 dB quiet 4-8 kHz.
+- [x] R.17 Constants/control-store port sharing: embed the walker's reachable
+      pph 0..108 words in unused constants words 144..252, and select that
+      address while `prun` freezes the sequencer. The existing state-store
+      replay cycle re-primes the sequencer address before it resumes, so the
+      separate control EBR and `psg_ctrl.hex` retire. Fingerprint
+      `9f327071ab8f`: 20 -> 19 EBR, with the port-routing trade 8,198 -> 8,237
+      placed LC (+39); Yosys maps 7,147 LUT4, 1,662 carries and 1,633 flops.
+      The frozen matrix remains 59/59 byte-identical, `psg_tb` stays at
+      906/1,275 sample clocks and 5,022/7,654 tick clocks with zero late flips,
+      and the PICO-8 noise gate passes. Celeste music 30 remains
+      -0.09/+0.16/+0.07/+0.14 dB whole-track and -0.04 dB quiet 4-8 kHz.
+- [x] R.18 Walker lifetime retirement: export the shared ROM word directly
+      and qualify only its four externally active fields; accumulate the old
+      primary/secondary samples in `smp_b` after the new G-product consumes
+      it, retiring both old-only 18-bit registers; reuse `mxs_new` for the
+      wavetable interpolation sign until W27 overwrites it. Fingerprint
+      `10dd65abd3c7`: 8,237 -> 8,189 placed LC (-48), 19 EBR unchanged;
+      Yosys maps 7,142 LUT4, 1,658 carries and 1,596 flops (-5/-4/-37).
+      The noise/analysis gates and `psg_tb` pass at unchanged 906/1,275
+      sample and 5,022/7,654 tick clocks, the frozen matrix is 59/59
+      byte-identical, and Celeste music 30 remains
+      -0.09/+0.16/+0.07/+0.14 dB whole-track and -0.04 dB quiet 4-8 kHz.
+      Reusing `smp_a` for `gz_s1_r` was rejected and reverted: -17 flops but
+      +33 LUT4, +4 carries and +24 placed cells from fanout entanglement.
+- [x] R.19 Fold-series lifetime retirement: carry the compression-only
+      divide-by-five series in the selected destination stack word after its
+      plain sum is no longer needed, with writes qualified so an in-range fold
+      retains that sum. Fingerprint `67b0b3f73e3c`: 8,189 -> 8,164 placed LC
+      (-25), 19 EBR unchanged; Yosys maps 7,138 LUT4, 1,658 carries and 1,578
+      flops (-4/0/-18). The first unqualified form was rejected by the
+      noise-fidelity gate because it overwrote in-range sums; the corrected
+      form passes `make test-psg` at 906/1,275 sample and 5,022/7,654 tick
+      clocks with zero late flips, the frozen matrix is 59/59 byte-identical,
+      and Celeste music 30 remains at -0.09/+0.16/+0.07/+0.14 dB whole-track
+      and -0.04 dB quiet 4-8 kHz.
+- [x] R.20 Fold-remainder lifetime retirement: after the compression operand
+      is consumed, reuse `fx_r[3:0]` for the divide-by-five remainder and
+      remove the dedicated four-bit `fr_r`. Fingerprint `0ea9c400b998`:
+      8,164 -> 8,138 placed LC (-26), 19 EBR unchanged; Yosys maps 7,116
+      LUT4, 1,656 carries and 1,574 flops (-22/-2/-4). `make test-psg`
+      remains at 906/1,275 sample and 5,022/7,654 tick clocks with zero late
+      flips, and the frozen matrix is 59/59 byte-identical. The broadened
+      final Celeste gate passes entry points 10, 20, 30 and 40, while entry
+      point 0 exposes a pre-existing post-pattern-3 spectral mismatch retained
+      for the later fidelity pass. The 59/59 render-exact regression gate is
+      the commit criterion for this optimization.
+- [x] R.21 Walker control-field deduplication: select all eleven multiplier
+      launches with the existing capture/action opcode, adding `CAP_W75` for
+      the sole launch-only phase and retiring the four-bit `MUL_SEL` field.
+      Fingerprint `a106714c2ab0`: 8,138 -> 8,127 placed LC (-11), 19 EBR
+      unchanged; Yosys maps 7,099 LUT4, 1,658 carries and 1,574 flops
+      (-17/+2/0). `make test-psg` remains at 906/1,275 sample and
+      5,022/7,654 tick clocks with zero late flips, and the frozen matrix is
+      59/59 byte-identical. The updated schedule visualizer derives launches
+      from the live request mux and finds no unexplained hardware-walk phase:
+      46 are multiply-busy on every profile and 15 more are conditionally
+      busy. The all-Celeste final gate retains the documented pre-existing
+      music-0 mismatch for the later fidelity pass; it is not an optimization
+      regression.
+- [x] R.22 Multiplier leading-zero retirement: run the three constant-171
+      reciprocal limbs in the existing eight-iteration mode instead of
+      charging ten iterations. The change is exact across all three result
+      ports in the cycle model and frees four multiplier iterations per
+      non-wavetable visit or two per wavetable visit. It does not retime the
+      fixed schedule and increases placement 8,127 -> 8,151 (+24), an
+      accepted capacity trade. Fingerprint `c06087a366b8`; Yosys remains at
+      7,099 LUT4, 1,658 carries, 1,574 flops and 19 EBR. The visualizer labels
+      iteration reductions as retiming potential rather than automatic
+      walker-clock savings, and identifies pph 92 as a completed-product hold
+      before the fixed pph 93 consume rather than unexplained empty time.

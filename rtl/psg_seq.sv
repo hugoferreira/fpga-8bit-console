@@ -69,11 +69,15 @@ module psg_seq (input  bit   clk,
                 output logic [7:0]  div_d,
                 input  logic [23:0] d_res,
                 input  logic [7:0]  d_rem,
-                input  logic        d_busy);
+                input  logic        d_busy,
+                // The sample walk borrows the otherwise idle constants port.
+                input  logic        ctrl_read,
+                input  logic [7:0]  ctrl_addr,
+                output logic [15:0] ctrl_q);
 
   // Every waveform is computed (adopt-pico8-integer-audio 2.2): the wave
-  // ROM retires. The constants block keeps the pitch increments; words
-  // 64..255 stay reserved for microcode and scheduled tables.
+  // ROM retires. The constants block keeps pitch increments, slide constants,
+  // fade steps and the sample-walk control words.
   logic [15:0] crom[0:255];
   initial begin
     $readmemh("./rtl/psg_const.hex", crom);
@@ -231,7 +235,8 @@ module psg_seq (input  bit   clk,
   // reading them). One physical write site: the engine's stores go through
   // the same scheduled state-memory port as V_ST, with the word address and
   // data selected before it.
-  logic [15:0] acc, wrd;
+  logic [15:0] acc;
+  logic [13:0] wrd;                  // only {play_len[5:0], speed[7:0]}
   logic        abank;                // 0 = note words 0..2, 1 = ins words 6..8
   logic        froll;                // fcnt+1 >= sp: the row rolls over
   logic        ge_lpe;               // row+1 >= lpe
@@ -239,7 +244,9 @@ module psg_seq (input  bit   clk,
   // by the EFFSEL steps after the note/instrument dispatch settles which
   // bank supplies the effect. Replaces the e_sp/e_tcnt/e_fcnt bank muxes.
   logic [7:0]  eff_sp, eff_fcnt;
-  logic [4:0]  eff_tcnt;
+  // tcnt[0] has no effect consumer: arpeggio and vibrato start at bit 1.
+  // Store only tcnt[4:1], so effect staging does not carry a dead bit.
+  logic [3:0]  eff_tcnt;
 
   // The PSG_REC_W* field lists (record words 3/4/5/9) are in psg_common.svh
   // with the rest of the record layout. The always_comb form below MUST stay
@@ -304,35 +311,9 @@ module psg_seq (input  bit   clk,
   logic [1:0]  fade_dir;             // 0 none, 1 fading in, 2 fading out
   logic [15:0] fade_acc;
   logic [12:0] fade_step;
-  // 4096/n, as a block ROM rather than 13 five-input LUT decodes. The
-  // address is combinational, not registered off fade_len: the $22 write
-  // that sets the length and the $20 write that consumes the step can be
-  // adjacent CPU cycles, so the ROM has to see the NEW length on the very
-  // cycle it is written. With this form fstep_q is valid exactly when
-  // fade_len is - one cycle after the $22 write - and the two can never
-  // disagree.
-  (* ram_style = "block" *) logic [12:0] fstep_rom[0:31];
-  initial begin
-    fstep_rom[0]  = 13'd8191; fstep_rom[1]  = 13'd4096;
-    fstep_rom[2]  = 13'd2048; fstep_rom[3]  = 13'd1365;
-    fstep_rom[4]  = 13'd1024; fstep_rom[5]  = 13'd819;
-    fstep_rom[6]  = 13'd682;  fstep_rom[7]  = 13'd585;
-    fstep_rom[8]  = 13'd512;  fstep_rom[9]  = 13'd455;
-    fstep_rom[10] = 13'd409;  fstep_rom[11] = 13'd372;
-    fstep_rom[12] = 13'd341;  fstep_rom[13] = 13'd315;
-    fstep_rom[14] = 13'd292;  fstep_rom[15] = 13'd273;
-    fstep_rom[16] = 13'd256;  fstep_rom[17] = 13'd240;
-    fstep_rom[18] = 13'd227;  fstep_rom[19] = 13'd215;
-    fstep_rom[20] = 13'd204;  fstep_rom[21] = 13'd195;
-    fstep_rom[22] = 13'd186;  fstep_rom[23] = 13'd178;
-    fstep_rom[24] = 13'd170;  fstep_rom[25] = 13'd163;
-    fstep_rom[26] = 13'd157;  fstep_rom[27] = 13'd151;
-    fstep_rom[28] = 13'd146;  fstep_rom[29] = 13'd141;
-    fstep_rom[30] = 13'd136;  fstep_rom[31] = 13'd132;
-  end
-  wire [4:0] fstep_a = (cs && rw && addr == 8'h22) ? di[7:3] : fade_len[7:3];
+  // 4096/n shares words 112..143 of the pitch/constants block. fstep_q
+  // preserves the selected word after that port returns to sequencer traffic.
   logic [12:0] fstep_q;
-  always_ff @(posedge clk) fstep_q <= fstep_rom[fstep_a];
 
   // ------------------------------------------------------------------
   // Sequencer FSM (note fetch, per-tick effects, music flow control)
@@ -421,9 +402,9 @@ module psg_seq (input  bit   clk,
   logic [1:0] arp_idx;
   always_comb begin
     if (e_fx == 3'd6)
-      arp_idx = (eff_sp <= 8) ? eff_tcnt[2:1] : eff_tcnt[3:2];
+      arp_idx = (eff_sp <= 8) ? eff_tcnt[1:0] : eff_tcnt[2:1];
     else
-      arp_idx = (eff_sp <= 8) ? eff_tcnt[3:2] : eff_tcnt[4:3];
+      arp_idx = (eff_sp <= 8) ? eff_tcnt[2:1] : eff_tcnt[3:2];
   end
 
 
@@ -538,9 +519,19 @@ module psg_seq (input  bit   clk,
   // same constants ROM (four per chromatic, base from pitch word 36+c).
   logic [7:0]  pinc_addr;
   logic [15:0] crom_q;
-  // Every pitch increment is dp << 8 with dp in 13 bits, so the 24-bit
-  // value is a wiring reconstruction of the constants word.
-  wire [23:0] pinc_q = {3'b000, crom_q[12:0], 8'h00};
+  // Export the registered word directly. The walker qualifies the only four
+  // fields with out-of-walk side effects; zeroing all 16 bits here built a
+  // redundant output mux around action fields consumed only while prun is set.
+  assign ctrl_q = crom_q;
+  wire         fade_issue = cs && rw && addr == 8'h22;
+  logic        crom_replay;
+  // A fade lookup displaces the current sequencer lookup. Hold on the borrow
+  // and replay cycles: the first loads the fade word, the second reissues the
+  // pitch/slide word for the unchanged state.
+  wire         seq_hold = walk_frozen | fade_issue | crom_replay;
+  // Every pitch increment is dp << 8 with dp in 13 bits, so the complete
+  // 21-bit value is a wiring reconstruction of the constants word.
+  wire [20:0] pinc_q = {crom_q[12:0], 8'h00};
   logic [20:0] arp_r;
   wire signed [8:0] arp_raw =
       e_insfx ? ($signed({3'b0, w_cur_pitch}) + $signed({3'b0, arp_p}) - 9'sd24)
@@ -568,9 +559,18 @@ module psg_seq (input  bit   clk,
       K_SL8:   pinc_addr = 8'd36 + {2'b0, sl_chr};
       default: pinc_addr = {2'b0, e_pitch};
     endcase
+    if (fade_issue)
+      pinc_addr = 8'd112 + {3'b0, di[7:3]};
   end
   always_ff @(posedge clk) begin
-    crom_q  <= crom[pinc_addr];
+    crom_q  <= crom[ctrl_read ? ctrl_addr : pinc_addr];
+    if (reset) begin
+      crom_replay <= 1'b0;
+    end else begin
+      crom_replay <= fade_issue;
+      if (crom_replay)
+        fstep_q <= crom_q[12:0];
+    end
   end
 
   // The base pitch increment is the LIVE table port: pinc_addr idles at
@@ -580,7 +580,7 @@ module psg_seq (input  bit   clk,
   // default address. The base_r/prev_r prefetch registers this replaces
   // were a leftover of the phase-increment slide: prev_r had no consumer
   // at all.
-  wire [20:0] base_inc = pinc_q[20:0];
+  wire [20:0] base_inc = pinc_q;
   // The binary's amplitude is vol<<8 exactly (a0 in _calculate_osc_state).
   wire [11:0] vol_direct  = w_ins_done ? 12'd0 : {1'b0, w_cur_vol, 8'b0};
   wire [11:0] pvol_direct = {1'b0, w_prev_vol, 8'b0};
@@ -609,7 +609,7 @@ module psg_seq (input  bit   clk,
   // delta from 128 here; the shared multiplier applies it below.
   logic signed [2:0] lfo;
   always_comb begin
-    case (eff_tcnt[3:1])
+    case (eff_tcnt[2:0])
       3'd1, 3'd3: lfo =  3'sd1;
       3'd2:       lfo =  3'sd2;
       3'd5, 3'd7: lfo = -3'sd1;
@@ -771,7 +771,7 @@ module psg_seq (input  bit   clk,
   wire vol_div = (e_fx == 3'd1) || (e_fx == 3'd4) || (e_fx == 3'd5);
   // d - t, the "rows remaining" multiplier fade-out and drop share.
   wire [11:0] eff_rem = {4'b0, eff_sp} - {4'b0, eff_fcnt};
-  assign div_start = !walk_frozen
+  assign div_start = !seq_hold
                      && ((sst == K_FX && !m_busy
                           && ((xs == 4'd5 && e_fx == 3'd3)
                               || (xs == 4'd6 && vol_div)
@@ -985,7 +985,7 @@ module psg_seq (input  bit   clk,
         ptick_pend <= 0;
       end
 `ifndef SYNTHESIS
-      if (!walk_frozen && sst == T_NL && tnl_len_launch && m_busy)
+      if (!seq_hold && sst == T_NL && tnl_len_launch && m_busy)
         $error("T_NL pattern-length product blocked by a busy m service");
 `endif
       // Boundary publication for the pre-run tick pass: the evaluation ran
@@ -1016,7 +1016,7 @@ module psg_seq (input  bit   clk,
           if (pend_stop2[i]) playing[i] <= 0;
         pend_stop2 <= 0;
       end
-      if (!walk_frozen)
+      if (!seq_hold)
       case (sst)
         // One pass over the slots in order, servicing any pending trigger and,
         // when the pass was started by a tick, advancing the row. Each visit is
@@ -1131,7 +1131,7 @@ module psg_seq (input  bit   clk,
           w_row <= is_mus(c) ? 5'd0 : trg_row[c[1:0]];
           // play_len stages in wrd's high byte until T_NH writes word 2;
           // speed joins it in the low byte at T_LS.
-          wrd[15:8] <= is_mus(c) ? 8'd0 : {2'b0, trg_len[c[1:0]]};
+          wrd[13:8] <= is_mus(c) ? 6'd0 : trg_len[c[1:0]];
           if (!is_mus(c)) begin
             trg_row[c[1:0]] <= 0;           // parameters are one-shot
             trg_len[c[1:0]] <= 0;
@@ -1418,7 +1418,7 @@ module psg_seq (input  bit   clk,
         // ---- effect staging: the family fields the effect path reads ----
         ES0: sst <= ES1;                    // issue the bank's counter word
         ES1: begin                          // consume it, issue the speed word
-          eff_tcnt <= state_q[12:8];
+          eff_tcnt <= state_q[12:9];
           eff_fcnt <= state_q[7:0];
           sst <= ES2;
         end
@@ -1441,7 +1441,7 @@ module psg_seq (input  bit   clk,
         K_PF0: sst <= K_FX;
         // Effect evaluation, one microinstruction per completed product.
         K_FX: if (!m_busy && !((xs == 4'd7 || xs == 4'd10) && d_busy)) begin
-          if (xs == 0) arp_r <= pinc_q[20:0];
+          if (xs == 0) arp_r <= pinc_q;
           case (xs)
             // The effect runs on the note's OWN amplitude, or on the
             // instrument row's when the instrument is the one carrying
@@ -1681,7 +1681,7 @@ module psg_seq (input  bit   clk,
           if (fade_len >= 8'd8) begin        // music(-1, fade): fade out
             fade_dir <= 2'd2;
             fade_acc <= 0;
-            fade_step <= fstep_q;
+            fade_step <= crom_replay ? crom_q[12:0] : fstep_q;
             fade_len <= 0;
           end else begin
             mus_playing <= 0;
@@ -1696,7 +1696,7 @@ module psg_seq (input  bit   clk,
           if (fade_len >= 8'd8) begin        // music(n, fade): fade in
             fade_dir <= 2'd1;
             fade_acc <= 0;
-            fade_step <= fstep_q;
+            fade_step <= crom_replay ? crom_q[12:0] : fstep_q;
             mus_gain <= 0;
             fade_len <= 0;
           end else begin
@@ -1840,11 +1840,11 @@ module psg_seq (input  bit   clk,
              end
       default: eng_we = 1'b0;
     endcase
-    if (walk_frozen)
+    if (seq_hold)
       eng_we = 1'b0;
   end
 
-  wire state_tick_we = (sst == V_ST) && !walk_frozen;
+  wire state_tick_we = (sst == V_ST) && !seq_hold;
   logic [3:0] tick_issue;
 
   // Owner 2, the tick engine and the V_LD/V_ST record visit. Both are the
@@ -1877,7 +1877,7 @@ module psg_seq (input  bit   clk,
     smul_a     = 25'sd0;
     smul_b     = 12'd0;
     smul_mode  = 2'd0;
-    if (!walk_frozen) begin
+    if (!seq_hold) begin
       case (sst)
         // mul_go names the steps that actually have operands; the rest
         // are register writes, divide launches or the publish handshake.

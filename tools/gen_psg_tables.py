@@ -114,9 +114,12 @@ with open("rtl/psg_pitch.hex", "w") as f:
 # and are imported rather than restated here.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from psg_hw_forms import slide_affine_table            # noqa: E402
+from gen_psg_ctrl import build as build_ctrl, PLAST    # noqa: E402
 
 AFFINE = slide_affine_table()
 assert AFFINE is not None, "no feasible slide affine table"
+FSTEP = [8191] + [4096 // n for n in range(1, 32)]
+CTRL = build_ctrl()
 with open("rtl/psg_const.hex", "w") as f:
     for p in range(64):
         dp = pico8_phase_increment(p) >> 8
@@ -128,7 +131,17 @@ with open("rtl/psg_const.hex", "w") as f:
         assert r < (1 << 29) and b < (1 << 21)
         for w in (b & 0xFFF, b >> 12, r & 0xFFFF, r >> 16):
             f.write(f"{w:04x}\n")
-    for _ in range(64 + 4 * len(AFFINE), 256):
+    # Words 112..143 share the constants block with the music-fade steps.
+    for w in FSTEP:
+        f.write(f"{w:04x}\n")
+    # The sample walk freezes the sequencer, so its pph-indexed control words
+    # can borrow the same synchronous port. Only pph 0..PLAST is reachable;
+    # those 109 words exactly fit the constants block's free 144..252 range.
+    for w in CTRL[:PLAST + 1]:
+        f.write(f"{w:04x}\n")
+    used = 64 + 4 * len(AFFINE) + len(FSTEP) + PLAST + 1
+    assert used == 253
+    for _ in range(used, 256):
         f.write("0000\n")
 
 with open("rtl/psg_waves.hex", "w") as f:

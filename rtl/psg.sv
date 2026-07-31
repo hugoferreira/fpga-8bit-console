@@ -249,6 +249,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .s_old_phase(s_old_phase), .s_old_inc(s_old_inc),
     .old_mode_r(old_mode_r), .old_alt_r(old_alt_r), .old_q0(old_q0),
     .z_eval(z_eval), .dq17(dq17), .q16(q16),
+    .ctrl_q(ctrl_q), .ctrl_addr(ctrl_addr),
     .prun(prun), .fold_busy(fold_busy),
     .dry16(dry16), .dry_valid(dry_valid));
 
@@ -269,6 +270,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [23:0] s_phase, s_phase2, s_old_phase;
   wire [20:0] s_eff_inc, s_old_inc;
   wire [16:0] old_q0;
+  wire [15:0] ctrl_q;
+  wire [7:0]  ctrl_addr;
   wire [PSG_NV-1:0] clr_ack;
   wire signed [15:0] dry16;
   wire        dry_valid;
@@ -349,7 +352,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .smul_start(smul_start), .smul_a(smul_a), .smul_b(smul_b),
     .smul_mode(smul_mode),
     .div_start(div_start), .div_n(div_n), .div_d(div_d),
-    .d_res(d_res), .d_rem(d_rem), .d_busy(d_busy));
+    .d_res(d_res), .d_rem(d_rem), .d_busy(d_busy),
+    .ctrl_read(prun), .ctrl_addr(ctrl_addr), .ctrl_q(ctrl_q));
 
   // The sequencer's own wires: its record-store owner bundle, its multiply
   // request, the walk handshakes and the fields the CPU read mux answers

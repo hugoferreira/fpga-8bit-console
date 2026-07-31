@@ -1,9 +1,12 @@
 # Handover: noise fidelity — COMPLETE
 
-Status 2026-07-30, all work UNCOMMITTED in the working tree. The three defects
-below are explained, fixed in RTL, measured, and protected by the synthetic
-noise-sweep gates. Full-track Celeste music 30 also passes the localized
-spectral-balance gate described below.
+Status 2026-07-31. The three defects below are explained, fixed in RTL,
+measured, and protected by the synthetic noise-sweep gates. Every Celeste
+music entry point (0, 10, 20, 30 and 40) is also a provenance-bound full-track
+gate; together they traverse all music patterns used by the cart. Entries 10,
+20, 30 and 40 pass. Entry 0 retains a known post-pattern-3 high-band mismatch
+for a later PICO-8 fidelity pass; the frozen 59-render matrix is the
+render-exact regression gate for the RTL optimizations.
 
 ## Post-closeout correction: the first full-track comparison was stale
 
@@ -36,7 +39,7 @@ passes: -0.09/+0.16/+0.07/+0.14 dB whole-track across the four bands, with
 `tools/psg_track_gate.py` prevents that provenance error. It always renders the
 current hardware-schedule RTL, fingerprints every PSG source plus the cart audio
 and reference, writes those hashes beside the candidate WAV, and then invokes
-the full-track comparison. The reproducible gate is:
+the full-track comparison. The single-track diagnostic command is:
 
 ```sh
 make test-psg-track \
@@ -44,6 +47,17 @@ make test-psg-track \
   MUSIC=30 \
   PSG_REFERENCE=build/p8ref/pico8-30.wav
 ```
+
+The final integration gate is:
+
+```sh
+make test-psg-celeste-tracks \
+  CART=~/Stuff/carts/celeste-15133.p8.png
+```
+
+It renders entry points 0, 10, 20, 30 and 40 from the current RTL, verifies
+candidate provenance, and compares each against
+`build/p8ref/pico8-{0,10,20,30,40}.wav`.
 
 `tools/test_psg_ref_check.py` protects the analysis with an equal-RMS
 spectral-tilt case, a quiet-only excess that passes the whole-track average,

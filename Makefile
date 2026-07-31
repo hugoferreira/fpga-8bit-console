@@ -316,6 +316,23 @@ test-psg-track:
 	  --candidate-out "build/psg_track_gate/music$(MUSIC)-current-rtl.wav" \
 	  --spectrogram-file "build/psg_track_gate/music$(MUSIC)-comparison.png"
 
+# Celeste's five entry points cover every chained music pattern used by the
+# game. This is the final PSG integration gate.
+CELESTE_MUSIC ?= 0 10 20 30 40
+PSG_REFERENCE_DIR ?= build/p8ref
+test-psg-celeste-tracks:
+	@test -n "$(CART)" || { echo "usage: make test-psg-celeste-tracks CART=<celeste.p8.png> [PSG_REFERENCE_DIR=build/p8ref]"; exit 2; }
+	@failed=0; for music in $(CELESTE_MUSIC); do \
+	  ref="$(PSG_REFERENCE_DIR)/pico8-$$music.wav"; \
+	  test -f "$$ref" || { echo "missing PICO-8 reference: $$ref"; exit 2; }; \
+	  echo "=== Celeste music $$music ==="; \
+	  python3 tools/psg_track_gate.py --cart "$(CART)" --music "$$music" \
+	    --reference "$$ref" \
+	    --candidate-out "build/psg_track_gate/music$$music-current-rtl.wav" \
+	    --spectrogram-file "build/psg_track_gate/music$$music-comparison.png" \
+	    || failed=1; \
+	done; exit $$failed
+
 test-psg-preview: $(PSG_WAV_PV)
 	@test -n "$(CART)" || { echo "usage: make test-psg-preview CART=<cart.p8.png>"; exit 1; }
 	python3 tools/psg_preview_check.py --cart $(CART) \
@@ -344,6 +361,27 @@ psg-notes: $(PSG_WAV)
 	@test -n "$(CART)" || { echo "usage: make psg-notes CART=<cart.p8.png> SFX=n"; exit 1; }
 	@$(MAKE) -s psg-wav CART=$(CART) SFX=$(SFX) SECONDS=$(SECONDS) WAV=build/psg_sfx.wav
 	python3 tools/psg_notes.py build/psg_sfx.wav --cart $(CART) --sfx $(SFX)
+
+# Inspect the two schedules themselves - the walk's micro-phase timetable and
+# the tick sequencer's FSM - rather than a render of them running. Everything
+# is read out of the RTL and the control-store generator, so the picture tracks
+# the source instead of becoming a stale drawing.
+#   make psg-viz && open build/psg_viz.html
+PSG_VIZ_OUT ?= build/psg_viz.html
+psg-viz: tools/psg_viz.py tools/psg_viz.html rtl/psg_walk.sv rtl/psg_seq.sv \
+         tools/gen_psg_ctrl.py
+	python3 tools/psg_viz.py --out $(PSG_VIZ_OUT)
+
+# Prove a multiply mode/width change before the RTL moves. A narrower mode only
+# makes a product ready earlier; fixed control-store phases still elapse until
+# they are separately retimed. The mode also selects the accumulator SLICE, so
+# this gate says whether two configurations are bit-identical on all three
+# result ports before any schedule experiment.
+#   make test-psg-mul
+test-psg-mul:
+	python3 tools/psg_mul_model.py
+
+.PHONY: test-psg-celeste-tracks psg-viz test-psg-mul
 
 # ------------------------------------------------------------------------------
 # Simulation / testbenches

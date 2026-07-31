@@ -10,13 +10,6 @@ that a small one fails.
 
 Measure with `make metrics`.
 
-> **Two agents are working in this checkout at once** (the nemo port and the
-> celeste port). File ownership, the protocol for the four shared files - this
-> one, `tools/isa_metrics.py`, `docs/hardware-gaps.md` and the `Makefile` - and
-> the open requests between them are in
-> [`agent-coordination.md`](agent-coordination.md). Read it before editing a
-> section you did not write.
-
 ## Registered corpora
 
 | Corpus | Program | Frame-bound | Instructions | Plumbing |
@@ -177,8 +170,7 @@ accumulates a 16-bit remainder per axis per object per frame.
   and its hair drawn over the terrain. A real PICO-8 capture of the same room
   via `tools/p8_capture.py` agrees, modulo the effects layer above. (Until the
   framebuffer off-by-one in `sim/console.cpp` was fixed, the same comparison
-  read 90.1% as captured and 99.65% offset by one pixel — see
-  `agent-coordination.md`.)
+  read 90.1% as captured and 99.65% offset by one pixel.)
 
   The **music** is verified the same way, against real PICO-8 rather than
   against expectation: `tools/p8_music_trace.py` traces the cart's own

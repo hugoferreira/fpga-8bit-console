@@ -68,10 +68,21 @@ function _draw() cls() end
 """
 
 
-def make_trace_cart(cart_png, path, pattern, mask, frames, record=False):
+def make_trace_cart(cart_png, path, pattern, mask, frames, record=False,
+                    solo_channel=None):
     rom = rom_from_png(cart_png)
     sfx = sfx_section(rom)
     mus = music_section(rom)
+    if solo_channel is not None:
+        isolated = []
+        for row in mus:
+            flags, packed = row.split()
+            channels = [int(packed[i:i + 2], 16) for i in range(0, 8, 2)]
+            for ch in range(4):
+                if ch != solo_channel:
+                    channels[ch] |= 0x40
+            isolated.append(flags + " " + "".join(f"{v:02x}" for v in channels))
+        mus = isolated
     while sfx and set(sfx[-1][8:]) <= {"0"}:
         sfx.pop()
     while mus and mus[-1] == "00 00000000":
@@ -109,13 +120,16 @@ def main():
     ap.add_argument("--record", metavar="DIR",
                     help="record PICO-8's own audio to a .wav in DIR, for A/B "
                          "against sim/psg_wav.cpp's rendering")
+    ap.add_argument("--solo-channel", type=int, choices=range(4),
+                    help="disable the other three music bytes in every pattern")
     args = ap.parse_args()
 
     with tempfile.TemporaryDirectory() as home:
         cart = os.path.join(home, "carts", "trace.p8")
         os.makedirs(os.path.dirname(cart), exist_ok=True)
         make_trace_cart(args.cart, cart, args.pattern, args.mask, args.frames,
-                        record=bool(args.record))
+                        record=bool(args.record),
+                        solo_channel=args.solo_channel)
         if args.record:
             # PICO-8 will not create the directory it writes into, which is
             # why extcmd("screenshot") silently fails on macOS too.

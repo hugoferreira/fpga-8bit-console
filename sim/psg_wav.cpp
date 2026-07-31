@@ -88,6 +88,7 @@ int main(int argc, char** argv) {
     int music = -1, sfx = -1, mask = 7;
     double seconds = 10.0;
     long samples = -1;
+    bool psg_trace = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--audio") && i + 1 < argc)   audio = argv[++i];
         else if (!strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
@@ -98,6 +99,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--samples") && i + 1 < argc) samples = atol(argv[++i]);
         else if (!strcmp(argv[i], "--clk") && i + 1 < argc) CLK_HZ = atof(argv[++i]);
         else if (!strcmp(argv[i], "--wr-hold") && i + 1 < argc) wr_hold = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--psg-trace")) psg_trace = true;
     }
     if (!audio) { fprintf(stderr, "need --audio <4608-byte image>\n"); return 1; }
     capture_dec = (long)CLK_HZ - RATE;
@@ -165,6 +167,20 @@ int main(int argc, char** argv) {
             pcm.push_back(s);
             if (s < lo) lo = s;
             if (s > hi) hi = s;
+            // Same 30 Hz state shape as tools/p8_music_trace.py. Sampling
+            // every 735 audio cells is exact at 22,050 Hz and turns a
+            // full-track mismatch into a pattern/SFX/row transition diff.
+            if (psg_trace && (pcm.size() - 1) % (RATE / 30) == 0) {
+                const uint64_t d = dut->dbg;
+                fprintf(stdout, "@@%zu", (pcm.size() - 1) / (RATE / 30));
+                for (int ch = 0; ch < 4; ch++)
+                    fprintf(stdout, " %llu",
+                            (unsigned long long)((d >> (16 + ch * 6)) & 0x3f));
+                for (int ch = 0; ch < 4; ch++)
+                    fprintf(stdout, " %llu",
+                            (unsigned long long)((d >> (40 + ch * 6)) & 0x1f));
+                fprintf(stdout, " %llu\n", (unsigned long long)(d & 0x3f));
+            }
         }
     }
     write_wav(out, pcm);

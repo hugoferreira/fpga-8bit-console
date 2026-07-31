@@ -296,7 +296,7 @@ It is how the phaser bug above was found. Every silent row in NEMO's SFX 8 was
 wave 7 and no other waveform was affected, which ruled out sequencing, pitch and
 the mixer in one pass and pointed at the phaser. The companion tools are
 `make psg-wav` (render to a WAV and listen) and `make psg-notes` (per-row pitch
-and waveform), both from the celeste agent.
+and waveform).
 
 ### The mixer runs 2x hot, so the channels do not compose the way PICO-8's do
 

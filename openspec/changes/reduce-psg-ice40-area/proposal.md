@@ -42,5 +42,5 @@ None. The cart-visible audio behavior and register interface remain unchanged.
 - Verification: PSG structural tests and PICO-8 export-oracle tooling.
 - Synthesis: the existing standalone `make synth-psg` target and its mapped and
   routed reports; no shared Makefile changes are required.
-- Coordination: no Celeste- or NEMO-owned source is modified. Their builds and
-  audio renders are integration gates only.
+- Celeste and NEMO builds and audio renders are integration gates only; their
+  sources are not modified.
