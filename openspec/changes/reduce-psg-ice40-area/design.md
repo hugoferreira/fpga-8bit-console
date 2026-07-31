@@ -1274,15 +1274,31 @@ LUT4s and -56 placed; the gate costs +34 LUT4s of the saving. The placed delta
 is inside the mapping-noise band, so the cell claim rests on the structural
 number - and the real return is the defect and what it unblocks.
 
-**Priced and not yet taken:** the same argument covers the rest of the walker's
-pph-derived fabric - `wlk_ra`/`wlk_wa`'s comparators, subtracts and adds,
-`state_sample_read`, `state_sample_we`, `state_lp_we`. Replacing that fabric
-with a 128 x 14 control word measures **-88 cells for +1 block** (16,080 ->
-15,992, carries 2,108 -> 2,081), the best block rate recorded in this change,
-and would leave 14 of 32 blocks. Measured as a shape ablation with
-arbitrary-but-distinct contents, so the fabric delta is real and the contents
-are the implementation's problem. It reads the control word on exactly the
-phases the gate above now makes trustworthy.
+**And the same argument does NOT extend to the rest of the walker's
+pph-derived fabric - measured, refuted, recorded.** `wlk_ra`/`wlk_wa`'s
+comparators, subtracts and adds and the three record enables were built as a
+128 x 16 control word in its own block. The result is render-exact and
+structurally cheaper and still not worth a block:
+
+| form | pre-map cells | placed | LUT4 | carries |
+| --- | --- | --- | --- | --- |
+| shape ablation, arbitrary contents | -88 | - | - | - |
+| real, 14-bit word, offset write address | -73 | **+32** | +62 | -22 |
+| real, 16-bit word, absolute write address | -75 | **-14** | +21 | -23 |
+
+**-75 structural cells map to +21 LUT4s.** The reason generalises and is worth
+carrying: the pph comparator fabric is SHARED - the 18-arm record-load
+`case (pph)`, `s_stw`, `pph == PWORK+26`, `pph == PLAST` all read it - so
+peeling individual consumers off removes terms without retiring the decode,
+and abc9 then covers what remains worse than it covered the whole. It is THE
+LAW in a new dress: a partial migration off shared fabric pays nothing.
+
+A -14 placed delta is inside the +/-60 mapping-noise band, so nothing is
+established, and it spends one of the blocks section 21 banked. The version
+worth measuring next is the total one - EVERY pph-derived decode moved at
+once, record-load case included, so the fabric stops existing. That needs a
+load-slot field the 16-bit word cannot hold, so two blocks (13 -> 15), still
+inside this change's EBR ceiling.
 
 ## Risks / Trade-offs
 

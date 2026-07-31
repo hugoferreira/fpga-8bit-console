@@ -637,14 +637,31 @@
       accumulator, the slide affine's r/b are variable-operand inputs, and
       `recip`'s only nearby constant is applied after the mux with the
       non-table tail path - folding it in would buy a second subtract.
-- [ ] R.29 PRICED, not taken: the rest of the walker's pph-derived fabric -
-      `wlk_ra`/`wlk_wa` comparators, subtracts and adds, `state_sample_read`,
-      `state_sample_we`, `state_lp_we` - as a 128 x 14 control word.
-      **-88 cells for +1 block** (16,080 -> 15,992 pre-map, carries 2,108 ->
-      2,081), leaving 14 of 32 blocks. Best block rate recorded in this change.
-      Measured as a shape ablation with arbitrary-but-distinct ROM contents:
-      the fabric delta is real, the contents are the implementation's problem.
-      Note the ROM covers the HARDWARE schedule only, so the preview flavour
-      keeps its expressions under `REALTIME_PREVIEW` (removed at elaboration
-      for the standalone target, so the measurement stands). It reads the
-      control word on exactly the phases R.28's gate now makes trustworthy.
+- [x] R.29 REFUTED with numbers, do not retry in this shape. The rest of the
+      walker's pph-derived fabric - `wlk_ra`/`wlk_wa`'s comparators, subtracts
+      and adds, `state_sample_read`, `state_sample_we`, `state_lp_we` - was
+      built as a 128 x 16 control word in its own block (absolute read and
+      write words plus four enable bits; PSG_V_PAR1 = PSG_V_PAR0 + 4 and a
+      parameter offset is 0..3, so bank selection is an OR of bit 2 and
+      `ispar` is `ra[4] & ra[3]`, which no oscillator word sets). It is
+      RENDER-EXACT - 400,000 samples of Celeste music 20 byte-identical,
+      `make test-psg` unchanged, and the preview flavour keeps its expressions
+      under `REALTIME_PREVIEW`. It is also not worth a block:
+        shape ablation (arbitrary contents)  16,080 -> 15,992  (-88)
+        real, 14-bit word, offset write addr 16,089 -> 16,016  (-73)
+              -> placed 8,078 -> 8,110 (+32), LUT4 7,065 -> 7,127 (+62)
+        real, 16-bit word, absolute write    16,089 -> 16,014  (-75)
+              -> placed 8,078 -> 8,064 (-14), LUT4 7,065 -> 7,086 (+21),
+                 carries 1,690 -> 1,667 (-23), 13 -> 14 EBR
+      **-75 structural cells map to +21 LUT4s.** The reason generalises: the
+      pph comparator fabric is SHARED across many consumers - the record-load
+      `case (pph)`, `s_stw`, `pph == PWORK+26`, `pph == PLAST` - so peeling
+      individual consumers off it removes terms without retiring the decode,
+      and abc9 re-covers what is left worse than it covered the whole. A -14
+      placed delta is inside the +/-60 mapping-noise band, so nothing is even
+      established, and it costs one of the blocks R.27 banked.
+      **The condition under which this could pay: move EVERY pph-derived
+      decode at once**, the 18-arm record-load case included, so the fabric
+      actually stops existing. That needs a load-slot field the 16-bit word
+      has no room for, hence two blocks (13 -> 15) - still inside this
+      change's EBR ceiling, and the only version worth measuring next.
