@@ -544,3 +544,28 @@
       Celeste 0/10/20/30/40 final gate all pass. The rejected 83-phase retime
       and blanket nine-iteration sequencer remap first diverged at 21.246 s
       and 42.493 s respectively despite passing the narrower gates.
+- [x] R.26 Multiplier alignment unification: fix the accumulator boundary at 12
+      for every request so the mode names an iteration count and nothing else.
+      An N-step product then lands `|A| * B << (12 - N)`; each call site's
+      count is fixed, so its consumer's offset is a constant and the
+      compensation is wiring. The 22-bit accumulator-read mux, the 34-bit
+      re-pack mux and the `m_mode` register retire, and the three result ports
+      (`m_res`/`m_res_wide`/`m_res12` - 32, 34 and 28 bits of one register)
+      collapse to one 34-bit view. `tools/psg_mul_model.py` proves the landing
+      law across the full |A| sweep for all five live iteration counts, proves
+      no landing overflows the 34-bit register, and now names all five consume
+      offsets so a later edit cannot get one silently wrong. Fingerprint
+      `0dde4052c511`: 8,138 -> 8,017 placed LC (-121), 19 EBR unchanged; Yosys
+      maps 7,009 LUT4, 1,687 carries and 1,547 flops (-133/+10/-2), and the
+      pre-mapping census moves 16,235 -> 16,089. No schedule moves:
+      `make test-psg` remains at 714/1,275 sample and 3,555/7,654 tick clocks
+      with zero late flips, the frozen matrix is 59/59 byte-exact against
+      PICO-8 and byte-identical against the anchor, and all five Celeste entry
+      points render byte-identically to R.25's WAVs. Two experiments refuted in
+      the same pass, both by the same mechanism: narrowing `mul_start_a` 25 ->
+      22 bits is exactly 0 cells (yosys already prunes bits no consumer reads,
+      so a bound on a POSITION is not an invisible bound), and sharing the two
+      comb networks is 0 cells (the comb is the identity at REVERB=0 and yosys
+      already folds it - the -158 a constant ablation reported was the
+      downstream blend subtract collapsing). **Ablate to the proposed
+      replacement, never to a constant.**

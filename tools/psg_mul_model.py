@@ -5,9 +5,12 @@ The sample walk is scheduled tightly around the multiply service:
 request-to-consume slack is zero at every call site
 (tools/psg_viz.py measures this). A narrower mode makes a product ready
 earlier, but the fixed control-store phases still elapse until a separate
-retiming moves the dependent actions. The mode also selects the accumulator
-SLICE as well as the iteration count, so "the operand fits in 8 bits" does not
-by itself mean mode 0 returns the same number.
+retiming moves the dependent actions. The service has ONE accumulator
+boundary, so a mode selects only how many iterations run - and an N-iteration
+request therefore lands the exact product shifted LEFT by (12 - N). Every call
+site has a fixed N, so its consumer compensates with a constant slice offset;
+"the operand fits in 8 bits" is exactly the condition for mode 0 to be safe,
+and the position is the caller's business.
 
 This answers that question without touching the RTL:
 
@@ -27,10 +30,10 @@ MULSVC_SV = os.path.join(ROOT, "rtl", "psg_mulsvc.sv")
 
 A_BITS = 21                       # m_a, per the module's own width comment
 # The service's stated ceiling on |A|: "the widest |A| any arm supplies is
-# base_inc, whose pitch-table ceiling is 0x1CE0 << 8". Beyond it a 12-bit B
-# can push the product past 33 bits, which m_res (32) cannot hold - m_res_wide
-# (34) can. Testing above the ceiling reports an overflow the design never
-# reaches; ignoring the distinction hides one it might.
+# base_inc, whose pitch-table ceiling is 0x1CE0 << 8". It is what bounds every
+# landing below 2^33, so a shifted product still fits the 34-bit register.
+# Testing above the ceiling reports an overflow the design never reaches;
+# ignoring the distinction hides one it might.
 A_CEILING = 0x1CE0 << 8           # 1,892,352
 B_BITS = 12                       # mul_start_b
 P_BITS = 34                       # m_p
@@ -71,25 +74,35 @@ def parse_iters(path=MULSVC_SV):
     return dict(sorted(out.items()))
 
 
-# The accumulator slice and the re-pack shift, both keyed by mode. These are
-# the halves people forget: changing the mode moves BOTH, which is why a
-# narrower mode is not obviously equivalent even for an operand that fits.
-SHIFT = {0: 8, 1: 10, 2: 12, 3: 9}
+# The one accumulator boundary, shared by every request. It used to move with
+# the iteration count so that every product landed at bit 0; that alignment was
+# the same shift-add spelled four times in hardware. Fixing it here is what
+# makes a product's POSITION a function of its iteration count.
+BOUNDARY = 12
+
+
+def parse_boundary(path=MULSVC_SV):
+    """The accumulator boundary, READ from the RTL's m_acc slice."""
+    txt = open(path).read()
+    m = re.search(r"m_acc\s*=\s*m_p\[33:(\d+)\]", txt)
+    if not m:
+        raise SystemExit(f"{path}: m_acc is no longer one fixed slice of m_p")
+    return int(m.group(1))
 
 
 def service_shape(b, mode, short=False):
-    """Return the live iteration count and accumulator shift for one request."""
-    if short:
-        return 6, SHIFT[mode]
-    return parse_iters()[mode], SHIFT[mode]
+    """Return the live iteration count and accumulator boundary for a request."""
+    return (6 if short else parse_iters()[mode]), parse_boundary()
 
 
 def mulsvc(a, b, mode, iters=None, shift=None, short=False):
-    """One complete service transaction. Returns (m_res, m_res_wide, m_res12).
+    """One complete service transaction. Returns m_res, the whole 34-bit m_p.
 
     Mirrors the always_ff exactly: strip the sign into m_a, load m_p with B,
     then for each iteration add m_a into the accumulator slice when m_p[0] is
-    set and shift the whole register right by one.
+    set and shift the whole register right by one. There is one result port
+    because there is one register - the former m_res/m_res_wide/m_res12 were
+    three widths of the same bits.
     """
     live_it, live_sh = service_shape(b, mode, short)
     it = iters if iters is not None else live_it
@@ -100,7 +113,13 @@ def mulsvc(a, b, mode, iters=None, shift=None, short=False):
         acc = (m_p >> sh) & mask(22)
         s = (acc + (m_a if m_p & 1 else 0)) & mask(23)
         m_p = ((s << (sh - 1)) | ((m_p >> 1) & mask(sh - 1))) & mask(P_BITS)
-    return m_p & mask(32), m_p & mask(P_BITS), m_p & mask(28)
+    return m_p
+
+
+def landing(mode, short=False):
+    """How far left an N-iteration product lands: the consumer's slice offset."""
+    it, sh = service_shape(0, mode, short)
+    return sh - it
 
 
 def sweep(bits=A_BITS, dense=4096, extra=20000):
@@ -115,17 +134,20 @@ def sweep(bits=A_BITS, dense=4096, extra=20000):
     return sorted(set(v & top for v in vals))
 
 
-def equivalent(b, mode_a, mode_b, iters_b=None, shift_b=None, values=None):
-    """Do two configurations agree on ALL THREE result ports, everywhere?
+def equivalent(b, mode_a, mode_b, values=None):
+    """Do two configurations carry the SAME VALUE, at their own landings?
 
-    All three, because the consume steps read different slices - CAP_W17 takes
-    m_res12[26:10] while CAP_W63 takes m_res_wide[24:0]. Checking only m_res
-    would pass a change that corrupts a consumer.
+    Position is no longer part of the answer: each mode lands its product
+    (12 - iterations) places left, and each call site's consumer slices at its
+    own constant offset. So the question a mode change has to survive is
+    whether the bits agree once both are shifted back.
     """
     vals = values if values is not None else sweep()
     bad = []
     for a in vals:
-        if mulsvc(a, b, mode_a) != mulsvc(a, b, mode_b, iters_b, shift_b):
+        pa = mulsvc(a, b, mode_a) >> landing(mode_a)
+        pb = mulsvc(a, b, mode_b) >> landing(mode_b)
+        if pa != pb:
             bad.append(a)
             if len(bad) > 8:
                 break
@@ -139,59 +161,66 @@ def check(name, ok, detail=""):
 
 def gate():
     iters = parse_iters()
+    boundary = parse_boundary()
     print("psg_mulsvc iteration counts (read from RTL): "
           + ", ".join(f"mode {k}={v}" for k, v in iters.items())
           + "; explicit short=6")
-    for mode, it in iters.items():
-        if SHIFT.get(mode) != it:
-            print(f"  note: mode {mode} loads {it} iterations but this model "
-                  f"shifts by {SHIFT.get(mode)} — the two must match")
+    print(f"one accumulator boundary (read from RTL): m_p[33:{boundary}] — a "
+          f"request of N iterations lands its product {boundary} - N places "
+          "left")
     vals = sweep()
     ok = True
 
-    # 1. The model IS a multiplier - but only for operands that FIT the mode.
+    # 1. THE LANDING LAW, which is what every consume slice in psg_walk and
+    #    psg_seq is wired against: an N-iteration request returns exactly
+    #    |A| * B * 2^(boundary - N). One boundary means position is a pure
+    #    function of the iteration count, so each site's compensation is a
+    #    constant - and getting it wrong is a shifted, not a corrupted, value.
     #    A mode consumes `iters` bits of B; anything wider has its top bits
-    #    sitting in the accumulator slice at load time and is corrupted before
-    #    the first iteration. That is the property the rest of this gate is
-    #    about, so the exactness check must respect it rather than trip on it.
-    bad_exact, bad_wide = [], []
-    for mode, it in iters.items():
-        for b in (0, 1, 3, 171, 255, 341, 1023, (1 << it) - 1):
-            if b.bit_length() > it:
+    #    still sitting above the multiplier field at load time and is
+    #    corrupted before the first iteration. That contract is unchanged.
+    bad_land = []
+    for mode, it in list(iters.items()) + [("short", 6)]:
+        short = mode == "short"
+        n = 6 if short else it
+        md = 1 if short else mode
+        for b in (0, 1, 3, 63, 171, 255, 341, 1023, (1 << n) - 1):
+            if b.bit_length() > n:
                 continue
-            for a in (0, 1, 777, 12345, 100000, (1 << 17) - 1,
-                      A_CEILING, (1 << A_BITS) - 1):
-                want = abs(a) * b
-                res, wide, _ = mulsvc(a, b, mode)
-                if wide != want:
-                    bad_wide.append((mode, a, b))
-                # m_res is 32 bits. The widest |A| times the widest B needs 33
-                # and would fail here - but the RTL notes products "peak at 22
-                # bits real, 33 structural": no arm pairs a 21-bit A with a
-                # 12-bit B. Asserting that corner would be asserting something
-                # the design never asks for, so the claim is scoped to
-                # products that fit the port.
-                if want < (1 << 32) and res != want:
-                    bad_exact.append((mode, a, b))
-    ok &= check("m_res is exact for every product that fits its 32 bits",
-                not bad_exact,
-                "wider products are the structural corner, carried by "
-                "m_res_wide" if not bad_exact else f"{bad_exact[:3]}")
-    ok &= check("m_res_wide is exact across the full 21-bit |A| range",
-                not bad_wide,
-                "the 34-bit port holds products m_res would truncate"
-                if not bad_wide else f"{bad_wide[:3]}")
+            for a in vals:
+                want = (abs(a) * b) << (boundary - n)
+                if mulsvc(a, b, md, short=short) != want:
+                    bad_land.append((mode, a, b))
+                    break
+            if bad_land:
+                break
+        if bad_land:
+            break
+    ok &= check("every request returns |A|*B << (12 - iterations)",
+                not bad_land,
+                f"{len(vals)} values of |A| per multiplier, all five "
+                "iteration counts" if not bad_land else f"{bad_land[:3]}")
 
-    # 1b. And the converse: a B wider than the mode is corrupted. This is the
+    # 1a. And it fits: the widest landing is the narrowest request, so the
+    #     shift never pushes a product out of the 34-bit register.
+    bad_fit = [(mode, it) for mode, it in list(iters.items()) + [("short", 6)]
+               if (A_CEILING * ((1 << (6 if mode == "short" else it)) - 1)
+                   << (boundary - (6 if mode == "short" else it))
+                   ) >= (1 << P_BITS)]
+    ok &= check("no landing overflows the 34-bit accumulator", not bad_fit,
+                "|A| <= 0x1CE0<<8 and B < 2^N bound every shifted product "
+                "by 2^33" if not bad_fit else f"{bad_fit}")
+
+    # 1b. The converse: a B wider than the mode is corrupted. This is the
     #     trap the gate exists to catch, so assert it happens.
     ok &= check("a B wider than its mode is corrupted (the trap)",
-                mulsvc(7, 341, 0)[0] != 7 * 341,
+                mulsvc(7, 341, 0) != (7 * 341) << landing(0),
                 "341 cannot be evaluated by mode 0's byte ceiling")
 
     # 2. Mode 0 remains the original eight-cycle path for byte operands.
     bad, n = equivalent(255, 1, 0, values=vals)
     ok &= check("8-bit sequencer B at mode 0 == mode 1",
-                not bad, f"{n} values of |A|, all three ports")
+                not bad, f"{n} values of |A|, compared at their landings")
 
     # 2b. The reciprocal /3 limb program does not need a second product at
     # all. It currently evaluates x*341 and x*171, then forms
@@ -223,22 +252,24 @@ def gate():
                 bool(bad341), f"first divergence at |A|={bad341[0]}"
                 if bad341 else "no divergence — 341 would fit mode 0?!")
 
-    # 4. The spare wmul_mode encoding: a 9-iteration mode would serve 341.
+    # 4. The spare wmul_mode encoding: a 9-iteration mode serves 341.
     bad9, n9 = equivalent(341, 1, 3, values=vals)
     ok &= check("341 at mode 3 (9 iterations) == mode 1", not bad9,
                 f"{n9} values — exact nine-bit service mode")
 
-    # 5. A short request runs six iterations without changing mode 1's ten-bit
-    # alignment, so its exact product is shifted left by four.
-    bad6 = []
-    for a in vals:
-        short = mulsvc(a, 63, 1, short=True)
-        exact = abs(a) * 63
-        if short[1] != exact << 4:
-            bad6.append(a)
-            break
-    ok &= check("short six-step product == exact product << 4", not bad6,
-                f"{len(vals)} values of |A|")
+    # 5. The walk's own consume offsets, spelled as the RTL spells them. These
+    #    are the constants a future edit is most likely to get wrong, so name
+    #    them rather than leaving them implicit in the landing law.
+    sites = [("wavetable lerp  m_res[20:2]", 1, False, 2),
+             ("G pass          m_res[26:10]", 2, False, 0),
+             ("x*341 limb      m_res[28:3]", 3, False, 3),
+             ("K_FX byte       m_res[27:4]", 0, False, 4),
+             ("blend / T_NL    m_res[28:6]", 1, True, 6)]
+    bad_sites = [name for name, md, sh, off in sites if landing(md, sh) != off]
+    ok &= check("every named consume offset matches its launch",
+                not bad_sites,
+                "; ".join(n for n, _, _, _ in sites) if not bad_sites
+                else f"{bad_sites}")
 
     # 6. Every constant the walk actually multiplies by, checked against the
     #    narrowest EXISTING mode that fits it.
@@ -257,16 +288,18 @@ def gate():
 
 def explain(value):
     iters = parse_iters()
+    boundary = parse_boundary()
     print(f"{value} = 0b{value:b} — {value.bit_length()} significant bits\n")
-    print(f"  {'mode':<6}{'iters':<7}{'shift':<7}{'100000 x B':<14}{'exact?'}")
-    for mode, it in iters.items():
+    print(f"  {'mode':<6}{'iters':<7}{'lands<<':<9}{'100000 x B':<14}{'exact?'}")
+    for mode in iters:
         it, sh = service_shape(value, mode)
-        got = mulsvc(100000, value, mode)[0]
-        print(f"  {mode:<6}{it:<7}{sh:<7}{got:<14}"
+        got = mulsvc(100000, value, mode) >> (sh - it)
+        print(f"  {mode:<6}{it:<7}{sh - it:<9}{got:<14}"
               f"{'yes' if got == 100000 * value else 'NO — truncated'}")
-    print("\nA mode is safe for B when its iteration count is at least B's bit "
-          "length:\n  the loop consumes one bit of B per iteration, and the "
-          "shift keeps the product in place.")
+    print(f"\nA mode is safe for B when its iteration count is at least B's "
+          f"bit length:\n  the loop consumes one bit of B per iteration. The "
+          f"product then lands\n  ({boundary} - iterations) places left, and "
+          f"its consumer slices there.")
 
 
 def main():

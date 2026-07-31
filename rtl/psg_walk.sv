@@ -39,9 +39,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
                   output logic [PSG_VADR-1:0] wlk_wa,
                   output logic [15:0] wlk_wd,
                   // The multiply service: this module's request bundle
-                  input  logic [31:0] m_res,
-                  input  logic [33:0] m_res_wide,
-                  input  logic [27:0] m_res12,
+                  // One 34-bit view of the product accumulator. Bit k is
+                  // bit k of the exact product shifted left by (12 - N) for
+                  // an N-iteration request, so each consume slice below is
+                  // offset by its own call site's constant.
+                  input  logic [33:0] m_res,
                   input  logic        m_busy,
                   output logic        wmul_start,
                   output logic signed [24:0] wmul_a,
@@ -436,8 +438,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   wire signed [8:0] wt_qd =
       $signed({wt_q1[7], wt_q1}) - $signed(smp_b[8:0]);
   wire signed [19:0] wt_prod =
-      mxs_new ? -$signed({1'b0, m_res_wide[18:0]})
-              :  $signed({1'b0, m_res_wide[18:0]});
+      mxs_new ? -$signed({1'b0, m_res[20:2]})
+              :  $signed({1'b0, m_res[20:2]});
   // The p-side consume (+15) bases on smp_a's table byte; the q-side
   // (+26) must base on smp_b's - by then smp_a already holds the p
   // RESULT, which is what a shared base compounded into garbage.
@@ -633,16 +635,16 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // the noise bypass (>>11) is gz_s1_r >> 1: floor of floor.
   logic signed [16:0] mx_new, mx_old, mx_prod;
   // tz(G*z/3072): ONE 12-bit-B service pass forms the whole product
-  // magnitude (m_res12), then the /3 reciprocal uses
+  // magnitude (m_res[27:0]), then the /3 reciprocal uses
   // 174763 = 341*2^9 + 171. Only the x*341 limb needs the shared service:
   // 171*x = (341*x + x)/2 exactly, and x*341 remains in m_p until the
   // consume phase. This retires three redundant eight-iteration launches
   // and the 25-bit register that used to hold the first product.
   wire [25:0] gz_171_twice =
-      m_res_wide[25:0] + {9'b0, gz_s1_r};
+      m_res[28:3] + {9'b0, gz_s1_r};
   wire [24:0] gz_171 = gz_171_twice[25:1];
   wire [33:0] gz_q3acc =
-      {m_res_wide[24:0], 9'b0} + {9'b0, gz_171};
+      {m_res[27:3], 9'b0} + {9'b0, gz_171};
   // Noise is back on the documented /2048: the walk above carries the binary's
   // k = 80 explicitly, so the scaling no longer has to absorb a fitted constant.
   wire [16:0] gz_scaled = (!s_snd_wt && s_snd_wave == 3'd6)
@@ -700,9 +702,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   wire signed [16:0] filt_y = (s_ch_damp != 2'd0) ? dmp_y : mx_prod;
   // The shared service forms |new-old| * blend_pos; dividing by 64 is a
   // wiring shift and the saved sign reproduces truncation toward zero.
-  // The six-step mode-1 result retains that mode's ten-bit alignment, so it
-  // is the exact blend product shifted left by four.
-  wire [22:0] bl_res = m_res[26:4];
+  // The six-step request lands six places left of the exact product, so the
+  // slice starts at bit 6.
+  wire [22:0] bl_res = m_res[28:6];
 
   // One physical request mux and one sequential write site make the effect
   // multiplier a PSG-wide service. A sample walk freezes the tick sequencer;
@@ -749,12 +751,13 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               wmul_mode = 2'd2;
             end
           end
-          // /3 reciprocal limb: m_res12 is the whole G*z magnitude.
+          // /3 reciprocal limb: the twelve-iteration G pass lands in place,
+          // so m_res[27:0] is the whole G*z magnitude.
           // CAP_W17 and CAP_W40 launch the same retained x*341 operation
           // for the new and old voice respectively.
           CAP_W17: if (!s_snd_wt) begin
             wmul_start   = 1'b1;
-            wmul_a = {8'b0, m_res12[26:10]};
+            wmul_a = {8'b0, m_res[26:10]};
             wmul_b = 12'd341;
             wmul_mode = 2'd3;
           end
@@ -779,7 +782,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           end
           CAP_W40: begin
             wmul_start   = 1'b1;
-            wmul_a = {8'b0, m_res12[26:10]};
+            wmul_a = {8'b0, m_res[26:10]};
             wmul_b = 12'd341;
             wmul_mode = 2'd3;
           end
@@ -1546,7 +1549,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             // limb and the >>11 for the noise bypass while the first
             // limb launches.
             if (!s_snd_wt) begin
-              gz_s1_r <= m_res12[26:10];
+              gz_s1_r <= m_res[26:10];
               mxs_old <= z_old_sel[17];
             end
           end
@@ -1566,7 +1569,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           CAP_W40: begin
             // Both profiles have just completed a G pass and launch the
             // retained x*341 /3 limb from the captured magnitude.
-            gz_s1_r <= m_res12[26:10];
+            gz_s1_r <= m_res[26:10];
           end
           CAP_W51: begin
             if (s_snd_wt)

@@ -1076,6 +1076,74 @@ is 59/59 unchanged against the frozen matrix. The provenance-bound final gate
 passes Celeste entry points 0, 10, 20, 30 and 40 from source fingerprint
 `a11f43ccbe2f`.
 
+### 20. One accumulator boundary: stop spelling the multiplier four times
+
+The service's mode moved the accumulator boundary WITH the iteration count so
+that every product landed at bit 0 no matter how many steps it took. That made
+one shift-add engine into four: a 22-bit four-way mux selecting `m_acc`, a
+34-bit four-way mux re-packing `m_p`, and the `m_mode` register that drove
+both. None of it is arithmetic — it is alignment.
+
+Fixing the boundary at 12 for every request makes an N-step product land N
+steps short of bottom, so its value is the exact product shifted LEFT by
+(12 - N):
+
+```
+m_p after N iterations = |A| * B * 2^(12-N)      (N = 6, 8, 9, 10, 12)
+```
+
+`tools/psg_mul_model.py` proves that over the whole |A| sweep for all five
+live iteration counts, and proves the shift never overflows: a mode-N request
+contracts B < 2^N and |A| <= 0x1CE0 << 8, so every landing is below 2^33.
+`mul_start_short` was already this idea in miniature — six steps at mode 1's
+boundary, landing four bits left, with two consumers compensating in wiring —
+and this generalises it to every mode.
+
+Every call site has a FIXED iteration count, so its consumer's offset is a
+constant and the compensation is wiring, not a shifter. The five offsets are
+now named in the gate so a future edit cannot get them silently wrong:
+wavetable lerp `m_res[20:2]`, the twelve-step G pass `m_res[26:10]`
+(unmoved), the `x*341` limb `m_res[28:3]`, the sequencer's eight-step effect
+products `m_res[27:4]` / `m_res[31:11]` / `m_res[10:4]`, and the six-step
+blend and pattern-length products `m_res[28:6]` / `m_res[18:6]`. The single
+ten-step sequencer product, the music gain at xs 10, takes `m_res[21:10]`.
+Widths and truncation points are unchanged at every one of them, so every
+consumed value is bit-identical — this is a re-positioning, not a re-rounding.
+The three result ports collapse with the alignment: `m_res`, `m_res_wide` and
+`m_res12` were 32, 34 and 28 bits of the same register, and picking the wrong
+one is the bug class this file keeps recording. There is now one 34-bit view.
+
+At RTL fingerprint `0dde4052c511`, Yosys maps 7,009 LUT4s, 1,687 carries,
+1,547 flip-flops and 19 EBRs; nextpnr attempts 8,017 placed cells. Relative to
+section 19 that is -133 LUT4s, +10 carries, -2 flip-flops, no EBR change and
+-121 placed cells. The pre-mapping census moves 16,235 -> 16,089.
+
+Nothing about the schedule moves: iteration counts, `m_busy` and every request
+and consume phase are unchanged, so `make test-psg` stays at 714/1,275 sample
+clocks and 3,555/7,654 tick-preparation clocks with zero late flips. The
+frozen matrix is 59/59 byte-exact against PICO-8 and byte-identical against
+the anchor, and all five Celeste entry points (0, 10, 20, 30, 40) render
+byte-identically to their section-19 WAVs.
+
+Two neighbouring experiments were measured and REFUTED in the same pass, and
+both refute by the same mechanism:
+
+- Narrowing `mul_start_a` from 25 to 22 bits. The service reads only bit 24
+  and bits 20:0, and no arm exceeds |A| < 2^21, so three bits of every operand
+  arm are dead — and removing them is **exactly 0 cells**. `synth_ice40`
+  flattens before optimising, so bits no consumer reads are already pruned
+  through the module port. Bit-width "invisible bounds" are only worth
+  spelling when the bound is on a VALUE; a bound on a POSITION is already
+  visible to synthesis.
+- Sharing the two comb networks. Ablating `cmb_old` to a constant priced it at
+  -158 cells, but ablating it to its actual replacement — the identity, which
+  is what `tz((2x + h)/2)` is at h = 0, verified over all 131,072 17-bit
+  values — is **0 cells**. Yosys already folds both combs away at REVERB=0.
+  The -158 was the downstream `blend_diff` subtract and `bl_acc` term
+  collapsing, which no sharing can remove. **Ablate to the proposed
+  replacement, never to zero**: a constant ablation prices the cone plus
+  everything it feeds, and reports a saving that cannot be realised.
+
 ## Risks / Trade-offs
 
 - **[Single-store contention]** Tick and sample work can request the voice EBR

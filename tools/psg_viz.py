@@ -287,9 +287,33 @@ def resolve_pph(key, params):
         return None
 
 
-# CAP_W75 explicitly requests six iterations while retaining mode 1's
-# accumulator alignment.
-MUL_ITERS = {0: 8, 1: 10, 2: 12, 3: 9}
+def load_mul_iters():
+    """mode -> iterations, and the explicit short count, READ from the RTL.
+
+    This table was transcribed by hand and went stale the moment psg_mulsvc
+    gained a 9-iteration mode 3 and a six-step `mul_start_short`: every
+    latency the tool reported was then measured against a service that no
+    longer existed. tools/psg_mul_model.py already parses the m_cnt load, so
+    reuse it and let the RTL be the only source.
+    """
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    try:
+        import psg_mul_model as M
+        iters = {int(k): int(v) for k, v in M.parse_iters().items()}
+        short = int(getattr(M, "SHORT_ITERS", 6))
+    except Exception as e:
+        print(f"warning: could not read psg_mulsvc iteration counts ({e}); "
+              "latency figures below are NOT from the current RTL",
+              file=sys.stderr)
+        return {0: 8, 1: 10, 2: 12}, 6
+    txt = "\n".join(read(os.path.join(ROOT, "rtl", "psg_mulsvc.sv")))
+    m = re.search(r"mul_start_short\s*\?\s*4'd(\d+)", txt)
+    if m:
+        short = int(m.group(1))
+    return iters, short
+
+
+MUL_ITERS, SHORT_ITERS = load_mul_iters()
 
 # ----------------------------------------------------------------------
 # Per-arm dependency audit (non-wavetable profile), done by reading the RTL.
@@ -308,7 +332,7 @@ MUL_DEPS = {
          "why": "z_new_c = smp_a + smp_b, both written from z_eval (the wave "
                 "cone) at CAP_W1/W3/W4; g_live comes from s_eff_a in the "
                 "record. Neither is a product — this is a chain head."},
-    "CAP_W17": {"after": "CAP_W4", "a": "m_res12[26:10]", "b": "341",
+    "CAP_W17": {"after": "CAP_W4", "a": "m_res[26:10]", "b": "341",
          "why": "reads the service output directly: arm 1's product, hi limb."},
     "CAP_W27": {"after": None, "a": "z_old_sel", "b": "s_old_G",
          "why": "z_old_sel = z_old_c = smp_b, holding the old-state wave "
@@ -316,7 +340,7 @@ MUL_DEPS = {
                 "record word. CAP_W26's product-derived write to smp_b is "
                 "guarded by s_snd_wt and does not apply here. Independent of "
                 "arms 1/3/5 — a second chain head."},
-    "CAP_W40": {"after": "CAP_W27", "a": "m_res12[26:10]", "b": "341",
+    "CAP_W40": {"after": "CAP_W27", "a": "m_res[26:10]", "b": "341",
          "why": "reads the old G*z product directly and launches its hi limb."},
     "CAP_W75": {"after": "both", "a": "blend_diff", "b": "bl_cnt[5:0]",
          "why": "blend_diff = cmb_new - cmb_old, and those descend from mx_new "
@@ -328,9 +352,9 @@ def product_consumers(lines, cap_arms):
     """Which capture steps read a multiply result, directly or through a wire.
 
     `CAP_W51` never names m_res - it reads `gz_old_scaled`, which is a wire
-    over `m_res_wide`. Scanning for the port alone therefore misses real
-    consumers and makes a tight schedule look slack, so the search runs over
-    the combinational closure of the three result ports instead.
+    over it. Scanning for the port alone therefore misses real consumers and
+    makes a tight schedule look slack, so the search runs over the
+    combinational closure of the result port instead.
     """
     txt = "\n".join(lines)
     defs = {}
@@ -338,7 +362,7 @@ def product_consumers(lines, cap_arms):
                          r"(?:\[[^\]]*\]\s*)?([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.*?);\s*$",
                          txt, re.M | re.S):
         defs.setdefault(m.group(1), []).append(m.group(2))
-    closure = {"m_res", "m_res_wide", "m_res12"}
+    closure = {"m_res"}
     for _ in range(len(defs) + 1):
         grew = False
         for name, rhs in defs.items():
@@ -1042,7 +1066,7 @@ def attribute_ready_products(phases, mul_arms):
         arm = mul_arms.get(p.get("mul"))
         if not p.get("mul") or not arm:
             continue
-        arm_iters = {6} if arm["short"] else {MUL_ITERS[m] for m in arm["modes"]}
+        arm_iters = {SHORT_ITERS} if arm["short"] else {MUL_ITERS[m] for m in arm["modes"]}
         for iters in sorted(arm_iters):
             ready = p["pph"] + iters + 1
             nxt = next((c for c in consumers if c >= ready), None)
@@ -1104,7 +1128,7 @@ def analyse(model):
         arm = walk["mul_arms"].get(str(p["mul"])) or walk["mul_arms"].get(p["mul"])
         if not p["mul"] or not arm:
             continue
-        arm_iters = {6} if arm["short"] else {MUL_ITERS[m] for m in arm["modes"]}
+        arm_iters = {SHORT_ITERS} if arm["short"] else {MUL_ITERS[m] for m in arm["modes"]}
         for iters in sorted(arm_iters):
             ready = p["pph"] + iters + 1
             nxt = [c for c in cons if c >= ready]
@@ -1135,7 +1159,7 @@ def analyse(model):
                 "iterating — they are not reschedulable, and shortening them "
                 "means a wider multiplier, not a tighter timetable.\n\n"
                 "Consumers are found over the combinational closure of "
-                "m_res/m_res12/m_res_wide, because steps like CAP_W51 read the "
+                "m_res, because steps like CAP_W51 read the "
                 "product through a wire (gz_old_scaled) and a direct-name scan "
                 "would score a tight schedule as slack.",
         "table": {"cols": ["req", "arm", "iters", "ready", "consumed", "slack"],
@@ -1167,8 +1191,8 @@ def analyse(model):
             mode = (arm["modes"][expr_i]
                     if len(arm["b_exprs"]) == len(arm["modes"])
                     else max(arm["modes"], key=MUL_ITERS.get))
-            charged = 6 if arm["short"] else MUL_ITERS[mode]
-            fits = [it for it in sorted({6, *MUL_ITERS.values()})
+            charged = SHORT_ITERS if arm["short"] else MUL_ITERS[mode]
+            fits = [it for it in sorted({SHORT_ITERS, *MUL_ITERS.values()})
                     if bits is not None and it >= bits]
             best = fits[0] if fits else None
             excess = (charged - best) if best is not None else None
@@ -1188,11 +1212,19 @@ def analyse(model):
     used_modes = sorted({
         mode for arm in walk["mul_arms"].values() for mode in arm["modes"]
     })
+    # "3 of 4" would read as headroom that no longer exists: mode 3 is now
+    # defined. Report the two different facts separately - how many encodings
+    # the SERVICE defines, and which of them the walk actually issues.
     measure = {
-        "iteration ladder": ("short = 6, " + ", ".join(
-            f"mode {k} = {v}" for k, v in MUL_ITERS.items())),
-        "mode encodings used": f"{len(used_modes)} of 4 "
-                               "(wmul_mode is 2 bits)",
+        "iteration ladder": (f"short = {SHORT_ITERS}, " + ", ".join(
+            f"mode {k} = {v}" for k, v in sorted(MUL_ITERS.items()))),
+        "encodings defined by psg_mulsvc":
+            f"{len(MUL_ITERS)} of 4 (wmul_mode is 2 bits)"
+            + ("" if len(MUL_ITERS) < 4 else " — none spare"),
+        "issued by the walk": ", ".join(f"mode {m}" for m in used_modes)
+                              + (", plus the explicit short request"
+                                 if any(a["short"] for a in
+                                        walk["mul_arms"].values()) else ""),
     }
     for val in sorted({r[1] for r in provable}):
         sites = [r for r in provable if r[1] == val]
@@ -1210,7 +1242,7 @@ def analyse(model):
     # profile's requests form a serial chain, so the sum of narrower-mode
     # deltas bounds how much a correspondingly compressed chain could save.
     # Report it as potential, never as a saving caused by the mode change.
-    ladder = sorted({6, *MUL_ITERS.values()})
+    ladder = sorted({SHORT_ITERS, *MUL_ITERS.values()})
     for prof in walk["profiles"]:
         delta = 0
         for p in S["phases"]:
@@ -1226,7 +1258,7 @@ def analyse(model):
                 mode = (arm["modes"][expr_i]
                         if len(arm["b_exprs"]) == len(arm["modes"])
                         else max(arm["modes"], key=MUL_ITERS.get))
-                charged = 6 if arm["short"] else MUL_ITERS[mode]
+                charged = SHORT_ITERS if arm["short"] else MUL_ITERS[mode]
                 fits = [it for it in ladder if it >= bits]
                 if fits and fits[0] < charged:
                     delta += fits[0] - charged
@@ -1281,12 +1313,42 @@ def analyse(model):
     # longest path. Three numbers, all from the same graph: one service (what
     # runs today), one per chain, and unlimited.
     S = walk["schedules"]["hw"]
+    # MUL_DEPS is hand-written, and the RTL moves. When the service's arm set
+    # changes underneath it the graph silently describes a machine that no
+    # longer exists - and a longest path over a stale graph still returns a
+    # confident number. Compare the two and refuse to report rather than
+    # publish one. This is not hypothetical: the x*171 limb passes were
+    # retired mid-campaign and the audit outlived them.
+    # Scoped to the profile the audit is written for. MUL_DEPS documents the
+    # NON-wavetable path, so a wavetable-only arm (CAP_W15's lerp) is out of
+    # scope rather than missing - but anything that CAN fire on this profile
+    # and is unaudited is a genuine hole.
+    nowt_true = ("", "!s_snd_wt", "bl_cnt != 7'd64")
+    launched = {p["mul"] for p in S["phases"] if p["mul"]
+                and walk["mul_arms"].get(p["mul"], {}).get("cond") in nowt_true}
+    audited = set(MUL_DEPS)
+    if launched != audited:
+        gone = sorted(audited - launched)
+        fresh = sorted(launched - audited)
+        detail = []
+        if gone:
+            detail.append("audited but no longer launching: " + ", ".join(gone))
+        if fresh:
+            detail.append("launching but never audited: " + ", ".join(fresh))
+        print("warning: the multiply dependency audit no longer matches the "
+              "RTL — " + "; ".join(detail)
+              + ". The chain-depth finding is withheld until it is redone.",
+              file=sys.stderr)
+        chain_finding = None
+    else:
+        chain_finding = True
+
     iters_of = {}
     for p in S["phases"]:
         arm = walk["mul_arms"].get(p["mul"])
         if p["mul"] and arm and p["mul"] in MUL_DEPS:
             nowt = [c for c, mode in arm["branches"] if c == "!s_snd_wt"]
-            iters_of[p["mul"]] = 6 if arm["short"] else (
+            iters_of[p["mul"]] = SHORT_ITERS if arm["short"] else (
                 MUL_ITERS[dict(arm["branches"])["!s_snd_wt"]] if nowt
                 else max(MUL_ITERS[m] for m in arm["modes"]))
 
@@ -1303,7 +1365,7 @@ def analyse(model):
     # The former x*171 siblings are reconstructed exactly from x*341 + x.
     unlimited = (max(cost('CAP_W4') + cost('CAP_W17'),
                      cost('CAP_W27') + cost('CAP_W40')) + cost('CAP_W75'))
-    out.append({
+    out.append({} if not chain_finding else {
         "id": "mul-deps",
         "area": "walk",
         "title": f"the multiply chain's data depth is {unlimited} clocks; one "
@@ -1758,6 +1820,9 @@ def main():
             continue                       # the reset entry, by construction
         print(f"warning: {SEQ_SV}:{ln}: `{src}` is outside the FSM case block "
               "and is missing from the graph", file=sys.stderr)
+
+    # A withheld finding is an empty dict; drop it rather than render a blank.
+    model["findings"] = [f for f in model["findings"] if f.get("id")]
 
     if args.json:
         json.dump(model, sys.stdout, indent=1)

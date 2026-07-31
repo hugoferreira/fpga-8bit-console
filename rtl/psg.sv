@@ -190,9 +190,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // modules (u_mul, u_div). Requesters keep their request selection; these
   // are the response wires the consume steps read.
   // ------------------------------------------------------------------
-  wire  [31:0] m_res;
-  wire  [33:0] m_res_wide;
-  wire  [27:0] m_res12;
+  wire  [33:0] m_res;              // one accumulator view; see psg_mulsvc
   wire         m_busy;
 
   // The divider's request comes from the sequencer alone, so there is no
@@ -237,8 +235,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .state_q(state_q),
     .state_sample_read(state_sample_read), .wlk_ra(wlk_ra),
     .state_sample_we(state_sample_we), .wlk_wa(wlk_wa), .wlk_wd(wlk_wd),
-    .m_res(m_res), .m_res_wide(m_res_wide), .m_res12(m_res12),
-    .m_busy(m_busy),
+    .m_res(m_res), .m_busy(m_busy),
     .wmul_start(wmul_start), .wmul_a(wmul_a), .wmul_b(wmul_b),
     .wmul_mode(wmul_mode), .wmul_short(wmul_short),
     .iss_sec(iss_sec), .iss_om(iss_om), .iss_os(iss_os),
@@ -330,8 +327,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .mul_start(mul_start), .mul_start_a(mul_start_a),
     .mul_start_b(mul_start_b), .mul_start_mode(mul_start_mode),
     .mul_start_short(mul_start_short),
-    .m_res(m_res), .m_res_wide(m_res_wide), .m_res12(m_res12),
-    .m_busy(m_busy));
+    .m_res(m_res), .m_busy(m_busy));
 
   // ---- the tick sequencer --------------------------------------------
   // u_seq (rtl/psg_seq.sv) is the 120.49 Hz half: the FSM, the per-slot

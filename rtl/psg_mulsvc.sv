@@ -23,10 +23,12 @@ module psg_mulsvc (input  bit          clk,
                    input  logic signed [24:0] mul_start_a,
                    input  logic [11:0] mul_start_b,
                    input  logic [1:0]  mul_start_mode,  // 0: 8-bit B, 3: 9, 1: 10, 2: 12
-                   input  logic        mul_start_short, // six steps, retaining mode alignment
-                   output logic [31:0] m_res,
-                   output logic [33:0] m_res_wide,
-                   output logic [27:0] m_res12,
+                   input  logic        mul_start_short, // six steps
+                   // ONE view of the accumulator. The three former ports
+                   // (32/34/28 bits) were the same register sliced three ways,
+                   // and picking the wrong one is the bug class the comments
+                   // below keep warning about.
+                   output logic [33:0] m_res,
                    output logic        m_busy);
 
   // 21 bits, not 24: the widest |A| any arm supplies is base_inc, whose
@@ -34,38 +36,47 @@ module psg_mulsvc (input  bit          clk,
   // peak at 18 bits. The accumulator and product register narrow with it
   // (products peak at 22 bits real, 33 structural).
   logic [20:0] m_a;
-  // A short request keeps mode 1's existing ten-bit accumulator alignment, so
-  // its six-step result lands four bits left of its natural position. Its two
-  // explicit consumers compensate in wiring; the iterative datapath remains
-  // unchanged and no wide launch mux or in-flight state bit is required.
-  logic [33:0] m_p;                  // accumulator plus 6/8/9/10/12-bit multiplier
+  logic [33:0] m_p;                  // accumulator plus the 12-bit multiplier
   logic [3:0]  m_cnt;
-  logic [1:0]  m_mode;
   // Reset contract: m_cnt is validity/control state and resets to idle.
   // m_a/m_p are datapath: every one is overwritten by the six-op program
   // before it is observed.
-  wire  [21:0] m_acc = (m_mode == 2'd2) ? m_p[33:12]
-                     : (m_mode == 2'd1) ? m_p[31:10]
-                     : (m_mode == 2'd3) ? m_p[30:9] : m_p[29:8];
+
+  // ONE accumulator boundary for every request. The mode used to move the
+  // boundary WITH the iteration count so that each product landed at bit 0
+  // regardless of how many steps it took - which meant this engine was the
+  // same shift-add spelled four times: a 22-bit four-way mux on the read and
+  // a 34-bit four-way mux on the write-back, both pure alignment.
+  //
+  // Fixing the boundary at 12 makes an N-step product land N steps short of
+  // bottom, so its value is the exact product shifted LEFT by (12 - N):
+  //
+  //     m_p after N iterations = |A| * B * 2^(12-N)      (N = 6, 8, 9, 10, 12)
+  //
+  // proven over the whole |A| sweep by tools/psg_mul_model.py. Every call site
+  // has a fixed iteration count, so its consumer's shift is a constant and the
+  // compensation is WIRING - the slices below moved, no gate was added, and
+  // every consumed value is bit-identical. The mode now names an iteration
+  // count and nothing else; `mul_start_short` was already the same idea (six
+  // steps at mode 1's boundary, landing four bits left), generalised here.
+  //
+  // The width still fits: |A| < 2^21 and a mode-N request contracts B < 2^N,
+  // so |A|*B*2^(12-N) < 2^33 for every N.
+  wire  [21:0] m_acc = m_p[33:12];
   wire  [22:0] m_sum = {1'b0, m_acc} + (m_p[0] ? {2'b0, m_a} : 23'd0);
 
-  // m_res holds the product IN PLACE: bit k is product bit k. The
+  // Bit k of m_res is bit k of the product shifted as above. The
   // microinstruction contract's "volumes use m_res[15:8]" is a semantic Q8
   // scale, not a placement offset - reading a product from the wrong slice
   // shortens every music pattern and fires 44 oracle diagnostics.
-  assign m_res      = m_p[31:0];
-  assign m_res_wide = m_p[33:0];
-  assign m_res12    = m_p[27:0];
-  assign m_busy     = (m_cnt != 0);
+  assign m_res  = m_p;
+  assign m_busy = (m_cnt != 0);
 
   always_ff @(posedge clk) begin
     if (reset)
       m_cnt <= 0;
     else if (m_cnt != 0) begin
-      m_p   <= (m_mode == 2'd2) ? {m_sum, m_p[11:1]}
-             : (m_mode == 2'd1) ? {2'b0, m_sum, m_p[9:1]}
-             : (m_mode == 2'd3) ? {3'b0, m_sum, m_p[8:1]}
-                                : {4'b0, m_sum, m_p[7:1]};
+      m_p   <= {m_sum, m_p[11:1]};
       m_cnt <= m_cnt - 1;
     end else if (mul_start) begin
       // The one place signs are stripped: requesters pass raw signed
@@ -76,7 +87,6 @@ module psg_mulsvc (input  bit          clk,
       m_a    <= mul_start_a[24] ? (21'd0 - mul_start_a[20:0])
                                 : mul_start_a[20:0];
       m_p    <= {22'b0, mul_start_b};
-      m_mode <= mul_start_mode;
       m_cnt  <= mul_start_short ? 4'd6
               : (mul_start_mode == 2'd2) ? 4'd12
               : (mul_start_mode == 2'd1) ? 4'd10

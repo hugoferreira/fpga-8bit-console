@@ -57,7 +57,11 @@ module psg_seq (input  bit   clk,
                 output logic [PSG_VADR-1:0] etk_wa,
                 output logic [15:0] etk_wd,
                 // The multiply service: this module's request bundle
-                input  logic [31:0] m_res,
+                // One 34-bit view of the product accumulator. An
+                // N-iteration request lands the exact product shifted left
+                // by (12 - N), so every consume slice below carries its own
+                // launch site's constant offset.
+                input  logic [33:0] m_res,
                 input  logic        m_busy,
                 output logic        smul_start,
                 output logic signed [24:0] smul_a,
@@ -596,8 +600,9 @@ module psg_seq (input  bit   clk,
   //   3 pitch effect, 4 volume effect, 5 music fade, 6 atomic publish.
   // A step consumes the preceding m_res, updates only the documented
   // working register, and starts at most one new eight-cycle product.
-  // Products retain the original truncation points: 24-bit effects use
-  // m_res[31:8], and volumes use m_res[15:8].
+  // Products retain their original truncation points. The slices that
+  // express them moved by the launch's own (12 - N) when the service went to
+  // one accumulator boundary - same bits, same width, higher position.
   logic [3:0]  xs;
   // The binary's amplitude is 12-bit `a` = vol<<8 carried through the
   // effect arithmetic (2.3/3.1). The Q8 row fraction it replaces cost
@@ -684,8 +689,8 @@ module psg_seq (input  bit   clk,
   // sum: base - (floor + cb) is base + ~floor + !cb, and base - p24 is
   // base + ~p24 + 1, so the round-up and the negations ride the carry-in.
   // Two's-complement identities - the results are bit-for-bit unchanged.
-  wire        vib_cb  = |m_res[6:0];
-  wire [20:0] fxp_op  = m_res[27:7];
+  wire        vib_cb  = |m_res[10:4];
+  wire [20:0] fxp_op  = m_res[31:11];
   wire [20:0] fxp_res = base_inc + (lfo_neg ? ~fxp_op : fxp_op)
                       + {20'b0, (lfo_neg & ~vib_cb)};
   logic [20:0] fxi_next;
@@ -790,7 +795,7 @@ module psg_seq (input  bit   clk,
   // is the arm cost THE LAW warns about.
   wire div_ceil = (sst == K_SL0) ? slp_neg
                                  : (xs == 4'd6 && e_fx == 3'd1 && vl_neg);
-  wire [23:0] div_base = (sst == K_SL0) ? {d_rem, 16'b0} : m_res[23:0];
+  wire [23:0] div_base = (sst == K_SL0) ? {d_rem, 16'b0} : m_res[27:4];
   always_comb begin
     div_d = (sst == K_FX && xs == 4'd9) ? 8'd7 : eff_sp;
     div_n = div_base + (div_ceil ? ({16'b0, eff_sp} - 24'd1) : 24'd0);
@@ -979,11 +984,10 @@ module psg_seq (input  bit   clk,
       // The launch-to-capture gap is at most nine cycles; the first sample
       // product launches at PWORK+4, so the capture always wins.
       if (ptick_pend && !m_busy) begin
-        // m_res holds the product in place (m_res[k] is product bit k); the
-        // [15:8] slice volume steps use is a semantic Q8 scale, not a
-        // placement offset, so the 13-bit tick count is the low 13 bits.
-        // Six-step mode 1 leaves this product four places left.
-        ptick_tgt <= m_res[16:4];
+        // The Q8 scale volume steps read is a semantic one, not a placement
+        // offset, so the 13-bit tick count is this product's low 13 bits.
+        // The six-step request leaves this product six places left.
+        ptick_tgt <= m_res[18:6];
         ptick_pend <= 0;
       end
 `ifndef SYNTHESIS
@@ -1462,7 +1466,7 @@ module psg_seq (input  bit   clk,
               if (e_fx == 3'd3) arp_r <= fxi_next;   // the drop quotient
             end
             4'd10: vol_r <= a_post;
-            4'd11: if (is_mus(c)) vol_r <= m_res[19:8];
+            4'd11: if (is_mus(c)) vol_r <= m_res[21:10];
             default: ;
           endcase
           if (xs == 4'd2 && e_fx == 3'd1) begin
