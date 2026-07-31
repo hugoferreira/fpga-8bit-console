@@ -1356,7 +1356,117 @@ Two neighbours priced at the same time, both already closed:
   replacement (`3g + 3 <= x`, which is an exact rewrite of `g < floor(x/3)`)
   and measured **+57 LUT4s and +22 placed**. Structural cells are not LUT4s -
   the same trap section 22 records for the pph fabric. Do not retry.
+
+  Re-measured standalone (the cone lifted out registered-in/registered-out,
+  same yosys, plus nextpnr for placed LCs) because -726 kept looking like it
+  had to mean something. It does not, and the isolated numbers reproduce the
+  in-design ones exactly:
+
+      as built  `g < (dp+500)/3`      763 pre-map   36 LUT4  50 carry  107 LC
+      R.15      `3g + 3 <= dp+500`    108 pre-map   76 LUT4  38 carry  109 LC
+      ablation  (wiring fn)            36 pre-map   18 LUT4   9 carry   48 LC
+
+  The ablation delta is -727, i.e. the recorded -726 to within one cell, and
+  R.15's rewrite is +40 LUT4 / -12 carry / +2 LC against the +57 / -16 / +22
+  it measured in-design. The cone is unshared; context is doing nothing here.
+
+  **The mechanism, which the "structural cells are not LUT4s" phrasing does
+  not capture: the structural-to-LC ratio is not constant across cell
+  families.** The divider alone is 713 pre-map cells and 63 placed LCs -
+  **11:1**. The adder/comparator forms are **1:1** (108 pre-map -> 109 LC;
+  84 -> 84). Yosys lowers `$div` to a restoring array before exploiting the
+  constant divisor: 13 quotient stages x a 17-bit conditional subtract, which
+  is the 289 `$__ICE40_CARRY_WRAPPER` cells. With divisor 3 the partial
+  remainder is always < 3, so ~15 of the 17 bits of every subtract sit on
+  constant zeros; opt and abc9 delete them and what survives is near the
+  minimal MSB-first digit recurrence, about two cells per dividend bit. 289
+  carry wrappers become 50. The array was ~92% scaffolding. The rewrite has
+  no such slack to give back - `g` is a free 13-bit variable, so `3g` and the
+  15-bit compare are all real, and both are committed to hard carry chains at
+  alumacc time before abc9 can restructure. The ledger was comparing 727
+  fictional cells against 108 real ones.
+
+  So the usable rule is per-family: carry-chain arithmetic ~1:1 (pre-map is
+  an honest proxy), `$div`/`$mod` by a constant ~11:1 (pre-map is fiction),
+  shared decode fabric the section-22/R.29 case (the count drops but nothing
+  retires). `tools/psg_ff_census.py`'s docstring carries the carve-out.
+
+  One loose end for anyone re-deriving this: R.15's rewrite is not the
+  cheapest exact one. Folding the constant to the other side - `3g <= dp+497`
+  rather than `3g+3 <= dp+500` - measures **84 LC against the divider's 107**,
+  so -23 rather than +2. Do not retry still holds, because -23 is inside the
+  +/-60 mapping-noise band. But the reason is that the whole `/3` is worth
+  ~59 LCs (107 against the 48-LC ablation floor) and the best rewrite recovers
+  about a third of it - not that the rewrite is inherently worse.
 - `nz_kick_m` is already a three-term masked shift-add, not a multiply.
+
+### 24. SEQ_BUDGET: built, measured, and the reason it buys nothing here
+
+R.30 needs about thirteen more phases per visit, so before it could land the
+question "is the visit's LENGTH render-load-bearing?" had to be answered.
+Measured directly: shifting PWORK, PSTOR, PFOLD and PLAST by +13 with no
+arithmetic change of any kind moves **two of 400,000** Celeste music-20
+samples. It is.
+
+The recorded fix for that is a cycle budget for the sequencer - a fixed number
+of cycles offered per sample interval, frozen for the remainder, so the FSM's
+position at every sample boundary is a function of the sample index alone. It
+was written up as landed. **It is not in the RTL** - `git grep SEQ_BUDGET`
+finds nothing, and `1261e19` is the measurement commit and never mentions it.
+So it was built here, and then measured. Everything below is measurement.
+
+**The counter is inert.** With a budget too large to bind, Celeste music 20 is
+byte-identical to HEAD over 400,000 samples. Every difference seen at any
+other setting is the BOUND, not the mechanism. (First attempt at this control
+used a 9-bit counter and the value 1023, which truncates to 511 and bound
+after all - the control has to be checked as carefully as the experiment.)
+
+**The leftover is already CONSTANT.** Probing the cycles actually offered per
+interval: **565, every interval, unchanging across 400,000 samples.** That
+follows from the walk being a fixed program - 85 phases x 8 slots plus a fold
+- so `1275 - 710` is the same number every sample. The design is therefore
+already deterministic at a FIXED clock and a FIXED walk length; the fragility
+is only ACROSS changes to either.
+
+**And the sequencer uses those cycles.** Clipping below 565 costs timing
+fidelity against real PICO-8, measured on the provenance-bound Celeste gate:
+
+| SEQ_BUDGET | tick pre-run | music-20 lock | blocks tracked | gate |
+| --- | --- | --- | --- | --- |
+| unbounded (today) | 3,555 / 7,654 | 0.83 | 94 / 110 | pass |
+| 416 | 4,705 / 7,654 | 0.73 | 59 / 110 | pass |
+| 288 | 6,053 / 7,654 | 0.71 | 49 / 110 | **FAIL** |
+
+Both bounded settings keep `psg_tb` at zero late flips and the frozen matrix
+at 59/59 byte-exact against PICO-8 - the 59 short cases never exercise a
+chain, so the oracle cannot see this. Only `mix-four` moves against the
+anchor, and it is a pure one-sample onset shift (bit-identical at lag +1).
+**The oracle is blind to exactly the property this bound changes**, which is
+why the full-track gate is the one that adjudicated it.
+
+So the window is empty. Invariance needs SEQ_BUDGET <= the leftover, fidelity
+needs it >= what the sequencer draws, and at 28.125 MHz those meet at 565 -
+the whole leftover. A budget of 565 states `f_min = 22050 * (710 + 565) =
+28.125 MHz` exactly: the bound is honoured only at precisely the shipping
+clock and leaves zero room for the walk to grow. It buys the invariance in
+name and nothing in practice. Not landed; the counter costs 8,078 -> 8,096
+placed cells (+18, nine flops and a comparator) for it.
+
+**What this actually says about R.30.** Its price was never "a render change
+needing a re-frozen baseline". Its price is that the sequencer loses 104 of
+its 565 cycles per sample, which lands it in the degraded band the table
+above measures - closer to the 416 row than to today. R.30 must therefore be
+adjudicated on the full-track gate as a FIDELITY trade, not booked as a free
+-307 cells. The three ways out, in the order they are worth trying:
+
+1. **Buy the phases back inside the visit.** The walk is 85 phases with 41 of
+   them multiply-latency shadow; R.30 adds 13 to the load window. Any 13
+   phases retired elsewhere make it free. This is the only option that costs
+   nothing.
+2. **Raise the PSG clock.** PSGDIV is a one-way ratchet - 112.5/4 = 28.125 and
+   /3 = 37.5 MHz against a routed Fmax near 36 - so this is not currently
+   available.
+3. **Spend the fidelity** and adjudicate it explicitly on the five-track gate.
 
 ## Risks / Trade-offs
 

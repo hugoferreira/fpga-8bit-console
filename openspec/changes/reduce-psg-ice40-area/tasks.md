@@ -689,7 +689,13 @@
       Priced alongside and CLOSED: `nz_thresh = nz_sum / 3` ablates at -726
       pre-mapping cells but R.15 already measured its exact replacement at +57
       LUT4 / +22 placed - structural cells are not LUT4s. `nz_kick_m` is
-      already a masked shift-add.
+      already a masked shift-add. Re-measured standalone 2026-07-31 and the
+      -726 is confirmed fiction: the divider is 713 pre-map cells and 63
+      placed LCs (11:1, because `$div` lowers to a restoring array before the
+      constant divisor is exploited and abc9 deletes ~92% of it), against 1:1
+      for the arithmetic that would replace it. design.md section 23 has the
+      table, the mechanism and the per-family ratio rule; psg_ff_census.py's
+      docstring has the carve-out.
 - [x] R.31 CAP_W75's two phases of slack, re-examined on request. It is the
       only non-zero in the schedule: the short six-iteration blend request
       launches at pph 70, is readable at 77, and CAP_W84 consumes it at 79.
@@ -701,3 +707,35 @@
       against 561 spare, and the slack is a WAIT, not service capacity - the
       service is free from phase 77 either way. The schedule give it reveals is
       better spent on R.30, which needs ~8 phases and returns 307 cells.
+- [x] R.32 SEQ_BUDGET built and MEASURED; not landed, and it re-prices R.30.
+      The visit's LENGTH is render-load-bearing: shifting PWORK/PSTOR/PFOLD/
+      PLAST by +13 with no arithmetic change moves 2 of 400,000 music-20
+      samples. The recorded fix - a fixed per-interval cycle offer for the
+      sequencer - was written up as landed but `git grep SEQ_BUDGET` finds
+      nothing in the RTL (`1261e19` is the measurement commit and never
+      mentions it), so it was built here.
+      Control: with a budget too large to bind, music 20 is byte-identical to
+      HEAD over 400,000 samples - the counter is inert and every difference is
+      the bound. (The first control used a 9-bit counter and 1023, which
+      truncates to 511 and bound anyway; check the control as carefully as the
+      experiment.)
+      Probed: the cycles offered per interval are **a constant 565**, every
+      interval, over 400,000 samples - the walk is a fixed program, so the
+      leftover is fixed. The design is ALREADY deterministic at a fixed clock
+      and fixed walk length; only changes to either move it.
+      Measured cost of bounding below 565, on the provenance-bound gate:
+        unbounded  pre-run 3,555/7,654  music-20 lock 0.83  94/110  pass
+        416        pre-run 4,705/7,654  lock 0.73          59/110  pass
+        288        pre-run 6,053/7,654  lock 0.71          49/110  FAIL
+      Both keep psg_tb at zero late flips and the matrix at 59/59 byte-exact
+      vs PICO-8 (only mix-four moves, a pure one-sample onset shift,
+      bit-identical at lag +1) - **the oracle is blind to the property the
+      bound changes.** Invariance needs budget <= leftover and fidelity needs
+      budget >= demand; at 28.125 MHz both meet at 565, i.e. f_min = exactly
+      the shipping clock and zero room for the walk to grow. Counter costs +18
+      placed cells. Not landed.
+      **Re-prices R.30**: its cost is not a re-frozen baseline, it is that the
+      sequencer loses 104 of 565 cycles/sample, landing it in the degraded
+      band above. Buy the 13 phases back inside the visit (41 of the 85 are
+      multiply-latency shadow) and R.30 is free; otherwise it is a fidelity
+      trade to adjudicate on the five-track gate, not a free -307 cells.
