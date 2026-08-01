@@ -141,9 +141,7 @@ begin
     cmp #192
     bcs .nextcloud
     lda [effects.cloud_width[x]]                  ; -w cells, in pixels
-    asl
-    asl
-    asl
+    asl a, 3
     eor #$FF
     add #1
     sta [effects.cloud_x_high[x]]
@@ -173,10 +171,7 @@ begin
     lda [effects.particle_offset[x]]                ; off += spd/32, capped at the cart's 0.05
     add #13
     sta [effects.particle_offset[x]]
-    lsr                         ; y += sin(off), from a 16-step table
-    lsr
-    lsr
-    lsr
+    lsr a, 4                    ; y += sin(off), from a 16-step table
     tay
     lda [effects.particle_y_low[x]]
     clc

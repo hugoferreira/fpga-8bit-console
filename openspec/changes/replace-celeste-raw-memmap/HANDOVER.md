@@ -257,6 +257,4 @@ make test-celeste
 openspec validate replace-celeste-raw-memmap --strict
 ```
 
-The checkout is shared with Nemo/PSG work. Preserve all unrelated dirty files
-and continue observing `docs/agent-coordination.md`; this change did not edit
-Nemo-owned paths or the four shared coordination files.
+Preserve all unrelated dirty files when continuing this change.

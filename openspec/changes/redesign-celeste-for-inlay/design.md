@@ -62,9 +62,7 @@ Namespace syntax follows existing aggregate syntax:
 
 ```asm
 namespace Fixed
-    export approach
-
-    proc approach using console6502
+    export proc approach
         value : ptr Fixed8_8 in w0
         target : ptr Fixed8_8 in w1
         amount : ptr Fixed8_8 in w2
@@ -79,11 +77,16 @@ locations, pools, nested namespaces and procedures. Names resolve from the
 innermost lexical namespace outward, then globally. Qualified references use
 dots. There is no wildcard `using`/import mechanism in this phase.
 
-Declarations are private to their source module by default. `export name`
-exposes one member under its fully qualified name; `export namespace Child`
-exposes a nested namespace without making its unexported children public.
-References within the same source module may name private members. Cross-module
-references must use exported qualified names.
+Declarations are private to their source module by default. `export` is a
+modifier on the declaration itself: `export proc update`,
+`export struct Header`, `export value = 1` and `export data:` expose those
+members under their fully qualified names. `export namespace Child` exposes a
+nested namespace without making its unexported children public. Detached
+`export name` manifests are rejected. Fields, enum members, parameters, locals
+and procedure-local labels inherit accessibility from their owning declaration
+and cannot be independently exported. References within the same source module
+may name private members. Cross-module references must use exported qualified
+names.
 
 This default keeps generated tables and helper constants private while making
 the public surface reviewable. It is stricter than traditional assembler
@@ -94,6 +97,31 @@ The backend uses length-prefixed components for collision-free symbols rather
 than replacing dots with underscores. Source maps and diagnostics always use
 the source-qualified name. Target-local labels remain scoped under the emitted
 procedure symbol.
+
+### Use the target's default procedure convention
+
+Each selected target environment declares one default calling convention.
+Ordinary procedures omit `using` and resolve parameter assignment, returns,
+frames and `invoke` through that target default. `using NAME` exists only for
+an intentional per-procedure override:
+
+```asm
+proc update
+    self : ptr CelesteObject in pObj
+begin
+    ...
+end
+
+proc interrupt using console6502_interrupt naked
+begin
+    ...
+end
+```
+
+Repeating the target default as `using console6502` is rejected rather than
+accepted as boilerplate. If a target environment supplies no default, a
+procedure without `using` is invalid. The selected target environment is the
+single explicit owner of ordinary procedure behavior.
 
 ### Make qualified compile-time values usable without compatibility aliases
 
@@ -155,6 +183,8 @@ In particular:
 - immediate and table-copy pairs use `mov`;
 - carry-normalized scalar arithmetic uses `add`/`sub`;
 - eligible tests use the established branch pseudo-operations;
+- repeated implicit-accumulator shifts and rotates use counted
+  `asl a, N`/`lsr a, N`/`rol a, N`/`ror a, N` pseudo-operations;
 - zero-page word values use `ldab`, `stab`, `addw`, `subw` and `cmpw`;
 - object-field byte accesses use pointer displacement;
 - object-field word transfers use typed deterministic sequences built from
@@ -162,6 +192,20 @@ In particular:
 
 No optimization pass silently recognizes arbitrary raw instruction sequences.
 Adoption is visible in source and measured by conformance.
+
+Counted shifts and rotates are target pseudo-operations, not frontend loop
+syntax. Their count is a positive assembly-time integer within the target's
+bounded expansion limit. They preserve the exact result, carry chain and final
+flags of `N` explicitly repeated accumulator instructions. Memory forms remain
+explicit in this slice so an address cannot be mistaken for a repetition
+count.
+
+The accumulator operand is spelled explicitly — `asl a, 3`, not `asl 3` —
+because the shorter form cannot be made unambiguous. `asl {zaddr: u8}` already
+matches a bare expression, and customasm v0.14.1 breaks the tie by silently
+choosing the smaller encoding, so `asl 3` assembles to `06 03` against zero
+page address 3. The ambiguity is not diagnosable from inside the ruledef, which
+is exactly why the operand carries the disambiguation instead.
 
 ### Keep layout declarations free of backend compatibility plumbing
 
@@ -258,9 +302,6 @@ is specified to replace.
   instruction/pseudo contract as normative and add focused reference tests.
 - [Default-private symbols complicate generated modules] → Update generators
   to emit explicit exports and test their public manifests.
-- [Concurrent Nemo work touches shared files] → Restrict implementation to
-  Celeste/Inlay-owned paths and follow `docs/agent-coordination.md` for shared
-  metrics or Makefile changes.
 
 ## Migration Plan
 

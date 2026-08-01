@@ -122,9 +122,7 @@ load:
     bne .nextspawn
     txa
     and #15
-    asl
-    asl
-    asl
+    asl a, 3
     sta Objects.spawn_x
     txa
     and #$F0

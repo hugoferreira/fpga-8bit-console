@@ -35,10 +35,9 @@
 
 ## 4. Migrate Build Integration
 
-- [x] 4.1 After checking `docs/agent-coordination.md`, update the shared
-  Makefile using its append-only protocol so canonical build variables, rules
-  and dependencies use `inlay` and `build/inlay/` while intentional legacy
-  aliases remain available.
+- [x] 4.1 Update the Makefile so canonical build variables, rules and
+  dependencies use `inlay` and `build/inlay/` while intentional legacy aliases
+  remain available.
 - [x] 4.2 Update the Celeste frontend preparation to create
   `build/inlay/celeste.inlay.asm`, `.inlay.asm` modules,
   `build/inlay/celeste.asm` and the corresponding source map, and invoke the

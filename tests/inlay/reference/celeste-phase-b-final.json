@@ -6,10 +6,10 @@
     "sourcePortChange": "openspec/changes/port-celeste-sources-to-inlay"
   },
   "assembly": {
-    "encodedInstructionSites": 2329,
-    "executableBytes": 5161,
-    "programSpanBytes": 12813,
-    "programSpanEndExclusive": 13581,
+    "encodedInstructionSites": 2293,
+    "executableBytes": 5155,
+    "programSpanBytes": 12807,
+    "programSpanEndExclusive": 13575,
     "programSpanStart": 768
   },
   "behavior": {
@@ -25,78 +25,78 @@
   "legacyCandidates": [
     {
       "kind": "lda_sta",
-      "line": 165,
-      "nextLine": 166,
+      "line": 171,
+      "nextLine": 172,
       "operands": [
-        "(pObj), y",
-        "w0"
+        "(Machine.object), y",
+        "word0"
       ],
       "path": "src/celeste/math.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 168,
-      "nextLine": 169,
+      "line": 174,
+      "nextLine": 175,
       "operands": [
-        "(pObj), y",
-        "w0+1"
+        "(Machine.object), y",
+        "word0+1"
       ],
       "path": "src/celeste/math.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 176,
-      "nextLine": 177,
+      "line": 182,
+      "nextLine": 183,
       "operands": [
-        "w0",
-        "(pObj), y"
+        "word0",
+        "(Machine.object), y"
       ],
       "path": "src/celeste/math.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 179,
-      "nextLine": 180,
+      "line": 185,
+      "nextLine": 186,
       "operands": [
-        "w0+1",
-        "(pObj), y"
+        "word0+1",
+        "(Machine.object), y"
       ],
       "path": "src/celeste/math.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 191,
-      "nextLine": 192,
+      "line": 197,
+      "nextLine": 198,
       "operands": [
-        "(pObj), y",
-        "w1"
+        "(Machine.object), y",
+        "word1"
       ],
       "path": "src/celeste/math.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 194,
-      "nextLine": 195,
+      "line": 200,
+      "nextLine": 201,
       "operands": [
-        "(pObj), y",
-        "w1+1"
+        "(Machine.object), y",
+        "word1+1"
       ],
       "path": "src/celeste/math.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 87,
-      "nextLine": 88,
+      "line": 104,
+      "nextLine": 105,
       "operands": [
         "#0",
-        "[pObj + CelesteObject.core.kind]"
+        "[Machine.object.core.kind]"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 116,
-      "nextLine": 117,
+      "line": 133,
+      "nextLine": 134,
       "operands": [
         "#$FF",
         "spawn_slot"
@@ -105,296 +105,286 @@
     },
     {
       "kind": "lda_sta",
-      "line": 123,
-      "nextLine": 125,
+      "line": 140,
+      "nextLine": 142,
       "operands": [
         "#0",
-        "(pObj), y"
+        "(Machine.object), y"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 129,
-      "nextLine": 130,
+      "line": 146,
+      "nextLine": 147,
       "operands": [
         "spawn_type",
-        "[pObj + CelesteObject.core.kind]"
+        "[Machine.object.core.kind]"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 132,
-      "nextLine": 133,
+      "line": 149,
+      "nextLine": 150,
       "operands": [
-        "Objects.type_tile-1, x",
-        "[pObj + CelesteObject.core.sprite]"
+        "type_tile-1, x",
+        "[Machine.object.core.sprite]"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 134,
-      "nextLine": 135,
+      "line": 151,
+      "nextLine": 152,
       "operands": [
         "spawn_x",
-        "[pObj + CelesteObject.core.x]"
+        "[Machine.object.core.x]"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 136,
-      "nextLine": 137,
+      "line": 153,
+      "nextLine": 154,
       "operands": [
         "spawn_y",
-        "[pObj + CelesteObject.core.y]"
+        "[Machine.object.core.y]"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 139,
-      "nextLine": 140,
+      "line": 156,
+      "nextLine": 157,
       "operands": [
         "#8",
-        "[pObj + CelesteObject.core.hitbox.w]"
+        "[Machine.object.core.hitbox.w]"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 148,
-      "nextLine": 149,
+      "line": 165,
+      "nextLine": 166,
       "operands": [
-        "Objects.type_init_lo-1, x",
-        "pFn"
+        "type_init_lo-1, x",
+        "Machine.function"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 150,
-      "nextLine": 151,
+      "line": 167,
+      "nextLine": 168,
       "operands": [
-        "Objects.type_init_hi-1, x",
-        "pFn+1"
+        "type_init_hi-1, x",
+        "Machine.function+1"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 194,
-      "nextLine": 195,
+      "line": 211,
+      "nextLine": 212,
       "operands": [
         "#0",
-        "[pObj + CelesteObject.core.kind]"
+        "[Machine.object.core.kind]"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 223,
-      "nextLine": 224,
+      "line": 240,
+      "nextLine": 241,
       "operands": [
-        "Objects.type_update_lo-1, x",
-        "pFn"
+        "type_update_lo-1, x",
+        "Machine.function"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 225,
-      "nextLine": 226,
+      "line": 242,
+      "nextLine": 243,
       "operands": [
-        "Objects.type_update_hi-1, x",
-        "pFn+1"
+        "type_update_hi-1, x",
+        "Machine.function+1"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 249,
-      "nextLine": 250,
+      "line": 266,
+      "nextLine": 267,
       "operands": [
-        "Objects.type_draw_lo-1, x",
-        "pFn"
+        "type_draw_lo-1, x",
+        "Machine.function"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 251,
-      "nextLine": 252,
+      "line": 268,
+      "nextLine": 269,
       "operands": [
-        "Objects.type_draw_hi-1, x",
-        "pFn+1"
+        "type_draw_hi-1, x",
+        "Machine.function+1"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 291,
-      "nextLine": 292,
+      "line": 308,
+      "nextLine": 309,
       "operands": [
-        "w0+1",
-        "t0"
+        "Fixed.word0+1",
+        "Machine.t0"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 312,
-      "nextLine": 313,
+      "line": 329,
+      "nextLine": 330,
       "operands": [
-        "w0+1",
-        "t0"
+        "Fixed.word0+1",
+        "Machine.t0"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_and_branch",
-      "line": 362,
-      "nextLine": 364,
+      "line": 379,
+      "nextLine": 381,
       "operands": [
-        "[pObj + CelesteObject.core.flags]",
-        "#F_SOLIDS",
+        "[Machine.object.core.flags]",
+        "#flag_solids",
         ".solid"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 376,
-      "nextLine": 377,
+      "line": 393,
+      "nextLine": 394,
       "operands": [
-        "t1",
-        "c_ox"
+        "Machine.t1",
+        "Collision.offset_x"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_and_branch",
-      "line": 411,
-      "nextLine": 413,
+      "line": 428,
+      "nextLine": 430,
       "operands": [
-        "[pObj + CelesteObject.core.flags]",
-        "#F_SOLIDS",
+        "[Machine.object.core.flags]",
+        "#flag_solids",
         ".solid"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 426,
-      "nextLine": 427,
+      "line": 443,
+      "nextLine": 444,
       "operands": [
-        "t1",
-        "c_oy"
+        "Machine.t1",
+        "Collision.offset_y"
       ],
       "path": "src/celeste/obj.inlay.asm"
     },
     {
       "kind": "clc_adc",
-      "line": 42,
-      "nextLine": 43,
+      "line": 57,
+      "nextLine": 58,
       "operands": [
         "",
-        "(pObj), y"
+        "(Machine.object), y"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "clc_adc",
-      "line": 48,
-      "nextLine": 49,
+      "line": 63,
+      "nextLine": 64,
       "operands": [
         "",
-        "(pObj), y"
+        "(Machine.object), y"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 52,
-      "nextLine": 53,
+      "line": 67,
+      "nextLine": 68,
       "operands": [
-        "[pObj + CelesteObject.core.hitbox.w]",
-        "c_w"
+        "[Machine.object.core.hitbox.w]",
+        "width"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 54,
-      "nextLine": 55,
+      "line": 69,
+      "nextLine": 70,
       "operands": [
-        "[pObj + CelesteObject.core.hitbox.h]",
-        "c_h"
+        "[Machine.object.core.hitbox.h]",
+        "height"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 64,
-      "nextLine": 65,
+      "line": 79,
+      "nextLine": 80,
       "operands": [
-        "c_j",
-        "t3"
+        "row",
+        "Machine.t3"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 73,
-      "nextLine": 74,
+      "line": 85,
+      "nextLine": 86,
       "operands": [
-        "c_i",
-        "t5"
+        "column",
+        "Machine.t5"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_and_branch",
-      "line": 81,
-      "nextLine": 83,
+      "line": 93,
+      "nextLine": 95,
       "operands": [
         "tile_flags, y",
-        "c_mask",
+        "mask",
         ".hit"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 85,
-      "nextLine": 87,
+      "line": 97,
+      "nextLine": 99,
       "operands": [
-        "t5",
-        "c_i1",
+        "Machine.t5",
+        "last_column",
         ".col"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 90,
-      "nextLine": 92,
+      "line": 102,
+      "nextLine": 104,
       "operands": [
-        "t3",
-        "c_j1",
+        "Machine.t3",
+        "last_row",
         ".row"
-      ],
-      "path": "src/celeste/collide.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 113,
-      "nextLine": 115,
-      "operands": [
-        "#0",
-        "c_i"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
@@ -403,18 +393,18 @@
       "line": 125,
       "nextLine": 127,
       "operands": [
-        "#15",
-        "c_i1"
+        "#0",
+        "column"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 133,
-      "nextLine": 135,
+      "line": 137,
+      "nextLine": 139,
       "operands": [
-        "#0",
-        "c_j"
+        "#15",
+        "last_column"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
@@ -423,59 +413,69 @@
       "line": 145,
       "nextLine": 147,
       "operands": [
+        "#0",
+        "row"
+      ],
+      "path": "src/celeste/collide.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 157,
+      "nextLine": 159,
+      "operands": [
         "#15",
-        "c_j1"
+        "last_row"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 178,
-      "nextLine": 179,
+      "line": 185,
+      "nextLine": 186,
       "operands": [
-        "c_j",
-        "t3"
+        "row",
+        "Machine.t3"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 187,
-      "nextLine": 188,
+      "line": 191,
+      "nextLine": 192,
       "operands": [
-        "c_i",
-        "t5"
+        "column",
+        "Machine.t5"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 204,
-      "nextLine": 205,
+      "line": 208,
+      "nextLine": 209,
       "operands": [
-        "Collision.hi, x",
-        "pFn+1"
+        "hi, x",
+        "Machine.function+1"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 210,
-      "nextLine": 212,
+      "line": 214,
+      "nextLine": 216,
       "operands": [
-        "t5",
-        "c_i1",
+        "Machine.t5",
+        "last_column",
         ".col"
       ],
       "path": "src/celeste/collide.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 215,
-      "nextLine": 217,
+      "line": 219,
+      "nextLine": 221,
       "operands": [
-        "t3",
-        "c_j1",
+        "Machine.t3",
+        "last_row",
         ".row"
       ],
       "path": "src/celeste/collide.inlay.asm"
@@ -486,7 +486,7 @@
       "nextLine": 50,
       "operands": [
         "#1",
-        "[pObj + CelesteObject.core.hitbox.x]"
+        "[Machine.object.core.hitbox.x]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -496,7 +496,7 @@
       "nextLine": 52,
       "operands": [
         "#3",
-        "[pObj + CelesteObject.core.hitbox.y]"
+        "[Machine.object.core.hitbox.y]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -506,7 +506,7 @@
       "nextLine": 54,
       "operands": [
         "#6",
-        "[pObj + CelesteObject.core.hitbox.w]"
+        "[Machine.object.core.hitbox.w]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -516,7 +516,7 @@
       "nextLine": 56,
       "operands": [
         "#5",
-        "[pObj + CelesteObject.core.hitbox.h]"
+        "[Machine.object.core.hitbox.h]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -525,8 +525,8 @@
       "line": 57,
       "nextLine": 58,
       "operands": [
-        "max_djump",
-        "[pObj + CelesteObject.payload.player.dash_jumps]"
+        "[game.max_dash_jumps]",
+        "[Machine.object.payload.player.dash_jumps]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -536,7 +536,7 @@
       "nextLine": 60,
       "operands": [
         "#1",
-        "[pObj + CelesteObject.core.sprite]"
+        "[Machine.object.core.sprite]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -546,7 +546,7 @@
       "nextLine": 87,
       "operands": [
         "#0",
-        "Player.input"
+        "input"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -556,7 +556,7 @@
       "nextLine": 96,
       "operands": [
         "#0",
-        "c_ox"
+        "Collision.offset_x"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -565,8 +565,8 @@
       "line": 120,
       "nextLine": 122,
       "operands": [
-        "(pObj), y",
-        "#Player.bit_ground",
+        "(Machine.object), y",
+        "#bit_ground",
         ".nosmoke"
       ],
       "path": "src/celeste/player.inlay.asm"
@@ -576,8 +576,8 @@
       "line": 133,
       "nextLine": 135,
       "operands": [
-        "(pObj), y",
-        "#Player.bit_jump",
+        "(Machine.object), y",
+        "#bit_jump",
         ".jumpheld"
       ],
       "path": "src/celeste/player.inlay.asm"
@@ -588,7 +588,7 @@
       "nextLine": 160,
       "operands": [
         "#4",
-        "[pObj + CelesteObject.payload.player.jump_buffer]"
+        "[Machine.object.payload.player.jump_buffer]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -597,8 +597,8 @@
       "line": 164,
       "nextLine": 166,
       "operands": [
-        "(pObj), y",
-        "#Player.bit_dash",
+        "(Machine.object), y",
+        "#bit_dash",
         ".dashheld"
       ],
       "path": "src/celeste/player.inlay.asm"
@@ -609,7 +609,7 @@
       "nextLine": 186,
       "operands": [
         "#6",
-        "[pObj + CelesteObject.payload.player.grace]"
+        "[Machine.object.payload.player.grace]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -618,8 +618,8 @@
       "line": 187,
       "nextLine": 189,
       "operands": [
-        "[pObj + CelesteObject.payload.player.dash_jumps]",
-        "max_djump",
+        "[Machine.object.payload.player.dash_jumps]",
+        "[game.max_dash_jumps]",
         ".gracedone"
       ],
       "path": "src/celeste/player.inlay.asm"
@@ -629,8 +629,8 @@
       "line": 192,
       "nextLine": 193,
       "operands": [
-        "max_djump",
-        "[pObj + CelesteObject.payload.player.dash_jumps]"
+        "[game.max_dash_jumps]",
+        "[Machine.object.payload.player.dash_jumps]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -639,8 +639,8 @@
       "line": 230,
       "nextLine": 231,
       "operands": [
-        "(pObj), y",
-        "w2"
+        "(Machine.object), y",
+        "Fixed.word2"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -649,8 +649,8 @@
       "line": 233,
       "nextLine": 234,
       "operands": [
-        "(pObj), y",
-        "w2+1"
+        "(Machine.object), y",
+        "Fixed.word2+1"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -659,8 +659,8 @@
       "line": 243,
       "nextLine": 244,
       "operands": [
-        "(pObj), y",
-        "w2"
+        "(Machine.object), y",
+        "Fixed.word2"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -669,8 +669,8 @@
       "line": 246,
       "nextLine": 247,
       "operands": [
-        "(pObj), y",
-        "w2+1"
+        "(Machine.object), y",
+        "Fixed.word2+1"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -679,8 +679,8 @@
       "line": 382,
       "nextLine": 383,
       "operands": [
-        "Player.input",
-        "c_ox"
+        "input",
+        "Collision.offset_x"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -689,7 +689,7 @@
       "line": 389,
       "nextLine": 391,
       "operands": [
-        "[video + VideoRegisters.random]",
+        "[video.random]",
         "#51",
         ".fall"
       ],
@@ -701,7 +701,7 @@
       "nextLine": 436,
       "operands": [
         "#0",
-        "[pObj + CelesteObject.payload.player.jump_buffer]"
+        "[Machine.object.payload.player.jump_buffer]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -711,46 +711,46 @@
       "nextLine": 470,
       "operands": [
         "#0",
-        "[pObj + CelesteObject.payload.player.jump_buffer]"
+        "[Machine.object.payload.player.jump_buffer]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 541,
-      "nextLine": 542,
+      "line": 540,
+      "nextLine": 541,
       "operands": [
         "#4",
-        "[pObj + CelesteObject.payload.player.dash_time]"
+        "[Machine.object.payload.player.dash_time]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 544,
-      "nextLine": 545,
+      "line": 543,
+      "nextLine": 544,
       "operands": [
         "#10",
-        "[pObj + CelesteObject.payload.player.dash_effect]"
+        "[Machine.object.payload.player.dash_effect]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 554,
-      "nextLine": 556,
+      "line": 553,
+      "nextLine": 555,
       "operands": [
         "#0",
-        "Player.vinput"
+        "vinput"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_and_branch",
-      "line": 593,
-      "nextLine": 595,
+      "line": 592,
+      "nextLine": 594,
       "operands": [
-        "[pObj + CelesteObject.core.flip]",
+        "[Machine.object.core.flip]",
         "#$01",
         ".neutralright"
       ],
@@ -758,41 +758,51 @@
     },
     {
       "kind": "lda_sta",
-      "line": 685,
-      "nextLine": 686,
+      "line": 684,
+      "nextLine": 685,
       "operands": [
-        "Player.input",
-        "c_ox"
+        "input",
+        "Collision.offset_x"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 716,
-      "nextLine": 718,
+      "line": 714,
+      "nextLine": 716,
       "operands": [
         "#1",
-        "[pObj + CelesteObject.core.sprite]"
+        "[Machine.object.core.sprite]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 809,
-      "nextLine": 810,
+      "line": 807,
+      "nextLine": 808,
       "operands": [
         "#15",
-        "delay_restart"
+        "[game.restart_delay]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 826,
-      "nextLine": 828,
+      "line": 824,
+      "nextLine": 826,
       "operands": [
         "#$FF",
-        "[pObj + CelesteObject.core.x]"
+        "[Machine.object.core.x]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 851,
+      "nextLine": 852,
+      "operands": [
+        "#3",
+        "[Machine.object.core.sprite]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -801,18 +811,18 @@
       "line": 853,
       "nextLine": 854,
       "operands": [
-        "#3",
-        "[pObj + CelesteObject.core.sprite]"
+        "[Machine.object.core.x]",
+        "[Machine.object.payload.spawn.target_x]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 855,
-      "nextLine": 856,
+      "line": 856,
+      "nextLine": 857,
       "operands": [
-        "[pObj + CelesteObject.core.x]",
-        "[pObj + CelesteObject.payload.spawn.target_x]"
+        "(Machine.object), y",
+        "[Machine.object.payload.spawn.target_y]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -821,70 +831,70 @@
       "line": 858,
       "nextLine": 859,
       "operands": [
-        "(pObj), y",
-        "[pObj + CelesteObject.payload.spawn.target_y]"
-      ],
-      "path": "src/celeste/player.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 860,
-      "nextLine": 861,
-      "operands": [
         "#127",
-        "[pObj + CelesteObject.core.y]"
+        "[Machine.object.core.y]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 887,
-      "nextLine": 889,
+      "line": 885,
+      "nextLine": 887,
       "operands": [
-        "(pObj), y",
-        "t3",
+        "(Machine.object), y",
+        "Machine.t3",
         ".done"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 890,
-      "nextLine": 891,
+      "line": 888,
+      "nextLine": 889,
       "operands": [
         "#1",
-        "[pObj + CelesteObject.payload.spawn.phase]"
+        "[Machine.object.payload.spawn.phase]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 924,
-      "nextLine": 925,
+      "line": 922,
+      "nextLine": 923,
       "operands": [
-        "[pObj + CelesteObject.payload.spawn.target_y]",
-        "t3"
+        "[Machine.object.payload.spawn.target_y]",
+        "Machine.t3"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 927,
-      "nextLine": 929,
+      "line": 925,
+      "nextLine": 927,
       "operands": [
-        "(pObj), y",
-        "t3",
+        "(Machine.object), y",
+        "Machine.t3",
         ".done2"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 931,
-      "nextLine": 932,
+      "line": 929,
+      "nextLine": 930,
       "operands": [
-        "t3",
-        "[pObj + CelesteObject.core.y]"
+        "Machine.t3",
+        "[Machine.object.core.y]"
+      ],
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 940,
+      "nextLine": 941,
+      "operands": [
+        "#2",
+        "[Machine.object.payload.spawn.phase]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
@@ -893,189 +903,179 @@
       "line": 942,
       "nextLine": 943,
       "operands": [
-        "#2",
-        "[pObj + CelesteObject.payload.spawn.phase]"
-      ],
-      "path": "src/celeste/player.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 944,
-      "nextLine": 945,
-      "operands": [
         "#5",
-        "[pObj + CelesteObject.payload.spawn.delay]"
+        "[Machine.object.payload.spawn.delay]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 965,
-      "nextLine": 966,
+      "line": 963,
+      "nextLine": 964,
       "operands": [
-        "[pObj + CelesteObject.core.x]",
-        "spawn_x"
+        "[Machine.object.core.x]",
+        "Objects.spawn_x"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 968,
-      "nextLine": 969,
+      "line": 966,
+      "nextLine": 967,
       "operands": [
-        "(pObj), y",
-        "spawn_y"
+        "(Machine.object), y",
+        "Objects.spawn_y"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 994,
-      "nextLine": 995,
+      "line": 992,
+      "nextLine": 993,
       "operands": [
         "#29",
-        "[pObj + CelesteObject.core.sprite]"
+        "[Machine.object.core.sprite]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "clc_adc",
-      "line": 1014,
-      "nextLine": 1015,
+      "line": 1012,
+      "nextLine": 1013,
       "operands": [
         "",
-        "(pObj), y"
+        "(Machine.object), y"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "clc_adc",
-      "line": 1021,
-      "nextLine": 1022,
+      "line": 1019,
+      "nextLine": 1020,
       "operands": [
         "",
-        "(pObj), y"
+        "(Machine.object), y"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 1069,
-      "nextLine": 1070,
+      "line": 1067,
+      "nextLine": 1068,
       "operands": [
         "#5",
-        "[pObj + CelesteObject.payload.player.delay]"
+        "[Machine.object.payload.player.delay]"
       ],
       "path": "src/celeste/player.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 23,
-      "nextLine": 24,
+      "line": 44,
+      "nextLine": 45,
       "operands": [
         "#0",
-        "[video + VideoRegisters.clip_x0]"
+        "[video.clip_x0]"
       ],
       "path": "src/celeste/room.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 30,
-      "nextLine": 31,
+      "line": 51,
+      "nextLine": 52,
       "operands": [
         "#1",
-        "room_bank"
+        "[game.room_bank]"
       ],
       "path": "src/celeste/room.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 57,
-      "nextLine": 58,
+      "line": 78,
+      "nextLine": 79,
       "operands": [
-        "(pSrc), y",
-        "[room_tiles + RoomTileBuffer.cells[y]]"
+        "(Machine.source), y",
+        "[room_tiles.cells[y]]"
       ],
       "path": "src/celeste/room.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 77,
-      "nextLine": 78,
+      "line": 97,
+      "nextLine": 98,
       "operands": [
         "Gfx.tile_base, x",
-        "(pDst), y"
+        "(Machine.destination), y"
       ],
       "path": "src/celeste/room.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 100,
-      "nextLine": 102,
+      "line": 120,
+      "nextLine": 122,
       "operands": [
-        "ROOMTILES, x",
-        "#TILE_SPAWN",
+        "[room_tiles.cells[x]]",
+        "#tile_spawn",
         ".nextspawn"
       ],
       "path": "src/celeste/room.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 122,
-      "nextLine": 124,
+      "line": 140,
+      "nextLine": 142,
       "operands": [
-        "#PLAYFIELD_W",
-        "t3"
+        "#playfield_width",
+        "Machine.t3"
       ],
       "path": "src/celeste/room.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 135,
-      "nextLine": 136,
+      "line": 153,
+      "nextLine": 154,
       "operands": [
-        "t3",
-        "[video + VideoRegisters.camera_x]"
+        "Machine.t3",
+        "[video.camera_x]"
       ],
       "path": "src/celeste/room.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 137,
-      "nextLine": 138,
+      "line": 155,
+      "nextLine": 156,
       "operands": [
         "#0",
-        "camera_y"
+        "[game.camera_y]"
       ],
       "path": "src/celeste/room.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 143,
-      "nextLine": 144,
+      "line": 161,
+      "nextLine": 162,
       "operands": [
         "#0",
-        "spawn_x"
+        "Objects.spawn_x"
       ],
       "path": "src/celeste/room.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 160,
-      "nextLine": 162,
+      "line": 178,
+      "nextLine": 180,
       "operands": [
-        "Room.cue_level, x",
-        "level",
+        "cue_level, x",
+        "[game.level]",
         ".play"
       ],
       "path": "src/celeste/room.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 203,
-      "nextLine": 205,
+      "line": 221,
+      "nextLine": 223,
       "operands": [
-        "[pObj + CelesteObject.core.kind]",
+        "[Machine.object.core.kind]",
         "#ObjectKind.player",
         ".found"
       ],
@@ -1083,101 +1083,51 @@
     },
     {
       "kind": "lda_sta",
-      "line": 223,
-      "nextLine": 225,
+      "line": 241,
+      "nextLine": 243,
       "operands": [
         "#0",
-        "camera_y"
+        "[game.camera_y]"
       ],
       "path": "src/celeste/room.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 39,
-      "nextLine": 40,
+      "line": 55,
+      "nextLine": 56,
       "operands": [
-        "nspr",
-        "[video + VideoRegisters.split]"
+        "[game.sprite_count]",
+        "[video.split]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 46,
-      "nextLine": 47,
+      "line": 62,
+      "nextLine": 63,
       "operands": [
-        "nspr",
-        "[video + VideoRegisters.sprite_count]"
+        "[game.sprite_count]",
+        "[video.sprite_count]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 140,
-      "nextLine": 141,
+      "line": 156,
+      "nextLine": 157,
       "operands": [
-        "t4",
-        "[video + VideoRegisters.sprite_x]"
+        "Machine.t4",
+        "[video.sprite_x]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 143,
-      "nextLine": 144,
+      "line": 159,
+      "nextLine": 160,
       "operands": [
-        "t3",
-        "[video + VideoRegisters.sprite_flags]"
-      ],
-      "path": "src/celeste/draw.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 215,
-      "nextLine": 216,
-      "operands": [
-        "[pObj + CelesteObject.core.x]",
-        "t3"
-      ],
-      "path": "src/celeste/draw.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 217,
-      "nextLine": 218,
-      "operands": [
-        "[pObj + CelesteObject.core.y]",
-        "t4"
-      ],
-      "path": "src/celeste/draw.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 222,
-      "nextLine": 223,
-      "operands": [
-        "#0",
-        "(pObj), y"
-      ],
-      "path": "src/celeste/draw.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 225,
-      "nextLine": 226,
-      "operands": [
-        "t3",
-        "(pObj), y"
-      ],
-      "path": "src/celeste/draw.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 228,
-      "nextLine": 229,
-      "operands": [
-        "#0",
-        "(pObj), y"
+        "Machine.t3",
+        "[video.sprite_flags]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
@@ -1186,27 +1136,77 @@
       "line": 231,
       "nextLine": 232,
       "operands": [
-        "t4",
-        "(pObj), y"
+        "[Machine.object.core.x]",
+        "Machine.t3"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 256,
-      "nextLine": 258,
+      "line": 233,
+      "nextLine": 234,
       "operands": [
-        "Draw.hair_palette, x",
-        "hair_col"
+        "[Machine.object.core.y]",
+        "Machine.t4"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 238,
+      "nextLine": 239,
+      "operands": [
+        "#0",
+        "(Machine.object), y"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 241,
+      "nextLine": 242,
+      "operands": [
+        "Machine.t3",
+        "(Machine.object), y"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 244,
+      "nextLine": 245,
+      "operands": [
+        "#0",
+        "(Machine.object), y"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 247,
+      "nextLine": 248,
+      "operands": [
+        "Machine.t4",
+        "(Machine.object), y"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 272,
+      "nextLine": 274,
+      "operands": [
+        "hair_palette, x",
+        "hair_color_value"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_and_branch",
-      "line": 276,
-      "nextLine": 278,
+      "line": 292,
+      "nextLine": 294,
       "operands": [
-        "[pObj + CelesteObject.core.flip]",
+        "[Machine.object.core.flip]",
         "#1",
         ".faceright"
       ],
@@ -1214,70 +1214,70 @@
     },
     {
       "kind": "clc_adc",
-      "line": 285,
-      "nextLine": 286,
+      "line": 301,
+      "nextLine": 302,
       "operands": [
         "",
-        "(pObj), y"
+        "(Machine.object), y"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "clc_adc",
-      "line": 297,
-      "nextLine": 298,
+      "line": 313,
+      "nextLine": 314,
       "operands": [
         "",
-        "(pObj), y"
+        "(Machine.object), y"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 334,
-      "nextLine": 335,
+      "line": 350,
+      "nextLine": 351,
       "operands": [
-        "hair_col",
-        "t3"
+        "hair_color_value",
+        "Machine.t3"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 420,
-      "nextLine": 421,
+      "line": 426,
+      "nextLine": 427,
       "operands": [
-        "pDst",
-        "OVLROW_LO, x"
+        "Machine.destination",
+        "[overlay_rows.low[x]]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 422,
-      "nextLine": 423,
+      "line": 428,
+      "nextLine": 429,
       "operands": [
-        "pDst+1",
-        "OVLROW_HI, x"
+        "Machine.destination+1",
+        "[overlay_rows.high[x]]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 437,
-      "nextLine": 438,
+      "line": 443,
+      "nextLine": 444,
       "operands": [
         "#1",
-        "ovl_dirty"
+        "[game.overlay_dirty]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 470,
-      "nextLine": 472,
+      "line": 476,
+      "nextLine": 478,
       "operands": [
-        "[pObj + CelesteObject.core.kind]",
+        "[Machine.object.core.kind]",
         "#ObjectKind.title",
         ".yes"
       ],
@@ -1285,42 +1285,12 @@
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 480,
-      "nextLine": 482,
+      "line": 486,
+      "nextLine": 488,
       "operands": [
-        "seconds",
-        "hud_secs",
+        "[game.seconds]",
+        "[game.hud_seconds]",
         ".nochange"
-      ],
-      "path": "src/celeste/draw.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 505,
-      "nextLine": 506,
-      "operands": [
-        "OVLSHADOW+$000, x",
-        "OVL+$000, x"
-      ],
-      "path": "src/celeste/draw.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 507,
-      "nextLine": 508,
-      "operands": [
-        "OVLSHADOW+$100, x",
-        "OVL+$100, x"
-      ],
-      "path": "src/celeste/draw.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 509,
-      "nextLine": 510,
-      "operands": [
-        "OVLSHADOW+$200, x",
-        "OVL+$200, x"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
@@ -1329,8 +1299,8 @@
       "line": 511,
       "nextLine": 512,
       "operands": [
-        "OVLSHADOW+$300, x",
-        "OVL+$300, x"
+        "[overlay_shadow_pages.page0[x]]",
+        "[framebuffer_pages.page0[x]]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
@@ -1339,8 +1309,8 @@
       "line": 513,
       "nextLine": 514,
       "operands": [
-        "OVLSHADOW+$400, x",
-        "OVL+$400, x"
+        "[overlay_shadow_pages.page1[x]]",
+        "[framebuffer_pages.page1[x]]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
@@ -1349,8 +1319,8 @@
       "line": 515,
       "nextLine": 516,
       "operands": [
-        "OVLSHADOW+$500, x",
-        "OVL+$500, x"
+        "[overlay_shadow_pages.page2[x]]",
+        "[framebuffer_pages.page2[x]]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
@@ -1359,8 +1329,8 @@
       "line": 517,
       "nextLine": 518,
       "operands": [
-        "OVLSHADOW+$600, x",
-        "OVL+$600, x"
+        "[overlay_shadow_pages.page3[x]]",
+        "[framebuffer_pages.page3[x]]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
@@ -1369,8 +1339,8 @@
       "line": 519,
       "nextLine": 520,
       "operands": [
-        "OVLSHADOW+$700, x",
-        "OVL+$700, x"
+        "[overlay_shadow_pages.page4[x]]",
+        "[framebuffer_pages.page4[x]]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
@@ -1379,98 +1349,128 @@
       "line": 521,
       "nextLine": 522,
       "operands": [
-        "OVLSHADOW+$800, x",
-        "OVL+$800, x"
+        "[overlay_shadow_pages.page5[x]]",
+        "[framebuffer_pages.page5[x]]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 526,
-      "nextLine": 527,
+      "line": 523,
+      "nextLine": 524,
       "operands": [
-        "OVLSHADOW+$900, x",
-        "OVL+$900, x"
+        "[overlay_shadow_pages.page6[x]]",
+        "[framebuffer_pages.page6[x]]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 568,
-      "nextLine": 569,
+      "line": 525,
+      "nextLine": 526,
       "operands": [
-        "[overlay_rows + OverlayRowPointers.low[y]]",
-        "pOvl"
+        "[overlay_shadow_pages.page7[x]]",
+        "[framebuffer_pages.page7[x]]"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 570,
-      "nextLine": 571,
+      "line": 527,
+      "nextLine": 528,
       "operands": [
-        "[overlay_rows + OverlayRowPointers.high[y]]",
-        "pOvl+1"
+        "[overlay_shadow_pages.page8[x]]",
+        "[framebuffer_pages.page8[x]]"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 532,
+      "nextLine": 533,
+      "operands": [
+        "[overlay_shadow_pages.page9[x]]",
+        "[framebuffer_pages.page9[x]]"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 573,
+      "nextLine": 574,
+      "operands": [
+        "[overlay_rows.low[y]]",
+        "overlay_pointer"
+      ],
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 575,
+      "nextLine": 576,
+      "operands": [
+        "[overlay_rows.high[y]]",
+        "overlay_pointer+1"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 596,
-      "nextLine": 598,
+      "line": 599,
+      "nextLine": 601,
       "operands": [
-        "(pSrc), y",
-        "#Draw.glyph_end",
+        "(Machine.source), y",
+        "#glyph_end",
         ".done"
       ],
       "path": "src/celeste/draw.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 53,
-      "nextLine": 54,
+      "line": 67,
+      "nextLine": 68,
       "operands": [
         "#0",
-        "CL_XL, x"
+        "[effects.cloud_x_low[x]]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 66,
-      "nextLine": 67,
+      "line": 80,
+      "nextLine": 81,
       "operands": [
-        "[video + VideoRegisters.random]",
-        "CL_SL, x"
+        "[video.random]",
+        "[effects.cloud_speed_low[x]]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 76,
-      "nextLine": 77,
+      "line": 90,
+      "nextLine": 91,
       "operands": [
-        "[video + VideoRegisters.random]",
-        "PA_XL, x"
+        "[video.random]",
+        "[effects.particle_x_low[x]]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 81,
-      "nextLine": 82,
+      "line": 95,
+      "nextLine": 96,
       "operands": [
-        "[video + VideoRegisters.random]",
-        "PA_YL, x"
+        "[video.random]",
+        "[effects.particle_y_low[x]]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "lda_and_branch",
-      "line": 89,
-      "nextLine": 91,
+      "line": 103,
+      "nextLine": 105,
       "operands": [
-        "[video + VideoRegisters.random]",
+        "[video.random]",
         "#1",
         ".grey"
       ],
@@ -1478,80 +1478,80 @@
     },
     {
       "kind": "lda_sta",
-      "line": 95,
-      "nextLine": 97,
+      "line": 109,
+      "nextLine": 111,
       "operands": [
         "#Gfx.palette_6",
-        "PA_ATTR, x"
+        "[effects.particle_attribute[x]]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 98,
-      "nextLine": 99,
+      "line": 112,
+      "nextLine": 113,
       "operands": [
-        "[video + VideoRegisters.random]",
-        "PA_OFF, x"
+        "[video.random]",
+        "[effects.particle_offset[x]]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "clc_adc",
-      "line": 114,
-      "nextLine": 115,
+      "line": 128,
+      "nextLine": 129,
       "operands": [
         "",
-        "CL_SL, x"
+        "[effects.cloud_speed_low[x]]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 136,
-      "nextLine": 137,
+      "line": 148,
+      "nextLine": 149,
       "operands": [
         "#0",
-        "CL_XL, x"
+        "[effects.cloud_x_low[x]]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 142,
-      "nextLine": 144,
+      "line": 154,
+      "nextLine": 156,
       "operands": [
         "#119",
-        "CL_Y, x"
+        "[effects.cloud_y[x]]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "clc_adc",
-      "line": 152,
-      "nextLine": 153,
+      "line": 164,
+      "nextLine": 165,
       "operands": [
         "",
-        "PA_SL, x"
+        "[effects.particle_speed_low[x]]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "clc_adc",
-      "line": 168,
-      "nextLine": 169,
+      "line": 177,
+      "nextLine": 178,
       "operands": [
         "",
-        "Fx.sin_low, y"
+        "sin_low, y"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 175,
-      "nextLine": 177,
+      "line": 184,
+      "nextLine": 186,
       "operands": [
-        "PA_XH, x",
+        "[effects.particle_x_high[x]]",
         "#133",
         ".nextpart"
       ],
@@ -1559,114 +1559,94 @@
     },
     {
       "kind": "lda_sta",
-      "line": 180,
-      "nextLine": 181,
+      "line": 189,
+      "nextLine": 190,
       "operands": [
         "#$FC",
-        "PA_XH, x"
+        "[effects.particle_x_high[x]]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 212,
-      "nextLine": 213,
+      "line": 221,
+      "nextLine": 222,
       "operands": [
-        "CL_W, x",
-        "[video + VideoRegisters.repeat]"
+        "[effects.cloud_width[x]]",
+        "[video.repeat]"
       ],
       "path": "src/celeste/fx.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 34,
-      "nextLine": 35,
+      "line": 48,
+      "nextLine": 49,
       "operands": [
-        "(pSrc), y",
-        "[psg + PsgRegisters.data]"
+        "(Machine.source), y",
+        "[psg.data]"
       ],
       "path": "src/celeste/sound.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 43,
-      "nextLine": 44,
+      "line": 57,
+      "nextLine": 58,
       "operands": [
         "#0",
-        "nextch"
+        "[game.next_channel]"
       ],
       "path": "src/celeste/sound.inlay.asm"
     },
     {
       "kind": "lda_and_branch",
-      "line": 67,
-      "nextLine": 69,
+      "line": 81,
+      "nextLine": 83,
       "operands": [
-        "Audio.channel_bits, y",
-        "t0",
+        "channel_bits, y",
+        "Machine.t0",
         ".go"
       ],
       "path": "src/celeste/sound.inlay.asm"
     },
     {
       "kind": "lda_and_branch",
-      "line": 79,
-      "nextLine": 81,
+      "line": 93,
+      "nextLine": 95,
       "operands": [
-        "Audio.channel_bits, y",
-        "PSG_MUSMASK",
+        "channel_bits, y",
+        "[psg.music_mask]",
         ".steal"
       ],
       "path": "src/celeste/sound.inlay.asm"
     },
     {
       "kind": "lda_cmp_branch",
-      "line": 31,
-      "nextLine": 34,
+      "line": 45,
+      "nextLine": 48,
       "operands": [
-        "[video + VideoRegisters.frame]",
-        "SPR_FRAME",
+        "[video.frame]",
+        "[video.frame]",
         ".wait"
       ],
       "path": "src/celeste/platform.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 42,
-      "nextLine": 43,
+      "line": 56,
+      "nextLine": 57,
       "operands": [
-        "btn",
-        "btnprev"
+        "[game.buttons]",
+        "[game.previous_buttons]"
       ],
       "path": "src/celeste/platform.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 44,
-      "nextLine": 45,
+      "line": 58,
+      "nextLine": 59,
       "operands": [
-        "[video + VideoRegisters.buttons]",
-        "btn"
-      ],
-      "path": "src/celeste/platform.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 54,
-      "nextLine": 55,
-      "operands": [
-        "Gfx.draw_palette, x",
-        "SPR_DPAL, x"
-      ],
-      "path": "src/celeste/platform.inlay.asm"
-    },
-    {
-      "kind": "lda_sta",
-      "line": 65,
-      "nextLine": 66,
-      "operands": [
-        "#0",
-        "[video + VideoRegisters.sheet_address_low]"
+        "[video.buttons]",
+        "[game.buttons]"
       ],
       "path": "src/celeste/platform.inlay.asm"
     },
@@ -1675,88 +1655,108 @@
       "line": 68,
       "nextLine": 69,
       "operands": [
-        "#<Gfx.sheet",
-        "pSrc"
+        "Gfx.draw_palette, x",
+        "[video.draw_palette[x]]"
       ],
       "path": "src/celeste/platform.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 70,
-      "nextLine": 71,
+      "line": 79,
+      "nextLine": 80,
+      "operands": [
+        "#0",
+        "[video.sheet_address_low]"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 82,
+      "nextLine": 83,
+      "operands": [
+        "#<Gfx.sheet",
+        "Machine.source"
+      ],
+      "path": "src/celeste/platform.inlay.asm"
+    },
+    {
+      "kind": "lda_sta",
+      "line": 84,
+      "nextLine": 85,
       "operands": [
         "#>Gfx.sheet",
-        "pSrc+1"
+        "Machine.source+1"
       ],
       "path": "src/celeste/platform.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 72,
-      "nextLine": 73,
+      "line": 86,
+      "nextLine": 87,
       "operands": [
         "#<Gfx.upload_bytes",
-        "t0"
+        "Machine.t0"
       ],
       "path": "src/celeste/platform.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 74,
-      "nextLine": 75,
+      "line": 88,
+      "nextLine": 89,
       "operands": [
         "#>Gfx.upload_bytes",
-        "t1"
+        "Machine.t1"
       ],
       "path": "src/celeste/platform.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 78,
-      "nextLine": 79,
+      "line": 92,
+      "nextLine": 93,
       "operands": [
-        "(pSrc), y",
-        "[video + VideoRegisters.sheet_data]"
+        "(Machine.source), y",
+        "[video.sheet_data]"
       ],
       "path": "src/celeste/platform.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 23,
-      "nextLine": 24,
+      "line": 51,
+      "nextLine": 52,
       "operands": [
         "#0",
-        "frames"
+        "[game.frames]"
       ],
       "path": "src/celeste/game.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 63,
-      "nextLine": 64,
+      "line": 91,
+      "nextLine": 92,
       "operands": [
         "#0",
-        "frames"
+        "[game.frames]"
       ],
       "path": "src/celeste/game.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 78,
-      "nextLine": 79,
+      "line": 106,
+      "nextLine": 107,
       "operands": [
         "#0",
-        "frames"
+        "[game.frames]"
       ],
       "path": "src/celeste/game.inlay.asm"
     },
     {
       "kind": "lda_sta",
-      "line": 139,
-      "nextLine": 140,
+      "line": 167,
+      "nextLine": 168,
       "operands": [
         "#0",
-        "shake_x"
+        "[game.shake_x]"
       ],
       "path": "src/celeste/game.inlay.asm"
     }
@@ -1765,660 +1765,663 @@
   "phase": "celeste-inlay-phase-b",
   "rawObjectIndirectSites": [
     {
-      "base": "pObj",
-      "line": 165,
+      "base": "object",
+      "line": 171,
       "path": "src/celeste/math.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 168,
+      "base": "object",
+      "line": 174,
       "path": "src/celeste/math.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 177,
+      "base": "object",
+      "line": 183,
       "path": "src/celeste/math.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 180,
+      "base": "object",
+      "line": 186,
       "path": "src/celeste/math.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 191,
+      "base": "object",
+      "line": 197,
       "path": "src/celeste/math.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 194,
+      "base": "object",
+      "line": 200,
       "path": "src/celeste/math.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 125,
+      "base": "object",
+      "line": 142,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 144,
+      "base": "object",
+      "line": 161,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 295,
+      "base": "object",
+      "line": 312,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 297,
+      "base": "object",
+      "line": 314,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 316,
+      "base": "object",
+      "line": 333,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 318,
+      "base": "object",
+      "line": 335,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 367,
+      "base": "object",
+      "line": 384,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 369,
+      "base": "object",
+      "line": 386,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 383,
-      "path": "src/celeste/obj.inlay.asm"
-    },
-    {
-      "base": "pObj",
-      "line": 385,
-      "path": "src/celeste/obj.inlay.asm"
-    },
-    {
-      "base": "pObj",
-      "line": 394,
-      "path": "src/celeste/obj.inlay.asm"
-    },
-    {
-      "base": "pObj",
-      "line": 396,
-      "path": "src/celeste/obj.inlay.asm"
-    },
-    {
-      "base": "pObj",
-      "line": 398,
-      "path": "src/celeste/obj.inlay.asm"
-    },
-    {
-      "base": "pObj",
+      "base": "object",
       "line": 400,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 416,
+      "base": "object",
+      "line": 402,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 418,
+      "base": "object",
+      "line": 411,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 432,
+      "base": "object",
+      "line": 413,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 434,
+      "base": "object",
+      "line": 415,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 443,
+      "base": "object",
+      "line": 417,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 445,
+      "base": "object",
+      "line": 433,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 447,
+      "base": "object",
+      "line": 435,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 449,
       "path": "src/celeste/obj.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 43,
+      "base": "object",
+      "line": 451,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "object",
+      "line": 460,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "object",
+      "line": 462,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "object",
+      "line": 464,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "object",
+      "line": 466,
+      "path": "src/celeste/obj.inlay.asm"
+    },
+    {
+      "base": "object",
+      "line": 58,
       "path": "src/celeste/collide.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 49,
+      "base": "object",
+      "line": 64,
       "path": "src/celeste/collide.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 233,
+      "base": "object",
+      "line": 237,
       "path": "src/celeste/collide.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 260,
+      "base": "object",
+      "line": 262,
       "path": "src/celeste/collide.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 264,
+      "base": "object",
+      "line": 266,
       "path": "src/celeste/collide.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 282,
+      "base": "object",
+      "line": 284,
       "path": "src/celeste/collide.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 286,
+      "base": "object",
+      "line": 288,
       "path": "src/celeste/collide.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 304,
+      "base": "object",
+      "line": 306,
       "path": "src/celeste/collide.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 120,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 133,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 138,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 140,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 148,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 150,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 153,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 156,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 164,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 169,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 171,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 179,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 181,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 197,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 200,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 211,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 218,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 230,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 233,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 243,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 246,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 334,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 336,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 341,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 343,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 347,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 349,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 401,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 440,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 443,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 447,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 473,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 476,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 487,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 490,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 512,
+      "base": "object",
+      "line": 511,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 526,
+      "base": "object",
+      "line": 525,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 536,
+      "base": "object",
+      "line": 535,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 630,
+      "base": "object",
+      "line": 629,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 632,
+      "base": "object",
+      "line": 631,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 638,
+      "base": "object",
+      "line": 637,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 641,
+      "base": "object",
+      "line": 640,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 651,
+      "base": "object",
+      "line": 650,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 654,
+      "base": "object",
+      "line": 653,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 656,
+      "base": "object",
+      "line": 655,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 658,
+      "base": "object",
+      "line": 657,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 668,
+      "base": "object",
+      "line": 667,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 671,
+      "base": "object",
+      "line": 670,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 679,
+      "base": "object",
+      "line": 678,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 682,
+      "base": "object",
+      "line": 681,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 705,
+      "base": "object",
+      "line": 704,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 707,
+      "base": "object",
+      "line": 706,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 720,
+      "base": "object",
+      "line": 718,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
+      "line": 829,
+      "path": "src/celeste/player.inlay.asm"
+    },
+    {
+      "base": "object",
       "line": 831,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 833,
+      "base": "object",
+      "line": 856,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 858,
+      "base": "object",
+      "line": 862,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 864,
+      "base": "object",
+      "line": 865,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 867,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 869,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 871,
+      "base": "object",
+      "line": 885,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 887,
+      "base": "object",
+      "line": 892,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 894,
+      "base": "object",
+      "line": 910,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 912,
+      "base": "object",
+      "line": 913,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 915,
+      "base": "object",
+      "line": 916,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 918,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 920,
+      "base": "object",
+      "line": 925,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 927,
+      "base": "object",
+      "line": 933,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 935,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 937,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 939,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 941,
+      "base": "object",
+      "line": 948,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 950,
+      "base": "object",
+      "line": 960,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 962,
+      "base": "object",
+      "line": 966,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 968,
+      "base": "object",
+      "line": 996,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 998,
+      "base": "object",
+      "line": 999,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 1001,
+      "base": "object",
+      "line": 1004,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 1006,
+      "base": "object",
+      "line": 1007,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 1009,
+      "base": "object",
+      "line": 1013,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 1015,
+      "base": "object",
+      "line": 1014,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 1016,
+      "base": "object",
+      "line": 1020,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 1022,
+      "base": "object",
+      "line": 1021,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 1023,
+      "base": "object",
+      "line": 1026,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
+      "base": "object",
       "line": 1028,
       "path": "src/celeste/player.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 1030,
-      "path": "src/celeste/player.inlay.asm"
-    },
-    {
-      "base": "pObj",
-      "line": 214,
+      "base": "object",
+      "line": 232,
       "path": "src/celeste/room.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 163,
-      "path": "src/celeste/draw.inlay.asm"
-    },
-    {
-      "base": "pObj",
+      "base": "object",
       "line": 179,
       "path": "src/celeste/draw.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 223,
+      "base": "object",
+      "line": 195,
       "path": "src/celeste/draw.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 226,
+      "base": "object",
+      "line": 239,
       "path": "src/celeste/draw.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 229,
+      "base": "object",
+      "line": 242,
       "path": "src/celeste/draw.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 232,
+      "base": "object",
+      "line": 245,
       "path": "src/celeste/draw.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 286,
+      "base": "object",
+      "line": 248,
       "path": "src/celeste/draw.inlay.asm"
     },
     {
-      "base": "pObj",
-      "line": 298,
+      "base": "object",
+      "line": 302,
+      "path": "src/celeste/draw.inlay.asm"
+    },
+    {
+      "base": "object",
+      "line": 314,
       "path": "src/celeste/draw.inlay.asm"
     }
   ],
   "rom": {
     "bytes": 65536,
     "path": "build/celeste.bin",
-    "sha256": "e57a8ea4112c6f16086d6a618254214c453d464d4de9ce19bfa03ac608f53da6"
+    "sha256": "13ed7d617e7e72c329d19078726505539975960093e663839b846f9bf5eeaf07"
   },
   "source": {
+    "countedShiftSites": 11,
     "customOperations": {
       "add": 57,
       "addw": 6,
+      "asr": 1,
+      "asrw": 2,
       "bnzero": 0,
       "bzero": 0,
       "cbeq": 2,
@@ -2426,9 +2429,9 @@
       "cblt": 3,
       "cbne": 5,
       "cmpw": 0,
-      "ldab": 20,
+      "ldab": 18,
       "mov": 215,
-      "stab": 20,
+      "stab": 19,
       "sub": 28,
       "subw": 5,
       "tbnz": 0,
@@ -2445,6 +2448,6 @@
   },
   "symbols": {
     "path": "build/celeste.sym",
-    "sha256": "d2f6ad71aa5740081afc15084ec08c4c6749e2dff9a7124611926e3da339c117"
+    "sha256": "4b660a0bab4f51d980d90d2b1eb952d0ab52b683a4dc53ea3cc615aa79c02768"
   }
 }

@@ -68,14 +68,26 @@ reject ambiguous or missing references.
 ### Requirement: Explicit Module Exports
 
 Names declared in a semantic module SHALL be private to that module by default.
-An `export NAME` declaration inside a namespace SHALL expose that member under
-its fully qualified name to other semantic modules. Exporting a nested
-namespace SHALL expose the namespace name but SHALL NOT implicitly export its
-private descendants.
+The `export` modifier SHALL attach directly to an exportable declaration inside
+a namespace and SHALL expose that declaration under its fully qualified name
+to other semantic modules.
+
+Exportable declarations SHALL include constants, target data labels, enums,
+structures, unions, overlays, locations, pools, procedures and nested
+namespaces. The accepted forms SHALL follow the declaration's ordinary syntax,
+including `export proc init`, `export struct Vec2`,
+`export value = 42` and `export data_label:`. A standalone `export NAME`
+manifest SHALL be invalid.
+
+Exporting a nested namespace SHALL expose the namespace name but SHALL NOT
+implicitly export its private descendants. Structure/union fields, enum
+members, procedure parameters, frame locals and procedure-local labels SHALL
+NOT accept independent `export` modifiers; their accessibility follows their
+owning declaration.
 
 #### Scenario: Exported member is used by another module
 
-- **WHEN** `Gfx` exports `draw_palette` and another module refers to
+- **WHEN** `Gfx` declares `export draw_palette:` and another module refers to
   `Gfx.draw_palette`
 - **THEN** the reference resolves across the module boundary
 
@@ -90,6 +102,24 @@ private descendants.
 - **WHEN** a declaration in the defining module refers to an unexported member
   by a valid lexical name
 - **THEN** the reference resolves normally
+
+#### Scenario: Procedure carries its visibility
+
+- **WHEN** `Player` declares `export proc init`
+- **THEN** `Player.init` is public without a separate export manifest entry
+
+#### Scenario: Standalone export is attempted
+
+- **WHEN** a namespace contains `export init` followed by `proc init`
+- **THEN** translation rejects the standalone export and identifies
+  `export proc init` as the accepted form
+
+#### Scenario: Nested member is independently exported
+
+- **WHEN** source prefixes a structure field, enum member, parameter, local or
+  procedure-local label with `export`
+- **THEN** translation rejects the modifier because visibility belongs to the
+  owning namespace declaration
 
 ### Requirement: Collision-free Target Symbols
 
@@ -136,7 +166,9 @@ one-past-capacity use SHALL fail deterministically before partial target output.
 
 The initial namespace slice SHALL NOT add wildcard imports, namespace aliases,
 implicit imports or runtime namespace objects. Fully qualified dots and lexical
-lookup SHALL be the only cross-scope reference mechanisms.
+lookup SHALL be the only cross-scope reference mechanisms. Visibility SHALL be
+read at the declaration site through the `export` prefix rather than through a
+detached namespace manifest.
 
 #### Scenario: Wildcard import is attempted
 

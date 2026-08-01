@@ -150,14 +150,11 @@
       condition does not. Belongs to `add-isa-ergonomic-gates`
 - [ ] 4.7 Fail the metrics run on a corpus that is measured but not registered
 
-## 5. Documentation and coordination
+## 5. Documentation and integration
 
 - [x] 5.1 `docs/corpora.md`: celeste registered with what it is, which systems
       are implemented, what it measures well and badly, and its divergences
       (**gate C5**)
-- [x] 5.5 Two agents are working in this checkout at once; the file ownership
-      and shared-file protocol are in `docs/agent-coordination.md`, along with
-      the requests raised in both directions
 - [x] 5.6 **Proposed, not taken**: the plumbing metric should count pointer
       setup. `plumbing` is shared by all three corpora and every recorded
       baseline, so changing it moves every number in `docs/corpora.md` at once.

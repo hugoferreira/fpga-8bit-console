@@ -489,8 +489,7 @@ begin
     iny
     sta (Machine.object), y
     lda wall               ; the puff, unless the wall is ice
-    asl
-    asl
+    asl a, 2
     add wall  ; wall_dir * 5 ... the cart tests ice at *3
     sta Collision.offset_x                    ; and puffs at *6; close enough is not enough,
     lda wall               ; so both are spelled out
@@ -708,8 +707,7 @@ begin
     beq .still
     tbz [game.buttons], #Platform.Input.left|Platform.Input.right, .still
     lda [Machine.object.payload.player.sprite_offset]
-    lsr
-    lsr
+    lsr a, 2
     add #1
     jmp .setspr
 .still:

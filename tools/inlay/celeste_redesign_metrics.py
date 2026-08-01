@@ -27,6 +27,10 @@ HANDWRITTEN = (
 CUSTOM_OPS = (
     "mov", "add", "sub", "ldab", "stab", "addw", "subw", "cmpw",
     "cbeq", "cbne", "cblt", "cbge", "tbz", "tbnz", "bzero", "bnzero",
+    # A pseudo-op missing from this tuple is not merely uncounted: the
+    # annotated parser skips its line entirely, so its expansion bytes vanish
+    # from executableBytes and the migration reads as a saving it did not make.
+    "asr", "asrw",
 )
 PHASE_A_VISUAL = {
     "title":
@@ -197,8 +201,18 @@ def main() -> int:
         }
         for path, text in texts.items()
         for number, line in enumerate(text.splitlines(), 1)
-        if (match := re.search(r"\((pObj|pOth)\),\s*y\b", line))
+        # The namespace migration renamed pObj/pOth to Machine.object/.other.
+        # Keep this in step with test_conformance.py, which gates the count.
+        if (match := re.search(r"\(Machine\.(object|other)\),\s*y\b", line))
     ]
+    # Counted accumulator shifts/rotates. Adopting them is byte-neutral, so the
+    # ROM digest cannot show it and only the site count can.
+    counted_shift_sites = sum(
+        len(re.findall(
+            r"^\s*(?:asl|lsr|rol|ror) a,\s*\d+", text, re.MULTILINE
+        ))
+        for text in texts.values()
+    )
     artifacts = {
         "sourcePortChange": "openspec/changes/port-celeste-sources-to-inlay",
         "bytePreservingChange":
@@ -229,6 +243,7 @@ def main() -> int:
         },
         "source": {
             "customOperations": custom,
+            "countedShiftSites": counted_shift_sites,
             "objectOffsetSetups": len(offset_sites),
             "rawObjectIndirects": len(raw_indirect_sites),
             "legacyCandidateCounts": {

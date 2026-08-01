@@ -85,6 +85,11 @@
 - [x] 10.4 Move PSG upload, channel allocation, SFX and music controls under `Audio`
 - [x] 10.5 Remove residual unqualified implementation constants and global helper labels from production modules
 - [x] 10.6 Audit and document every remaining raw target sequence that cannot use an adopted typed/custom operation
+- [ ] 10.7 Declare the `console6502` target's default calling convention, make omitted `using` resolve through it, reject redundant default clauses and test explicit override/no-default behavior
+- [ ] 10.8 Replace detached namespace export manifests with declaration-attached `export`, cover every exportable declaration and invalid nested-member form, and migrate generators plus production Celeste source
+- [x] 10.9 Add bounded accumulator `asl a, N`, `lsr a, N`, `rol a, N` and `ror a, N` pseudo-operations, prove byte/flag/carry equivalence at boundary counts, reject ambiguous memory forms and migrate eligible Celeste sequences
+  - Spelled `asl a, N`, not `asl N`: the bare form collides with `asl {zaddr: u8}` and customasm v0.14.1 silently prefers the smaller encoding, assembling `asl 3` to `06 03`. Spec and design amended with the finding.
+  - 11 Celeste sites, 33 instructions; ROM bit-identical across the migration, so `source.countedShiftSites` is gated separately. Instruction sites 2326 -> 2304.
 
 ## 11. Final regression and measurements
 
@@ -94,3 +99,10 @@
 - [x] 11.4 Confirm the image fits existing ROM/RAM maps and improves executable instruction count and manual offset setup over Phase A
 - [x] 11.5 Publish pre/post footprint, instruction, pointer-plumbing and custom-operation adoption measurements
 - [x] 11.6 Update Inlay/Celeste documentation with namespaces, module APIs, customasm-only output and the new regression contract
+
+## 12. Introduce target-sized code pointers
+
+- [x] 12.1 Define `codeptr` as a target-sized primitive with target-owned width and byte order
+- [x] 12.2 Add direct `data codeptr PROCEDURE` relocation syntax while retaining explicit split low/high tables
+- [x] 12.3 Migrate Celeste's reset vectors to `codeptr` without changing ROM bytes
+- [x] 12.4 Add core, host, portability, conformance and gameplay regression coverage

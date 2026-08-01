@@ -126,6 +126,7 @@ def main():
             "end\n"
             "data u8 low(Player.update), high(Player.update)\n"
             "data u16 addr(Player.update)\n"
+            "data codeptr Player.update\n"
             "mov a, #Player.speed\n"
             "enum Kind : u8\n"
             "none = 0\n"
@@ -182,7 +183,11 @@ def main():
         assert "jsr __inlay_q6_Player6_update" in assembly
         assert "#d8 (__inlay_q6_Player6_update)[7:0]" in assembly
         assert "#d8 (__inlay_q6_Player6_update)[15:8]" in assembly
-        assert "#d16 __inlay_q6_Player6_update" in assembly
+        assert assembly.count("#d16 __inlay_q6_Player6_update") == 1
+        assert (
+            "#d8 (__inlay_q6_Player6_update)[7:0], "
+            "(__inlay_q6_Player6_update)[15:8]"
+        ) in assembly
         assert "__inlay_q6_Player5_speed = 10" in assembly
         assert "__inlay_q6_Player7_palette:" in assembly
         assert "lda __inlay_q6_Player7_palette,x" in assembly

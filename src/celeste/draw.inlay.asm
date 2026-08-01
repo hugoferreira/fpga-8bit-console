@@ -392,35 +392,26 @@ hair_chase:
     ldab Fixed.word1  ; d = target - h
     subw Fixed.word0
     stab Fixed.word2
+    stab Fixed.word1            ; stab leaves AB, so d lands in both words
 
-    ldab Fixed.word2  ; w1 = d >> 1
-    stab Fixed.word1
-    jsr asr_w1
+    jsr asr_w1                  ; w1 = d >> 1
 
     jsr asr_w2                  ; w2 = d >> 3
     jsr asr_w2
     jsr asr_w2
 
-    ldab Fixed.word0
+    ldab Fixed.word0            ; addw is carry-free, so the two shifts chain
     addw Fixed.word1
-    stab Fixed.word0
-    ldab Fixed.word0
     addw Fixed.word2
     stab Fixed.word0
     rts
 
 asr_w1:
-    lda Fixed.word1+1
-    cmp #$80                    ; carry = the sign bit, so the shift is signed
-    ror Fixed.word1+1
-    ror Fixed.word1
+    asrw Fixed.word1           ; clobbers A; Z and N are undefined afterwards
     rts
 
 asr_w2:
-    lda Fixed.word2+1
-    cmp #$80
-    ror Fixed.word2+1
-    ror Fixed.word2
+    asrw Fixed.word2
     rts
 
 ; ------------------------------------------------------------------------------
@@ -561,8 +552,7 @@ overlay_end:
 
 char:
     sta character
-    asl
-    asl
+    asl a, 2
     add character  ; glyph * 5
     tax
     mov row, #0
@@ -585,9 +575,7 @@ char:
     lda [overlay_rows.high[y]]
     sta overlay_pointer+1
     lda pen_x
-    lsr
-    lsr
-    lsr
+    lsr a, 3
     tay
     lda (overlay_pointer), y
     ora bits

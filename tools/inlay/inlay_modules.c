@@ -3,14 +3,15 @@
 #include <string.h>
 
 typedef struct {
-    la_u16 source_id;
-    la_u16 line;
-} LaOriginRec;
-
-typedef struct {
     LaSourceView view;
     la_u8 state;
 } LaModuleRec;
+
+typedef struct {
+    la_u16 parent;
+    la_u16 child;
+    la_u16 line;
+} LaModuleEdge;
 
 typedef struct {
     la_u16 module;
@@ -19,20 +20,26 @@ typedef struct {
 } LaModuleFrame;
 
 typedef struct {
-    const char *data;
-    const LaOriginRec *origins;
-    la_u16 length;
-    la_u16 offset;
-    la_u16 line_count;
-} LaExpandedState;
-
-typedef struct {
-    char *output;
-    LaOriginRec *origins;
     LaModuleRec *modules;
     LaModuleSource *sources;
+    LaModuleEdge *edges;
     LaModuleFrame *frames;
-    LaExpandedState *state;
+    la_u16 module_count;
+    la_u16 edge_count;
+    la_u16 frame_capacity;
+    la_u16 depth;
+    const char *pending;
+    la_u16 pending_length;
+    la_u16 pending_offset;
+    int read_started;
+} LaReplayState;
+
+typedef struct {
+    LaModuleRec *modules;
+    LaModuleSource *sources;
+    LaModuleEdge *edges;
+    LaModuleFrame *frames;
+    LaReplayState *state;
 } LaModuleStorage;
 
 static la_u32 module_align(la_u32 value)
@@ -58,6 +65,7 @@ LaModuleLimits la_default_module_limits(void)
 {
     LaModuleLimits limits;
     limits.max_modules = 64;
+    limits.max_edges = 64;
     limits.max_source_bytes = 32767;
     limits.max_source_lines = 4096;
     limits.max_include_depth = 32;
@@ -67,16 +75,15 @@ LaModuleLimits la_default_module_limits(void)
 la_u32 la_module_workspace_required(const LaModuleLimits *limits)
 {
     la_u32 total;
-    total = module_align((la_u32)limits->max_source_bytes + 1);
-    total += module_align((la_u32)limits->max_source_lines *
-                          sizeof(LaOriginRec));
-    total += module_align((la_u32)limits->max_modules *
-                          sizeof(LaModuleRec));
+    total = module_align((la_u32)limits->max_modules *
+                         sizeof(LaModuleRec));
     total += module_align((la_u32)limits->max_modules *
                           sizeof(LaModuleSource));
+    total += module_align((la_u32)limits->max_edges *
+                          sizeof(LaModuleEdge));
     total += module_align((la_u32)limits->max_include_depth *
                           sizeof(LaModuleFrame));
-    total += module_align(sizeof(LaExpandedState));
+    total += module_align(sizeof(LaReplayState));
     return total;
 }
 
@@ -84,8 +91,7 @@ static LaDiagnosticCode module_fail(const LaDiagnosticSink *sink,
                                     LaDiagnosticCode code,
                                     la_u16 source_id, la_u16 line,
                                     const char *arg_data, la_u16 arg_length,
-                                    la_i32 value,
-                                    la_i32 limit)
+                                    la_i32 value, la_i32 limit)
 {
     LaDiagnostic diagnostic;
     memset(&diagnostic, 0, sizeof(diagnostic));
@@ -145,7 +151,8 @@ static const char *module_code_end(const char *start, const char *end)
         }
     }
     while (code_end > start &&
-           (code_end[-1] == ' ' || code_end[-1] == '\t')) {
+           (code_end[-1] == ' ' || code_end[-1] == '\t' ||
+            code_end[-1] == '\r')) {
         --code_end;
     }
     return code_end;
@@ -159,85 +166,23 @@ static int module_storage_init(LaWorkspace workspace,
     la_u32 remaining;
     cursor = (char *)workspace.data;
     remaining = workspace.size;
-    storage->output = (char *)module_take(
-        &cursor, &remaining, (la_u32)limits->max_source_bytes + 1);
-    storage->origins = (LaOriginRec *)module_take(
-        &cursor, &remaining,
-        (la_u32)limits->max_source_lines * sizeof(LaOriginRec));
     storage->modules = (LaModuleRec *)module_take(
         &cursor, &remaining,
         (la_u32)limits->max_modules * sizeof(LaModuleRec));
     storage->sources = (LaModuleSource *)module_take(
         &cursor, &remaining,
         (la_u32)limits->max_modules * sizeof(LaModuleSource));
+    storage->edges = (LaModuleEdge *)module_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_edges * sizeof(LaModuleEdge));
     storage->frames = (LaModuleFrame *)module_take(
         &cursor, &remaining,
         (la_u32)limits->max_include_depth * sizeof(LaModuleFrame));
-    storage->state = (LaExpandedState *)module_take(
-        &cursor, &remaining, sizeof(LaExpandedState));
-    return storage->output != 0 && storage->origins != 0 &&
-           storage->modules != 0 && storage->sources != 0 &&
-           storage->frames != 0 && storage->state != 0;
-}
-
-static LaDiagnosticCode append_source_line(
-    const LaDiagnosticSink *diagnostics, const LaModuleLimits *limits,
-    const LaModuleRec *module, const LaModuleFrame *frame,
-    const char *line_start, const char *line_end, LaModuleStorage *storage,
-    la_u16 *output_length, la_u16 *output_lines)
-{
-    la_u16 line_length;
-    line_end = module_code_end(line_start, line_end);
-    while (line_start < line_end &&
-           (*line_start == ' ' || *line_start == '\t')) {
-        ++line_start;
-    }
-    line_length = (la_u16)(line_end - line_start);
-    if (line_length == 0) return LA_OK;
-    if ((la_u32)*output_length + line_length + 1 >
-        limits->max_source_bytes) {
-        return module_fail(diagnostics, LA_ERR_MODULE_SOURCE_CAPACITY,
-                           module->view.source_id, frame->line,
-                           module->view.name.data, module->view.name.length,
-                           *output_length + line_length + 1,
-                           limits->max_source_bytes);
-    }
-    if (*output_lines >= limits->max_source_lines) {
-        return module_fail(diagnostics, LA_ERR_MODULE_LINE_CAPACITY,
-                           module->view.source_id, frame->line,
-                           module->view.name.data, module->view.name.length,
-                           *output_lines + 1, limits->max_source_lines);
-    }
-    memcpy(storage->output + *output_length, line_start, line_length);
-    *output_length = (la_u16)(*output_length + line_length);
-    storage->output[(*output_length)++] = '\n';
-    storage->origins[*output_lines].source_id = module->view.source_id;
-    storage->origins[*output_lines].line = frame->line;
-    ++*output_lines;
-    return LA_OK;
-}
-
-static int expanded_read(void *context, char *destination, la_u16 capacity)
-{
-    LaExpandedState *state;
-    la_u16 amount;
-    state = (LaExpandedState *)context;
-    if (state->offset >= state->length) return 0;
-    amount = (la_u16)(state->length - state->offset);
-    if (amount > capacity) amount = capacity;
-    memcpy(destination, state->data + state->offset, amount);
-    state->offset = (la_u16)(state->offset + amount);
-    return amount;
-}
-
-static void expanded_origin(void *context, la_u16 expanded_line,
-                            LaSpan *origin)
-{
-    LaExpandedState *state;
-    state = (LaExpandedState *)context;
-    if (expanded_line == 0 || expanded_line > state->line_count) return;
-    origin->source_id = state->origins[expanded_line - 1].source_id;
-    origin->line = state->origins[expanded_line - 1].line;
+    storage->state = (LaReplayState *)module_take(
+        &cursor, &remaining, sizeof(LaReplayState));
+    return storage->modules != 0 && storage->sources != 0 &&
+           storage->edges != 0 && storage->frames != 0 &&
+           storage->state != 0;
 }
 
 static int include_line(const char *start, const char *end,
@@ -278,6 +223,146 @@ static la_u16 find_module(LaModuleRec *modules, la_u16 count,
     return LA_INVALID_HANDLE;
 }
 
+static void replay_reset(void *context)
+{
+    LaReplayState *state;
+    state = (LaReplayState *)context;
+    state->depth = 1;
+    state->frames[0].module = 0;
+    state->frames[0].offset = 0;
+    state->frames[0].line = 1;
+    state->pending = 0;
+    state->pending_length = 0;
+    state->pending_offset = 0;
+}
+
+static la_u16 replay_child(LaReplayState *state, la_u16 parent,
+                           la_u16 line)
+{
+    la_u16 edge;
+    for (edge = 0; edge < state->edge_count; ++edge) {
+        if (state->edges[edge].parent == parent &&
+            state->edges[edge].line == line) {
+            return state->edges[edge].child;
+        }
+    }
+    return LA_INVALID_HANDLE;
+}
+
+static int replay_next_line(void *context, LaSourceLine *result)
+{
+    LaReplayState *state;
+    state = (LaReplayState *)context;
+    while (state->depth != 0) {
+        LaModuleFrame *frame;
+        LaModuleRec *module;
+        const char *start;
+        const char *end;
+        const char *code_end;
+        LaSlice requested;
+        int include;
+        la_u16 original_line;
+        frame = &state->frames[state->depth - 1];
+        module = &state->modules[frame->module];
+        if (frame->offset >= module->view.length) {
+            --state->depth;
+            continue;
+        }
+        start = module->view.data + frame->offset;
+        end = start;
+        while ((la_u16)(end - module->view.data) < module->view.length &&
+               *end != '\n') ++end;
+        original_line = frame->line++;
+        frame->offset = (la_u16)(end - module->view.data);
+        if (frame->offset < module->view.length) ++frame->offset;
+        code_end = module_code_end(start, end);
+        include = include_line(start, code_end, &requested);
+        if (include > 0) {
+            la_u16 child;
+            child = replay_child(state, frame->module, original_line);
+            if (child == LA_INVALID_HANDLE ||
+                state->depth >= state->frame_capacity) return -1;
+            state->frames[state->depth].module = child;
+            state->frames[state->depth].offset = 0;
+            state->frames[state->depth].line = 1;
+            ++state->depth;
+            continue;
+        }
+        while (start < code_end && (*start == ' ' || *start == '\t')) {
+            ++start;
+        }
+        if (start == code_end) continue;
+        result->data = start;
+        result->length = (la_u16)(code_end - start);
+        result->source_id = module->view.source_id;
+        result->line = original_line;
+        return 1;
+    }
+    return 0;
+}
+
+static int replay_read(void *context, char *destination, la_u16 capacity)
+{
+    LaReplayState *state;
+    la_u16 written;
+    state = (LaReplayState *)context;
+    if (!state->read_started) {
+        replay_reset(state);
+        state->read_started = 1;
+    }
+    written = 0;
+    while (written < capacity) {
+        if (state->pending_offset < state->pending_length) {
+            la_u16 amount;
+            amount = (la_u16)(state->pending_length -
+                              state->pending_offset);
+            if (amount > capacity - written) {
+                amount = (la_u16)(capacity - written);
+            }
+            memcpy(destination + written,
+                   state->pending + state->pending_offset, amount);
+            state->pending_offset =
+                (la_u16)(state->pending_offset + amount);
+            written = (la_u16)(written + amount);
+            continue;
+        }
+        if (state->pending != 0 &&
+            state->pending_offset == state->pending_length) {
+            destination[written++] = '\n';
+            state->pending = 0;
+            if (written == capacity) break;
+        } else {
+            LaSourceLine line;
+            int next;
+            next = replay_next_line(state, &line);
+            if (next <= 0) break;
+            state->pending = line.data;
+            state->pending_length = line.length;
+            state->pending_offset = 0;
+        }
+    }
+    return written;
+}
+
+static void replay_origin(void *context, la_u16 expanded_line,
+                          LaSpan *origin)
+{
+    LaReplayState *state;
+    LaSourceLine line;
+    la_u16 current;
+    state = (LaReplayState *)context;
+    replay_reset(state);
+    current = 0;
+    while (current < expanded_line &&
+           replay_next_line(state, &line) > 0) {
+        ++current;
+    }
+    if (current == expanded_line) {
+        origin->source_id = line.source_id;
+        origin->line = line.line;
+    }
+}
+
 LaDiagnosticCode la_expand_modules(const LaSourceView *root,
                                    const LaModuleResolver *resolver,
                                    const LaDiagnosticSink *diagnostics,
@@ -288,29 +373,36 @@ LaDiagnosticCode la_expand_modules(const LaSourceView *root,
     la_u32 required;
     LaModuleStorage storage;
     la_u16 module_count;
+    la_u16 edge_count;
     la_u16 depth;
-    la_u16 output_length;
-    la_u16 output_lines;
     required = la_module_workspace_required(limits);
     memset(expanded, 0, sizeof(*expanded));
     if (workspace.data == 0 || workspace.size < required) {
         return module_fail(diagnostics, LA_ERR_MODULE_WORKSPACE,
-                           root->source_id, 0,
-                           root->name.data, root->name.length,
-                           (la_i32)required, (la_i32)workspace.size);
+                           root->source_id, 0, root->name.data,
+                           root->name.length, (la_i32)required,
+                           (la_i32)workspace.size);
     }
-    if (limits->max_modules == 0 || limits->max_include_depth == 0) {
+    if (limits->max_modules == 0 || limits->max_edges == 0 ||
+        limits->max_include_depth == 0) {
         return module_fail(diagnostics, LA_ERR_MODULE_CAPACITY,
-                           root->source_id, 1,
-                           root->name.data, root->name.length, 1, 0);
+                           root->source_id, 1, root->name.data,
+                           root->name.length, 1, 0);
     }
     if (!module_storage_init(workspace, limits, &storage)) {
         return module_fail(diagnostics, LA_ERR_MODULE_WORKSPACE,
-                           root->source_id, 0,
-                           root->name.data, root->name.length,
-                           (la_i32)required, (la_i32)workspace.size);
+                           root->source_id, 0, root->name.data,
+                           root->name.length, (la_i32)required,
+                           (la_i32)workspace.size);
+    }
+    if (root->length > limits->max_source_bytes) {
+        return module_fail(diagnostics, LA_ERR_MODULE_SOURCE_CAPACITY,
+                           root->source_id, 1, root->name.data,
+                           root->name.length, root->length,
+                           limits->max_source_bytes);
     }
     module_count = 1;
+    edge_count = 0;
     copy_source_view(&storage.modules[0].view, root);
     storage.modules[0].state = 1;
     storage.sources[0].source_id = root->source_id;
@@ -319,9 +411,9 @@ LaDiagnosticCode la_expand_modules(const LaSourceView *root,
     storage.frames[0].module = 0;
     storage.frames[0].offset = 0;
     storage.frames[0].line = 1;
-    output_length = 0;
-    output_lines = 0;
     expanded->max_depth = 1;
+    expanded->total_source_bytes = root->length;
+    expanded->total_source_lines = 0;
     while (depth != 0) {
         LaModuleFrame *frame;
         LaModuleRec *module;
@@ -330,6 +422,7 @@ LaDiagnosticCode la_expand_modules(const LaSourceView *root,
         const char *content_end;
         LaSlice requested;
         int include;
+        la_u16 include_line_number;
         frame = &storage.frames[depth - 1];
         module = &storage.modules[frame->module];
         if (frame->offset >= module->view.length) {
@@ -341,17 +434,23 @@ LaDiagnosticCode la_expand_modules(const LaSourceView *root,
         line_end = line_start;
         while ((la_u16)(line_end - module->view.data) <
                module->view.length && *line_end != '\n') ++line_end;
-        content_end = line_end;
-        if (content_end > line_start && content_end[-1] == '\r') {
-            --content_end;
+        content_end = module_code_end(line_start, line_end);
+        include_line_number = frame->line++;
+        ++expanded->total_source_lines;
+        if (include_line_number > limits->max_source_lines) {
+            return module_fail(
+                diagnostics, LA_ERR_MODULE_LINE_CAPACITY,
+                module->view.source_id, include_line_number,
+                module->view.name.data, module->view.name.length,
+                include_line_number, limits->max_source_lines);
         }
-        include = include_line(line_start, content_end, &requested);
         frame->offset = (la_u16)(line_end - module->view.data);
         if (frame->offset < module->view.length) ++frame->offset;
+        include = include_line(line_start, content_end, &requested);
         if (include < 0) {
             return module_fail(diagnostics, LA_ERR_MODULE_SYNTAX,
-                               module->view.source_id, frame->line,
-                               module->view.name.data,
+                               module->view.source_id,
+                               include_line_number, module->view.name.data,
                                module->view.name.length, 0, 0);
         }
         if (include > 0) {
@@ -363,64 +462,80 @@ LaDiagnosticCode la_expand_modules(const LaSourceView *root,
                                    module->view.source_id,
                                    requested, &child)) {
                 return module_fail(diagnostics, LA_ERR_MODULE_NOT_FOUND,
-                                   module->view.source_id, frame->line,
-                                   requested.data, requested.length, 0, 0);
+                                   module->view.source_id,
+                                   include_line_number, requested.data,
+                                   requested.length, 0, 0);
             }
-            existing = find_module(
-                storage.modules, module_count, child.source_id);
+            existing = find_module(storage.modules, module_count,
+                                   child.source_id);
             if (existing != LA_INVALID_HANDLE) {
                 return module_fail(
                     diagnostics,
                     storage.modules[existing].state == 1 ?
                         LA_ERR_MODULE_CYCLE : LA_ERR_MODULE_DUPLICATE,
-                    module->view.source_id, frame->line,
+                    module->view.source_id, include_line_number,
                     requested.data, requested.length, 0, 0);
             }
             if (module_count >= limits->max_modules) {
                 return module_fail(diagnostics, LA_ERR_MODULE_CAPACITY,
-                                   module->view.source_id, frame->line,
-                                   requested.data, requested.length,
-                                   module_count + 1,
+                                   module->view.source_id,
+                                   include_line_number, requested.data,
+                                   requested.length, module_count + 1,
                                    limits->max_modules);
+            }
+            if (edge_count >= limits->max_edges) {
+                return module_fail(diagnostics, LA_ERR_MODULE_CAPACITY,
+                                   module->view.source_id,
+                                   include_line_number, requested.data,
+                                   requested.length, edge_count + 1,
+                                   limits->max_edges);
             }
             if (depth >= limits->max_include_depth) {
                 return module_fail(diagnostics, LA_ERR_MODULE_DEPTH,
-                                   module->view.source_id, frame->line,
-                                   requested.data, requested.length, depth + 1,
+                                   module->view.source_id,
+                                   include_line_number, requested.data,
+                                   requested.length, depth + 1,
                                    limits->max_include_depth);
+            }
+            if (child.length > limits->max_source_bytes) {
+                return module_fail(
+                    diagnostics, LA_ERR_MODULE_SOURCE_CAPACITY,
+                    child.source_id, 1, child.name.data, child.name.length,
+                    child.length, limits->max_source_bytes);
             }
             child_index = module_count++;
             copy_source_view(&storage.modules[child_index].view, &child);
             storage.modules[child_index].state = 1;
             storage.sources[child_index].source_id = child.source_id;
             copy_slice(&storage.sources[child_index].name, &child.name);
+            storage.edges[edge_count].parent = frame->module;
+            storage.edges[edge_count].child = child_index;
+            storage.edges[edge_count].line = include_line_number;
+            ++edge_count;
+            expanded->total_source_bytes += child.length;
             storage.frames[depth].module = child_index;
             storage.frames[depth].offset = 0;
             storage.frames[depth].line = 1;
             ++depth;
             if (depth > expanded->max_depth) expanded->max_depth = depth;
-        } else {
-            LaDiagnosticCode append_result;
-            append_result = append_source_line(
-                diagnostics, limits, module, frame, line_start, line_end,
-                &storage, &output_length, &output_lines);
-            if (append_result != LA_OK) return append_result;
         }
-        ++frame->line;
     }
-    storage.output[output_length] = 0;
-    storage.state->data = storage.output;
-    storage.state->origins = storage.origins;
-    storage.state->length = output_length;
-    storage.state->offset = 0;
-    storage.state->line_count = output_lines;
-    expanded->input.read = expanded_read;
+    memset(storage.state, 0, sizeof(*storage.state));
+    storage.state->modules = storage.modules;
+    storage.state->sources = storage.sources;
+    storage.state->edges = storage.edges;
+    storage.state->frames = storage.frames;
+    storage.state->module_count = module_count;
+    storage.state->edge_count = edge_count;
+    storage.state->frame_capacity = limits->max_include_depth;
+    replay_reset(storage.state);
+    expanded->input.read = replay_read;
     expanded->input.context = storage.state;
     expanded->input.source_id = root->source_id;
-    expanded->input.origin = expanded_origin;
+    expanded->input.origin = replay_origin;
+    expanded->input.reset = replay_reset;
+    expanded->input.next_line = replay_next_line;
     expanded->sources = storage.sources;
     expanded->source_count = module_count;
-    expanded->expanded_bytes = output_length;
-    expanded->expanded_lines = output_lines;
     return LA_OK;
 }

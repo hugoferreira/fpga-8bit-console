@@ -35,6 +35,7 @@ EXPECTED_CELESTE_OVERLAY_OPERATIONS = 207
 EXPECTED_CELESTE_OFFSET_SETUPS = 0
 EXPECTED_CELESTE_SEMANTIC_OFFSETS = 97
 EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 129
+EXPECTED_CELESTE_COUNTED_SHIFTS = 11
 READABLE_CELESTE_MODULES = {
     "audio.inlay.asm",
     "collide.inlay.asm",
@@ -1334,10 +1335,10 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
     )
     metrics = json.loads(metrics_path.read_text(encoding="ascii"))
     expected_assembly = {
-        "encodedInstructionSites": 2329,
-        "executableBytes": 5161,
-        "programSpanBytes": 12813,
-        "programSpanEndExclusive": 13581,
+        "encodedInstructionSites": 2293,
+        "executableBytes": 5155,
+        "programSpanBytes": 12807,
+        "programSpanEndExclusive": 13575,
         "programSpanStart": 768,
     }
     if metrics.get("phase") != "celeste-inlay-phase-b":
@@ -1363,11 +1364,25 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
         for operation in (
             "mov", "add", "sub", "ldab", "stab", "addw", "subw", "cmpw",
             "cbeq", "cbne", "cblt", "cbge", "tbz", "tbnz", "bzero",
-            "bnzero",
+            "bnzero", "asr", "asrw",
         )
     }
     if measured_source.get("customOperations") != custom_operations:
         raise AssertionError("Celeste final custom-operation metrics are stale")
+    counted_shift_sites = sum(
+        len(re.findall(
+            r"^\s*(?:asl|lsr|rol|ror) a,\s*\d+", text, re.MULTILINE
+        ))
+        for text in module_texts
+    )
+    if counted_shift_sites != EXPECTED_CELESTE_COUNTED_SHIFTS:
+        raise AssertionError(
+            "checked-in Celeste counted shift/rotate count changed: "
+            f"expected {EXPECTED_CELESTE_COUNTED_SHIFTS}, "
+            f"got {counted_shift_sites}"
+        )
+    if measured_source.get("countedShiftSites") != counted_shift_sites:
+        raise AssertionError("Celeste final counted-shift measurement is stale")
     return (
         len(frontend_bytes), digest, overlay_operations,
         offset_setups, raw_indirects,

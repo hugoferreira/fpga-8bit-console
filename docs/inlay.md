@@ -789,26 +789,88 @@ output.
 | Metric | Phase A | Phase B | Delta |
 | --- | ---: | ---: | ---: |
 | ROM image | 65,536 B | 65,536 B | 0 |
-| encoded instruction sites | 2,336 | 2,329 | -7 (-0.3%) |
-| executable instruction bytes | 5,142 | 5,161 | +19 (+0.4%) |
-| program span (`$0300` origin) | 12,794 B | 12,813 B | +19 |
+| encoded instruction sites | 2,336 | 2,304 | -32 (-1.4%) |
+| executable instruction bytes | 5,142 | 5,155 | +13 (+0.3%) |
+| program span (`$0300` origin) | 12,794 B | 12,807 B | +13 |
 | manual `ldy #O_*` setups | 127 | 0 | -127 (-100%) |
 | raw `(pObj|pOth),y` accesses | 157 | 129 | -28 (-17.8%) |
 
 The instruction-count and manual-offset requirements improve. The small byte
 increase is the visible cost of explicit frame receiver preservation and
 structured boundaries; it is reported rather than treated as an optimization.
-The final program ends at `$350d`, before the object pool at `$5000`, and all
+The final program ends at `$3507`, before the object pool at `$5000`, and all
 layout assertions retain the established zero-page, pool, room, overlay and
 MMIO regions.
+
+The byte increase was first published as +19. `Draw.hair_chase` then dropped
+three redundant word-accumulator sites — `stab` does not disturb `AB`, so the
+reload after each store was dead, and `addw` is carry-free (`w_lo` in
+`rtl/cpu6502_core.sv`), so the two shifted terms chain into one accumulator
+run. That is -6 bytes, and the frame and PSG checkpoints are unchanged.
+
+The instruction-site count then fell a further -22 when 11 runs of repeated
+accumulator shifts adopted the counted `asl a, N` forms (task 10.9). That
+adoption is deliberately byte-neutral: the ROM digest is identical across it,
+which is why `source.countedShiftSites` is recorded and gated separately — a
+byte measurement cannot see it at all.
+
+### Counted accumulator shifts
+
+`asl a, N`, `lsr a, N`, `rol a, N` and `ror a, N` (N in 1..8) emit exactly N
+copies of the corresponding accumulator instruction. The explicit `a` operand
+is **required**, and is not cosmetic: `asl {zaddr: u8}` already matches a bare
+expression, so the shorter `asl N` is ambiguous, and customasm v0.14.1 resolves
+that ambiguity by silently preferring the smaller encoding — `asl 3` assembles
+to `06 03`, a read-modify-write of zero page address 3, with no diagnostic.
+The counts are enumerated one per rule rather than computed by slicing a
+repeated constant, because a computed slice zero-extends past its width and
+turns `asl a, 9` into `00` (BRK) followed by eight shifts. `make pseudo-check`
+verifies all 32 rules byte-for-byte, executes the boundary counts against a
+reference model to check the accumulator and carry, and asserts that
+out-of-range counts and memory-operand forms fail to assemble.
+
+### Operand width, and why it is not spelled `.w`
+
+The pseudo-op layer marks a 16-bit operand with a trailing `w` — `asr` is the
+byte form, `asrw zp` the zero-page pair — matching the `addw`/`subw`/`cmpw`
+spelling the hardware word instructions already use. A bare mnemonic is always
+the byte form, so the convention is additive.
+
+The m68k `.b`/`.w` spelling was tried first and does not work here, for a reason
+worth recording: `.` is Inlay's **member separator**, the same dot as in
+`Fixed.word1` and `CelesteObject.core`. At statement position a dotted mnemonic
+is lexically indistinguishable from a qualified name, and the frontend resolves
+it as one — `asr.w Fixed.word1` came out as
+`__inlay_q3_asr1_w __inlay_q5_Fixed5_word1` and did not assemble. Excepting a
+mnemonic whitelist would make `.` mean one thing at statement start and another
+everywhere else, which is the same positional ambiguity that makes `asl 3`
+dangerous.
+
+Note that the two conventions are not unified: `ldab`/`stab` name the `AB`
+register pair rather than a width, and no suffix expresses that. The width axis
+covers operand size only.
+
+`asr`/`asrw` carry **different contracts**, which the rule comments state at the
+site. `asr`'s flags are exactly what a hardware `ASR A` would leave, verified
+over all 256 accumulator values against both carries and both overflow states,
+so neither form refines the other. `asrw` is weaker than its hardware form: it
+loads the high byte to test the sign, so it clobbers `A` and leaves `Z`/`N` from
+the low byte. Do not branch on an `asrw` result without re-testing it.
+
+When adding a pseudo-op, register it in `CUSTOM_OPS` in
+`tools/inlay/celeste_redesign_metrics.py` and in the matching tuple in
+`tools/inlay/test_conformance.py`. This is not bookkeeping: the annotated parser
+skips any line whose mnemonic it does not recognise, so an unregistered pseudo-op
+drops its expansion bytes from `executableBytes` and a byte-neutral migration
+reports a saving it did not make.
 
 | Custom/pseudo operation | Phase A | Phase B | Delta |
 | --- | ---: | ---: | ---: |
 | `mov` | 125 | 219 | +94 |
 | `add` | 60 | 57 | -3 |
 | `sub` | 35 | 28 | -7 |
-| `ldab` | 12 | 20 | +8 |
-| `stab` | 12 | 20 | +8 |
+| `ldab` | 12 | 18 | +6 |
+| `stab` | 12 | 19 | +7 |
 | `addw` | 2 | 6 | +4 |
 | `subw` | 3 | 5 | +2 |
 | `cmpw` | 0 | 0 | 0 |

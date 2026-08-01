@@ -80,10 +80,7 @@ flags:
     sta Machine.t3
 .row:
     lda Machine.t3                      ; the row base: j * 16, one shift short of free
-    asl
-    asl
-    asl
-    asl
+    asl a, 4
     sta Machine.t4
     lda column
     sta Machine.t5
@@ -172,12 +169,7 @@ tiles:
 ; the way Lua's flr() does rather than truncating toward zero. Clobbers A.
 ; ------------------------------------------------------------------------------
 floor:
-    cmp #$80                    ; carry = the sign bit
-    ror
-    cmp #$80
-    ror
-    cmp #$80
-    ror
+    asr a, 3
     rts
 ; ------------------------------------------------------------------------------
 ; spikes_at: the cart's spikes_at for the player's box, using the player's own
@@ -194,10 +186,7 @@ spikes:
     sta Machine.t3
 .row:
     lda Machine.t3
-    asl
-    asl
-    asl
-    asl
+    asl a, 4
     sta Machine.t4
     lda column
     sta Machine.t5
@@ -255,9 +244,7 @@ begin
     cmp #6
     bcs .yes
     lda Machine.t3                      ; j*8 + 8
-    asl
-    asl
-    asl
+    asl a, 3
     add #8
     cmp Machine.t6
     beq .yes
@@ -326,9 +313,7 @@ begin
     cmp #6
     bcs .yes
     lda Machine.t5
-    asl
-    asl
-    asl
+    asl a, 3
     add #8
     cmp Machine.t6
     beq .yes

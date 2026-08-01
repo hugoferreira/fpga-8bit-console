@@ -1,5 +1,43 @@
 ## ADDED Requirements
 
+### Requirement: Target-default Calling Convention
+
+Every selected target environment SHALL declare one default calling
+convention. A procedure without a `using` clause SHALL use that convention.
+The source SHALL use `using NAME` only when a procedure deliberately overrides
+the target default; it SHALL NOT repeat the default convention explicitly.
+
+Convention resolution SHALL be deterministic: an explicit procedure override
+takes precedence over the target default. Translation SHALL fail when neither
+exists rather than inferring parameter, return or frame behavior from the
+target name.
+
+#### Scenario: Ordinary procedure uses the target default
+
+- **WHEN** the `console6502` target declares its normal convention as default
+  and source declares `proc Player.update`
+- **THEN** parameter assignment, returns, frames and invocation use that
+  convention without `using console6502`
+
+#### Scenario: Procedure overrides the default
+
+- **WHEN** source declares `proc interrupt using console6502_interrupt naked`
+- **THEN** that procedure uses the named override while other procedures
+  continue to use the target default
+
+#### Scenario: Redundant default is written explicitly
+
+- **WHEN** source declares an ordinary procedure with
+  `using console6502` while `console6502` is the target default
+- **THEN** translation rejects the redundant clause and directs the author to
+  omit it
+
+#### Scenario: Target has no default
+
+- **WHEN** a procedure omits `using` and the selected target environment has
+  not declared a default convention
+- **THEN** translation fails before parameter or frame locations are assigned
+
 ### Requirement: Qualified Compile-time Operand Values
 
 Qualified constants, enum members and layout properties SHALL be usable in
@@ -169,3 +207,60 @@ instruction sequences by pattern matching.
 - **WHEN** source contains raw instructions equivalent to a custom operation
 - **THEN** the frontend preserves them as written and conformance may report
   the missed adoption
+
+### Requirement: Counted Accumulator Shifts and Rotates
+
+The `console6502` target SHALL provide counted pseudo-operations `asl a, N`,
+`lsr a, N`, `rol a, N` and `ror a, N` for the implicit accumulator forms. `N`
+SHALL be a positive assembly-time integer within the target's documented
+expansion limit, which is 8. Lowering SHALL be exactly equivalent to spelling
+the corresponding ordinary instruction `N` consecutive times.
+
+The explicit `a` operand SHALL be required. The shorter `asl N` spelling is
+prohibited because it is not expressible without ambiguity: `asl {zaddr: u8}`
+already matches a bare expression, and customasm v0.14.1 resolves the resulting
+overlap by silently preferring the smaller encoding, assembling `asl 3` to
+`06 03` — a read-modify-write of zero page address 3 — with no diagnostic.
+
+The accumulator result and final processor flags SHALL equal the expanded
+sequence. Counted rotates SHALL feed each repetition's carry output into the
+next repetition. The initial slice SHALL NOT interpret an address operand as a
+count or add counted memory forms.
+
+Each accepted count SHALL be declared by its own rule rather than computed from
+a repeated constant, so that the accepted range is structural. A computed slice
+zero-extends beyond its width and would emit `00` (BRK) followed by eight
+shifts for `asl a, 9`.
+
+#### Scenario: Accumulator is shifted three times
+
+- **WHEN** source contains `asl a, 3`
+- **THEN** customasm emits the same bytes and final machine state as three
+  consecutive accumulator `asl` instructions
+
+#### Scenario: Rotate consumes and chains carry
+
+- **WHEN** source contains `ror a, 4`
+- **THEN** the first rotation consumes the incoming carry and each subsequent
+  rotation consumes the carry produced by the previous rotation
+
+#### Scenario: Count is one
+
+- **WHEN** source contains `lsr a, 1`
+- **THEN** it is accepted and emits the same instruction as plain `lsr`
+
+#### Scenario: Count is invalid
+
+- **WHEN** a counted shift or rotate uses zero, a negative value, a
+  non-constant value or a count above the target expansion limit
+- **THEN** assembly fails, citing the offending source line and therefore the
+  supplied count; the accepted range is carried by the rule documentation
+  rather than the diagnostic, because customasm reports an unmatched
+  instruction as `no match found for instruction` and offers no hook for a
+  rule-supplied message
+
+#### Scenario: Memory form is attempted
+
+- **WHEN** source attempts to combine a memory operand and repetition count
+- **THEN** the counted pseudo-operation rejects it rather than guessing which
+  operand is the count

@@ -86,7 +86,10 @@ Player, spawn, smoke and title behavior SHALL expose init, update and draw
 procedures and SHALL scope helpers and constants under the owning object-kind
 namespace. Large lifecycle bodies SHALL be split into named procedures when
 their physical inputs, outputs and clobbers can be declared without hidden
-value preservation.
+value preservation. Public lifecycle procedures SHALL carry the `export`
+modifier on their declarations. Ordinary Celeste procedures SHALL rely on the
+`console6502` target's default calling convention and SHALL omit redundant
+`using console6502` clauses.
 
 #### Scenario: Player update is reviewed
 
@@ -100,6 +103,19 @@ value preservation.
 - **WHEN** code uses maximum run speed or dash acceleration
 - **THEN** it resolves a private qualified `Player` constant rather than a
   global `MAXRUN`-style name
+
+#### Scenario: Player lifecycle is declared
+
+- **WHEN** the `Player` namespace defines its public initialization entry
+- **THEN** source spells it `export proc init` without a detached `export init`
+  or redundant `using console6502`
+
+#### Scenario: Procedure needs a non-default convention
+
+- **WHEN** a Celeste target-boundary procedure deliberately requires a
+  convention other than the `console6502` default
+- **THEN** its declaration names that override with `using` and conformance
+  records why the default is unsuitable
 
 ### Requirement: Minimal Main Composition Root
 

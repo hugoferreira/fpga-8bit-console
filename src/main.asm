@@ -380,8 +380,7 @@ ball_step:
     ora t_slow+1
     beq .full
     lda bvx+1              ; arithmetic halves into tmp2:tmp
-    cmp #$80
-    ror
+    asr
     sta tmp2
     lda bvx
     ror
@@ -390,8 +389,7 @@ ball_step:
     addw tmp
     stab ballx
     lda bvy+1
-    cmp #$80
-    ror
+    asr
     sta tmp2
     lda bvy
     ror
@@ -1359,15 +1357,13 @@ move_paddle:
     tbnz btn, #BTN_L, .apply
     ; v -= v>>2 (arithmetic), toward zero
     lda padvx+1
-    cmp #$80
-    ror
+    asr
     sta tmp
     lda padvx
     ror
     sta tmp2
     lda tmp
-    cmp #$80
-    ror
+    asr
     sta tmp
     lda tmp2
     ror

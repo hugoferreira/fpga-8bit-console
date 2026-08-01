@@ -1055,14 +1055,23 @@ slot, frame slot or backend-defined pointer location.
 ### Code-pointer representation
 
 Celeste benefits from split low/high method arrays while Nemo uses contiguous
-little-endian code pointers inside class records. The language must decide
-whether a `codeptr` table has:
+little-endian code pointers inside class records. `codeptr` has one canonical
+target-defined width and byte order, and complete procedure-address data uses
+that representation directly:
 
-- one canonical memory representation per target; or
-- an explicitly selectable array-of-structures or structure-of-arrays
-  representation.
+```asm
+data codeptr Player.init, Spawn.init
+```
 
-The corpus contains evidence for needing both.
+Split tables remain explicit structure-of-arrays storage:
+
+```asm
+data u8 low(Player.init), low(Spawn.init)
+data u8 high(Player.init), high(Spawn.init)
+```
+
+This keeps `codeptr` nominal and portable without hiding the alternative table
+shape that Celeste's dispatch loop actually consumes.
 
 ### Frame-addressable pointers
 
