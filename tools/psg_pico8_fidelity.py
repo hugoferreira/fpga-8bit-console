@@ -116,6 +116,9 @@ def main():
     ap.add_argument("--cart", required=True)
     ap.add_argument("--reference-dir", default=os.path.join(ROOT, "build", "p8ref"))
     ap.add_argument("--entries", help="comma-separated subset, for smoke tests")
+    ap.add_argument("--clock", type=int, default=28_125_000,
+                    help="PSG clock to render at; the baseline is at the "
+                         "shipping clock, so a sweep is informational")
     ap.add_argument("--record", action="store_true",
                     help="rewrite the baseline instead of gating against it")
     args = ap.parse_args()
@@ -139,7 +142,8 @@ def main():
         if not os.path.exists(ref_path):
             raise SystemExit(f"missing PICO-8 reference: {ref_path}")
         reference = R.load(ref_path)
-        cand = R.load(render(entry, audio_path, len(reference)))
+        cand = R.load(render(entry, audio_path, len(reference),
+                             clock=args.clock))
         m = measure(reference, cand)
         results[str(entry)] = m
         print(f"=== music {entry} vs PICO-8 ===")

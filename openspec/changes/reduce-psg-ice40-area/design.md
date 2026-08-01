@@ -1685,6 +1685,51 @@ Renders: Celeste music 20 byte-identical over 400,000 samples, the frozen
 matrix 59/59 byte-exact against PICO-8 AND byte-identical against the anchor,
 and fidelity against PICO-8 within tolerance on all five entry points.
 
+### 29. Group the multiply requests by OPERANDS, not by phase
+
+A per-module census is misleading on a flattened netlist, and following it
+found this. `u_mul` reads as 670 LUT4s for one iterative engine, which is
+absurd until you look at the cell names: `m_a`'s D-cone alone is ~250, and
+that cone is not the multiplier - it is the whole request mux, flattened in
+and then named after the flop it drives. **The service's operand SELECTION was
+about 470 LUT4s**, which is section 5c's law stated as a measurement.
+
+Seven arms, one per launching phase. But the phases are mutually exclusive and
+several ask for the SAME shape, so the arms can be grouped by what they need
+rather than by who needs it - selecting the operands where a second arm would
+have selected the result, which is the cheap direction:
+
+- **The two noise requests** are one expression, `J = 8*dp + 1120` against
+  `|draw|`, on different increments and draws. One selected `dp`, one adder,
+  one arm.
+- **The wavetable lerp** is a signed 9-bit table delta times a 10-bit phase
+  fraction at W4 (p side) and again at W15 (q side).
+- **The G pass** is `|z| x G` at W4 for the new voice, at W27 for the old -
+  and at W27 for the new one too on the wavetable path, whose lerp already
+  used W4.
+- **The retained `x*341` limb** is IDENTICAL at W15 and W40: same operand,
+  same constant, same mode. Two arms for one expression.
+
+Seven arms become four. Three 25-bit arms, a 17-bit adder and a duplicated
+12-bit constant stop existing; what replaces them is a 13-bit select, a 9-bit
+select and two one-bit ones.
+
+At RTL fingerprint `d583d0cd1b29`: pre-mapping 15,674 -> **15,506 (-168)**,
+Yosys 6,868 LUT4s (-55), 1,709 carries (-9), 1,563 flip-flops and 13 EBRs
+unchanged; nextpnr attempts **7,877 placed cells (-54)**. That is 102% of the
+HX8K, **197 cells from placing**.
+
+Nothing about the schedule or the arithmetic moves - the same operands reach
+the same service on the same phases - so `make test-psg` is unchanged at
+618/1,275 and 2,443/7,654, Celeste music 20 is byte-identical over 400,000
+samples, the frozen matrix is 59/59 byte-exact against PICO-8 AND
+byte-identical against the anchor, and PICO-8 fidelity is within tolerance on
+all five entry points.
+
+**The reusable form: when two arms of a wide selector want the same
+expression, select its OPERANDS.** The law says selection eats arithmetic; the
+corollary is that selection should happen where the values are narrowest.
+
 ## Risks / Trade-offs
 
 - **[Single-store contention]** Tick and sample work can request the voice EBR

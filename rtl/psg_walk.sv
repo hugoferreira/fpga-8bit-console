@@ -646,7 +646,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           || (s_snd_wave == 3'd6 && !s_snd_wt && !s_ch_buzz && nz_tick_r));
   wire  [20:0] nz2_inc = blend_restart ? s_last_inc : s_old_inc;
   wire  [12:0] nz2_dp  = nz2_inc[20:8];
-  wire  [16:0] nz2_j   = {1'b0, nz2_dp, 3'b0} + 17'd1120;
+  // nz2_j is not built separately - see nz_j_req below.
   wire  [7:0]  nz2_adv = {lfsr2[7] ^ lfsr2[6], lfsr2[8] ^ lfsr2[7],
                           lfsr2[9] ^ lfsr2[8], lfsr2[10] ^ lfsr2[9],
                           lfsr2[11] ^ lfsr2[10], lfsr2[12] ^ lfsr2[11],
@@ -673,8 +673,14 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   wire signed [17:0] nz_mag = $signed({2'b0, nz_m[23:8]});
   wire signed [17:0] nz_pos = nz_mag;
   wire signed [17:0] nz_neg = -(nz_mag + 18'(|nz_m[7:0]));
-  wire [8:0]         nz_mag_b  = nz_rand[8]  ? 9'(-nz_rand)  : 9'(nz_rand);
-  wire [8:0]         nz2_mag_b = nz2_rand[8] ? 9'(-nz2_rand) : 9'(nz2_rand);
+  // The two requests are the same shape - J = 8*dp + 1120 against |draw| -
+  // on mutually exclusive phases, so select the OPERANDS and build one of
+  // each. J's adder and a 25-bit request arm both stop existing.
+  wire  [12:0]       nz_dp_req  = nz_req_old ? nz2_dp : nz_dp;
+  wire  [16:0]       nz_j_req   = {1'b0, nz_dp_req, 3'b0} + 17'd1120;
+  wire signed [8:0]  nz_rand_req = nz_req_old ? nz2_rand : nz_rand;
+  wire [8:0]         nz_mag_req = nz_rand_req[8] ? 9'(-nz_rand_req)
+                                                 : 9'(nz_rand_req);
   // The preview flavour never uses the service - its whole point is a compact
   // lowering - so it keeps the parallel form. REALTIME_PREVIEW is a parameter
   // and this arm is removed from hardware and oracle builds.
@@ -837,67 +843,53 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
         // Product and capture are functions of the same phase wherever a
         // dependency allows; CAP_W75 names the sole launch-only blend step.
         (* parallel_case *) case (1'b1)
-          nz_req_old: begin
+          (nz_req_old || nz_req_live): begin
             wmul_start = 1'b1;
-            wmul_a = {8'b0, nz2_j};
-            wmul_b = {3'b0, nz2_mag_b};
+            wmul_a = {8'b0, nz_j_req};
+            wmul_b = {3'b0, nz_mag_req};
             wmul_mode = 2'd0;
           end
-          nz_req_live: begin
+          // Four arms, not seven: the requests are grouped by the OPERANDS
+          // they need, not by the phase that needs them. Every phase pair
+          // below launches the same shape, and the phases are mutually
+          // exclusive, so selecting the operands costs a narrow mux where a
+          // second arm would have cost a 25-bit one. Three 25-bit arms and
+          // the duplicate constants stop existing.
+          //
+          // The wavetable lerp: p-side at W4, q-side at W15, both a signed
+          // 9-bit table delta times a 10-bit phase fraction.
+          ((cap[CAP_W4] || cap[CAP_W15]) && s_snd_wt): begin
             wmul_start = 1'b1;
-            wmul_a = {8'b0, nz_j};
-            wmul_b = {3'b0, nz_mag_b};
-            wmul_mode = 2'd0;
+            wmul_a = cap[CAP_W4] ? 25'(wt_pd) : 25'(wt_qd);
+            wmul_b = cap[CAP_W4] ? {2'b0, wt_pf} : {2'b0, wt_qf};
+            wmul_mode = 2'd1;
           end
-          cap[CAP_W4]: begin
+          // The G pass: new voice at W4 (and at W27 on the wavetable path,
+          // whose lerp has already consumed W4), old continuation at W27.
+          // ONE 12-bit-B service pass forms the whole |z| x G magnitude.
+          ((cap[CAP_W4] && !s_snd_wt) || cap[CAP_W27]): begin
             wmul_start = 1'b1;
-            if (s_snd_wt) begin
-              wmul_a = 25'(wt_pd);
-              wmul_b = {2'b0, wt_pf};
-              wmul_mode = 2'd1;
-            end else begin
-              // ONE 12-bit G pass: |z| x G on the widened B port.
-              wmul_a = 25'(z_new_c);
-              wmul_b = 12'(g_live);
-              wmul_mode = 2'd2;
-            end
+            wmul_a = (cap[CAP_W27] && !s_snd_wt) ? 25'(z_old_sel)
+                                                 : 25'(z_new_c);
+            wmul_b = (cap[CAP_W27] && !s_snd_wt) ? 12'(s_old_G)
+                                                 : 12'(g_live);
+            wmul_mode = 2'd2;
           end
-          // /3 reciprocal limb: the twelve-iteration G pass lands in place,
-          // so m_res[27:0] is the whole G*z magnitude.
-          // CAP_W17 and CAP_W40 launch the same retained x*341 operation
-          // for the new and old voice respectively.
+          // The retained x*341 reciprocal limb, first at W15 on the
+          // non-wavetable path and again at W40 for whichever voice the G
+          // pass above just completed. Identical operands, so one arm.
+          ((cap[CAP_W15] && !s_snd_wt) || cap[CAP_W40]): begin
+            wmul_start = 1'b1;
+            wmul_a = {8'b0, m_res[26:10]};
+            wmul_b = 12'd341;
+            wmul_mode = 2'd3;
+          end
           cap[CAP_W75]: if (bl_cnt != 7'd64) begin
             wmul_start   = 1'b1;
             wmul_a = 25'(blend_diff);
             wmul_b = {6'b0, bl_cnt[5:0]};
             wmul_mode = 2'd1;
             wmul_short = 1'b1;
-          end
-          // One phase, both chains. Either profile launches here; only the
-          // operands differ, and s_snd_wt picks them.
-          cap[CAP_W15]: begin
-            wmul_start = 1'b1;
-            if (s_snd_wt) begin
-              wmul_a = 25'(wt_qd);
-              wmul_b = {2'b0, wt_qf};
-              wmul_mode = 2'd1;
-            end else begin
-              wmul_a = {8'b0, m_res[26:10]};
-              wmul_b = 12'd341;
-              wmul_mode = 2'd3;
-            end
-          end
-          cap[CAP_W27]: begin
-            wmul_start   = 1'b1;
-            wmul_a = s_snd_wt ? 25'(z_new_c) : 25'(z_old_sel);
-            wmul_b = s_snd_wt ? 12'(g_live) : 12'(s_old_G);
-            wmul_mode = 2'd2;
-          end
-          cap[CAP_W40]: begin
-            wmul_start   = 1'b1;
-            wmul_a = {8'b0, m_res[26:10]};
-            wmul_b = 12'd341;
-            wmul_mode = 2'd3;
           end
           default: ;
         endcase

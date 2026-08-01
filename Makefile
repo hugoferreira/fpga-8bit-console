@@ -391,7 +391,7 @@ test-psg-pico8:
 	@test -n "$(CART)" || { echo "usage: make test-psg-pico8 CART=<celeste.p8.png> [RECORD=1]"; exit 2; }
 	python3 tools/psg_pico8_fidelity.py --cart "$(CART)" \
 	  --reference-dir "$(PSG_REFERENCE_DIR)" $(if $(RECORD),--record,) \
-	  $(if $(ENTRIES),--entries $(ENTRIES),)
+	  $(if $(ENTRIES),--entries $(ENTRIES),) $(if $(CLK),--clock $(CLK),)
 
 .PHONY: test-psg-celeste-tracks psg-viz test-psg-mul test-psg-pico8
 

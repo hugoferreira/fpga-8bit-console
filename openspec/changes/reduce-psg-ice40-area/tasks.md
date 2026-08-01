@@ -848,3 +848,26 @@
       flips. Music 20 byte-identical over 400,000 samples, matrix 59/59
       byte-exact vs PICO-8 AND byte-identical vs the anchor, PICO-8 fidelity
       within tolerance on all five entry points.
+- [x] R.36 Group the multiply requests by OPERANDS, not by phase. A per-module
+      census misleads on a flattened netlist: `u_mul` reads 670 LUT4 for one
+      iterative engine because `m_a`'s D-cone (~250) is the flattened REQUEST
+      MUX named after the flop it drives. The service's operand selection was
+      ~470 LUT4 - THE LAW as a measurement.
+      Seven arms, one per launching phase, but the phases are mutually
+      exclusive and several ask the same shape: the two noise requests are one
+      expression (`J = 8*dp + 1120` against `|draw|`) on different increments
+      and draws; the wavetable lerp is the same 9-bit delta x 10-bit fraction
+      at W4 and W15; the G pass is `|z| x G` at W4 and W27; and the retained
+      `x*341` limb is IDENTICAL at W15 and W40. Seven arms become four - three
+      25-bit arms, a 17-bit adder and a duplicated 12-bit constant stop
+      existing, replaced by a 13-bit select, a 9-bit select and two one-bit
+      ones. Fingerprint `d583d0cd1b29`: pre-map 15,674 -> **15,506 (-168)**,
+      6,868 LUT4 (-55), 1,709 carries (-9), 1,563 flops, 13 EBR, placed 7,931
+      -> **7,877 (-54)**. **102% of the HX8K, 197 cells from placing.**
+      Schedule and arithmetic untouched: test-psg unchanged at 618/1,275 and
+      2,443/7,654, music 20 byte-identical over 400,000 samples, matrix 59/59
+      byte-exact vs PICO-8 AND byte-identical vs the anchor, PICO-8 fidelity
+      within tolerance.
+      **Reusable: when two arms of a wide selector want the same expression,
+      select its OPERANDS - selection should happen where the values are
+      narrowest.**
