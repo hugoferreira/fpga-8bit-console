@@ -90,10 +90,16 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // unused schedule is removed during lowering rather than becoming runtime
   // selection logic.
   localparam int PLOSC = REALTIME_PREVIEW ? 7  : PSG_SOSC;
+  // The hardware visit is 63 phases, not 85. Its chain is spaced by the
+  // multiply service's RADIX-4 latency - request at p, readable at
+  // p + steps + 1 - so the whole timetable in tools/gen_psg_ctrl.py moved in
+  // with it, and PSTOR, PFOLD and PLAST moved with the timetable. Everything
+  // below that is phase-relative reads its position from these, or from the
+  // control word, so the two cannot drift apart.
   localparam int PWORK = REALTIME_PREVIEW ? 12 : 19;
-  localparam int PFOLD = REALTIME_PREVIEW ? 23 : 84;
-  localparam int PSTOR = REALTIME_PREVIEW ? 16 : 52;
-  localparam int PLAST = REALTIME_PREVIEW ? 23 : 84;
+  localparam int PFOLD = REALTIME_PREVIEW ? 23 : 62;
+  localparam int PSTOR = REALTIME_PREVIEW ? 16 : 43;
+  localparam int PLAST = REALTIME_PREVIEW ? 23 : 62;
 
 
   // The synthesis walk's working copy: parameters and oscillator state loaded
@@ -142,9 +148,12 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // not by the visit's end.
   // The dampen state is produced at +62, far past its word's store
   // slot, so it writes back through two dedicated late cycles.
+  // The two dedicated late cycles, named against the END of the visit so a
+  // re-spaced chain carries them along: the dampen state is produced by W86,
+  // far past its word's ordinary store slot.
   wire         state_lp_we = prun && !REALTIME_PREVIEW
-                               && (pph == 7'(PWORK + 63)
-                                   || pph == 7'(PWORK + 64));
+                               && (pph == 7'(PLAST - 2)
+                                   || pph == 7'(PLAST - 1));
   assign state_sample_we = (prun
                                && pph >= 7'(PSTOR)
                                && pph < 7'(PSTOR + PLOSC))
@@ -288,9 +297,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       wlk_ra = {pc_ch, PSG_V_OSC};
 
     if (state_lp_we) begin
-      wlk_wa = {pc_ch, (pph == 7'(PWORK + 63)) ? PSG_V_OSC + 5'd5
-                                               : PSG_V_OSC + 5'd4};
-      wlk_wd = (pph == 7'(PWORK + 63)) ? s_lp[15:0] : `PSG_OSC_W14;
+      wlk_wa = {pc_ch, (pph == 7'(PLAST - 2)) ? PSG_V_OSC + 5'd5
+                                              : PSG_V_OSC + 5'd4};
+      wlk_wd = (pph == 7'(PLAST - 2)) ? s_lp[15:0] : `PSG_OSC_W14;
     end else begin
       wlk_wa = {pc_ch, PSG_V_OSC + 5'(s_stw)};
       wlk_wd = sosc_wd;
@@ -311,11 +320,16 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // walk then paid ~50 logic cells decoding it every cycle. There are exactly
   // sixteen actions, so one-hot fits the SAME 16-bit word on the SAME shared
   // port, and the decode costs nothing.
+  // W15 carries BOTH profiles now: the wavetable q-side lerp and the
+  // non-wavetable first reciprocal limb are s_snd_wt-exclusive, so they share
+  // one action instead of burning a phase each. W26 and W27 canNOT be merged
+  // the same way - W26 writes the smp_b that W27's operand reads - so they
+  // stay one phase apart.
   localparam int
       CAP_W0 = 0, CAP_W1 = 1, CAP_W2 = 2, CAP_W3 = 3,
-      CAP_W4 = 4, CAP_W5 = 5, CAP_W6 = 6, CAP_W15 = 7, CAP_W17 = 8,
-      CAP_W26 = 9, CAP_W27 = 10, CAP_W40 = 11, CAP_W51 = 12,
-      CAP_W75 = 13, CAP_W84 = 14, CAP_W86 = 15;
+      CAP_W4 = 4, CAP_W5 = 5, CAP_W6 = 6, CAP_W15 = 7,
+      CAP_W26 = 8, CAP_W27 = 9, CAP_W40 = 10, CAP_W51 = 11,
+      CAP_W75 = 12, CAP_W84 = 13, CAP_W86 = 14;
   wire [6:0] pph_nxt = (!prun || pph == 7'(PLAST)) ? 7'd0 : pph + 7'd1;
   always_comb ctrl_addr = 8'd144 + {1'b0, pph_nxt};
   // The visit's FIRST word is not a control word. ctrl_addr is only selected
@@ -463,8 +477,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // The p-side consume (+15) bases on smp_a's table byte; the q-side
   // (+26) must base on smp_b's - by then smp_a already holds the p
   // RESULT, which is what a shared base compounded into garbage.
-  wire signed [17:0] wt_base =
-      (pph == 7'(PWORK + 26)) ? smp_b : smp_a;
+  // The q-side consume bases on smp_b, the p-side on smp_a - by the q phase
+  // smp_a already holds the p RESULT, which is what a shared base compounded
+  // into garbage. Read it off the ACTION rather than a phase number so the
+  // two cannot drift when the chain is re-spaced.
+  wire signed [17:0] wt_base = cap[CAP_W26] ? smp_b : smp_a;
   wire signed [19:0] wt_sum = $signed({wt_base[9:0], 10'b0}) + wt_prod;
   wire signed [17:0] wt_z = 18'(wt_sum >>> 3);
 
@@ -774,12 +791,6 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           // so m_res[27:0] is the whole G*z magnitude.
           // CAP_W17 and CAP_W40 launch the same retained x*341 operation
           // for the new and old voice respectively.
-          cap[CAP_W17]: if (!s_snd_wt) begin
-            wmul_start   = 1'b1;
-            wmul_a = {8'b0, m_res[26:10]};
-            wmul_b = 12'd341;
-            wmul_mode = 2'd3;
-          end
           cap[CAP_W75]: if (bl_cnt != 7'd64) begin
             wmul_start   = 1'b1;
             wmul_a = 25'(blend_diff);
@@ -787,11 +798,19 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             wmul_mode = 2'd1;
             wmul_short = 1'b1;
           end
-          cap[CAP_W15]: if (s_snd_wt) begin
-            wmul_start   = 1'b1;
-            wmul_a = 25'(wt_qd);
-            wmul_b = {2'b0, wt_qf};
-            wmul_mode = 2'd1;
+          // One phase, both chains. Either profile launches here; only the
+          // operands differ, and s_snd_wt picks them.
+          cap[CAP_W15]: begin
+            wmul_start = 1'b1;
+            if (s_snd_wt) begin
+              wmul_a = 25'(wt_qd);
+              wmul_b = {2'b0, wt_qf};
+              wmul_mode = 2'd1;
+            end else begin
+              wmul_a = {8'b0, m_res[26:10]};
+              wmul_b = 12'd341;
+              wmul_mode = 2'd3;
+            end
           end
           cap[CAP_W27]: begin
             wmul_start   = 1'b1;
@@ -1035,20 +1054,20 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
     // at +48, both landing before the blend product launches at +51.
     // Level 2's tap is the write cell itself; the write stays at +63,
     // so it is still read-before-write.
-    wire [1:0] ring_lvl = (pph == 7'(PWORK + 47)) ? s_ch_rev : old_rev_r;
+    wire [1:0] ring_lvl = (pph == 7'(PWORK + 28)) ? s_ch_rev : old_rev_r;
     wire [9:0] ring_tap =
         (ring_lvl == 2'd1)
           ? ((ring_rp >= 10'd366) ? ring_rp - 10'd366
                                   : ring_rp + 10'd366)
           : ring_rp;
     always_ff @(posedge clk) begin
-      if (prun && (pph == 7'(PWORK + 47) || pph == 7'(PWORK + 48)))
+      if (prun && (pph == 7'(PWORK + 28) || pph == 7'(PWORK + 29)))
         ring_rd <= ringm[{4'b0, pc_ch} * 732 + {3'b0, ring_tap}];
-      if (prun && pph == 7'(PWORK + 48))
+      if (prun && pph == 7'(PWORK + 29))
         ring_q <= $signed(ring_rd);
-      if (prun && pph == 7'(PWORK + 49))
+      if (prun && pph == 7'(PWORK + 30))
         ring_q_old <= $signed(ring_rd);
-      if (prun && pph == 7'(PWORK + 63) && play_bits[pc_ch])
+      if (prun && pph == 7'(PLAST - 2) && play_bits[pc_ch])
         ringm[{4'b0, pc_ch} * 732 + {3'b0, ring_rp}] <= mx_filt[15:0];
     end
   end else begin : g_noring
@@ -1533,6 +1552,12 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             if (s_snd_wt) begin
               smp_a <= wt_z;
               mxs_new <= wt_qd[8];
+            end else begin
+              // The G pass is done: capture the >>10 for the second /3 limb
+              // and the >>11 for the noise bypass while the first limb
+              // launches on this same phase.
+              gz_s1_r <= m_res[26:10];
+              mxs_old <= z_old_sel[17];
             end
           end
           cap[CAP_W5]: begin
@@ -1562,15 +1587,6 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             // 254/256 that replaces the ~109/110 approximation.
             if (play_bits[pc_ch] && s_eff_a != 0)
               s_phase2 <= {7'b0, 17'(s_phase2[16:0] + dq17)};
-          end
-          cap[CAP_W17]: begin
-            // The G pass is done: capture the >>10 for the second /3
-            // limb and the >>11 for the noise bypass while the first
-            // limb launches.
-            if (!s_snd_wt) begin
-              gz_s1_r <= m_res[26:10];
-              mxs_old <= z_old_sel[17];
-            end
           end
           cap[CAP_W26]: begin
             if (s_snd_wt)

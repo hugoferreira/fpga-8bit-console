@@ -1559,6 +1559,78 @@ Rejected with numbers:
   `sl_bhi` is 9 bits on a 12-step one - real over-provisioning, but radix-4
   collapses the gap to one cycle and it stops being worth a stage.
 
+### 26. Recompacting the control ROM onto the radix-4 latency
+
+The walk is phase-pinned by the control store, so radix-4 bought it nothing
+until the timetable moved in. Respacing every launch to the new latency -
+request at p, readable at p + steps + 1, so mode 2 lands at p+7, modes 1 and 3
+at p+6, the short request at p+4 - collapses the chain from 65 phases to 43
+and the visit from **85 phases to 63**.
+
+Two collisions had to be resolved, and they resolve differently:
+
+- **W15 and W17 both want phase +11.** The wavetable q-side lerp and the
+  non-wavetable first reciprocal limb are `s_snd_wt`-exclusive, so they share
+  ONE action rather than burning a phase each - one opcode, the guard inside,
+  in both the request mux and the capture case. Fifteen actions now, one bit
+  spare.
+- **W26 and W27 cannot merge the same way.** W26 writes the `smp_b` that W27's
+  operand reads, so merging them would make W27 read the pre-edge value. They
+  stay one phase apart, and the non-wavetable chain waits that phase out with
+  its product already parked. That is the one phase this schedule gives away.
+
+Everything phase-relative outside the ROM moved with it, and where possible it
+now reads its position from something that cannot drift: the two late dampen
+write-backs are stated against `PLAST - 2`/`PLAST - 1` rather than `PWORK+63`,
+and the wavetable lerp base reads `cap[CAP_W26]` rather than a phase number.
+The reverb ring taps (REVERB=1 only) moved with the chain. `gen_psg_ctrl.py`
+asserts the store window and the late writes still fit inside the visit.
+
+At RTL fingerprint `ffdb1243f85f`: pre-mapping 16,173 -> 16,138 (-35), Yosys
+7,094 LUT4s (-62), 1,718 carries (+7), 1,553 flip-flops and 13 EBRs unchanged;
+nextpnr attempts 8,123 placed cells (-48).
+
+**The walk falls from 714 to 538 of 1,275 clocks per sample** - 176 clocks
+back - and the tick pre-run from 3,356 to 2,289 of 7,654 with 5,365 spare and
+zero late flips. Taken with section 25 the pair costs +45 placed cells and
+returns 176 clocks a sample and 1,266 a tick.
+
+**And it settles section 24.** The sequencer's per-interval offer rises from
+565 to about 741 cycles. R.30 needs eight phases at radix-4 - live product
+launched at 18 and readable at 23, old at 23 and readable at 28, so PWORK 19
+-> 27 - which is 64 clocks. That leaves the sequencer more than it has ever
+had, so **R.30 no longer takes anything from it**: the fidelity trade section
+24 priced has been bought out.
+
+Gates: the frozen matrix is 59/59 byte-exact against PICO-8 AND byte-identical
+against the anchor - a 22-phase reschedule that moved no oracle sample.
+`make test-psg` passes. Fidelity against PICO-8 across all five Celeste entry
+points is within tolerance of the recorded baseline, with music 10's contour
+improving 0.967 -> 0.972.
+
+### 27. Fidelity against PICO-8, as a regression gate
+
+`psg_track_gate.py` compares a render to a real PICO-8 recording, but its
+verdict is an ABSOLUTE tolerance - which is how section 24's SEQ_BUDGET=416
+went green while moving music 20's lock from 0.83 to 0.73, and how the same
+thing nearly happened twice more. Seeing it required diffing numbers out of
+two logs by hand.
+
+`tools/psg_pico8_fidelity.py` (`make test-psg-pico8`) renders all five entry
+points with the current RTL, measures them against the committed recordings,
+and compares the measurements to a baseline in `tests/psg/pico8-fidelity.json`.
+A metric that gets worse by more than its tolerance FAILS; a metric that
+improves never does. The measured set is the one that actually moved during
+this campaign: lock median and the fraction of half-second blocks holding
+lag - which is what catches sequencer timing drift - the contour correlation,
+which is the metric for unpitched material, and the twelve band levels.
+
+The baseline is fidelity against PICO-8, NOT against our own previous render.
+Our previous render is not ground truth; the recordings are. That distinction
+is what lets a schedule change that moves samples pass, and a change that
+moves the sound fail, which is the discrimination this campaign kept having to
+make by eye.
+
 ## Risks / Trade-offs
 
 - **[Single-store contention]** Tick and sample work can request the voice EBR

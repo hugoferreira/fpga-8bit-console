@@ -780,3 +780,42 @@
       !m_busy` capture depends on - radix-4 only moves the deassert, which is
       why it is transparent); per-site mode retuning (real over-provisioning,
       but radix-4 collapses the gap to one cycle).
+- [x] R.34 Control-ROM recompaction onto the radix-4 latency. Respacing every
+      launch to `p + steps + 1` collapses the chain from 65 phases to 43 and
+      the visit from **85 to 63**. Two collisions: W15 and W17 both want +11
+      and ARE `s_snd_wt`-exclusive, so they share one action (guard inside, in
+      both the request mux and the capture case); W26 and W27 canNOT merge -
+      W26 writes the smp_b W27's operand reads - so they stay a phase apart and
+      the non-wavetable chain waits it out with its product parked. Everything
+      phase-relative outside the ROM moved with it and now reads a
+      non-drifting source where possible: the late dampen writes are stated
+      against `PLAST-2`/`PLAST-1`, the wavetable lerp base reads
+      `cap[CAP_W26]`. gen_psg_ctrl.py asserts the store window and late writes
+      still fit. Fingerprint `ffdb1243f85f`: pre-map 16,173 -> 16,138 (-35),
+      7,094 LUT4 (-62), 1,718 carries (+7), 1,553 flops, 13 EBR, placed 8,171
+      -> **8,123** (-48).
+      **Walk 714 -> 538 of 1,275 clocks/sample; tick pre-run 3,356 -> 2,289 of
+      7,654, 5,365 spare, zero late flips.** With R.33 the pair costs +45
+      placed and returns 176 clocks a sample.
+      **This settles R.32/R.30.** The sequencer's per-interval offer rises 565
+      -> ~741. R.30 needs 8 phases at radix-4 (live launched at 18 readable 23,
+      old at 23 readable 28, PWORK 19 -> 27) = 64 clocks, leaving the sequencer
+      more than it has ever had - so R.30 no longer takes anything from it and
+      the fidelity trade R.32 priced is bought out.
+      Matrix 59/59 byte-exact vs PICO-8 AND byte-identical vs the anchor - a
+      22-phase reschedule that moved no oracle sample. `make test-psg` passes.
+      PICO-8 fidelity within tolerance on all five entry points; music 10's
+      contour improved 0.967 -> 0.972.
+- [x] R.35 Fidelity against PICO-8 as a REGRESSION gate
+      (`tools/psg_pico8_fidelity.py`, `make test-psg-pico8`). The track gate's
+      verdict is an ABSOLUTE tolerance, which is how R.32's SEQ_BUDGET=416 went
+      green while moving music 20's lock 0.83 -> 0.73; seeing it needed two
+      logs diffed by hand. This renders all five entry points, measures them
+      against the committed recordings, and compares to a baseline in
+      `tests/psg/pico8-fidelity.json`: a metric that worsens beyond tolerance
+      FAILS, one that improves never does. Measured set is what actually moved
+      in this campaign - lock median and blocks-holding-lag (sequencer timing
+      drift), the contour correlation (the unpitched metric), and the twelve
+      band levels. The baseline is fidelity against PICO-8, NOT against our own
+      previous render: ours is not ground truth. That is what lets a schedule
+      change that moves samples pass while a change that moves the sound fails.

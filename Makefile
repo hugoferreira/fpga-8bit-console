@@ -381,7 +381,19 @@ psg-viz: tools/psg_viz.py tools/psg_viz.html rtl/psg_walk.sv rtl/psg_seq.sv \
 test-psg-mul:
 	python3 tools/psg_mul_model.py
 
-.PHONY: test-psg-celeste-tracks psg-viz test-psg-mul
+# Fidelity against PICO-8 as a REGRESSION gate, not an absolute one. The track
+# gate above passes anything inside its tolerance band, so a change that moved
+# music 20's lock from 0.83 to 0.73 still went green; this compares the same
+# measurements against a committed baseline and fails when one gets worse.
+#   make test-psg-pico8 CART=<celeste.p8.png>
+#   make test-psg-pico8 CART=... RECORD=1     # re-baseline, and say why
+test-psg-pico8:
+	@test -n "$(CART)" || { echo "usage: make test-psg-pico8 CART=<celeste.p8.png> [RECORD=1]"; exit 2; }
+	python3 tools/psg_pico8_fidelity.py --cart "$(CART)" \
+	  --reference-dir "$(PSG_REFERENCE_DIR)" $(if $(RECORD),--record,) \
+	  $(if $(ENTRIES),--entries $(ENTRIES),)
+
+.PHONY: test-psg-celeste-tracks psg-viz test-psg-mul test-psg-pico8
 
 # ------------------------------------------------------------------------------
 # Simulation / testbenches
