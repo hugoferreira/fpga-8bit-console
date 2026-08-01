@@ -24,9 +24,8 @@ make synth-all                 all four, as one table
 ## Measured
 
 iCE40 HX8K, tq144:4k, seed 1, RTL fingerprint `26545f591961` at `bd502a6`.
-**Quote the fingerprint whenever you record a number from these** — three agents
-edit `rtl/` concurrently and two runs of the same target can legitimately
-disagree. Every target prints it.
+**Quote the fingerprint whenever you record a number from these** so results
+remain attributable as the RTL changes. Every target prints it.
 
 | | logic cells | BRAM | Fmax | critical path |
 | --- | --- | --- | --- | --- |
