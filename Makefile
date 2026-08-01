@@ -393,7 +393,15 @@ test-psg-pico8:
 	  --reference-dir "$(PSG_REFERENCE_DIR)" $(if $(RECORD),--record,) \
 	  $(if $(ENTRIES),--entries $(ENTRIES),) $(if $(CLK),--clock $(CLK),)
 
-.PHONY: test-psg-celeste-tracks psg-viz test-psg-mul test-psg-pico8
+# Register live ranges in the sample walk, and which pairs could share one.
+# Lifetime retirement is the campaign's most reliable small lever and its
+# least predictable one, so this derives the part that must be exactly right -
+# the live ranges - from the RTL rather than from reading.
+#   make psg-lifetimes
+psg-lifetimes: tools/psg_lifetimes.py rtl/psg_walk.sv tools/gen_psg_ctrl.py
+	python3 tools/psg_lifetimes.py
+
+.PHONY: test-psg-celeste-tracks psg-viz test-psg-mul test-psg-pico8 psg-lifetimes
 
 # ------------------------------------------------------------------------------
 # Simulation / testbenches

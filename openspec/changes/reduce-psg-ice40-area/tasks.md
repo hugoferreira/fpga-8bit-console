@@ -901,3 +901,33 @@
       it: they need either a direct record write when `etk_we` is free plus a
       small pending buffer for collisions, or staging that costs back much of
       what the array gave. Realistically -40..60 placed.
+- [x] R.39 Lifetime analysis as a tool, and the retirement it found.
+      `tools/psg_lifetimes.py` (`make psg-lifetimes`) derives every walk
+      register's live range from the RTL and lists the pairs whose ranges are
+      disjoint and whose widths fit. Three things it has to model, each of
+      which made the first draft WRONG in the unsafe direction:
+      (a) record-streamed state is live from its LOAD phase to its STORE
+      phase, not just where the action arms touch it - without this it
+      proposed retiring `s_lp`, which would corrupt saved state;
+      (b) reads inside tasks - `noise_filt_step`, `stage_leaf`, `fold_launch`
+      do most of the walk's register writing, and missing them UNDER-reports a
+      live range;
+      (c) elaboration - REALTIME_PREVIEW arms are not in the hardware
+      lowering, and without stripping them `sa_hold` looks like a live host
+      that does not exist.
+      **Found and landed: `mx_prod` (live 67..69) retires into `smp_a` (live
+      30..47), twenty phases clear.** smp_a is 18 bits to mx_prod's 17, so the
+      role is `$signed` of its low slice and the writes sign-extend.
+      Placed 7,869 -> **7,805 (-64)**, 6,808 LUT4 (-53), flops 1,545 ->
+      **1,493 (-52)** - three times the seventeen the register itself holds,
+      so its D-mux and enable fabric went with it. Pre-map 15,505 -> 15,165.
+      **101% of the HX8K, 125 cells from placing.**
+      `make test-psg` unchanged at 618/1,275 and 2,443/7,654, music 20
+      byte-identical over 400,000 samples, matrix 59/59 byte-exact vs PICO-8
+      AND byte-identical vs the anchor.
+      Remaining candidates the tool ranks, each ~17 flops and each needing its
+      own measurement: `mx_filt` into `smp_a`/`smp_b` (22 phases clear),
+      `mx_new` into `nz_old_out_r` (7), `gz_s1_r` into `mx_filt` (9). The tool
+      does NOT predict whether one pays - fanout entanglement decides that,
+      and the prior is one win (R.37, -38) against one loss (R.18's smp_a /
+      gz_s1_r, +24 despite -17 flops).

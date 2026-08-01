@@ -47,12 +47,12 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
                   output logic        s_snd_wt,
                   output logic [1:0]  s_ch_det,
                   output logic        s_ch_buzz,
-                  output logic [23:0] s_phase,
+                  output logic [15:0] s_phase,
                   output logic [23:0] s_phase2,
-                  output logic [20:0] s_eff_inc,
+                  output logic [13:0] s_eff_inc,
                   output logic [2:0]  s_old_wave,
-                  output logic [23:0] s_old_phase,
-                  output logic [20:0] s_old_inc,
+                  output logic [15:0] s_old_phase,
+                  output logic [13:0] s_old_inc,
                   output logic [1:0]  old_mode_r,
                   output logic        old_alt_r,
                   output logic [16:0] old_q0,
@@ -97,7 +97,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   logic signed [16:0] s_lp;
   logic signed [15:0] s_noise_lp;
 
-  logic [20:0] s_last_inc;
+  logic [13:0] s_last_inc;
   logic [12:0] s_old_G, s_last_G;
   logic [2:0]  s_last_wave;
 
@@ -145,7 +145,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
     if (REALTIME_PREVIEW) begin
       case (s_stw)
 
-        4'd0:    sosc_wd = s_phase[23:8];
+        4'd0:    sosc_wd = s_phase;
         4'd1:    sosc_wd = {s_nz_hold, 8'b0};
         4'd2:    sosc_wd = s_phase2[15:0];
         4'd3:    sosc_wd = {4'b0, s_nz_ph, s_phase2[23:16]};
@@ -156,7 +156,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       endcase
     end else begin
       case (s_stw)
-        4'd0:    sosc_wd = s_phase[23:8];
+        4'd0:    sosc_wd = s_phase;
         4'd1:    sosc_wd = {s_nz_hold, old_q0[7:0]};
         4'd2:    sosc_wd = s_phase2[15:0];
 
@@ -164,13 +164,13 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
                             s_nz_ph, s_phase2[16]};
         4'd4:    sosc_wd = `PSG_OSC_W14;
         4'd5:    sosc_wd = s_lp[15:0];
-        4'd6:    sosc_wd = s_old_phase[23:8];
+        4'd6:    sosc_wd = s_old_phase;
         4'd7:    sosc_wd = `PSG_OSC_W17;
-        4'd8:    sosc_wd = s_old_inc[15:0];
-        4'd9:    sosc_wd = {s_old_G[7:0], 3'b0, s_old_inc[20:16]};
+        4'd8:    sosc_wd = {s_old_inc[8:0], 7'b0};
+        4'd9:    sosc_wd = {s_old_G[7:0], 3'b0, s_old_inc[13:9]};
         4'd10:   sosc_wd = {1'b0, old_rev_r, last_rev_r,
-                            s_last_wave, 3'b0, s_last_inc[20:16]};
-        4'd11:   sosc_wd = s_last_inc[15:0];
+                            s_last_wave, 3'b0, s_last_inc[13:9]};
+        4'd11:   sosc_wd = {s_last_inc[8:0], 7'b0};
         4'd12:   sosc_wd = {1'b0, `PSG_OSC_W22};
         default: sosc_wd = s_noise_lp;
       endcase
@@ -224,33 +224,33 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   assign dq_old_ctx = REALTIME_PREVIEW ? (pph == 7'(PWORK + 5))
                                      : prun && cap[CAP_W5];
 
-  wire [20:0] einc = s_eff_inc;
+  wire [13:0] einc = s_eff_inc;
 
   // Compact secondary-phase approximation used only by preview.
-  wire [16:0] preview_det_round = {4'b0, einc[20:8]} + 17'd255;
+  wire [16:0] preview_det_round = {4'b0, einc[13:1]} + 17'd255;
   wire [16:0] preview_det_wide =
-      {4'b0, einc[20:8]} - {8'b0, preview_det_round[16:8]};
+      {4'b0, einc[13:1]} - {8'b0, preview_det_round[16:8]};
   wire [23:0] preview_v2inc =
-      s_snd_wt ? {3'b0, einc} :
-      (s_snd_wave == 3'd7) ? ({3'b0, einc} - {10'b0, einc[20:7]}
-                                        - {13'b0, einc[20:10]}
-                                        - {15'b0, einc[20:12]}) :
+      s_snd_wt ? {3'b0, einc, 7'b0} :
+      (s_snd_wave == 3'd7) ? ({3'b0, einc, 7'b0} - {10'b0, einc}
+                                        - {13'b0, einc[13:3]}
+                                        - {15'b0, einc[13:5]}) :
       (s_ch_det == 2'd1)   ? {preview_det_wide[15:0], 8'b0} :
-      (s_ch_det == 2'd2)   ? {2'b0, einc, 1'b0} :
+      (s_ch_det == 2'd2)   ? {2'b0, einc, 8'b0} :
                                   24'd0;
   wire v2_on = s_snd_wt || (s_snd_wave == 3'd7) || (s_ch_det != 0);
 
   // The phase ALU is shared with the full-schedule serial soft-add engine.
-  logic [23:0] pha_a, pha_b;
+  logic [15:0] pha_a, pha_b;
   always_comb begin
     pha_a = s_phase;
-    pha_b = {3'b0, einc};
+    pha_b = {3'b0, einc[13:1]};
     if (dq_old_ctx) begin
       pha_a = s_old_phase;
-      pha_b = {3'b0, s_old_inc};
+      pha_b = {3'b0, s_old_inc[13:1]};
     end
   end
-  wire [23:0] pha_y = pha_a + pha_b;
+  wire [15:0] pha_y = pha_a + pha_b;
 
   logic [17:0] fold_a, fold_b;
   logic        fold_sub, fold_cin;
@@ -267,11 +267,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
     if (prun && s_snd_wt && play_bits[pc_ch]) begin
       if (REALTIME_PREVIEW ? (pph == 7'(PWORK)) : cap[CAP_W0]) begin
         syn_rd   = 1'b1;
-        syn_addr = s_snd_wtb + {7'b0, s_phase[23:18]};
+        syn_addr = s_snd_wtb + {7'b0, s_phase[15:10]};
       end else if (!REALTIME_PREVIEW && cap[CAP_W1]) begin
         syn_rd   = 1'b1;
         syn_addr = s_snd_wtb
-                 + {7'b0, s_phase[23:18] + 6'd1};
+                 + {7'b0, s_phase[15:10] + 6'd1};
       end else if ((REALTIME_PREVIEW ? (pph == 7'(PWORK + 1)) : iss_om)
                    && v2_on) begin
         syn_rd   = 1'b1;
@@ -311,7 +311,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
 
   // Pitched-noise recurrence. lfsr supplies the held sample and random step;
   // lfsr2 supplies the independent kick and previous-arm step.
-  wire  [12:0] nz_dp   = einc[20:8];
+  wire  [12:0] nz_dp   = einc[13:1];
 
   wire  [7:0] nz_adv = {lfsr[7] ^ lfsr[6], lfsr[8] ^ lfsr[7],
                         lfsr[9] ^ lfsr[8], lfsr[10] ^ lfsr[9],
@@ -343,7 +343,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       (nz_pre < -18'sd6143) ? -16'sd6143 : nz_pre[15:0];
 
   wire  signed [17:0] nz_r6 = nz_out_r >>> 6;
-  wire  signed [17:0] nz_z  = einc[20] ? ((nz_r6 <<< 6) + (nz_r6 <<< 2))
+  wire  signed [17:0] nz_z  = einc[13] ? ((nz_r6 <<< 6) + (nz_r6 <<< 2))
                                        : ((nz_r6 <<< 6) + (nz_r6 <<< 4));
 
   // A changed sounding tuple starts a 64-sample previous-to-current blend.
@@ -356,8 +356,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           || s_ch_buzz != last_alt_r
 
           || (s_snd_wave == 3'd6 && !s_snd_wt && !s_ch_buzz && nz_tick_r));
-  wire  [20:0] nz2_inc = blend_restart ? s_last_inc : s_old_inc;
-  wire  [12:0] nz2_dp  = nz2_inc[20:8];
+  wire  [13:0] nz2_inc = blend_restart ? s_last_inc : s_old_inc;
+  wire  [12:0] nz2_dp  = nz2_inc[13:1];
 
   wire  [7:0]  nz2_adv = {lfsr2[7] ^ lfsr2[6], lfsr2[8] ^ lfsr2[7],
                           lfsr2[9] ^ lfsr2[8], lfsr2[10] ^ lfsr2[9],
@@ -388,17 +388,17 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
                  : nz_tick_r ? (s_last_wave == 3'd6 && !last_alt_r)
                              : (s_old_wave == 3'd6 && !old_alt_r);
   wire [15:0] old_nz_seed_base =
-      nz_tick_r ? 16'(s_noise_lp) : s_old_phase[23:8];
+      nz_tick_r ? 16'(s_noise_lp) : s_old_phase;
   wire signed [17:0] nz_old_seed =
       $signed({{2{old_nz_seed_base[15]}}, old_nz_seed_base}) + nz_kick;
   wire signed [17:0] nz_old_pre =
-      $signed({{2{s_old_phase[23]}}, s_old_phase[23:8]})
+      $signed({{2{s_old_phase[15]}}, s_old_phase})
       + (nz_tog ? {mx_old[16], mx_old} : 18'sd0);
   wire signed [15:0] nz_old_next =
       (nz_old_pre > 18'sd6143)  ? 16'sd6143 :
       (nz_old_pre < -18'sd6143) ? -16'sd6143 : nz_old_pre[15:0];
   wire signed [17:0] nz_old_r6 = nz_old_out_r >>> 6;
-  wire signed [17:0] nz_old_z = s_old_inc[20]
+  wire signed [17:0] nz_old_z = s_old_inc[13]
       ? ((nz_old_r6 <<< 6) + (nz_old_r6 <<< 2))
       : ((nz_old_r6 <<< 6) + (nz_old_r6 <<< 4));
   wire signed [17:0] z_old_sel = old_nz_r_on ? nz_old_z : z_old_c;
@@ -417,7 +417,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   logic        mxs_new, mxs_old;
   logic [16:0] gz_s1_r;
 
-  logic signed [16:0] mx_new, mx_old, mx_prod;
+  logic signed [16:0] mx_new, mx_old;
+  wire  signed [16:0] mx_prod = smp_a[16:0];
 
   wire [25:0] gz_171_twice =
       m_res[28:3] + {9'b0, gz_s1_r};
@@ -666,8 +667,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
     logic clr;
     clr = (clr_tog[pc_ch] != clr_ack[pc_ch]);
     if (run) begin
-      if (s_ch_noiz || s_phase[23:20] != s_nz_ph) begin
-        s_nz_ph <= s_phase[23:20];
+      if (s_ch_noiz || s_phase[15:12] != s_nz_ph) begin
+        s_nz_ph <= s_phase[15:12];
         s_nz_hold <= $signed(lfsr[7:0]);
       end
     end
@@ -689,7 +690,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       old_nz_r_on <= run && old_nz_on;
       if (run && old_nz_on) begin
 
-        s_old_phase <= {nz_old_seed[15:0], 8'b0};
+        s_old_phase <= nz_old_seed[15:0];
       end
     end
   endtask
@@ -826,7 +827,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
 
         // Consume synchronous oscillator-record reads.
         case (pph)
-          7'd1: s_phase <= {state_q, 8'b0};
+          7'd1: s_phase <= state_q;
           7'd2: {s_nz_hold, old_q0[7:0]} <= state_q;
           7'd3: s_phase2[15:0] <= state_q;
           7'd4: if (REALTIME_PREVIEW)
@@ -845,17 +846,17 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           7'd7: if (REALTIME_PREVIEW)
                    s_noise_lp <= state_q;
                 else
-                   s_old_phase <= {state_q, 8'b0};
+                   s_old_phase <= state_q;
           7'd8: if (!REALTIME_PREVIEW)
                    `PSG_OSC_W17 <= state_q;
-          7'd9: if (!REALTIME_PREVIEW) s_old_inc[15:0] <= state_q;
+          7'd9: if (!REALTIME_PREVIEW) s_old_inc[8:0] <= state_q[15:7];
           7'd10: if (!REALTIME_PREVIEW)
-                    {s_old_G[7:0], s_old_inc[20:16]}
+                    {s_old_G[7:0], s_old_inc[13:9]}
                       <= {state_q[15:8], state_q[4:0]};
           7'd11: if (!REALTIME_PREVIEW)
                     {old_rev_r, last_rev_r, s_last_wave,
-                     s_last_inc[20:16]} <= {state_q[14:8], state_q[4:0]};
-          7'd12: if (!REALTIME_PREVIEW) s_last_inc[15:0] <= state_q;
+                     s_last_inc[13:9]} <= {state_q[14:8], state_q[4:0]};
+          7'd12: if (!REALTIME_PREVIEW) s_last_inc[8:0] <= state_q[15:7];
           7'd13: if (!REALTIME_PREVIEW)
                     `PSG_OSC_W22 <= state_q[14:0];
           7'd14: if (!REALTIME_PREVIEW) s_noise_lp <= state_q;
@@ -864,9 +865,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
         // Consume the four active sounding-parameter words.
         case (pph)
           7'(PLOSC + 1):
-            s_eff_inc[15:0] <= state_q;
+            s_eff_inc[8:0] <= state_q[15:7];
           7'(PLOSC + 2):
-            {s_snd_id, s_snd_wt, s_snd_wave, s_eff_inc[20:16]}
+            {s_snd_id, s_snd_wt, s_snd_wave, s_eff_inc[13:9]}
               <= {state_q[14:8], state_q[4:0]};
           7'(PLOSC + 3):
             {s_ch_damp, s_ch_rev, s_ch_det, s_ch_buzz,
@@ -944,7 +945,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
               if (!s_snd_wt) begin
                 s_phase <= pha_y;
               end else begin
-                wt_pf <= s_phase[17:8];
+                wt_pf <= s_phase[9:0];
                 wt_qf <= q16[9:0];
               end
             end
@@ -971,7 +972,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           cap[CAP_W1]: begin
 
             if (old_nz_r_on) begin
-              s_old_phase  <= {nz_old_next, 8'b0};
+              s_old_phase  <= nz_old_next;
               nz_old_out_r <= nz_old_pre;
             end
 
@@ -1076,9 +1077,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           cap[CAP_W84]: begin
 
             if (bl_cnt == 7'd64)
-              mx_prod <= cmb_new;
+              smp_a <= 18'(cmb_new);
             else
-              mx_prod <= 17'(bl_acc_tz >>> 6);
+              smp_a <= 18'(17'(bl_acc_tz >>> 6));
           end
           default: ;
         endcase
