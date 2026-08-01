@@ -25,6 +25,7 @@ rust/*.hex
 # Tools
 tools/target/
 tools/__pycache__/
+docs/__pycache__/
 
 # Standalone testbench builds
 rtl/obj_*/

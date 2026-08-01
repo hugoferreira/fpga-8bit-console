@@ -29,6 +29,13 @@ A complete 8-bit console implementation on FPGA, featuring a 6502 CPU, video sys
 - Hardware-accelerated rendering
 - Debug capabilities (frame timing, VCD traces)
 
+Audio renders, reference comparisons, composable terminal visualizations,
+spectrograms, and per-SFX diagnosis share one documented tool:
+[`docs/audio-analysis.md`](docs/audio-analysis.md). Its
+default full-track verdict policy and checked JSON contract are explicit in
+[`docs/schemas/audio-analysis-v2.schema.json`](docs/schemas/audio-analysis-v2.schema.json);
+the guide includes reproducible coloured captures of the terminal panels.
+
 ## Prerequisites
 
 ### Required Tools

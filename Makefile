@@ -356,20 +356,14 @@ psg-wav: $(PSG_WAV)
 	$(PSG_WAV) --audio build/psg_audio.bin --mask $(MASK) --seconds $(SECONDS) \
 	  $(if $(SFX),--sfx $(SFX),--music $(MUSIC)) --out $(WAV)
 
-# Row-by-row energy of one SFX against the cart's own note data. Localises a
-# "the melody is wrong" report to a row, and so to a waveform/volume/effect.
-#   make psg-rows CART=... SFX=8
-psg-rows: $(PSG_WAV)
-	@test -n "$(CART)" || { echo "usage: make psg-rows CART=<cart.p8.png> SFX=n"; exit 1; }
-	@$(MAKE) -s psg-wav CART=$(CART) SFX=$(SFX) SECONDS=$(SECONDS) WAV=build/psg_rows.wav
-	python3 tools/psg_rows.py build/psg_rows.wav --cart $(CART) --sfx $(SFX)
-
-# Diff the rendered pitch and waveform of one SFX against the cart's own data.
-#   make psg-notes CART=... SFX=21
-psg-notes: $(PSG_WAV)
-	@test -n "$(CART)" || { echo "usage: make psg-notes CART=<cart.p8.png> SFX=n"; exit 1; }
+# Unified row-by-row energy and stable-note pitch analysis against the cart's
+# own SFX data. Localises a bad render to a row, waveform, volume, or effect.
+#   make psg-analyze CART=... SFX=8
+psg-analyze: $(PSG_WAV)
+	@test -n "$(CART)" || { echo "usage: make psg-analyze CART=<cart.p8.png> SFX=n"; exit 2; }
+	@test -n "$(SFX)" || { echo "usage: make psg-analyze CART=<cart.p8.png> SFX=n"; exit 2; }
 	@$(MAKE) -s psg-wav CART=$(CART) SFX=$(SFX) SECONDS=$(SECONDS) WAV=build/psg_sfx.wav
-	python3 tools/psg_notes.py build/psg_sfx.wav --cart $(CART) --sfx $(SFX)
+	python3 tools/audio_analysis.py sfx analyze build/psg_sfx.wav --cart "$(CART)" --sfx "$(SFX)"
 
 # Inspect the two schedules themselves - the walk's micro-phase timetable and
 # the tick sequencer's FSM - rather than a render of them running. Everything
@@ -425,7 +419,7 @@ test-psg-pico8:
 psg-lifetimes: tools/psg_lifetimes.py rtl/psg_walk.sv tools/gen_psg_ctrl.py
 	python3 tools/psg_lifetimes.py
 
-.PHONY: test-psg-celeste-tracks psg-viz test-psg-mul test-psg-pico8 psg-lifetimes
+.PHONY: test-psg-celeste-tracks psg-analyze psg-viz test-psg-mul test-psg-pico8 psg-lifetimes
 
 # ------------------------------------------------------------------------------
 # Simulation / testbenches
@@ -448,7 +442,7 @@ debug: bin/sim_debug_${SIM_TOP}
 # declaration-after-use / cast issues Verilator tolerates), so it had not run
 # since the datapath refold. Kept as a target so that cannot happen quietly.
 test-psg: test-psg-fidelity
-	python3 tools/test_psg_ref_check.py
+	python3 tools/test_audio_analysis.py
 	verilator --binary --timing -Irtl -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
 	  -Wno-PINMISSING -o psg_tb_bin rtl/psg_tb.sv rtl/psg.sv rtl/dsigma.sv \
 	  --Mdir build/obj_psgtb

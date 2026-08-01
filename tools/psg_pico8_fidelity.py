@@ -32,7 +32,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 import psg_oracle_render                                   # noqa: E402
-import psg_ref_check as R                                  # noqa: E402
+import audio_analysis as R                                 # noqa: E402
 from p8_audio import rom_from_png                          # noqa: E402
 
 BASELINE = os.path.join(ROOT, "tests", "psg", "pico8-fidelity.json")
@@ -141,9 +141,9 @@ def main():
         ref_path = os.path.join(args.reference_dir, f"pico8-{entry}.wav")
         if not os.path.exists(ref_path):
             raise SystemExit(f"missing PICO-8 reference: {ref_path}")
-        reference = R.load(ref_path)
-        cand = R.load(render(entry, audio_path, len(reference),
-                             clock=args.clock))
+        reference = R.load_wav(ref_path)
+        cand = R.load_wav(render(entry, audio_path, len(reference),
+                                 clock=args.clock))
         m = measure(reference, cand)
         results[str(entry)] = m
         print(f"=== music {entry} vs PICO-8 ===")

@@ -16,7 +16,7 @@ total RMS ratio 1.00, loudness contour 0.995, timbre contour 0.983, and spectrum
 cosine 0.996. Those statistics preserve trajectory or normalized shape and can
 therefore hide a persistent absolute band-level error.
 
-`tools/psg_ref_check.py` now measures four absolute power bands in overlapping
+`tools/audio_analysis.py wav compare` measures four absolute power bands in overlapping
 one-second windows. It reports integrated whole-track level, median local level,
 and the median over the quietest 35% of reference windows. Bands carrying less
 than 0.5% of reference-window power are excluded, true silence is ignored, and
@@ -59,7 +59,7 @@ It renders entry points 0, 10, 20, 30 and 40 from the current RTL, verifies
 candidate provenance, and compares each against
 `build/p8ref/pico8-{0,10,20,30,40}.wav`.
 
-`tools/test_psg_ref_check.py` protects the analysis with an equal-RMS
+`tools/test_audio_analysis.py` protects the analysis with an equal-RMS
 spectral-tilt case, a quiet-only excess that passes the whole-track average,
 inactive-band handling, envelope alignment, and process-level exit status
 checks.

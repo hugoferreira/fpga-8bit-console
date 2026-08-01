@@ -38,15 +38,15 @@ import argparse
 import struct
 import subprocess
 import sys
-import wave
 from pathlib import Path
 
 import numpy as np
+import audio_analysis
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-RATE = 22050
+RATE = audio_analysis.RATE
 PITCHES = (4, 12, 20, 28, 36, 44, 52, 60)
 # Two volumes because kick magnitude and output quantisation both depend on
 # amplitude. A probe at one volume is blind the same way a probe at one pitch
@@ -54,7 +54,7 @@ PITCHES = (4, 12, 20, 28, 36, 44, 52, 60)
 VOLUMES = (7, 1)
 ROWS_PER_PITCH = 4
 SPEED = 16                      # ticks per row
-ROW_SAMPLES = SPEED * 183
+ROW_SAMPLES = SPEED * audio_analysis.SAMPLES_PER_TICK
 CLOCK = 28_125_000
 
 WORK = ROOT / "build/psg_fidelity"
@@ -71,7 +71,7 @@ TREND_TOL = 0.30
 # RNG seeds span 47.8..62.0 / 31.4..41.9 Hz. The 1.10 target clears that measured
 # upper spread; 1.25 is a regression guard. The lower side is intentionally not
 # gated: periodic noise can score artificially "better" on this statistic.
-WANDER_WINDOW = 2205
+WANDER_WINDOW = audio_analysis.WINDOW
 WANDER_HOP = 441
 WANDER_TOL = 1.10
 WANDER_GUARD = 1.25
@@ -102,12 +102,6 @@ def build_image(path: Path) -> None:
     path.write_bytes(bytes(img))
 
 
-def load(path: Path) -> np.ndarray:
-    with wave.open(str(path)) as handle:
-        return np.frombuffer(handle.readframes(handle.getnframes()),
-                             dtype="<i2").astype(float)
-
-
 def held_note_metrics(samples: np.ndarray) -> list[tuple[float, float, float]]:
     """(centroid stddev, repeat rate, HF power share) for each held pitch.
 
@@ -125,19 +119,12 @@ def held_note_metrics(samples: np.ndarray) -> list[tuple[float, float, float]]:
         lo = (index * ROWS_PER_PITCH + 1) * ROW_SAMPLES
         hi = (index * ROWS_PER_PITCH + ROWS_PER_PITCH) * ROW_SAMPLES
         held = samples[lo:hi]
-        cents = []
-        for start in range(0, len(held) - WANDER_WINDOW + 1, WANDER_HOP):
-            seg = held[start:start + WANDER_WINDOW]
-            spectrum = np.abs(np.fft.rfft(seg * np.hanning(len(seg))))
-            freqs = np.fft.rfftfreq(len(seg), 1 / RATE)
-            cents.append(float((spectrum * freqs).sum() / max(spectrum.sum(), 1e-9)))
+        cents = audio_analysis.windowed_spectral_centroids(
+            held, WANDER_WINDOW, WANDER_HOP, rate=RATE, remove_dc=False)
         wander = float(np.std(cents, ddof=1)) if len(cents) > 1 else 0.0
-        repeats = float(np.mean(np.diff(held) == 0)) if len(held) > 1 else 0.0
-        ac = held - held.mean()
-        power = np.abs(np.fft.rfft(ac * np.hanning(len(ac)))) ** 2
-        freqs = np.fft.rfftfreq(len(ac), 1 / RATE)
-        hf_share = float(power[freqs >= HF_CUTOFF].sum()
-                         / max(power.sum(), 1e-9))
+        repeats = audio_analysis.repeat_rate(held)
+        hf_share = audio_analysis.high_frequency_power_share(
+            held, HF_CUTOFF, rate=RATE)
         out.append((wander, repeats, hf_share))
     return out
 
@@ -155,10 +142,9 @@ def per_pitch(samples: np.ndarray) -> list[tuple[float, float]]:
         if len(seg) < 1024:
             out.append((0.0, 0.0))
             continue
-        spectrum = np.abs(np.fft.rfft(seg * np.hanning(len(seg))))
-        freqs = np.fft.rfftfreq(len(seg), 1 / RATE)
-        centroid = float((spectrum * freqs).sum() / max(spectrum.sum(), 1e-9))
-        out.append((float(np.sqrt((seg ** 2).mean())), centroid))
+        centroid = audio_analysis.spectral_centroid(
+            seg, rate=RATE, remove_dc=False)
+        out.append((audio_analysis.rms(seg), centroid))
     return out
 
 
@@ -209,7 +195,8 @@ def main() -> int:
         if not ours.exists():
             parser.error(f"candidate does not exist: {ours}")
 
-    ref_samples, cand_samples = load(args.reference), load(ours)
+    ref_samples = audio_analysis.load_wav(args.reference)
+    cand_samples = audio_analysis.load_wav(ours)
     ref = per_pitch(ref_samples)
     cand = per_pitch(cand_samples)
 

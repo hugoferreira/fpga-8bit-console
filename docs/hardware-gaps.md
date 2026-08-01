@@ -286,7 +286,7 @@ not in which notes play or when.
 
 ### How to compare a suspect voice against the cart, without PICO-8
 
-`make psg-rows CART=... SFX=n` renders one SFX through the real RTL and lines up
+`make psg-analyze CART=... SFX=n` renders one SFX through the real RTL and lines up
 the energy of each row against the cart's own note data. It needs no reference
 recording: the cart already says what each row should be, so a silent row that
 should sound localises the fault to a row, and therefore to a waveform, a volume
@@ -295,8 +295,8 @@ or an effect.
 It is how the phaser bug above was found. Every silent row in NEMO's SFX 8 was
 wave 7 and no other waveform was affected, which ruled out sequencing, pitch and
 the mixer in one pass and pointed at the phaser. The companion tools are
-`make psg-wav` (render to a WAV and listen) and `make psg-notes` (per-row pitch
-and waveform).
+`make psg-wav` (render to a WAV and listen) and `make psg-analyze` (per-row
+energy and stable-note pitch alongside the requested waveform).
 
 ### The mixer runs 2x hot, so the channels do not compose the way PICO-8's do
 
@@ -434,7 +434,7 @@ in RTL, and both are wrong. NEMO's title music uses both.
    Measured against a triangle at the same pitch and volume: **0.03x before,
    0.89x after**, consistent across pitches 21, 33 and 45. On NEMO's SFX 8 -
    14 of its 29 audible rows are phaser - **11 silent rows became 0**. The pitch
-   check `make psg-notes` went from 28/32 to 31/32 on SFX 7 at the same time,
+   check `make psg-analyze` went from 28/32 to 31/32 on SFX 7 at the same time,
    because rows that were previously too quiet to measure now carry a signal.
 
    Note this is not the same bug as the beat rate below, and it hid it: a

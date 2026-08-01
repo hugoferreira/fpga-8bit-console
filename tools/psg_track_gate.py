@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render current PSG RTL and gate one full track against real PICO-8.
 
-Unlike invoking psg_ref_check.py on an existing candidate WAV, this command
+Unlike invoking audio_analysis.py on an existing candidate WAV, this command
 owns candidate provenance: it rebuilds the hardware-schedule renderer when any
 PSG source changes, renders the requested track on every invocation, and writes
 a JSON sidecar containing source, cart-audio, and reference fingerprints.
@@ -27,14 +27,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from p8_audio import rom_from_png
 import psg_oracle_render
-import psg_ref_check
+import audio_analysis
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CLOCK = 28_125_000
 
 
 def digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+    """Compatibility name for the shared provenance helper."""
+    return audio_analysis.sha256_bytes(data)
 
 
 def source_fingerprint() -> tuple[str, list[Path]]:
@@ -53,7 +54,9 @@ def source_fingerprint() -> tuple[str, list[Path]]:
 
 def write_manifest(path: Path, *, source_sha: str, sources: list[Path],
                    audio: bytes, reference: Path, candidate: Path,
-                   music: int, mask: int, clock: int, samples: int) -> None:
+                   music: int, mask: int, clock: int, samples: int,
+                   policy=None) -> None:
+    policy = audio_analysis.comparison_policy(policy)
     manifest = {
         "schema_version": 1,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -61,9 +64,10 @@ def write_manifest(path: Path, *, source_sha: str, sources: list[Path],
         "sources": [source.relative_to(ROOT).as_posix() for source in sources],
         "audio_sha256": digest(audio),
         "reference": str(reference.resolve()),
-        "reference_sha256": digest(reference.read_bytes()),
+        "reference_sha256": audio_analysis.sha256_file(reference),
         "candidate": str(candidate.resolve()),
-        "candidate_sha256": digest(candidate.read_bytes()),
+        "candidate_sha256": audio_analysis.sha256_file(candidate),
+        "comparison_policy": policy.as_dict(),
         "music": music,
         "mask": mask,
         "clock_hz": clock,
@@ -103,7 +107,8 @@ def main() -> int:
     if args.clock <= 0:
         parser.error("--clock must be positive")
 
-    reference = psg_ref_check.load(str(args.reference))
+    reference = audio_analysis.load_wav(args.reference)
+    policy = audio_analysis.DEFAULT_POLICY
     audio = bytes(rom_from_png(args.cart)[0x3100:0x4300])
     work = args.candidate_out.parent
     work.mkdir(parents=True, exist_ok=True)
@@ -124,19 +129,21 @@ def main() -> int:
         manifest_path, source_sha=source_sha, sources=sources, audio=audio,
         reference=args.reference, candidate=args.candidate_out,
         music=args.music, mask=args.mask, clock=args.clock,
-        samples=len(reference))
+        samples=len(reference), policy=policy)
     print(f"current RTL source sha256: {source_sha}")
     print(f"provenance: {manifest_path}")
 
-    candidate = psg_ref_check.load(str(args.candidate_out))
-    psg_ref_check.describe(str(args.reference), reference, indent="reference ")
-    psg_ref_check.describe(str(args.candidate_out), candidate,
-                           indent="  current RTL ")
-    view = psg_ref_check.View(path=args.spectrogram_file)
-    score = psg_ref_check.compare(
-        reference, candidate, "current RTL", False, view,
-        ref_label=psg_ref_check.name(str(args.reference)))
-    return 0 if score >= 0.85 else 1
+    candidate = audio_analysis.load_wav(args.candidate_out)
+    audio_analysis.describe_wav(args.reference, reference, indent="reference ")
+    audio_analysis.describe_wav(args.candidate_out, candidate,
+                                indent="  current RTL ")
+    view = audio_analysis.SpectrogramView(path=args.spectrogram_file)
+    result = audio_analysis.analyze_comparison(
+        reference, candidate, "current RTL", policy=policy)
+    audio_analysis.report_comparison(
+        result, view=view,
+        reference_label=audio_analysis.display_name(args.reference))
+    return 0 if result.passed else 1
 
 
 if __name__ == "__main__":

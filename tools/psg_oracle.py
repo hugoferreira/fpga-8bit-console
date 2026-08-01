@@ -15,15 +15,14 @@ Examples:
 from __future__ import annotations
 
 import argparse
-import array
 import json
 import math
 import statistics
 import struct
-import sys
-import wave
 from dataclasses import dataclass
 from pathlib import Path
+
+import audio_analysis
 
 RATE = 22_050
 SAMPLES_PER_TICK = 183
@@ -452,16 +451,7 @@ def generate(out_dir: Path) -> dict:
 
 
 def read_wav(path: Path) -> list[int]:
-    with wave.open(str(path), "rb") as wav:
-        fmt = (wav.getnchannels(), wav.getsampwidth(), wav.getframerate())
-        if fmt != (1, 2, RATE):
-            raise ValueError(
-                f"{path}: expected mono 16-bit {RATE} Hz WAV, got {fmt}")
-        data = array.array("h")
-        data.frombytes(wav.readframes(wav.getnframes()))
-        if sys.byteorder != "little":
-            data.byteswap()
-        return list(data)
+    return audio_analysis.load_pcm16_mono(path, expected_rate=RATE).tolist()
 
 
 def correlation(a: list[float] | list[int],

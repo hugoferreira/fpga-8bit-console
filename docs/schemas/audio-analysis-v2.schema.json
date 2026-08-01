@@ -1,0 +1,503 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "fpga-8bit-console audio analysis result v2",
+  "description": "Structured stdout from tools/audio_analysis.py --output json.",
+  "oneOf": [
+    {"$ref": "#/$defs/wavInspect"},
+    {"$ref": "#/$defs/wavCompare"},
+    {"$ref": "#/$defs/sfxAnalyze"},
+    {"$ref": "#/$defs/commandError"}
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nullableNumber": {
+      "type": ["number", "null"]
+    },
+    "nullableInteger": {
+      "type": ["integer", "null"]
+    },
+    "audio": {
+      "type": "object",
+      "required": [
+        "path", "label", "source_sha256", "sample_rate_hz",
+        "sample_count", "duration_seconds", "peak", "rms"
+      ],
+      "properties": {
+        "path": {"type": "string"},
+        "label": {"type": "string"},
+        "source_sha256": {"$ref": "#/$defs/sha256"},
+        "sample_rate_hz": {"type": "integer", "minimum": 1},
+        "sample_count": {"type": "integer", "minimum": 0},
+        "duration_seconds": {"type": "number", "minimum": 0},
+        "peak": {"type": "number", "minimum": 0},
+        "rms": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "clickPolicy": {
+      "type": "object",
+      "required": [
+        "profile_id", "description", "context_radius_samples",
+        "guard_radius_samples", "minimum_delta_pcm",
+        "minimum_severity_ratio", "local_derivative_rms_floor_pcm",
+        "cluster_gap_samples", "periodic_edge_max_gap_samples",
+        "periodic_edge_minimum_events", "periodic_edge_similarity_ratio",
+        "maximum_reported_events", "standalone_maximum_events"
+      ],
+      "properties": {
+        "profile_id": {"const": "click-v1"},
+        "description": {"type": "string"},
+        "context_radius_samples": {"type": "integer", "minimum": 1},
+        "guard_radius_samples": {"type": "integer", "minimum": 0},
+        "minimum_delta_pcm": {"type": "number", "minimum": 0},
+        "minimum_severity_ratio": {"type": "number", "minimum": 0},
+        "local_derivative_rms_floor_pcm": {"type": "number", "minimum": 0},
+        "cluster_gap_samples": {"type": "integer", "minimum": 0},
+        "periodic_edge_max_gap_samples": {"type": "integer", "minimum": 1},
+        "periodic_edge_minimum_events": {"type": "integer", "minimum": 1},
+        "periodic_edge_similarity_ratio": {"type": "number", "minimum": 0},
+        "maximum_reported_events": {"type": "integer", "minimum": 0},
+        "standalone_maximum_events": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "clickEvent": {
+      "type": "object",
+      "required": [
+        "sample_index", "time_seconds", "delta_pcm",
+        "local_derivative_rms_pcm", "severity_ratio"
+      ],
+      "properties": {
+        "sample_index": {"type": "integer", "minimum": 1},
+        "time_seconds": {"type": "number", "minimum": 0},
+        "delta_pcm": {"type": "number"},
+        "local_derivative_rms_pcm": {"type": "number", "minimum": 0},
+        "severity_ratio": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "clickAnalysis": {
+      "type": "object",
+      "required": [
+        "policy", "sample_rate_hz", "analyzed_delta_count",
+        "candidate_edge_count", "suppressed_periodic_edge_count",
+        "event_count", "reported_event_count", "events_truncated",
+        "max_severity_ratio", "events"
+      ],
+      "properties": {
+        "policy": {"$ref": "#/$defs/clickPolicy"},
+        "sample_rate_hz": {"type": "integer", "minimum": 1},
+        "analyzed_delta_count": {"type": "integer", "minimum": 0},
+        "candidate_edge_count": {"type": "integer", "minimum": 0},
+        "suppressed_periodic_edge_count": {"type": "integer", "minimum": 0},
+        "event_count": {"type": "integer", "minimum": 0},
+        "reported_event_count": {"type": "integer", "minimum": 0},
+        "events_truncated": {"type": "boolean"},
+        "max_severity_ratio": {"$ref": "#/$defs/nullableNumber"},
+        "events": {"type": "array", "items": {"$ref": "#/$defs/clickEvent"}}
+      },
+      "additionalProperties": false
+    },
+    "clickComparison": {
+      "type": "object",
+      "required": [
+        "reference", "candidate", "match_tolerance_samples",
+        "maximum_unmatched_events", "matched_event_count",
+        "unmatched_event_count", "reported_unmatched_event_count",
+        "unmatched_events_truncated", "unmatched_events"
+      ],
+      "properties": {
+        "reference": {"$ref": "#/$defs/clickAnalysis"},
+        "candidate": {"$ref": "#/$defs/clickAnalysis"},
+        "match_tolerance_samples": {"type": "integer", "minimum": 0},
+        "maximum_unmatched_events": {"$ref": "#/$defs/nullableInteger"},
+        "matched_event_count": {"type": "integer", "minimum": 0},
+        "unmatched_event_count": {"type": "integer", "minimum": 0},
+        "reported_unmatched_event_count": {"type": "integer", "minimum": 0},
+        "unmatched_events_truncated": {"type": "boolean"},
+        "unmatched_events": {
+          "type": "array", "items": {"$ref": "#/$defs/clickEvent"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "profile_id", "description", "score", "reference", "pitch",
+        "level", "spectrum", "bands", "lock", "clicks"
+      ],
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "enum": ["full-track-v2", "full-track-v1", "pitch-band-v1"]
+        },
+        "description": {"type": "string"},
+        "score": {
+          "type": "object",
+          "required": ["minimum"],
+          "properties": {"minimum": {"type": "number"}},
+          "additionalProperties": false
+        },
+        "reference": {
+          "type": "object",
+          "required": ["pitched_minimum", "voiced_confidence_minimum"],
+          "properties": {
+            "pitched_minimum": {"type": "number"},
+            "voiced_confidence_minimum": {"type": "number"}
+          },
+          "additionalProperties": false
+        },
+        "pitch": {
+          "type": "object",
+          "required": ["tolerance_semitones"],
+          "properties": {"tolerance_semitones": {"type": "number"}},
+          "additionalProperties": false
+        },
+        "level": {
+          "type": "object",
+          "required": [
+            "live_rms_minimum", "median_ratio_minimum", "median_ratio_maximum"
+          ],
+          "properties": {
+            "live_rms_minimum": {"type": "number"},
+            "median_ratio_minimum": {"$ref": "#/$defs/nullableNumber"},
+            "median_ratio_maximum": {"$ref": "#/$defs/nullableNumber"}
+          },
+          "additionalProperties": false
+        },
+        "spectrum": {
+          "type": "object",
+          "required": ["cosine_median_minimum", "cosine_p10_minimum"],
+          "properties": {
+            "cosine_median_minimum": {"$ref": "#/$defs/nullableNumber"},
+            "cosine_p10_minimum": {"$ref": "#/$defs/nullableNumber"}
+          },
+          "additionalProperties": false
+        },
+        "bands": {
+          "type": "object",
+          "required": [
+            "tolerance_db", "minimum_reference_share", "live_power_floor",
+            "quiet_reference_quantile", "minimum_quiet_windows"
+          ],
+          "properties": {
+            "tolerance_db": {"type": "number"},
+            "minimum_reference_share": {"type": "number"},
+            "live_power_floor": {"type": "number"},
+            "quiet_reference_quantile": {"type": "number"},
+            "minimum_quiet_windows": {"type": "integer"}
+          },
+          "additionalProperties": false
+        },
+        "lock": {
+          "type": "object",
+          "required": [
+            "block_correlation_minimum", "lag_tolerance_samples",
+            "median_correlation_minimum", "tracked_ratio_minimum"
+          ],
+          "properties": {
+            "block_correlation_minimum": {"type": "number"},
+            "lag_tolerance_samples": {"type": "integer"},
+            "median_correlation_minimum": {"$ref": "#/$defs/nullableNumber"},
+            "tracked_ratio_minimum": {"$ref": "#/$defs/nullableNumber"}
+          },
+          "additionalProperties": false
+        },
+        "clicks": {
+          "type": "object",
+          "required": [
+            "detection", "match_tolerance_samples", "maximum_unmatched_events"
+          ],
+          "properties": {
+            "detection": {"$ref": "#/$defs/clickPolicy"},
+            "match_tolerance_samples": {"type": "integer", "minimum": 0},
+            "maximum_unmatched_events": {"$ref": "#/$defs/nullableInteger"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "pitchResult": {
+      "type": ["object", "null"],
+      "required": [
+        "compared_window_count", "agreed_window_count", "agreement_ratio",
+        "boundary_slack_agreement_ratio", "tolerance_semitones"
+      ],
+      "properties": {
+        "compared_window_count": {"type": "integer"},
+        "agreed_window_count": {"type": "integer"},
+        "agreement_ratio": {"$ref": "#/$defs/nullableNumber"},
+        "boundary_slack_agreement_ratio": {"$ref": "#/$defs/nullableNumber"},
+        "tolerance_semitones": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "levelResult": {
+      "type": ["object", "null"],
+      "required": [
+        "rms_ratio_median", "rms_ratio_p10", "rms_ratio_p90",
+        "reference_rms_mean", "candidate_rms_mean"
+      ],
+      "properties": {
+        "rms_ratio_median": {"type": "number"},
+        "rms_ratio_p10": {"type": "number"},
+        "rms_ratio_p90": {"type": "number"},
+        "reference_rms_mean": {"type": "number"},
+        "candidate_rms_mean": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "spectrumResult": {
+      "type": ["object", "null"],
+      "required": ["cosine_median", "cosine_p10"],
+      "properties": {
+        "cosine_median": {"type": "number"},
+        "cosine_p10": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "contourResult": {
+      "type": ["object", "null"],
+      "required": ["loudness_correlation", "timbre_correlation"],
+      "properties": {
+        "loudness_correlation": {"type": "number"},
+        "timbre_correlation": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "bandResult": {
+      "type": "object",
+      "required": [
+        "label", "whole_db", "local_db", "quiet_db", "window_count",
+        "quiet_window_count", "failed_scopes"
+      ],
+      "properties": {
+        "label": {"type": "string"},
+        "whole_db": {"$ref": "#/$defs/nullableNumber"},
+        "local_db": {"$ref": "#/$defs/nullableNumber"},
+        "quiet_db": {"$ref": "#/$defs/nullableNumber"},
+        "window_count": {"type": "integer"},
+        "quiet_window_count": {"type": "integer"},
+        "failed_scopes": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["whole", "quiet"]}
+        }
+      },
+      "additionalProperties": false
+    },
+    "lockResult": {
+      "type": ["object", "null"],
+      "required": [
+        "median_correlation", "tracked_block_count", "tracked_ratio",
+        "block_count", "modal_lag_samples", "lost_after_seconds"
+      ],
+      "properties": {
+        "median_correlation": {"type": "number"},
+        "tracked_block_count": {"type": "integer"},
+        "tracked_ratio": {"type": "number"},
+        "block_count": {"type": "integer"},
+        "modal_lag_samples": {"type": ["integer", "null"]},
+        "lost_after_seconds": {"$ref": "#/$defs/nullableNumber"}
+      },
+      "additionalProperties": false
+    },
+    "comparisonSuccess": {
+      "type": "object",
+      "required": [
+        "label", "status", "score", "threshold", "policy", "failure_types",
+        "pitched_reference", "reference_pitchiness", "alignment_method",
+        "lag_samples", "lag_milliseconds", "overlap_samples", "window_count",
+        "pitch", "level", "spectrum", "contour", "bands", "band_failures",
+        "lock", "clicks", "first_pitch_mismatch_seconds", "audio",
+        "spectrogram_file"
+      ],
+      "properties": {
+        "label": {"type": "string"},
+        "status": {"type": "string", "enum": ["ok", "failed"]},
+        "score": {"type": "number"},
+        "threshold": {"type": "number"},
+        "policy": {"$ref": "#/$defs/policy"},
+        "failure_types": {"type": "array", "items": {"type": "string"}},
+        "pitched_reference": {"type": "boolean"},
+        "reference_pitchiness": {"type": "number"},
+        "alignment_method": {"type": "string", "enum": ["sample", "envelope"]},
+        "lag_samples": {"type": "integer"},
+        "lag_milliseconds": {"type": "number"},
+        "overlap_samples": {"type": "integer"},
+        "window_count": {"type": "integer"},
+        "pitch": {"$ref": "#/$defs/pitchResult"},
+        "level": {"$ref": "#/$defs/levelResult"},
+        "spectrum": {"$ref": "#/$defs/spectrumResult"},
+        "contour": {"$ref": "#/$defs/contourResult"},
+        "bands": {"type": "array", "items": {"$ref": "#/$defs/bandResult"}},
+        "band_failures": {"type": "array", "items": {"type": "string"}},
+        "lock": {"$ref": "#/$defs/lockResult"},
+        "clicks": {"$ref": "#/$defs/clickComparison"},
+        "first_pitch_mismatch_seconds": {"$ref": "#/$defs/nullableNumber"},
+        "audio": {"$ref": "#/$defs/audio"},
+        "spectrogram_file": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "itemError": {
+      "type": "object",
+      "required": ["status", "error", "message", "retryable", "path", "label"],
+      "properties": {
+        "status": {"const": "error"},
+        "error": {"type": "string"},
+        "message": {"type": "string"},
+        "retryable": {"type": "boolean"},
+        "field": {"type": "string"},
+        "value": {"type": "string"},
+        "suggestion": {"type": "string"},
+        "path": {"type": "string"},
+        "label": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "wavInspect": {
+      "type": "object",
+      "required": [
+        "schema_version", "command", "status", "failure_types", "audio",
+        "clicks", "spectrogram_file"
+      ],
+      "properties": {
+        "schema_version": {"const": 2},
+        "command": {"const": "wav.inspect"},
+        "status": {"type": "string", "enum": ["ok", "failed"]},
+        "failure_types": {"type": "array", "items": {"type": "string"}},
+        "audio": {"$ref": "#/$defs/audio"},
+        "clicks": {"$ref": "#/$defs/clickAnalysis"},
+        "spectrogram_file": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "wavCompare": {
+      "type": "object",
+      "required": [
+        "schema_version", "command", "status", "policy", "reference",
+        "candidates", "summary"
+      ],
+      "properties": {
+        "schema_version": {"const": 2},
+        "command": {"const": "wav.compare"},
+        "status": {"type": "string", "enum": ["ok", "failed", "partial", "error"]},
+        "policy": {"$ref": "#/$defs/policy"},
+        "reference": {"$ref": "#/$defs/audio"},
+        "candidates": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {"$ref": "#/$defs/comparisonSuccess"},
+              {"$ref": "#/$defs/itemError"}
+            ]
+          }
+        },
+        "summary": {
+          "type": "object",
+          "required": ["total", "ok", "failed", "error"],
+          "properties": {
+            "total": {"type": "integer"},
+            "ok": {"type": "integer"},
+            "failed": {"type": "integer"},
+            "error": {"type": "integer"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "sfxRow": {
+      "type": "object",
+      "required": [
+        "index", "requested_pitch", "requested_note", "wave", "volume",
+        "effect", "custom_instrument", "rms", "peak", "measured_hz",
+        "pitch_error_semitones", "energy_verdict", "pitch_verdict", "status"
+      ],
+      "properties": {
+        "index": {"type": "integer"},
+        "requested_pitch": {"type": "integer"},
+        "requested_note": {"type": "string"},
+        "wave": {"type": "string"},
+        "volume": {"type": "integer"},
+        "effect": {"type": "string"},
+        "custom_instrument": {"type": "boolean"},
+        "rms": {"type": "number"},
+        "peak": {"type": "number"},
+        "measured_hz": {"$ref": "#/$defs/nullableNumber"},
+        "pitch_error_semitones": {"$ref": "#/$defs/nullableNumber"},
+        "energy_verdict": {"type": "string"},
+        "pitch_verdict": {"type": "string"},
+        "status": {"type": "string", "enum": ["ok", "failed"]}
+      },
+      "additionalProperties": false
+    },
+    "sfxAnalyze": {
+      "type": "object",
+      "required": [
+        "schema_version", "command", "status", "failure_types", "audio",
+        "clicks", "cart", "cart_sha256",
+        "sfx_index", "speed_ticks_per_row", "row_duration_milliseconds",
+        "loop_start", "loop_end", "filter_flags", "rows", "summary"
+      ],
+      "properties": {
+        "schema_version": {"const": 2},
+        "command": {"const": "sfx.analyze"},
+        "status": {"type": "string", "enum": ["ok", "failed"]},
+        "failure_types": {"type": "array", "items": {"type": "string"}},
+        "audio": {"$ref": "#/$defs/audio"},
+        "clicks": {"$ref": "#/$defs/clickAnalysis"},
+        "cart": {"type": "string"},
+        "cart_sha256": {"$ref": "#/$defs/sha256"},
+        "sfx_index": {"type": "integer"},
+        "speed_ticks_per_row": {"type": "integer"},
+        "row_duration_milliseconds": {"type": "number"},
+        "loop_start": {"type": "integer"},
+        "loop_end": {"type": "integer"},
+        "filter_flags": {"type": "integer"},
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/sfxRow"}},
+        "summary": {
+          "type": "object",
+          "required": [
+            "row_count", "failed_row_count", "missing_row_count",
+            "leaking_row_count", "pitch_mismatch_count", "pitch_tested_count"
+          ],
+          "properties": {
+            "row_count": {"type": "integer"},
+            "failed_row_count": {"type": "integer"},
+            "missing_row_count": {"type": "integer"},
+            "leaking_row_count": {"type": "integer"},
+            "pitch_mismatch_count": {"type": "integer"},
+            "pitch_tested_count": {"type": "integer"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "commandError": {
+      "type": "object",
+      "required": [
+        "schema_version", "command", "status", "error", "message", "retryable"
+      ],
+      "properties": {
+        "schema_version": {"const": 2},
+        "command": {"type": "string"},
+        "status": {"const": "error"},
+        "error": {"type": "string"},
+        "message": {"type": "string"},
+        "retryable": {"type": "boolean"},
+        "field": {"type": "string"},
+        "value": {"type": "string"},
+        "suggestion": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

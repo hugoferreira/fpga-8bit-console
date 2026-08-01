@@ -33,7 +33,7 @@ correct audio at ~80 fps instead of correct audio at 46 fps.
 > CPU and no game, and the oracle builds `REALTIME_PREVIEW=0`. The console now
 > dumps its own audio - `build/obj_dir/console --audio-wav out.wav` - and
 > `tools/p8_music_wav.py` records real PICO-8 for a whole track to diff it
-> against, via `tools/psg_ref_check.py`. Use those on any audio claim about
+> against, via `tools/audio_analysis.py wav compare`. Use those on any audio claim about
 > `make run`; the `--audio-trace` distinct-level/effective-bit numbers this doc
 > cites as a gate read as HEALTHY throughout the corruption (15.3 bits, 40k
 > levels) and cannot be used to tell correct audio from garbage.

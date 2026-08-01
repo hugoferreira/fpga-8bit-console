@@ -176,7 +176,7 @@ accumulates a 16-bit remainder per axis per object per frame.
   against expectation: `tools/p8_music_trace.py` traces the cart's own
   sequencer, and pattern durations match this console's to within a frame
   (8.53 / 4.25 / 4.25 / 8.50 / 8.50 / 4.25 s against 8.50 / 4.27 / 4.20 / 8.50
-  / 8.47 / 4.27). `make psg-notes` confirms rendered pitch and waveform against
+  / 8.47 / 4.27). `make psg-analyze` confirms rendered pitch and requested waveform against
   the cart's note data — 31/31 rows within 0.05 semitones.
 
 ## The frame-pressure result

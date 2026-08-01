@@ -39,6 +39,8 @@ import sys
 import wave
 from pathlib import Path
 
+import audio_analysis
+
 TICK_SAMPLES = 183
 BLEND_SAMPLES = 64
 
@@ -857,9 +859,7 @@ def write_wav(path: Path, samples: list[int]) -> None:
 
 
 def read_wav(path: Path) -> list[int]:
-    with wave.open(str(path), "rb") as w:
-        n = w.getnframes()
-        return list(struct.unpack(f"<{n}h", w.readframes(n)))
+    return audio_analysis.load_pcm16_mono(path, expected_rate=22050).tolist()
 
 
 def first_nonzero(xs: list[int]) -> int | None:
