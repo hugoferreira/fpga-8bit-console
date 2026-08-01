@@ -69,7 +69,8 @@ module psg_seq (input  bit   clk,
                 // The sample walk reads control words during idle crom cycles.
                 input  logic        ctrl_read,
                 input  logic [7:0]  ctrl_addr,
-                output logic [15:0] ctrl_q);
+                output logic [15:0] ctrl_q,
+                output logic        ctrl_stall);
 
   // Pitch increments, slide/fade constants, and synthesis control words.
   logic [15:0] crom[0:255];
@@ -85,6 +86,7 @@ module psg_seq (input  bit   clk,
                       playing[3], playing[2], playing[1], playing[0]};
   logic [5:0]  sfx_id[0:PSG_NV-1];
   logic [4:0]  w_row;
+  logic        w_clr_tog;
 
   // CPU SFX registers address foreground slots only.
   wire [PSG_VW-1:0] fg_sl = {1'b0, addr[1:0]};
@@ -137,7 +139,7 @@ module psg_seq (input  bit   clk,
       4'd0: vwdata = `PSG_REC_W3;
       4'd1: vwdata = `PSG_REC_W4;
       4'd2: vwdata = `PSG_REC_W5;
-      4'd4: vwdata = {11'b0, w_row};
+      4'd4: vwdata = {10'b0, w_clr_tog, w_row};
       default: vwdata = {2'b0, `PSG_REC_W9};
     endcase
   end
@@ -322,12 +324,13 @@ module psg_seq (input  bit   clk,
   assign ctrl_q = crom_q;
   wire         fade_issue = cs && rw && addr == 8'h22;
   logic        crom_replay;
+  logic        ctrl_displaced;
 
   wire         seq_hold = walk_frozen | fade_issue | crom_replay;
+  assign ctrl_stall = ctrl_displaced;
 
   // Effect intermediates persist across shared multiply/divide requests.
   wire [12:0] pinc_q = crom_q[12:0];
-  logic [12:0] arp_r;
   wire signed [8:0] arp_raw =
       e_insfx ? ($signed({3'b0, w_cur_pitch}) + $signed({3'b0, arp_p}) - 9'sd24)
     : ins_use ? ($signed({3'b0, arp_p}) + $signed({3'b0, w_ins_pitch}) - 9'sd24)
@@ -339,6 +342,12 @@ module psg_seq (input  bit   clk,
 
       K_PF0:   pinc_addr = {2'b0, e_arp};
 
+      // Effects 6/7 publish the arpeggiated pitch-table result. Keep that
+      // synchronous lookup selected until the two inactive-bank increment
+      // words have been written; every other ordinary effect uses e_pitch.
+      K_FX:    pinc_addr = (e_fx == 3'd6 || e_fx == 3'd7)
+                              ? {2'b0, e_arp} : {2'b0, e_pitch};
+
       K_SL2:   pinc_addr = 8'd64 + {2'b0, sl_chr[3:0], 2'd0};
       K_SL3:   pinc_addr = 8'd64 + {2'b0, sl_chr[3:0], 2'd1};
       K_SL4:   pinc_addr = 8'd64 + {2'b0, sl_chr[3:0], 2'd2};
@@ -346,17 +355,28 @@ module psg_seq (input  bit   clk,
       K_SL6:   pinc_addr = 8'd64 + {2'b0, sl_chr[3:0], 2'd3};
       K_SL7,
       K_SL8:   pinc_addr = 8'd36 + {2'b0, sl_chr};
+      P_W0,
+      P_W1:    pinc_addr = (e_fx == 3'd1)
+                              ? 8'd36 + {2'b0, sl_chr}
+                              : (e_fx == 3'd6 || e_fx == 3'd7)
+                                  ? {2'b0, e_arp} : {2'b0, e_pitch};
       default: pinc_addr = {2'b0, e_pitch};
     endcase
     if (fade_issue)
       pinc_addr = 8'd112 + {3'b0, di[7:3]};
   end
   always_ff @(posedge clk) begin
-    crom_q  <= crom[ctrl_read ? ctrl_addr : pinc_addr];
+    // A fade-table read may land while the sample walk streams control words.
+    // Give the CPU lookup this cycle, then hold the walker for one phase while
+    // its displaced word is reissued. Adjacent $22/$20 writes still consume
+    // crom_q directly on the replay cycle.
+    crom_q <= crom[(ctrl_read && !fade_issue) ? ctrl_addr : pinc_addr];
     if (reset) begin
-      crom_replay <= 1'b0;
+      crom_replay    <= 1'b0;
+      ctrl_displaced <= 1'b0;
     end else begin
-      crom_replay <= fade_issue;
+      crom_replay    <= fade_issue;
+      ctrl_displaced <= fade_issue && ctrl_read;
       if (crom_replay)
         fstep_q <= crom_q[12:0];
     end
@@ -369,7 +389,7 @@ module psg_seq (input  bit   clk,
 
   logic [3:0]  xs;
 
-  logic [11:0] vol_r, pvol_r;
+  logic [11:0] vol_r;
 
   logic signed [2:0] lfo;
   always_comb begin
@@ -384,7 +404,10 @@ module psg_seq (input  bit   clk,
   wire       lfo_neg = lfo[2];
   wire [1:0] lfo_mag = lfo_neg ? 2'(-lfo) : 2'(lfo);
 
-  wire signed [12:0] vl_d   = $signed({1'b0, vol_r}) - $signed({1'b0, pvol_r});
+  wire [11:0] pvol_now = e_insfx ? {1'b0, w_ins_prev_vol, 8'b0}
+                                 : pvol_direct;
+  wire signed [12:0] vl_d   = $signed({1'b0, vol_r})
+                             - $signed({1'b0, pvol_now});
   wire               vl_neg = vl_d[12];
   wire signed [6:0]  slp_d = $signed({1'b0, e_pitch})
                             - $signed({1'b0, e_prevp});
@@ -432,7 +455,6 @@ module psg_seq (input  bit   clk,
   wire [12:0] fxp_op  = {6'b0, vib_full[13:7]};
   wire [12:0] fxp_res = base_inc + (lfo_neg ? ~fxp_op : fxp_op)
                       + {12'b0, (lfo_neg & ~vib_cb)};
-  logic [12:0] fxi_next;
   logic [11:0] fxv_next;
 
   logic signed [24:0] mul_a;
@@ -506,22 +528,27 @@ module psg_seq (input  bit   clk,
   end
 
   always_comb begin
-    fxi_next = base_inc;
-    case (e_fx)
-      3'd1: fxi_next = arp_r;
-
-      3'd2: fxi_next = fxp_res;
-      3'd3: fxi_next = d_res[12:0];
-      3'd6, 3'd7: fxi_next = arp_r;
-      default: ;
-    endcase
-
     fxv_next = vol_r;
     case (e_fx)
-      3'd1: fxv_next = pvol_r + (vl_neg ? ~d_res[11:0] : d_res[11:0])
+      3'd1: fxv_next = pvol_now + (vl_neg ? ~d_res[11:0] : d_res[11:0])
                      + {11'b0, vl_neg};
       3'd4: fxv_next = d_res[11:0];
       3'd5: fxv_next = d_res[11:0];
+      default: ;
+    endcase
+  end
+
+  // The final increment is available before volume/instrument post-processing
+  // finishes. Publish its two words immediately, then resume K_FX. This keeps
+  // the value in address-selected storage instead of a 13-bit holding
+  // register and leaves the atomic bank flip unchanged.
+  logic [12:0] fxi_pub;
+  always_comb begin
+    fxi_pub = base_inc;
+    case (e_fx)
+      3'd1: fxi_pub = sl_dp;
+      3'd2: fxi_pub = fxp_res;
+      3'd3: fxi_pub = d_res[12:0];
       default: ;
     endcase
   end
@@ -530,7 +557,7 @@ module psg_seq (input  bit   clk,
   // Published increments use units of 2^7. Ordinary pitches append one zero;
   // the custom-instrument bass flag divides by two without losing its residue.
   wire [13:0] pub_inc = (w_ins_on && w_ins_wt && w_ins_bass)
-                          ? {1'b0, arp_r} : {arp_r, 1'b0};
+                          ? {1'b0, fxi_pub} : {fxi_pub, 1'b0};
 
   wire [11:0] a_pub = vol_r;
   logic [15:0] pub_wd;
@@ -554,7 +581,7 @@ module psg_seq (input  bit   clk,
                               || w_ins_fx == 3'd5)),
                          ((!w_ins_on && w_cur_fx == 3'd3)
                           || (ins_use && fx_dfl && w_ins_fx == 3'd3)),
-                         clr_tog[c],
+                         w_clr_tog,
                          ((!w_ins_on
                            && (w_cur_fx == 3'd0
                                || w_cur_fx == 3'd4
@@ -708,7 +735,7 @@ module psg_seq (input  bit   clk,
 
             4'd6: {w_ch_damp, w_ch_rev, w_ch_det, w_ch_buzz, w_ch_noiz}
                     <= state_q[13:6];
-            4'd7: w_row <= state_q[4:0];
+            4'd7: {w_clr_tog, w_row} <= state_q[5:0];
             default: ;
           endcase
           if (vcnt == 4'd7) begin
@@ -770,6 +797,7 @@ module psg_seq (input  bit   clk,
           w_ins_on <= 0;
           w_ins_done <= 0;
           clr_tog[c] <= ~clr_tog[c];
+          w_clr_tog <= ~w_clr_tog;
           sst <= T_SP;
         end
         T_SP: begin
@@ -1034,19 +1062,13 @@ module psg_seq (input  bit   clk,
         K_PF0: sst <= K_FX;
 
         K_FX: if (!m_busy && !((xs == 4'd7 || xs == 4'd10) && d_busy)) begin
-          if (xs == 0) arp_r <= pinc_q;
           case (xs)
 
             4'd3: vol_r  <= (w_ins_done && ins_use) ? 12'd0
                           : e_insfx ? {1'b0, w_ins_vol, 8'b0}
                                     : vol_direct;
-            4'd4: pvol_r <= e_insfx ? {1'b0, w_ins_prev_vol, 8'b0}
-                                    : pvol_direct;
-
-            4'd5: if (e_fx != 3'd3) arp_r <= fxi_next;
             4'd7: begin
               vol_r <= fxv_next;
-              if (e_fx == 3'd3) arp_r <= fxi_next;
             end
             4'd10: vol_r <= a_post;
             4'd11: if (is_mus(c)) vol_r <= m_res[21:10];
@@ -1055,10 +1077,16 @@ module psg_seq (input  bit   clk,
           if (xs == 4'd2 && e_fx == 3'd1) begin
 
             sst <= K_SL0;
+          end else if (xs == 4'd7 && e_fx != 3'd1) begin
+
+            // The phase result is final. Move the existing P_W0/P_W1 writes
+            // here, then resume volume/instrument work at xs 8.
+            xs <= 4'd8;
+            sst <= P_W0;
           end else if (xs == 4'd11) begin
 
               xs <= 0;
-              sst <= P_W0;
+              sst <= P_W2;
           end else begin
             xs    <= xs + 1;
           end
@@ -1084,15 +1112,15 @@ module psg_seq (input  bit   clk,
         end
         K_SL7: sst <= K_SL8;
         K_SL8: if (!m_busy) begin
-          arp_r <= sl_dp;
-
+          // sl_dp depends on the final synchronous slide-table word. Publish
+          // it before returning to K_FX, while that word and m_res are held.
           xs    <= 4'd3;
-          sst   <= K_FX;
+          sst   <= P_W0;
         end
 
         // Direct publication, or active-bank copy for a skipped slot.
         P_W0: sst <= P_W1;
-        P_W1: sst <= P_W2;
+        P_W1: sst <= K_FX;
         P_W2: sst <= P_W3;
         P_W3: begin
           vcnt <= 0;
@@ -1302,29 +1330,29 @@ module psg_seq (input  bit   clk,
     eng_word = 6'd0;
     case (sst)
       EA0:  eng_word = abank ? 6'd6 : 6'd0;
-      EA1:  eng_word = state_replay ? (abank ? 6'd6 : 6'd0)
-                                    : (abank ? 6'd8 : 6'd2);
-      EA2:  eng_word = state_replay ? (abank ? 6'd8 : 6'd2)
-                                    : (abank ? 6'd7 : 6'd1);
+      EA1:  eng_word = seq_hold ? (abank ? 6'd6 : 6'd0)
+                                : (abank ? 6'd8 : 6'd2);
+      EA2:  eng_word = seq_hold ? (abank ? 6'd8 : 6'd2)
+                                : (abank ? 6'd7 : 6'd1);
       EA3:  begin
               eng_word = abank ? 6'd7 : 6'd1;
-              eng_rd = state_replay;
+              eng_rd = seq_hold;
             end
       ES0:  eng_word = e_insfx ? 6'd6 : 6'd0;
-      ES1:  eng_word = state_replay ? (e_insfx ? 6'd6 : 6'd0)
-                                    : (e_insfx ? 6'd8 : 6'd2);
+      ES1:  eng_word = seq_hold ? (e_insfx ? 6'd6 : 6'd0)
+                                : (e_insfx ? 6'd8 : 6'd2);
       ES2:  begin
               eng_word = e_insfx ? 6'd8 : 6'd2;
-              eng_rd = state_replay;
+              eng_rd = seq_hold;
             end
 
       K_ROT: eng_word = par_cpy;
-      PC0:   eng_word = state_replay ? par_cpy : par_cpy + 6'd1;
-      PC1:   eng_word = state_replay ? par_cpy + 6'd1 : par_cpy + 6'd2;
-      PC2:   eng_word = state_replay ? par_cpy + 6'd2 : par_cpy + 6'd3;
+      PC0:   eng_word = seq_hold ? par_cpy : par_cpy + 6'd1;
+      PC1:   eng_word = seq_hold ? par_cpy + 6'd1 : par_cpy + 6'd2;
+      PC2:   eng_word = seq_hold ? par_cpy + 6'd2 : par_cpy + 6'd3;
       PC3:   begin
                eng_word = par_cpy + 6'd3;
-               eng_rd = state_replay;
+               eng_rd = seq_hold;
              end
       default: eng_rd = 1'b0;
     endcase
@@ -1386,7 +1414,7 @@ module psg_seq (input  bit   clk,
   always_comb begin
 
     tick_issue = vcnt;
-    if (state_replay && sst == V_LD && vcnt != 0)
+    if (seq_hold && sst == V_LD && vcnt != 0)
       tick_issue = vcnt - 1'b1;
 
     etk_ra = eng_rd ? {c, eng_word}

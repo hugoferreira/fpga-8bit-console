@@ -157,6 +157,58 @@ def sec_mix() -> None:
            f"reachable excess <= {reach:,d}: minimal exact form is "
            f"n*{s5[1]}>>{s5[0]}" if s5 else "no (shift, mult) found")
 
+    # R.70: retire the corrected shift series and its original-excess
+    # lifetime by splitting x = 256*h + l. Since 256 = 51*5 + 1,
+    # floor(x/5) = 51*h + floor((h+l)/5). The latter quotient fits one
+    # 512x7 table. A soft_add input is the sum of two signed int16 values, so
+    # this also covers every later tree level: compression returns int16.
+    pair_lo = -(1 << 16)
+    pair_hi = (1 << 16) - 2
+    excess_max = max(pair_hi - M.SOFT_TH, -M.SOFT_TH - pair_lo)
+    excesses = range(excess_max + 1)
+
+    def split5(x: int) -> tuple[int, int, int, int]:
+        h, low = divmod(x, 256)
+        addr = h + low
+        return 51 * h + addr // 5, h, addr, addr // 5
+
+    split = [split5(x) for x in excesses]
+    quotient_max = max(q for q, _, _, _ in split)
+    h_max = max(h for _, h, _, _ in split)
+    addr_max = max(addr for _, _, addr, _ in split)
+    table_q_max = max(q for _, _, _, q in split)
+    bounds_ok = (len(split) == 40_961 and h_max == 160
+                 and addr_max == 414 and table_q_max < (1 << 7)
+                 and quotient_max == 8_192)
+    report("mix.base256_bounds", bounds_ok,
+           f"{len(split):,d} excesses: h <= {h_max}, h+l <= {addr_max}, "
+           f"table q <= {table_q_max}, final q <= {quotient_max:,d}")
+
+    quotient_ok = all(q == x // 5
+                      for x, (q, _, _, _) in zip(excesses, split))
+    report("mix.base256_div5", quotient_ok,
+           "51*h + floor((h+l)/5) == floor(x/5) on every reachable excess")
+
+    def shipped_soft_add(s: int) -> int:
+        if s >= M.SOFT_TH:
+            return M.SOFT_TH + ((s - M.SOFT_TH) * 52429 >> 18)
+        if s <= -M.SOFT_TH:
+            return -M.SOFT_TH - ((-M.SOFT_TH - s) * 52429 >> 18)
+        return s
+
+    def split_soft_add(s: int) -> int:
+        if s >= M.SOFT_TH:
+            return M.SOFT_TH + split5(s - M.SOFT_TH)[0]
+        if s <= -M.SOFT_TH:
+            return -M.SOFT_TH - split5(-M.SOFT_TH - s)[0]
+        return s
+
+    pair_sums = range(pair_lo, pair_hi + 1)
+    soft_ok = all(split_soft_add(s) == shipped_soft_add(s)
+                  for s in pair_sums)
+    report("mix.base256_soft_add", soft_ok,
+           f"exact over all {len(pair_sums):,d} signed-int16 pair sums")
+
 
 # --- slide: the fine-path reciprocal ----------------------------------------
 

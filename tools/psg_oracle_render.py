@@ -28,6 +28,8 @@ def build(clock_hz: int, build_dir: Path, jobs: int) -> Path:
             source.stat().st_mtime for source in sources):
         return binary
     object_dir.mkdir(parents=True, exist_ok=True)
+    multipump = clock_hz == 18_750_000
+    cflags = "-O2 -DPSG_FAST_RATIO=6" if multipump else "-O2"
     command = [
         "verilator", "--cc", str(ROOT / "rtl/psg.sv"),
         "--top-module", "psg", f"-I{ROOT / 'rtl'}", "-O3",
@@ -36,8 +38,13 @@ def build(clock_hz: int, build_dir: Path, jobs: int) -> Path:
         "-Wno-DEFOVERRIDE", "-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC",
         "--exe", str(ROOT / "sim/psg_wav.cpp"), "-o", "psg_wav",
         "--build", "-j", str(jobs), "-Mdir", str(object_dir),
-        "-CFLAGS", "-O2",
+        "-CFLAGS", cflags,
     ]
+    # Multi-pumping belongs only to the accepted iCE40 /6 clock pair. Older
+    # 28.125 MHz oracle models and PREVIEW builds retain the single-clock
+    # multiplier even though psg_wav.cpp harmlessly drives fastclk for both.
+    if multipump:
+        command.insert(6, "-GMULTIPUMP=1")
     subprocess.run(command, cwd=ROOT, check=True)
     return binary
 
@@ -47,7 +54,9 @@ def main() -> int:
     parser.add_argument("--audio", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--samples", type=int, required=True)
-    parser.add_argument("--music", type=int, default=0)
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--music", type=int)
+    source.add_argument("--sfx", type=int)
     parser.add_argument("--mask", type=int, default=7)
     parser.add_argument("--clock", type=int, default=DEFAULT_CLK)
     parser.add_argument("--build-dir", type=Path,
@@ -56,9 +65,11 @@ def main() -> int:
     args = parser.parse_args()
     binary = build(args.clock, args.build_dir, args.jobs)
     args.out.parent.mkdir(parents=True, exist_ok=True)
+    launch = (["--sfx", str(args.sfx)] if args.sfx is not None
+              else ["--music", str(args.music if args.music is not None else 0)])
     subprocess.run([
         str(binary), "--audio", str(args.audio.resolve()),
-        "--music", str(args.music), "--mask", str(args.mask),
+        *launch, "--mask", str(args.mask),
         "--samples", str(args.samples), "--clk", str(args.clock),
         "--out", str(args.out.resolve()),
     ], cwd=ROOT, check=True)

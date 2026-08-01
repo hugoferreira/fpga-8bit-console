@@ -28,6 +28,7 @@ IVERILOG_FLAGS = -g2012 -I. -y rtl
 #
 #   make run                 # the default game
 #   make run GAME=nemo
+#   make run game=celeste    # lowercase compatibility alias
 #   make games               # list what is available
 #
 # Only one program can be resident at a time: rtl/ram.hex is baked into the
@@ -37,6 +38,14 @@ IVERILOG_FLAGS = -g2012 -I. -y rtl
 # .bin and make would consider it up to date.
 # ------------------------------------------------------------------------------
 GAMES = breakout nemo celeste
+
+# Accept the lowercase spelling used by older commands and shell habits. An
+# explicit uppercase GAME remains canonical and wins when both are supplied.
+ifeq ($(origin GAME), undefined)
+ifneq ($(origin game), undefined)
+GAME := $(game)
+endif
+endif
 GAME ?= breakout
 
 # Per-game definitions: entry point, sources to watch, extra include path.
@@ -242,7 +251,7 @@ SECONDS ?= 12
 WAV     ?= build/psg.wav
 PSG_WAV  = build/obj_psg/psg_wav
 PSG_RTL  = rtl/psg.sv rtl/psg_common.svh rtl/psg_timing.sv \
-	rtl/psg_aram.sv rtl/psg_mulsvc.sv rtl/psg_divsvc.sv \
+	rtl/psg_aram.sv rtl/psg_mulsvc.sv rtl/psg_mulmp.sv rtl/psg_divsvc.sv \
 	rtl/psg_state_mem.sv rtl/psg_wave.sv rtl/psg_walk.sv rtl/psg_seq.sv
 
 $(PSG_WAV): $(PSG_RTL) sim/psg_wav.cpp
@@ -381,6 +390,21 @@ psg-viz: tools/psg_viz.py tools/psg_viz.html rtl/psg_walk.sv rtl/psg_seq.sv \
 test-psg-mul:
 	python3 tools/psg_mul_model.py
 
+# Exhaustively prove the serial fold's exact base-256 /5 decomposition over
+# every reachable excess and every signed-int16 pair sum.
+test-psg-fold:
+	python3 tools/psg_hw_forms.py mix
+
+# Prove the visit-local detune coefficient identity in Python, then exercise
+# every coefficient/input pair and the terminal-cycle chained-request contract
+# in the synthesizable radix-4 service under Icarus.
+test-psg-dq:
+	python3 tools/psg_dq_model.py
+	mkdir -p build
+	iverilog -g2012 -s psg_dqsvc_tb -o build/psg_dqsvc_tb \
+	  rtl/psg_dqsvc_tb.sv rtl/psg_dqsvc.sv
+	vvp build/psg_dqsvc_tb
+
 # Fidelity against PICO-8 as a REGRESSION gate, not an absolute one. The track
 # gate above passes anything inside its tolerance band, so a change that moved
 # music 20's lock from 0.83 to 0.73 still went green; this compares the same
@@ -429,6 +453,14 @@ test-psg: test-psg-fidelity
 	  -Wno-PINMISSING -o psg_tb_bin rtl/psg_tb.sv rtl/psg.sv rtl/dsigma.sv \
 	  --Mdir build/obj_psgtb
 	build/obj_psgtb/psg_tb_bin
+
+test-clocks:
+	mkdir -p build
+	verilator --binary --timing -Irtl -Wall -Wno-DECLFILENAME \
+	  -Wno-UNUSEDSIGNAL -Wno-BLKSEQ -Wno-PROCASSINIT \
+	  -o clocks_tb_bin rtl/clocks_tb.sv \
+	  --Mdir build/obj_clockstb
+	build/obj_clockstb/clocks_tb_bin
 
 # ------------------------------------------------------------------------------
 # PPU: golden-frame regression net, and its resource/timing report
@@ -834,6 +866,22 @@ SYNTH_DIR   = build/targets
 # Private to this block: `SEEDS` above belongs to ppu-timing and defaults to 5.
 SYNTH_SEEDS ?= 1
 
+# The PSG has two independently constrained related-clock domains: the full
+# datapath stays at 18.75 MHz while only the multi-pumped multiplier closes at
+# the 112.5 MHz PLL rate. Its closed-loop bundled-data CDC makes inter-domain
+# paths false for single-cycle timing; nextpnr's --ignore-rel-clk excludes
+# those paths while the SDC retains both same-domain requirements.
+SYNTH_TIMING_cpu = --freq $(TARGET_FREQ)
+SYNTH_TIMING_psg = --sdc rtl/target_psg.sdc --ignore-rel-clk
+SYNTH_TIMING_ppu = --freq $(TARGET_FREQ)
+SYNTH_TIMING_soc = --freq $(TARGET_FREQ)
+
+# router1 repeatedly plateaus with 1,000 unresolved arcs on the 97%-full PSG,
+# including both the pre-R.74 baseline and the smaller R.74 candidate. router2
+# completes the same seed and is therefore part of the reproducible PSG flow,
+# not an ad-hoc post-processing command.
+SYNTH_ROUTER_psg = --router router2
+
 # Floor on logic cells per target. A subsystem whose outputs all fold to
 # constants is trimmed to nothing and still reports a PASS with a spectacular
 # Fmax - it is measuring the empty space where the design used to be. That
@@ -874,7 +922,8 @@ synth-$(1): $(SYNTH_DIR)/$(1).json
 	  "$$$$(git rev-parse --short HEAD 2>/dev/null || echo no-git)"
 	@nextpnr-ice40 --$(FPGA_TYPE) --package $(FPGA_PKG) \
 	    --json $(SYNTH_DIR)/$(1).json --asc $(SYNTH_DIR)/$(1).asc \
-	    --freq $(TARGET_FREQ) --seed 1 > $(SYNTH_DIR)/$(1).pnr.log 2>&1 || true
+	    $$(SYNTH_TIMING_$(1)) $$(SYNTH_ROUTER_$(1)) --seed 1 \
+	    > $(SYNTH_DIR)/$(1).pnr.log 2>&1 || true
 	@# Anchor on the "N/M" shape of the utilisation table. A bare
 	@# 'ICESTORM_LC:' also matches the placer's per-iteration log lines
 	@# ("type ICESTORM_LC: wirelen solved = 55"), which silently replaced the
@@ -917,7 +966,7 @@ synth-seeds-$(1): $(SYNTH_DIR)/$(1).json
 	@for s in $$$$(seq 1 $(SYNTH_SEEDS)); do \
 	   nextpnr-ice40 --$(FPGA_TYPE) --package $(FPGA_PKG) \
 	     --json $(SYNTH_DIR)/$(1).json --asc /dev/null \
-	     --freq $(TARGET_FREQ) --seed $$$$s 2>&1 | \
+	     $$(SYNTH_TIMING_$(1)) $$(SYNTH_ROUTER_$(1)) --seed $$$$s 2>&1 | \
 	     grep 'Max frequency for clock' | tail -1 | \
 	     sed -E 's/.*: ([0-9.]+) MHz.*/\1/'; \
 	 done | sort -n | awk 'NF{a[++n]=$$$$1} END { if (n) \

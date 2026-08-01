@@ -30,11 +30,13 @@
 module target_ppu (
     input  logic       clk,
     input  logic       psgclk,
+    input  logic       fastclk,
     input  logic       rst,
     input  logic [7:0] buttons,
     output logic       probe
 );
     target_harness #(.HAS_PPU(1), .HAS_PSG(0), .RAM_ADDR_BITS(11)) u_target (
-        .clk(clk), .psgclk(psgclk), .rst(rst), .buttons(buttons), .probe(probe)
+        .clk(clk), .psgclk(psgclk), .fastclk(fastclk),
+        .rst(rst), .buttons(buttons), .probe(probe)
     );
 endmodule

@@ -13,19 +13,26 @@ sound for a regression check and worthless as a fidelity one - a noise case can
 never be byte-compared against PICO-8, whose RNG is shared across voices.
 
 For fidelity against real PICO-8 use tools/psg_fidelity_gate.py (statistics and
-their pitch dependence) and tools/psg_ref_check.py (a full track against a
+their pitch dependence) and tools/audio_analysis.py (a full track against a
 recording). Keep this one: catching an unintended change is exactly what it is
 good at, and it needs no PICO-8 to run.
 """
-import json, subprocess, sys, filecmp
+import argparse, json, subprocess, sys, filecmp
 from pathlib import Path
 
-ROOT = Path("/Users/bytter/Development/iot/fpga/fpga-8bit-console")
+ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "build/psg_oracle/cases"
-FROZEN = ROOT / "build/psg_oracle/adopt-exact/rtl"
-OUT = ROOT / "build/psg_oracle/bytecheck"
+# R.39 is the latest accepted byte-exact checkpoint. Earlier pre-area renders
+# are not a valid regression anchor after the adjudicated waveform/schedule
+# changes recorded by reduce-psg-ice40-area.
+FROZEN = ROOT / "build/psg_oracle/lifetime/rtl"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--clock", type=int, default=28_125_000,
+                    help="declared PSG clock (default: frozen 28.125 MHz anchor)")
+args = parser.parse_args()
+CLOCK = args.clock
+OUT = ROOT / f"build/psg_oracle/bytecheck-{CLOCK}"
 OUT.mkdir(parents=True, exist_ok=True)
-CLOCK = 28_125_000
 
 sys.path.insert(0, str(ROOT / "tools"))
 import psg_oracle_render

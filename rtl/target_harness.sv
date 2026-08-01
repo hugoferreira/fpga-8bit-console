@@ -17,7 +17,7 @@
  * Two clock pins, not one
  * ----------------------
  * The console derives everything from one PLL (rtl/clocks.sv): psgclk is
- * 112.5/4 = 28.125 MHz, and the chip runs at /32. Here they are separate INPUT
+ * 112.5/6 = 18.75 MHz, and the chip runs at /32. Here they are separate INPUT
  * pins so nextpnr reports an Fmax per domain, which is the question each
  * subsystem actually has. Feeding both from one pin instead would report the
  * minimum across the whole design and attribute it to nothing.
@@ -39,7 +39,8 @@
 
 module target_harness (
     input  logic       clk,       // chip clock (CPU, PPU, arbiter, DMA)
-    input  logic       psgclk,    // PSG clock; 28.125 MHz on iCE40 hardware
+    input  logic       psgclk,    // PSG clock; 18.75 MHz on iCE40 hardware
+    input  logic       fastclk,   // PLL clock; 112.5 MHz multiplier domain
     input  logic       rst,
     input  logic [7:0] buttons,
     output logic       probe
@@ -78,11 +79,13 @@ module target_harness (
     // when it is a pin-budget one.
     /* verilator lint_off PINCONNECTEMPTY */
     chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE("palette565.bin"),
-           .CLK_HZ(32'd28_125_000), .REVERB(1),
+           .CLK_HZ(32'd18_750_000), .REVERB(1),
            .HAS_PPU(HAS_PPU), .HAS_PSG(HAS_PSG), .PSG_DBG(0),
+           .PSG_MULTIPUMP(1),
            .RAM_ADDR_BITS(RAM_ADDR_BITS))
       chip0 (
-        .clk(clk), .cpuclk(clk), .psgclk(psgclk), .reset(rst),
+        .clk(clk), .cpuclk(clk), .psgclk(psgclk), .psgfastclk(fastclk),
+        .reset(rst),
         .vsync(vsync), .hsync(hsync), .vpos(vpos), .hpos(hpos),
         .buttons(buttons),
         .rgb(rgb), .audio(audio), .psg_dbg()

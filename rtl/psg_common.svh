@@ -32,7 +32,8 @@ endfunction
 
 // Per-slot state-memory map:
 //   0..9 tick state, 10..23 oscillator state, 24..31 double-buffered
-//   sounding parameters, 32 current note row. Each slot reserves 64 words.
+//   sounding parameters, 32 current note row plus clear token. Each slot
+//   reserves 64 words.
 localparam int PSG_TREC = 10;
 localparam int PSG_SPAR = 4;
 localparam int PSG_SOSC = 14;

@@ -7,10 +7,11 @@
 //
 // Everything is an integer division of one PLL output, so every clock here is
 // phase-locked to every other. That is the point: the PSG samples CPU-side
-// register writes directly, and a masterclk-domain signal is stable for
-// 32/PSGDIV psgclk edges, so there is no asynchronous crossing anywhere and no
-// synchroniser chain. Both clocks are taken as bits of ONE counter rather than
-// from separate dividers, so that relationship holds by construction.
+// register writes directly, and a masterclk-domain signal is stable for at
+// least floor(32/PSGDIV) complete PSG clocks. Power-of-two divisions are bits
+// of the /32 counter. Non-power-of-two PSG edges come from a registered modulo
+// divider on the PLL's falling edge, so a PSG rising edge can never coincide
+// with the CPU/master rising edge generated on a PLL rising edge.
 //
 // PSGDIV EXISTS BECAUSE THE UNDIVIDED CLOCK DOES NOT CLOSE.
 // This file used to hand the PSG the full 112.5 MHz and assert in a comment
@@ -18,16 +19,18 @@
 // measures the PSG at Fmax 27.98 MHz (critical path prun -> n_res, the
 // sample x volume multiply), so 112.5 missed by 4x and the comment documented
 // a rate the hardware never had. PSGDIV = 4 gives 28.125 MHz, the first
-// division that closes, and 1275 clocks per sample. The interactive Verilated
-// console runs a different lowering for host throughput; that host execution
-// rate is not a synthesized scheduling constraint.
+// division that closes. The bounded 578-clock schedule is render-exact at /6,
+// 18.75 MHz and at least 850 clocks/sample; together with the fixed 272
+// sequencer credits it exactly fills the minimum interval. The interactive
+// Verilated console runs a different lowering for
+// host throughput; that host execution rate is not a synthesized scheduling
+// constraint.
 //
 // The rate is ONE knob: rtl/top.sv derives its CLK_HZ from the same PSGDIV, so
 // the divider and the frequency the PSG computes its sample rate from cannot
 // drift apart. They are two facts about the same clock and getting them out of
-// step detunes the audio silently. Set PSGDIV back to 1 only against a fresh
-// `make synth-psg` Fmax that actually clears 112.5 MHz.
-module clocks #(parameter int PSGDIV = 4)
+// step detunes the audio silently.
+module clocks #(parameter int PSGDIV = 6)
              (input bit clk, output bit reset, output bit masterclk,
               output bit videoclk, output bit cpuclk, output bit psgclk);
 
@@ -60,19 +63,40 @@ module clocks #(parameter int PSGDIV = 4)
 
   assign reset = (reset_counter != 0);  // Reset active during counter period
 
-  // One free-running counter, and both clocks are bits of it. Bit k toggles
-  // every 2^k source clocks, so bit k is the source divided by 2^(k+1) at an
-  // exact 50% duty - and every derived clock shares the counter's edges, which
-  // is what makes the phase-lock structural rather than something to verify.
+  // One free-running counter supplies the /32 clocks. Bit k toggles every 2^k
+  // source clocks, so bit k is the source divided by 2^(k+1) at exact 50% duty.
   localparam int CW = $clog2(DIV);      // DIV = 32 -> 5 bits, bit 4 is /32
   logic [CW-1:0] ctr = 0;
   always_ff @(posedge clk) ctr <= ctr + 1;
 
-  // PSGDIV = 1 takes the source directly; otherwise bit log2(PSGDIV)-1, which
-  // is the source divided by PSGDIV.
+  // Power-of-two PSG divisions reuse the same counter. A non-power-of-two
+  // division uses a registered modulo counter: no combinational decode drives
+  // a clock, and odd divisors have the unavoidable one-source-cycle duty
+  // asymmetry. Its falling-edge source phase keeps every PSG rising edge half
+  // a PLL cycle away from every CPU/master rising edge.
   generate
-    if (PSGDIV <= 1) assign psgclk = clk;
-    else             assign psgclk = ctr[$clog2(PSGDIV) - 1];
+    if (PSGDIV <= 1) begin : g_psg_direct
+      assign psgclk = clk;
+    end else if ((PSGDIV & (PSGDIV - 1)) == 0) begin : g_psg_pow2
+      assign psgclk = ctr[$clog2(PSGDIV) - 1];
+    end else begin : g_psg_mod
+      localparam int PCW = $clog2(PSGDIV);
+      localparam int PHI = PSGDIV / 2;
+      logic [PCW-1:0] pctr = 0;
+      logic           pclk = 0;
+
+      always_ff @(negedge clk) begin
+        if (pctr == PCW'(PSGDIV - 1)) begin
+          pctr <= 0;
+          pclk <= 1;
+        end else begin
+          pctr <= pctr + 1'b1;
+          if (pctr == PCW'(PHI - 1))
+            pclk <= 0;
+        end
+      end
+      assign psgclk = pclk;
+    end
   endgenerate
 
   assign masterclk = ctr[CW-1];

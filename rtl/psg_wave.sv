@@ -213,28 +213,73 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   // integer forms directly, including their ceiling-biased corrections.
   wire [2:0] dq_wave = dq_old_ctx ? s_old_wave : s_snd_wave;
   wire [1:0] dq_mode = dq_old_ctx ? old_mode_r : s_ch_det;
-  wire [23:0] dp24 = {11'b0, dq_old_ctx ? s_old_inc_hi : s_eff_inc_hi};
+  wire [12:0] dp13 = dq_old_ctx ? s_old_inc_hi : s_eff_inc_hi;
+
+  // Triangle detune-1 is floor(193*dp/256). Split dp = 256*q+r:
+  // the coefficient applies to only five quotient bits, while the residue is
+  // floor(193*r/256) = r-ceil(63*r/256).  The latter is floor(3*r/4)
+  // plus one exactly when the two-bit residue is non-zero and no greater
+  // than r's high two bits.
+  wire [4:0] dq_q256 = dp13[12:8];
+  wire [7:0] dq_r256 = dp13[7:0];
+  wire [1:0] dq_rmod4 = dq_r256[1:0];
+  wire dq_rnz4 = dq_rmod4 != 0;
+  wire dq_r193_carry = dq_rnz4 && dq_r256[7:6] >= dq_rmod4;
+  wire [8:0] dq_low193 = {1'b0, dq_r256}
+                          - {3'b0, dq_r256[7:2]}
+                          - {8'b0, dq_rnz4}
+                          + {8'b0, dq_r193_carry};
+  wire [6:0] dq_q256_3 = {2'b0, dq_q256} + {1'b0, dq_q256, 1'b0};
+  wire [12:0] dq_hi193 = {dq_q256_3, 6'b0} + {8'b0, dq_q256};
+  wire [13:0] dq_193 = {1'b0, dq_hi193} + {6'b0, dq_low193[7:0]};
+
+  // Phaser detune-1 uses ceil(6*dp/256). Split at 128 so the coefficient is
+  // 3 on a six-bit quotient and seven-bit residue. The remaining corrections
+  // are quotient plus one iff their low residue is non-zero.
+  wire [5:0] dq_q128 = dp13[12:7];
+  wire [6:0] dq_r128 = dp13[6:0];
+  wire [7:0] dq_q128_3 = {2'b0, dq_q128} + {1'b0, dq_q128, 1'b0};
+  wire [8:0] dq_r128_3 = {2'b0, dq_r128} + {1'b0, dq_r128, 1'b0};
+  wire [1:0] dq_ceil3r128 = 2'((dq_r128_3 + 9'd127) >> 7);
+  wire [8:0] dq_ceil6_256 = {1'b0, dq_q128_3}
+                              + {7'b0, dq_ceil3r128};
+  wire [7:0] dq_ceil64 = {1'b0, dp13[12:6]}
+                           + {7'b0, |dp13[5:0]};
+  wire [6:0] dq_ceil128 = {1'b0, dq_q128}
+                            + {6'b0, |dq_r128};
+  wire [5:0] dq_ceil256 = {1'b0, dq_q256}
+                            + {5'b0, |dq_r256};
+
+  logic [13:0] dq_base;
+  logic [8:0]  dq_corr;
+  logic        dq_sub;
   always_comb begin
-    if (s_snd_wt)
-      dq17 = dp24[16:0];
-    else if (dq_wave == 3'd0) begin
+    dq_base = {1'b0, dp13};
+    dq_corr = 9'd0;
+    dq_sub = 1'b0;
+    if (!s_snd_wt && dq_wave == 3'd0) begin
       case (dq_mode)
-        2'd1:    dq17 = 17'(((dp24 << 7) + (dp24 << 6) + dp24) >> 8);
-        2'd2:    dq17 = 17'(dp24 + (dp24 >> 1));
-        default: dq17 = dp24[16:0];
+        2'd1:    dq_base = dq_193;
+        2'd2:    dq_base = {1'b0, dp13} + {2'b0, dp13[12:1]};
+        default: ;
       endcase
-    end else if (dq_wave == 3'd7) begin
+    end else if (!s_snd_wt && dq_wave == 3'd7) begin
+      dq_sub = 1'b1;
       case (dq_mode)
-        2'd1:    dq17 = 17'(dp24 - (((dp24 << 2) + (dp24 << 1)
-                                     + 24'd255) >> 8));
-        2'd2:    dq17 = 17'((dp24 << 1) - ((dp24 + 24'd63) >> 6));
-        default: dq17 = 17'(dp24 - ((dp24 + 24'd127) >> 7));
+        2'd1:    dq_corr = dq_ceil6_256;
+        2'd2: begin
+          dq_base = {dp13, 1'b0};
+          dq_corr = {1'b0, dq_ceil64};
+        end
+        default: dq_corr = {2'b0, dq_ceil128};
       endcase
-    end else if (dq_mode != 2'd0)
-      dq17 = 17'(dp24 - ((dp24 + 24'd255) >> 8));
-    else
-      dq17 = dp24[16:0];
+    end else if (!s_snd_wt && dq_mode != 2'd0) begin
+      dq_sub = 1'b1;
+      dq_corr = {3'b0, dq_ceil256};
+    end
   end
+  wire [13:0] dq_calc = dq_sub ? (dq_base - {5'b0, dq_corr}) : dq_base;
+  always_comb dq17 = {3'b0, dq_calc};
 
   // Secondary phase presentation: triangle/phaser use the unshifted 17-bit
   // accumulator, detune mode 2 doubles the other built-in waves, and preview

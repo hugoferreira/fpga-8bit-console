@@ -157,9 +157,11 @@ def streamed_ranges(src):
     for m in re.finditer(r"4'd(\d+):\s*sosc_wd\s*=\s*([^;]+);", sw):
         for r in re.findall(r"\b([a-z_]\w*)\b", m.group(2)):
             store.setdefault(r, []).append(C.PSTOR + int(m.group(1)))
-    # the two late dampen cycles read s_lp and word 14's members
-    for r in ("s_lp", "old_mode_r", "s_brown"):
-        store.setdefault(r, []).append(C.PLAST - 2)
+    # The low word is written on PLAST-1; word 14 (including s_lp's sign)
+    # shares PLAST with slot close and fold launch.
+    store.setdefault("s_lp", []).extend((C.PLAST - 1, C.PLAST))
+    for r in ("old_mode_r", "s_brown"):
+        store.setdefault(r, []).append(C.PLAST)
     return load, store
 
 

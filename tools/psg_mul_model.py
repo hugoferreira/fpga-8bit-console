@@ -29,15 +29,17 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MULSVC_SV = os.path.join(ROOT, "rtl", "psg_mulsvc.sv")
 
-A_BITS = 21                       # m_a, per the module's own width comment
-# The service's stated ceiling on |A|: "the widest |A| any arm supplies is
-# base_inc, whose pitch-table ceiling is 0x1CE0 << 8". It is what bounds every
-# landing below 2^33, so a shifted product still fits the 34-bit register.
-# Testing above the ceiling reports an overflow the design never reaches;
-# ignoring the distinction hides one it might.
-A_CEILING = 0x1CE0 << 8           # 1,892,352
+A_BITS = 18                       # m_a, per the module's own width comment
+# The live request audit bounds every A to a signed 18-bit source. The most
+# negative value therefore has magnitude 2^17; positive values stop one below.
+# Older RTL supplied a shift-scaled pitch increment and needed 21 bits, but the
+# current service receives the unshifted 13-bit table word and restores its
+# fixed-point position only at the named consumer slices below.
+A_CEILING = 1 << 17               # 131,072, inclusive magnitude ceiling
 B_BITS = 12                       # mul_start_b
 P_BITS = 34                       # m_p
+ACC_BITS = A_BITS + 1             # product accumulator above bit 12
+SUM_BITS = A_BITS + 3             # accumulator + radix-4 3*A term
 
 
 def mask(w):
@@ -53,7 +55,8 @@ def parse_radix_bits(path=MULSVC_SV):
     see `landing`.
     """
     txt = open(path).read()
-    m = re.search(r"m_p\s*<=\s*\{m_sum,\s*m_p\[11:(\d+)\]\}", txt)
+    m = re.search(
+        r"m_p\s*<=\s*\{[^;\n]*m_sum,\s*m_p\[11:(\d+)\]\}", txt)
     if not m:
         raise SystemExit(f"{path}: cannot find the m_p write-back shift")
     return int(m.group(1))
@@ -119,10 +122,10 @@ BOUNDARY = 12
 def parse_boundary(path=MULSVC_SV):
     """The accumulator boundary, READ from the RTL's m_acc slice."""
     txt = open(path).read()
-    m = re.search(r"m_acc\s*=\s*m_p\[33:(\d+)\]", txt)
+    m = re.search(r"m_acc\s*=\s*m_p\[(\d+):(\d+)\]", txt)
     if not m:
         raise SystemExit(f"{path}: m_acc is no longer one fixed slice of m_p")
-    return int(m.group(1))
+    return int(m.group(2))
 
 
 SHORT_STEPS = {1: 6, 2: 3}      # radix -> steps for an explicit short request
@@ -164,11 +167,56 @@ def mulsvc(a, b, mode, iters=None, shift=None, short=False, radix_bits=None,
     m_a = abs(a) & mask(A_BITS)
     m_p = (b << pre) & mask(B_BITS)
     for _ in range(it):
-        acc = (m_p >> sh) & mask(22)
+        acc = (m_p >> sh) & mask(ACC_BITS)
         d = m_p & mask(r)
-        srt = (acc + m_a * d) & mask(24)
+        srt = (acc + m_a * d) & mask(SUM_BITS)
         m_p = ((srt << (sh - r)) | ((m_p >> r) & mask(sh - r))) & mask(P_BITS)
     return m_p
+
+
+def signed(v, width):
+    """Interpret the low *width* bits as a two's-complement integer."""
+    v &= mask(width)
+    return v - (1 << width) if v & (1 << (width - 1)) else v
+
+
+def mulsvc_recoded(a, b, mode, short=False, trace=False):
+    """R.72 carried signed-digit candidate, including final correction.
+
+    For t = radix-4 digit + carry, 0..2 remain 0/+A/+2A, while 3 is
+    represented as -A with carry one and 4 as zero with carry one.  The
+    registered combined word may therefore be negative while busy.  Once the
+    last digit retires, adding carry*A at the accumulator boundary returns the
+    exact nonnegative public m_res without another service cycle.
+
+    The candidate narrows the live accumulator to signed 18 bits and the
+    add/sub result to signed 20 bits.  *trace* returns their observed extrema
+    so the gate proves those widths rather than trusting comments in RTL.
+    """
+    steps, boundary = service_shape(b, mode, short)
+    pre = 0 if short else parse_preshift().get(mode, 0)
+    m_a = abs(a) & mask(A_BITS)
+    m_p = (b << pre) & mask(B_BITS)
+    carry = 0
+    acc_lo = acc_hi = sum_lo = sum_hi = 0
+    for _ in range(steps):
+        acc = signed(m_p >> boundary, 18)
+        t = (m_p & 3) + carry
+        digit = t - 4 if t >= 3 else t
+        carry = int(t >= 3)
+        total = acc + m_a * digit
+        acc_lo, acc_hi = min(acc_lo, acc), max(acc_hi, acc)
+        sum_lo, sum_hi = min(sum_lo, total), max(sum_hi, total)
+
+        # RTL shape: {{4{sum[19]}}, sum[19:0], m_p[11:2]}.
+        total20 = total & mask(20)
+        total24 = total20 | ((mask(4) << 20) if total20 & (1 << 19) else 0)
+        m_p = ((total24 << 10) | ((m_p >> 2) & mask(10))) & mask(P_BITS)
+
+    result = (m_p + ((m_a << boundary) if carry else 0)) & mask(P_BITS)
+    if trace:
+        return result, (acc_lo, acc_hi), (sum_lo, sum_hi)
+    return result
 
 
 def sweep(bits=A_BITS, dense=4096, extra=20000):
@@ -215,7 +263,7 @@ def gate():
     print(f"psg_mulsvc is radix-{1 << rb} (read from RTL): "
           + ", ".join(f"mode {k}={v} steps" for k, v in iters.items())
           + f"; explicit short={SHORT_STEPS[rb]}")
-    print(f"one accumulator boundary (read from RTL): m_p[33:{boundary}] — an "
+    print(f"one accumulator boundary (read from RTL): bit {boundary} — an "
           f"M-step request lands its product {boundary} - {rb}*M places left"
           + (f", plus a pre-shift on mode(s) {sorted(parse_preshift())}"
              if parse_preshift() else ""))
@@ -264,9 +312,9 @@ def gate():
         width = rb * n - (0 if sh else parse_preshift().get(md, 0))
         if (A_CEILING * ((1 << width) - 1) << landing(md, sh)) >= (1 << P_BITS):
             bad_fit.append((mode, n))
-    ok &= check("no landing overflows the 34-bit accumulator", not bad_fit,
-                "|A| <= 0x1CE0<<8 and B < 2^N bound every shifted product "
-                "by 2^33" if not bad_fit else f"{bad_fit}")
+    ok &= check("no landing overflows the 34-bit result", not bad_fit,
+                "|A| <= 2^17 and B < 2^N bound every shifted product"
+                if not bad_fit else f"{bad_fit}")
 
     # 1b. The converse: a B wider than the mode is corrupted. This is the
     #     trap the gate exists to catch, so assert it happens.
@@ -317,6 +365,81 @@ def gate():
                  != mulsvc(a, 63, 1, iters=3, radix_bits=2, preshift=0, short=True)]
     ok &= check("short request: three radix-4 steps == six radix-2 steps",
                 not bad_short, f"{len(vals[:2000])} values of |A|")
+
+    # 1d. R.72: eliminate the explicit 3*A producer by carrying digit three
+    # into the next radix-4 position.  Compare the COMPLETE public m_res word,
+    # including each mode's fixed landing and the odd-width pre-shift.  Sweep
+    # every legal B at the A-domain boundaries, then the broad A sweep at all
+    # digit-pattern corners.  Sign is deliberately checked too: the service
+    # strips it before either recurrence, so both signs must remain identical.
+    recode_bad = []
+    acc_lo = acc_hi = sum_lo = sum_hi = 0
+    edge_a = (0, 1, 2, 3, 255, 256, 4095, A_CEILING - 1, A_CEILING)
+    shapes = [(mode, False) for mode in iters] + [(1, True)]
+    for mode, short in shapes:
+        n = SHORT_STEPS[rb] if short else iters[mode]
+        width = rb * n - (0 if short else parse_preshift().get(mode, 0))
+        for b in range(1 << width):
+            for a in edge_a:
+                for sgn in (1, -1):
+                    ref = mulsvc(sgn * a, b, mode, short=short)
+                    got, ab, sb = mulsvc_recoded(
+                        sgn * a, b, mode, short=short, trace=True)
+                    acc_lo, acc_hi = min(acc_lo, ab[0]), max(acc_hi, ab[1])
+                    sum_lo, sum_hi = min(sum_lo, sb[0]), max(sum_hi, sb[1])
+                    if got != ref:
+                        recode_bad.append((mode, short, a, b, sgn, ref, got))
+                        break
+                if recode_bad:
+                    break
+            if recode_bad:
+                break
+        if recode_bad:
+            break
+
+        corners = sorted(set((0, 1, 2, 3, (1 << width) - 1,
+                              mask(width) // 3, (2 * mask(width)) // 3)))
+        live_vals = [a for a in vals if a <= A_CEILING]
+        for b in corners:
+            for a in live_vals:
+                ref = mulsvc(a, b, mode, short=short)
+                got = mulsvc_recoded(a, b, mode, short=short)
+                if got != ref:
+                    recode_bad.append((mode, short, a, b, 1, ref, got))
+                    break
+            if recode_bad:
+                break
+        if recode_bad:
+            break
+    ok &= check("carried signed digits reproduce complete m_res",
+                not recode_bad,
+                ("every legal B at 9 A boundaries and both signs; all A "
+                 "sweep values at digit-pattern corners")
+                if not recode_bad else f"{recode_bad[:1]}")
+    ok &= check("recoded accumulator fits signed 18 bits",
+                -(1 << 17) <= acc_lo and acc_hi < (1 << 17),
+                f"observed {acc_lo}..{acc_hi}")
+    ok &= check("recoded add/sub result fits signed 20 bits",
+                -(1 << 19) <= sum_lo and sum_hi < (1 << 19),
+                f"observed {sum_lo}..{sum_hi}")
+
+    # 1e. R.73: expose an unsigned radix-4 digit as its two binary partial
+    #     products.  This is the exact arithmetic presented to synthesis;
+    #     whether the mapper turns it into a cheaper compressor is measured
+    #     separately by the registered-service harness.
+    partial_bad = []
+    for a in vals:
+        for digit in range(4):
+            got = (a if digit & 1 else 0) + ((a << 1) if digit & 2 else 0)
+            if got != a * digit:
+                partial_bad.append((a, digit, a * digit, got))
+                break
+        if partial_bad:
+            break
+    ok &= check("two gated partial products reproduce every radix-4 digit",
+                not partial_bad,
+                f"4 digits x {len(vals)} values of |A|"
+                if not partial_bad else f"{partial_bad[:1]}")
 
     # 2. Mode 0 remains the original eight-cycle path for byte operands.
     bad, n = equivalent(255, 1, 0, values=vals)

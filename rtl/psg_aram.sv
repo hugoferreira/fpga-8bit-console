@@ -16,28 +16,33 @@ module psg_aram (input  bit          clk,
 
                  input  logic        syn_rd,
                  input  logic [12:0] syn_addr,
+                 input  logic        seq_hold,
                  output logic [7:0]  seq_q,
                  output logic        seq_frozen);
 
   logic [7:0]  aram[0:4607];
   logic [15:0] wraddr;
-  logic [12:0] last_addr;
   logic        replay;
 
-  // A synthesis read replaces the sequencer address for one cycle. The next
-  // cycle reissues the last accepted sequencer address.
+  // A synthesis read replaces the sequencer address for one cycle. The
+  // sequencer stays frozen through the following replay cycle.
   assign seq_frozen = syn_rd | replay;
 
-  wire [12:0] aram_addr = syn_rd ? syn_addr : replay ? last_addr : seq_addr;
+  // Sequencer reads are issued one state before they are consumed.  An
+  // ordinary freeze therefore holds the registered RAM output: the held
+  // state's current seq_addr already names the following byte.  A synthesis
+  // borrow still replaces that output, so its replay cycle forcibly reissues
+  // the held sequencer address before the output is held again.
+  wire aram_rd = syn_rd | replay | !seq_hold;
+  wire [12:0] aram_addr = syn_rd ? syn_addr : seq_addr;
 
   always_ff @(posedge clk) begin
-    seq_q <= aram[aram_addr];
+    if (aram_rd)
+      seq_q <= aram[aram_addr];
     if (reset) begin
       replay <= 0;
-      last_addr <= 0;
     end else begin
       replay <= syn_rd;
-      if (!seq_frozen) last_addr <= seq_addr;
     end
   end
 

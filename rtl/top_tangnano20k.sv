@@ -157,8 +157,9 @@ module top(input  bit clk,                    // 27 MHz crystal, pin 4
   /* verilator lint_off PINCONNECTEMPTY */
   // psg_dbg is a verification-only bus; unconnected here so it synthesises away.
   chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE), .CLK_HZ(PSG_CLK_HZ),
-         .RAM_ADDR_BITS(16), .PSG_DBG(0))
-    chip(.clk(masterclk), .cpuclk(cpuclk), .psgclk(psgclk), .reset, .vsync,
+         .RAM_ADDR_BITS(16), .PSG_DBG(0), .PSG_MULTIPUMP(0))
+    chip(.clk(masterclk), .cpuclk(cpuclk), .psgclk(psgclk),
+         .psgfastclk(pllclk), .reset, .vsync,
          .hsync, .vpos, .hpos,
          .buttons(buttons), .rgb, .audio(audio), .psg_dbg());
   /* verilator lint_on PINCONNECTEMPTY */

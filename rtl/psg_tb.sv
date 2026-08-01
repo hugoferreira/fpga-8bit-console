@@ -12,11 +12,13 @@
 
 module psg_tb;
 
-  localparam CLKHZ = 32'd28_125_000;
-  localparam CLKS_PER_TICK = 233_418;
+  localparam CLKHZ = 32'd18_750_000;
+  localparam int CLKS_PER_TICK = int'(longint'(CLKHZ) * 183 / 22050);
 
   bit clk = 0;
-  always #5 clk = ~clk;
+  bit fastclk = 0;
+  always #30 clk = ~clk;
+  always #5 fastclk = ~fastclk;
 
   bit reset = 1;
   bit cs = 0, rw = 0;
@@ -25,8 +27,8 @@ module psg_tb;
   logic signed [15:0] pcm;
 
   // Functional DUT and independently driven delta-sigma smoke-test DUT.
-  psg #(.CLK_HZ(CLKHZ)) dut(
-    .clk(clk), .reset(reset),
+  psg #(.CLK_HZ(CLKHZ), .MULTIPUMP(1)) dut(
+    .clk(clk), .fastclk(fastclk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di),
     .dout(dout), .pcm(pcm),
     .dbg());
@@ -817,8 +819,9 @@ module psg_tb;
 
     $display("  synthesis deadline: worst %0d / %0d clocks (smoke test - the",
              max_sample_job_clocks, CLKHZ / 22050);
-    $display("    real requirement is 1190-1201 clocks/sample, see");
-    $display("    docs/hardware-gaps.md 'What the audio actually needs')");
+    $display("    fixed schedule also reserves 272 sequencer clocks/sample;");
+    $display("    /6 supplies 850 clocks: 530 walk + 272 sequencer credits,");
+    $display("    leaving 48 clocks of interval margin)");
     check(max_sample_job_clocks > 0 && max_sample_job_clocks < CLKHZ / 22050,
           "all slot and mix work completes before the next sample");
     $display("  tick pre-run: worst %0d / %0d clocks after pre_tick, %0d spare, %0d late flips",

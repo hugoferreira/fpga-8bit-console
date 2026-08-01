@@ -23,6 +23,8 @@
 `include "psg_timing.sv"
 `include "psg_aram.sv"
 `include "psg_mulsvc.sv"
+`include "psg_mulmp.sv"
+`include "psg_dqsvc.sv"
 `include "psg_divsvc.sv"
 `include "psg_state_mem.sv"
 `include "psg_wave.sv"
@@ -30,8 +32,10 @@
 `include "psg_seq.sv"
 
 module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
-             parameter REALTIME_PREVIEW = 0, parameter DBG_PORT = 1)
-          (input bit clk, input bit reset,
+             parameter REALTIME_PREVIEW = 0, parameter DBG_PORT = 1,
+             parameter int SEQ_BUDGET = 272,
+             parameter MULTIPUMP = 0)
+          (input bit clk, input bit fastclk, input bit reset,
            input bit cs, input bit rw, input logic [7:0] addr, input logic [7:0] di,
            output logic [7:0] dout,
            output logic signed [15:0] pcm,
@@ -62,7 +66,86 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // The sequencer advances only while neither shared memory nor the synthesis
   // pipeline is owned by the sample walk.
   wire         prun, fold_busy;
-  wire         walk_frozen = seq_frozen | prun | state_replay | fold_busy;
+  wire         walk_busy = seq_frozen | prun | state_replay | fold_busy;
+
+  // A fixed sequencer credit makes the program position at each sample
+  // boundary a function of the sample index, not of clocks-per-sample.  The
+  // The R.75 530-clock full walk plus 272 credits needs 802 clocks/sample;
+  // 112.5/6 = 18.75 MHz provides at least 850, leaving 48 clocks. A sweep
+  // found 272 is the first
+  // credit that keeps all 59 accepted renders byte-identical. There is no
+  // minimum-interval margin at /6, so the simulation assertion below is part
+  // of the clock contract rather than advisory. Preview
+  // is deliberately exempt: it runs in the simulator's single 3.5 MHz domain
+  // and has its own compact schedule.
+  logic seq_starved;
+  generate
+    if (!REALTIME_PREVIEW && SEQ_BUDGET == 272) begin : g_seq_budget_272
+      // 239 -> 255 takes 16 advances. After that wrap, another 255 advances
+      // reach {phase,count} = {1,255}: 16 + 256 = exactly 272 credits. This
+      // shares one eight-bit terminal decode instead of a nine-bit zero test.
+      logic [7:0] seq_count;
+      logic       seq_phase;
+      wire        seq_terminal = seq_phase && (&seq_count);
+
+      always_ff @(posedge clk) begin
+        if (reset || sample_en) begin
+          seq_count <= 8'd239;
+          seq_phase <= 1'b0;
+        end else if (!walk_busy && !seq_terminal) begin
+          seq_count <= seq_count + 1'b1;
+          if (&seq_count)
+            seq_phase <= 1'b1;
+        end
+      end
+      always_comb seq_starved = seq_terminal;
+
+`ifndef SYNTHESIS
+      logic [2:0] budget_warm;
+      always_ff @(posedge clk) begin
+        if (reset)
+          budget_warm <= 0;
+        else if (sample_en) begin
+          if (budget_warm != 3'd7)
+            budget_warm <= budget_warm + 1'b1;
+          else if (!seq_terminal)
+            $error("psg: CLK_HZ leaves fewer than SEQ_BUDGET clocks after the sample walk");
+        end
+      end
+`endif
+    end else if (!REALTIME_PREVIEW && SEQ_BUDGET > 0) begin : g_seq_budget
+      localparam int SEQ_CW = $clog2(SEQ_BUDGET + 1);
+      logic [SEQ_CW-1:0] seq_credit;
+
+      always_ff @(posedge clk) begin
+        if (reset || sample_en)
+          seq_credit <= SEQ_CW'(SEQ_BUDGET);
+        else if (!walk_busy && seq_credit != 0)
+          seq_credit <= seq_credit - 1'b1;
+      end
+      always_comb seq_starved = (seq_credit == 0);
+
+`ifndef SYNTHESIS
+      // The credit is a real bound only when every complete interval can pay
+      // it after the sample walk.  Ignore the partial startup intervals.
+      logic [2:0] budget_warm;
+      always_ff @(posedge clk) begin
+        if (reset)
+          budget_warm <= 0;
+        else if (sample_en) begin
+          if (budget_warm != 3'd7)
+            budget_warm <= budget_warm + 1'b1;
+          else if (seq_credit != 0)
+            $error("psg: CLK_HZ leaves fewer than SEQ_BUDGET clocks after the sample walk");
+        end
+      end
+`endif
+    end else begin : g_no_seq_budget
+      always_comb seq_starved = 1'b0;
+    end
+  endgenerate
+
+  wire         walk_frozen = walk_busy | seq_starved;
 
   // Convert a level-style bus write into one pulse in the PSG clock domain.
   // Reads retain level semantics.
@@ -74,11 +157,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .clk(clk), .reset(reset),
     .cs(cs_wr), .rw(rw), .addr(addr), .di(di),
     .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
+    .seq_hold(prun | state_replay | fold_busy | seq_starved),
     .seq_q(seq_q), .seq_frozen(seq_frozen));
 
   // Shared arithmetic services.
   wire  [33:0] m_res;
-  wire         m_busy;
+  wire         m_busy_walk;
+  wire         m_busy_seq;
 
   wire         div_start;
   logic [23:0] div_n;
@@ -97,20 +182,22 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .wlk_rd(state_sample_read), .wlk_ra(wlk_ra),
     .wlk_we(state_sample_we), .wlk_wa(wlk_wa), .wlk_wd(wlk_wd),
     .etk_ra(etk_ra), .etk_we(etk_we), .etk_wa(etk_wa), .etk_wd(etk_wd),
-    .prun(prun), .state_replay(state_replay), .state_q(state_q));
+    .prun(prun), .state_replay(state_replay),
+    .state_q(state_q));
 
   // The full schedule renders crossfades and reverb. Preview uses the compact
   // schedule and disables unreachable reverb phases at elaboration time.
   psg_walk #(.REVERB(REVERB && !REALTIME_PREVIEW),
-             .REALTIME_PREVIEW(REALTIME_PREVIEW)) u_walk(
+             .REALTIME_PREVIEW(REALTIME_PREVIEW),
+             .MULTIPUMP(MULTIPUMP)) u_walk(
     .clk(clk), .reset(reset), .sample_en(sample_en),
     .play_bits(play_bits), .mus_playing(mus_playing),
-    .spar_bank(spar_bank), .clr_tog(clr_tog), .clr_ack(clr_ack),
+    .spar_bank(spar_bank), .clr_tog(clr_tog),
     .seq_q(seq_q), .syn_rd(syn_rd), .syn_addr(syn_addr),
     .state_q(state_q),
     .state_sample_read(state_sample_read), .wlk_ra(wlk_ra),
     .state_sample_we(state_sample_we), .wlk_wa(wlk_wa), .wlk_wd(wlk_wd),
-    .m_res(m_res), .m_busy(m_busy),
+    .m_res(m_res), .m_busy(m_busy_walk),
     .wmul_start(wmul_start), .wmul_a(wmul_a), .wmul_b(wmul_b),
     .wmul_mode(wmul_mode), .wmul_short(wmul_short),
     .iss_sec(iss_sec), .iss_om(iss_om), .iss_os(iss_os),
@@ -121,7 +208,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .s_old_phase(s_old_phase), .s_old_inc(s_old_inc),
     .old_mode_r(old_mode_r), .old_alt_r(old_alt_r), .old_q0(old_q0),
     .z_eval(z_eval), .dq17(dq17), .q16(q16),
-    .ctrl_q(ctrl_q), .ctrl_addr(ctrl_addr),
+    .ctrl_q(ctrl_q), .ctrl_addr(ctrl_addr), .ctrl_stall(ctrl_stall),
     .prun(prun), .fold_busy(fold_busy),
     .dry16(dry16), .dry_valid(dry_valid));
 
@@ -144,7 +231,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [16:0] old_q0;
   wire [15:0] ctrl_q;
   wire [7:0]  ctrl_addr;
-  wire [PSG_NV-1:0] clr_ack;
+  wire        ctrl_stall;
   wire signed [15:0] dry16;
   wire        dry_valid;
 
@@ -179,12 +266,33 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     $fatal(1, "psg: both multiply requesters asserted in the same cycle");
 `endif
 
-  psg_mulsvc u_mul(
-    .clk(clk), .reset(reset),
-    .mul_start(mul_start), .mul_start_a(mul_start_a),
-    .mul_start_b(mul_start_b), .mul_start_mode(mul_start_mode),
-    .mul_start_short(mul_start_short),
-    .m_res(m_res), .m_busy(m_busy));
+  // Multi-pumping is an explicit board/bench contract, not something inferred
+  // from CLK_HZ. Only the iCE40 /6 configuration has the required 112.5 MHz
+  // fast clock and six-fast-clocks-per-PSG-clock service bound. PREVIEW,
+  // historical oracle clocks, and boards whose PSG already runs at the PLL
+  // rate retain the single-clock service. The walker sees true readiness; the
+  // sequencer sees the padded shipped radix-4 duration so multiplication
+  // throughput cannot move audible tick-program timing.
+  generate
+    if (!MULTIPUMP || REALTIME_PREVIEW) begin : g_mul_single
+      wire single_busy;
+      psg_mulsvc u_mul(
+        .clk(clk), .reset(reset),
+        .mul_start(mul_start), .mul_start_a(mul_start_a),
+        .mul_start_b(mul_start_b), .mul_start_mode(mul_start_mode),
+        .mul_start_short(mul_start_short),
+        .m_res(m_res), .m_busy(single_busy));
+      assign m_busy_walk = single_busy;
+      assign m_busy_seq  = single_busy;
+    end else begin : g_mul_multipump
+      psg_mulmp #(.RADIX_BITS(1)) u_mul(
+        .clk(clk), .fastclk(fastclk), .reset(reset),
+        .mul_start(mul_start), .mul_start_a(mul_start_a),
+        .mul_start_b(mul_start_b), .mul_start_mode(mul_start_mode),
+        .mul_start_short(mul_start_short),
+        .m_res(m_res), .m_busy(m_busy_walk), .m_seq_busy(m_busy_seq));
+    end
+  endgenerate
 
   // Tick-rate note/effect/music control.
   psg_seq u_seq(
@@ -201,12 +309,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .seq_addr(seq_addr), .seq_q(seq_q),
     .state_q(state_q), .state_replay(state_replay),
     .etk_ra(etk_ra), .etk_we(etk_we), .etk_wa(etk_wa), .etk_wd(etk_wd),
-    .m_res(m_res), .m_busy(m_busy),
+    .m_res(m_res), .m_busy(m_busy_seq),
     .smul_start(smul_start), .smul_a(smul_a), .smul_b(smul_b),
     .smul_mode(smul_mode), .smul_short(smul_short),
     .div_start(div_start), .div_n(div_n), .div_d(div_d),
     .d_res(d_res), .d_rem(d_rem), .d_busy(d_busy),
-    .ctrl_read(prun), .ctrl_addr(ctrl_addr), .ctrl_q(ctrl_q));
+    .ctrl_read(prun), .ctrl_addr(ctrl_addr), .ctrl_q(ctrl_q),
+    .ctrl_stall(ctrl_stall));
 
   wire [PSG_NV-1:0] play_bits, trig_req, clr_tog;
   wire [PSG_NCH*6-1:0] aud_sfx_bits;

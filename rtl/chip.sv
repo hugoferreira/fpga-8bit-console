@@ -8,6 +8,7 @@
 `include "cpu6502_wrapper.sv"
 
 module chip(input logic clk, input logic cpuclk, input logic psgclk,
+            input logic psgfastclk,
             input logic reset,
             input logic vsync, input logic hsync,
             input logic [6:0] vpos, input logic [7:0] hpos,
@@ -21,6 +22,9 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
   // sample rate is derived correctly on any board (default: the simulator's
   // 161*121*3*60 Hz pixel clock). REVERB=0 drops the reverb delay BRAM.
   parameter CLK_HZ = 32'd3_506_580, REVERB = 1, PSG_PREVIEW = 0;
+  // Enable only when psgfastclk is the 112.5 MHz PLL clock and psgclk is its
+  // accepted /6 derivative. Other boards and simulator models leave this off.
+  parameter PSG_MULTIPUMP = 0;
   // The PSG's --psg-trace bus. Only top_simulator.sv reads it; every
   // synthesised top leaves psg_dbg unconnected, so they set this to 0
   // and the cone that drives it is never built.
@@ -254,13 +258,16 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
   // The PSG is architected for the undivided PLL clock, giving thousands of
   // hardware clocks per 22050 Hz sample for serialized, BRAM-backed work.
   // Simulator lowering and host throughput are not an RTL scheduling budget.
-  // Same PLL, exact 32:1 ratio, so CPU-side register writes are stable for 32
-  // psgclk edges and need no synchroniser.
+  // Both clocks are phase-locked derivatives of one PLL; clocks.sv keeps
+  // non-power-of-two PSG rising edges on the opposite PLL phase from the
+  // CPU/master rising edges.
   generate
     if (HAS_PSG) begin : g_psg
       psg #(.CLK_HZ(CLK_HZ), .REVERB(REVERB),
-            .REALTIME_PREVIEW(PSG_PREVIEW), .DBG_PORT(PSG_DBG)) psg0(
+            .REALTIME_PREVIEW(PSG_PREVIEW), .DBG_PORT(PSG_DBG),
+            .MULTIPUMP(PSG_MULTIPUMP)) psg0(
         .clk(psgclk),
+        .fastclk(psgfastclk),
         .reset(reset),
         .cs(psg_cs),
         .rw(mem_write),

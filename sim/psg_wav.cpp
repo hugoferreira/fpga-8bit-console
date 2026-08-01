@@ -20,6 +20,10 @@
 #include "Vpsg.h"
 #include "verilated.h"
 
+#ifndef PSG_FAST_RATIO
+#define PSG_FAST_RATIO 0
+#endif
+
 // rtl/psg.sv's compiled CLK_HZ parameter. This standalone fallback matches the
 // module default; hardware-oracle builds override both it and -GCLK_HZ with the
 // board's derived PSG clock. Verilator wall time is test cost, not an RTL clock
@@ -33,7 +37,18 @@ static long capture_dec = 0;
 static bool capture_strobe = false;
 
 static void tick() {
+    // Only a MULTIPUMP build pays for fast-domain evaluations. Single-clock
+    // and PREVIEW models compile this loop out so their Verilated workload is
+    // unchanged. The /6 iCE40 build receives exactly six fast rising edges per
+    // PSG period; the PSG rising edge follows a fast falling edge, matching
+    // clocks.sv's phase relationship without relying on it for correctness.
     dut->clk = 0; dut->eval();
+#if PSG_FAST_RATIO > 0
+    for (int i = 0; i < PSG_FAST_RATIO; i++) {
+        dut->fastclk = 1; dut->eval();
+        dut->fastclk = 0; dut->eval();
+    }
+#endif
     dut->clk = 1; dut->eval();
     // Mirror the RTL divider from reset onward, including register uploads.
     // Starting this accumulator only when capture begins makes its phase depend
@@ -112,7 +127,8 @@ int main(int argc, char** argv) {
     fprintf(stderr, "audio image: %zu bytes\n", got);
 
     dut = new Vpsg;
-    dut->reset = 1; dut->cs = 0; dut->rw = 0; dut->addr = 0; dut->di = 0;
+    dut->reset = 1; dut->clk = 0; dut->fastclk = 0;
+    dut->cs = 0; dut->rw = 0; dut->addr = 0; dut->di = 0;
     for (int i = 0; i < 16; i++) tick();
     dut->reset = 0;
     for (int i = 0; i < 16; i++) tick();

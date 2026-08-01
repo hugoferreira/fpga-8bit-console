@@ -3,9 +3,9 @@
  *
  * Answers the question that motivated the whole split: what area and Fmax does
  * the audio chip have at the rate rtl/clocks.sv actually drives it? The PLL is
- * 112.5 MHz, but the PSG receives its divide-by-four output:
+ * 112.5 MHz, but the PSG receives its divide-by-six output:
  *
- *     psgclk = 28.125 MHz, CLK_HZ = 28,125,000
+ *     psgclk = 18.75 MHz, CLK_HZ = 18,750,000
  *
  * The old target passed 112,500,000 even after clocks.sv gained PSGDIV=4. That
  * did not change the physical clock constraint, but it did make the PSG's
@@ -49,6 +49,7 @@
 
 module target_psg (
     input  logic       psgclk,
+    input  logic       fastclk,
     input  logic       rst,
     input  logic       cs,
     input  logic       rw,
@@ -78,8 +79,9 @@ module target_psg (
     // against the part's 32 (design decision 8 always put them behind
     // this parameter, with Gowin as their home). Measuring this target
     // at REVERB=1 measures a build that cannot exist.
-    psg #(.CLK_HZ(32'd28_125_000), .REVERB(0), .DBG_PORT(0)) psg0 (
-        .clk(psgclk), .reset(rst),
+    psg #(.CLK_HZ(32'd18_750_000), .REVERB(0), .DBG_PORT(0),
+          .MULTIPUMP(1)) psg0 (
+        .clk(psgclk), .fastclk(fastclk), .reset(rst),
         .cs(cs), .rw(rw), .addr(addr), .di(di),
         .dout(dout), .pcm(pcm), .dbg()
     );

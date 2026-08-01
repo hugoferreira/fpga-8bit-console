@@ -4,7 +4,8 @@
 // schedule. In addition to the functional checks from psg_tb, this bench counts
 // sample-walk work, sequencer work/freeze time, state-port collisions, sample
 // overruns, active-slot time, and completion margins. +audio profiles an
-// external image; +pcm with +renderer_samples emits sample-domain PCM text.
+// external image; +pcm with +renderer_samples emits sample-domain PCM text;
+// +schedule_trace=<path> emits JSONL records consumable by tools/psg_viz.py.
 //
 // Build command:
 //   command: verilator --binary --timing -j 4 -Irtl rtl/psg_budget_tb.sv rtl/psg.sv \
@@ -13,7 +14,8 @@
 `timescale 1ns/1ps
 
 module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
-                       parameter int PREVIEW_P = 0);
+                       parameter int PREVIEW_P = 0,
+                       parameter int MULTIPUMP_P = 0);
 
   localparam CLKHZ = CLKHZ_P;
 
@@ -21,7 +23,9 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   localparam int CLKS_PER_TICK = int'(longint'(CLKHZ) * 183 / 22050);
 
   bit clk = 0;
-  always #5 clk = ~clk;
+  bit fastclk = 0;
+  always #30 clk = ~clk;
+  always #5 fastclk = ~fastclk;
 
   bit reset = 1;
   bit cs = 0, rw = 0;
@@ -29,8 +33,9 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   logic [7:0] dout;
   logic signed [15:0] pcm;
 
-  psg #(.CLK_HZ(CLKHZ), .REALTIME_PREVIEW(PREVIEW_P)) dut(
-    .clk(clk), .reset(reset),
+  psg #(.CLK_HZ(CLKHZ), .REALTIME_PREVIEW(PREVIEW_P),
+        .MULTIPUMP(MULTIPUMP_P)) dut(
+    .clk(clk), .fastclk(fastclk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di),
     .dout(dout), .pcm(pcm),
     .dbg());
@@ -68,17 +73,111 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
 
   longint slot_play[0:7];
 
+  bit recovery_probe = 0;
+  int recovery_preboundary = 0;
+  int recovery_coalesced = 0;
+  int recovery_delayed = 0;
+  int recovery_dropped_samples = 0;
+
   string pcm_trace_path = "";
+  string schedule_trace_path = "";
+  string walk_trace_path = "";
+  integer schedule_trace_fd = 0;
+  integer walk_trace_fd = 0;
+  int schedule_trace_limit = 250000;
+  int schedule_trace_records = 0;
+  bit schedule_trace_was_active = 0;
+  bit schedule_trace_truncated = 0;
+
+  initial begin
+    if ($value$plusargs("schedule_trace=%s", schedule_trace_path)) begin
+      void'($value$plusargs("schedule_trace_limit=%d", schedule_trace_limit));
+      schedule_trace_fd = $fopen(schedule_trace_path, "w");
+      if (schedule_trace_fd == 0) begin
+        $display("FAIL: cannot open schedule trace %s", schedule_trace_path);
+        errors++;
+      end
+    end
+    if ($value$plusargs("walk_trace=%s", walk_trace_path)) begin
+      walk_trace_fd = $fopen(walk_trace_path, "w");
+      if (walk_trace_fd == 0) begin
+        $display("FAIL: cannot open walk trace %s", walk_trace_path);
+        errors++;
+      end else
+        $fdisplay(walk_trace_fd,
+                  "sample,slot,event,row,eff_a,g_live,last_g,old_g,blend_restart,bl_cnt,phase,old_phase,last_inc,old_inc,snd_wave,last_wave,old_wave,nz_tick,old_nz_on,old_nz_r_on,mx_new,mx_old,blend_y,mix_leaf,preview_restart,preview_alpha,preview_old_leaf,preview_blend_leaf,fold_leaf,playing,pcm");
+    end
+  end
+
+  final begin
+    if (schedule_trace_fd != 0)
+      $fclose(schedule_trace_fd);
+    if (walk_trace_fd != 0)
+      $fclose(walk_trace_fd);
+  end
 
   // Sample on the falling edge after DUT nonblocking assignments settle.
   always @(negedge clk) begin
     if (!reset) begin
       total_clk++;
+      if (schedule_trace_fd != 0 && (dut.prun || schedule_trace_was_active)
+          && (schedule_trace_limit == 0
+              || schedule_trace_records < schedule_trace_limit)) begin
+        $fdisplay(schedule_trace_fd,
+                  "{\"cycle\":%0d,\"pph\":%0d,\"prun\":%0d,\"schedule\":\"%s\",\"sst\":%0d}",
+                  total_clk, dut.u_walk.pph, dut.prun,
+                  PREVIEW_P ? "preview" : "hw", dut.u_seq.sst);
+        schedule_trace_records++;
+      end else if (schedule_trace_fd != 0 && !schedule_trace_truncated
+                   && schedule_trace_limit != 0
+                   && schedule_trace_records >= schedule_trace_limit) begin
+        schedule_trace_truncated = 1;
+        $display("schedule trace stopped at %0d records; override with +schedule_trace_limit=<n> (0 is unlimited)",
+                 schedule_trace_limit);
+      end
+      schedule_trace_was_active = dut.prun;
+      if (walk_trace_fd != 0 && dut.u_walk.prun
+          && ((!PREVIEW_P && dut.u_walk.cap[dut.u_walk.CAP_W0])
+              || (!PREVIEW_P && dut.u_walk.cap[dut.u_walk.CAP_W1])
+              || (PREVIEW_P && dut.u_walk.pph == dut.u_walk.PWORK)
+              || dut.u_walk.pph == dut.u_walk.PLAST)) begin
+        $fdisplay(walk_trace_fd,
+                  "%0d,%0d,%s,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d",
+                  samples, dut.u_walk.pc_ch,
+                  (dut.u_walk.pph == dut.u_walk.PLAST) ? "fold" :
+                  ((!PREVIEW_P && dut.u_walk.cap[dut.u_walk.CAP_W1])
+                    ? "post_start" : "start"),
+                  row_of(dut.u_walk.pc_ch), dut.u_walk.s_eff_a,
+                  dut.u_walk.g_live,
+                  dut.u_walk.s_last_G, dut.u_walk.s_old_G,
+                  dut.u_walk.blend_restart, dut.u_walk.bl_cnt,
+                  dut.u_walk.s_phase, dut.u_walk.s_old_phase,
+                  dut.u_walk.s_last_inc, dut.u_walk.s_old_inc,
+                  dut.u_walk.s_snd_wave, dut.u_walk.s_last_wave,
+                  dut.u_walk.s_old_wave, dut.u_walk.nz_tick_r,
+                  dut.u_walk.old_nz_on, dut.u_walk.old_nz_r_on,
+                  $signed(dut.u_walk.mx_new), $signed(dut.u_walk.mx_old),
+                  $signed(dut.u_walk.blend_y), $signed(dut.u_walk.mix_leaf),
+                  dut.u_walk.preview_restart, dut.u_walk.preview_alpha,
+                  $signed(dut.u_walk.preview_old_leaf),
+                  $signed(dut.u_walk.preview_blend_leaf),
+                  $signed(dut.u_walk.fold_leaf),
+                  dut.u_walk.play_bits[dut.u_walk.pc_ch],
+                  $signed(pcm));
+      end
       if (dut.sample_en) samples++;
       st_clk[dut.u_seq.sst]++;
       if (dut.u_state.wlk_we && dut.u_state.etk_we) state_wr_lost++;
       if (dut.sample_en && dut.prun)      samp_over_prun++;
       if (dut.sample_en && dut.fold_busy) samp_over_fold++;
+      if (recovery_probe) begin
+        if (dut.pre_tick && dut.u_seq.tickpend)
+          recovery_coalesced++;
+        if (dut.tick_en_d && dut.u_seq.flip_pend)
+          recovery_delayed++;
+        if (dut.sample_en && (dut.prun || dut.fold_busy))
+          recovery_dropped_samples++;
+      end
       if (dut.sample_en)
         for (int sl = 0; sl < 8; sl++)
           if (dut.u_seq.play_bits[sl]) slot_play[sl]++;
@@ -147,6 +246,8 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
         end else if (dut.tick_en) begin
           if (tick_busy_at_pretick)
             late_flips++;
+          else if (recovery_probe)
+            recovery_preboundary++;
           else begin
             $display("  FAIL: tick pre-run missed its boundary from an idle walk");
             errors++;
@@ -305,6 +406,60 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   int seen_rows[0:63];
   int nrows;
 
+  // P.2 foreground-SFX recovery probes.  The aggregate PCM can remain busy
+  // when one loud leaf survives, so count each music slot at its own fold
+  // phase.  These counters are used by the focused +recovery test below.
+  int recovery_seen[0:3];
+  int recovery_audible[0:3];
+  int recovery_nonzero[0:3];
+  longint recovery_abs[0:3];
+  logic [15:0] recovery_phase_first[0:3];
+  logic [15:0] recovery_phase_last[0:3];
+
+  task measure_music_recovery(input int visits);
+    int guard;
+    int sl;
+    int v;
+    bit done;
+    for (int i = 0; i < 4; i++) begin
+      recovery_seen[i] = 0;
+      recovery_audible[i] = 0;
+      recovery_nonzero[i] = 0;
+      recovery_abs[i] = 0;
+      recovery_phase_first[i] = 0;
+      recovery_phase_last[i] = 0;
+    end
+    guard = 0;
+    done = 0;
+    while (!done && guard < visits * 4000) begin
+      @(negedge clk);
+      guard++;
+      if (dut.u_walk.prun && dut.u_walk.pph == 7'd23
+          && dut.u_walk.pc_ch >= 3'd4) begin
+        sl = int'(dut.u_walk.pc_ch) - 4;
+        if (recovery_seen[sl] < visits) begin
+          v = $signed(dut.u_walk.mix_leaf);
+          if (recovery_seen[sl] == 0)
+            recovery_phase_first[sl] = dut.u_walk.s_phase;
+          recovery_phase_last[sl] = dut.u_walk.s_phase;
+          recovery_seen[sl]++;
+          if (dut.u_walk.mx_aud) recovery_audible[sl]++;
+          if (v != 0) recovery_nonzero[sl]++;
+          recovery_abs[sl] += (v < 0) ? -v : v;
+        end
+      end
+      done = 1;
+      for (int i = 0; i < 4; i++)
+        if (recovery_seen[i] < visits) done = 0;
+    end
+    check(done, "observed every music slot at the preview fold phase");
+    for (int i = 0; i < 4; i++)
+      $display("  recovery slot %0d: seen=%0d audible=%0d nonzero=%0d abs=%0d phase=%04x..%04x",
+               i, recovery_seen[i], recovery_audible[i],
+               recovery_nonzero[i], recovery_abs[i],
+               recovery_phase_first[i], recovery_phase_last[i]);
+  endtask
+
   // Profiling helpers isolate one workload and optionally emit PCM at the
   // DUT's sample strobe rather than at the host/system clock.
   task zero_counters;
@@ -333,7 +488,8 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
     report_demand();
   endtask
 
-  task renderer_trace(input string path, input int pat, input int nsamples);
+  task renderer_trace(input string path, input int pat, input int sfx,
+                      input int nsamples);
     int captured;
     integer trace_fd;
     bit primed;
@@ -352,7 +508,10 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
     @(negedge clk);
 
     wr(8'h21, 8'h07);
-    wr(8'h20, 8'(pat));
+    if (sfx >= 0)
+      wr(8'h10, 8'(sfx));
+    else
+      wr(8'h20, 8'(pat));
 
     trace_fd = $fopen(pcm_trace_path, "w");
     if (trace_fd == 0) begin
@@ -449,10 +608,11 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
 
     begin
       automatic string cart_path = "";
-      automatic int    cart_pat = 0, cart_ticks = 500;
+      automatic int    cart_pat = 0, cart_sfx = -1, cart_ticks = 500;
       automatic int    renderer_samples = 0;
       if ($value$plusargs("audio=%s", cart_path)) begin
         void'($value$plusargs("music=%d", cart_pat));
+        void'($value$plusargs("sfx=%d", cart_sfx));
         void'($value$plusargs("ticks=%d", cart_ticks));
         void'($value$plusargs("pcm=%s", pcm_trace_path));
         void'($value$plusargs("renderer_samples=%d", renderer_samples));
@@ -461,7 +621,7 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
             $display("FAIL: +renderer_samples requires +pcm=<path>");
             errors++;
           end else
-            renderer_trace(cart_path, cart_pat, renderer_samples);
+            renderer_trace(cart_path, cart_pat, cart_sfx, renderer_samples);
         end else begin
           repeat (8) @(posedge clk);
           reset = 0;
@@ -472,6 +632,8 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
         $finish;
       end
     end
+
+    if (!$test$plusargs("recovery")) begin
 
     for (int r = 0; r < 32; r++) set_note(0, r, 30 + r % 8, 0, 7, 0);
     set_meta(0, 4, 2, 6);
@@ -761,6 +923,112 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
     for (int r = 0; r < 32; r++) set_note(41, r, 0, 0, 0, 0);
     set_meta(41, 16, 0, 0);
     upload;
+    end
+
+    // P.2: Celeste reserves music channels 0..2 and auto-picks foreground
+    // channel 3 for jump effects.  Repeatedly retrigger a short effect while
+    // the three music slots continue underneath, then prove recovery from the
+    // per-slot fold leaves rather than from aggregate PCM activity.
+    if ($test$plusargs("recovery")) begin
+      string recovery_audio;
+      int stop_guard;
+      int clear_guard;
+
+      reset = 1;
+      repeat (16) @(negedge clk);
+      reset = 0;
+      repeat (16) @(negedge clk);
+      errors = 0;
+
+      if ($value$plusargs("recovery_audio=%s", recovery_audio)) begin
+        $readmemh(recovery_audio, img);
+        // Use Celeste's real music SFX 10..12 in a stable self-looping
+        // three-channel pattern; channel 3 remains disabled as in the cart.
+        set_pat(3, 8'h8a, 8'h8b, 8'h0c, 8'h44);
+      end else begin
+        // Standalone form of Celeste's timing mix.  The 32-tick channel is
+        // what exposed a held EA2 consume being overwritten with word 1.
+        for (int r = 0; r < 32; r++) begin
+          set_note(29, r, 36, 0, 7, 0);
+          set_note(30, r, 42, 0, 7, 0);
+          set_note(31, r, 48, 0, 7, 0);
+        end
+        set_meta(29, 16, 0, 0);
+        set_meta(30, 32, 0, 0);
+        set_meta(31, 16, 0, 32);
+        set_pat(3, 8'h9f, 8'h1e, 8'h1d, 8'h5c);
+      end
+      upload;
+
+      wr(8'h21, 8'h07);
+      wr(8'h22, 8'd0);
+      wr(8'h20, 8'd3);
+      ticks(6);
+      check(dut.u_seq.playing[4] && dut.u_seq.playing[5]
+            && dut.u_seq.playing[6] && !dut.u_seq.playing[7],
+            "Celeste-shaped pattern owns exactly music channels 0..2");
+
+      measure_music_recovery(512);
+      for (int i = 0; i < 3; i++) begin
+        check(recovery_audible[i] == 512 && recovery_nonzero[i] > 32,
+              "each baseline music slot reaches the preview fold");
+      end
+
+      recovery_preboundary = 0;
+      recovery_coalesced = 0;
+      recovery_delayed = 0;
+      recovery_dropped_samples = 0;
+      recovery_probe = 1;
+      for (int n = 0; n < 64; n++) begin
+        // Celeste's jump is SFX 1.  At one trigger per PSG tick this always
+        // retriggers while active and sweeps the relative pre-tick phase.
+        wr(8'h13, 8'd1);
+        ticks(1);
+      end
+      stop_guard = 0;
+      while (dut.u_seq.playing[3] && stop_guard < 128) begin
+        ticks(1);
+        stop_guard++;
+      end
+      clear_guard = 0;
+      while (dut.u_walk.clr_ack_pv[3] != dut.clr_tog[3]
+             && clear_guard < CLKS_PER_TICK) begin
+        @(posedge clk);
+        clear_guard++;
+      end
+      recovery_probe = 0;
+
+      $display("  recovery scheduling: preboundary=%0d coalesced=%0d delayed=%0d dropped_samples=%0d",
+               recovery_preboundary, recovery_coalesced, recovery_delayed,
+               recovery_dropped_samples);
+      check(stop_guard < 128, "foreground SFX reaches its natural stop");
+      check(!dut.u_seq.playing[3], "foreground channel 3 stops after retriggers");
+      check(clear_guard < CLKS_PER_TICK,
+            "preview consumes the final foreground clear token promptly");
+      check(dut.u_walk.clr_ack_pv[3] == dut.clr_tog[3],
+            "preview consumes the final foreground clear token");
+      check(recovery_coalesced == 0,
+            "repeated foreground triggers do not coalesce a music tick");
+      check(recovery_delayed == 0,
+            "repeated foreground triggers do not delay music publication");
+
+      measure_music_recovery(512);
+      for (int i = 0; i < 3; i++) begin
+        check(dut.u_seq.playing[4+i], "music owner survives repeated SFX");
+        check(recovery_audible[i] == 512 && recovery_nonzero[i] > 32,
+              "music slot is audible again after foreground release");
+        check(recovery_phase_first[i] != recovery_phase_last[i],
+              "recovered music oscillator keeps advancing");
+        check(recovery_abs[i] > 0,
+              "recovered music leaf retains material signal energy");
+      end
+      check(recovery_audible[3] == 0,
+            "unused fourth music channel remains silent");
+
+      if (errors == 0) $display("ALL TESTS PASSED");
+      else             $display("%0d TEST(S) FAILED", errors);
+      $finish;
+    end
 
     $display("[14] start row and length");
     wr(8'h14, 8'd8);

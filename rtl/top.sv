@@ -27,8 +27,9 @@ module top(input  bit clk, output bit yellow_led,
   // to chip.sv as the frequency the PSG derives 22050 Hz from; deriving both
   // from the same number is what stops the divider and the assumed frequency
   // drifting apart, which would detune the audio with nothing to show for it.
-  // 4 because the PSG measures Fmax 27.98 MHz - see rtl/clocks.sv.
-  localparam PSG_DIV    = 4;
+  // /6 is the lowest proven render-exact clock: the 578-clock walk plus the
+  // fixed 272-cycle sequencer budget exactly fills its 850-clock interval.
+  localparam PSG_DIV    = 6;
   localparam PSG_CLK_HZ = 32'd112_500_000 / PSG_DIV;
 
   logic reset;
@@ -76,8 +77,9 @@ module top(input  bit clk, output bit yellow_led,
   // chip.sv so both tops agree again.
   // ---------------------------------------------------------------------
   chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE), .CLK_HZ(PSG_CLK_HZ),
-         .RAM_ADDR_BITS(13), .PSG_DBG(0))
-    chip(.clk(masterclk), .cpuclk(cpuclk), .psgclk(psgclk), .reset, .vsync,
+         .RAM_ADDR_BITS(13), .PSG_DBG(0), .PSG_MULTIPUMP(1))
+    chip(.clk(masterclk), .cpuclk(cpuclk), .psgclk(psgclk),
+         .psgfastclk(pllclk), .reset, .vsync,
          .hsync, .vpos, .hpos,
          .buttons(8'h00), .rgb, .audio(audio), .psg_dbg());
   /* verilator lint_on PINCONNECTEMPTY */
@@ -85,8 +87,8 @@ module top(input  bit clk, output bit yellow_led,
   // Delta-sigma output: 8-bit PCM -> 1-bit density stream on audio_pwm.
   // Wire this pin to a speaker/amp through an RC low-pass (~1k + ~10nF).
   // On psgclk, not masterclk: a delta-sigma modulator's noise shaping is only
-  // as good as its oversampling ratio, and 28.125 MHz against a 22050 Hz
-  // sample is 8x what the video clock gave it.
+  // as good as its oversampling ratio, and 18.75 MHz against a 22050 Hz sample
+  // is still over 6x what the video clock gives it.
   dsigma dsigma0(.clk(psgclk), .reset(reset), .pcm(audio), .out(audio_pwm));
 
   /* wire tx_ready;
