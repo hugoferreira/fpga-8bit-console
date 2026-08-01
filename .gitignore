@@ -31,3 +31,9 @@ rtl/obj_*/
 
 # Vendored/cloned dependencies
 rust/verilated-rs/
+
+# Stray build outputs from ad-hoc runs at the repo root
+a.out
+dump.vcd
+obj_dir/
+tools/65x02/__pycache__/
