@@ -281,6 +281,9 @@ module psg_seq (input  bit   clk,
   end
   assign seq_addr = sa_pat ? sa_pataddr : (sa_base + {5'b0, sa_off});
 
+  wire [5:0] pat_rows = (acc[7:0] != 0 && seq_q == 0)
+                          ? ((acc[7:0] < 8'd32) ? acc[5:0] : 6'd32) : 6'd32;
+
   function automatic logic [5:0] fdec(input logic [4:0] n);
     case (n)
       5'd0 : fdec = 6'b000000;  5'd1 : fdec = 6'b000001;  5'd2 : fdec = 6'b000010;
@@ -296,9 +299,6 @@ module psg_seq (input  bit   clk,
       5'd30: fdec = 6'b000100;  default: fdec = 6'b000101;
     endcase
   endfunction
-
-  wire [5:0] pat_rows = (acc[7:0] != 0 && seq_q == 0)
-                          ? ((acc[7:0] < 8'd32) ? acc[5:0] : 6'd32) : 6'd32;
 
   wire [5:0] fdv    = fdec(seq_q[7:3]);
   wire [1:0] f_det  = fdv[1:0];
@@ -326,8 +326,8 @@ module psg_seq (input  bit   clk,
   wire         seq_hold = walk_frozen | fade_issue | crom_replay;
 
   // Effect intermediates persist across shared multiply/divide requests.
-  wire [20:0] pinc_q = {crom_q[12:0], 8'h00};
-  logic [20:0] arp_r;
+  wire [12:0] pinc_q = crom_q[12:0];
+  logic [12:0] arp_r;
   wire signed [8:0] arp_raw =
       e_insfx ? ($signed({3'b0, w_cur_pitch}) + $signed({3'b0, arp_p}) - 9'sd24)
     : ins_use ? ($signed({3'b0, arp_p}) + $signed({3'b0, w_ins_pitch}) - 9'sd24)
@@ -362,7 +362,7 @@ module psg_seq (input  bit   clk,
     end
   end
 
-  wire [20:0] base_inc = pinc_q;
+  wire [12:0] base_inc = pinc_q;
 
   wire [11:0] vol_direct  = w_ins_done ? 12'd0 : {1'b0, w_cur_vol, 8'b0};
   wire [11:0] pvol_direct = {1'b0, w_prev_vol, 8'b0};
@@ -422,12 +422,17 @@ module psg_seq (input  bit   clk,
     endcase
   end
 
-  // Product slices below include each request's fixed radix-4 alignment.
-  wire        vib_cb  = |m_res[10:4];
-  wire [20:0] fxp_op  = m_res[31:11];
-  wire [20:0] fxp_res = base_inc + (lfo_neg ? ~fxp_op : fxp_op)
-                      + {20'b0, (lfo_neg & ~vib_cb)};
-  logic [20:0] fxi_next;
+  // Vibrato scales the phase increment only by |lfo| = 0, 1, or 2.  Spell
+  // that product as wiring so it does not occupy a wide shared-service
+  // request arm.  vib_cb is the discarded /128 remainder, matching the old
+  // m_res[10:4] test after the service's fixed four-bit landing shift.
+  wire [13:0] vib_full = lfo_mag[1] ? {base_inc, 1'b0}
+                         : lfo_mag[0] ? {1'b0, base_inc} : 14'd0;
+  wire        vib_cb  = |vib_full[6:0];
+  wire [12:0] fxp_op  = {6'b0, vib_full[13:7]};
+  wire [12:0] fxp_res = base_inc + (lfo_neg ? ~fxp_op : fxp_op)
+                      + {12'b0, (lfo_neg & ~vib_cb)};
+  logic [12:0] fxi_next;
   logic [11:0] fxv_next;
 
   logic signed [24:0] mul_a;
@@ -468,10 +473,7 @@ module psg_seq (input  bit   clk,
                    mul_b = {4'b0, mus_gain} + 12'd1; mul_md = 2'd1;
                    mul_go = 1'b1; end
       4'd4: case (e_fx)
-              3'd2: begin mul_a = {4'b0, base_inc}; mul_b = {10'b0, lfo_mag};
-                          mul_go = 1'b1; end
-
-              3'd3: begin mul_a = {12'b0, base_inc[20:8]};
+              3'd3: begin mul_a = {12'b0, base_inc};
                           mul_b = eff_rem;
                           mul_go = 1'b1; end
               default: ;
@@ -508,8 +510,8 @@ module psg_seq (input  bit   clk,
     case (e_fx)
       3'd1: fxi_next = arp_r;
 
-      3'd2: fxi_next = {fxp_res[20:8], 8'b0};
-      3'd3: fxi_next = {d_res[12:0], 8'b0};
+      3'd2: fxi_next = fxp_res;
+      3'd3: fxi_next = d_res[12:0];
       3'd6, 3'd7: fxi_next = arp_r;
       default: ;
     endcase
@@ -525,18 +527,20 @@ module psg_seq (input  bit   clk,
   end
 
   // Four words form the inactive sounding-parameter bank consumed by psg_walk.
-  wire [20:0] pub_inc = (w_ins_on && w_ins_wt && w_ins_bass)
-                          ? {1'b0, arp_r[20:1]} : arp_r;
+  // Published increments use units of 2^7. Ordinary pitches append one zero;
+  // the custom-instrument bass flag divides by two without losing its residue.
+  wire [13:0] pub_inc = (w_ins_on && w_ins_wt && w_ins_bass)
+                          ? {1'b0, arp_r} : {arp_r, 1'b0};
 
   wire [11:0] a_pub = vol_r;
   logic [15:0] pub_wd;
   always_comb begin
     case (sst)
-      P_W0:    pub_wd = pub_inc[15:0];
+      P_W0:    pub_wd = {pub_inc[8:0], 7'b0};
       P_W1:    pub_wd = {1'b0, w_ins_id, (w_ins_on & w_ins_wt),
                          (ins_use ? w_ins_wave
                           : (w_ins_on && w_ins_wt) ? 3'd0 : w_cur_wave),
-                         3'b0, pub_inc[20:16]};
+                         3'b0, pub_inc[13:9]};
       P_W2:    pub_wd = {1'b0,
                          (w_cur_fx == 3'd1
                           || (ins_use && fx_dfl && w_ins_fx == 3'd1)),
@@ -1080,7 +1084,7 @@ module psg_seq (input  bit   clk,
         end
         K_SL7: sst <= K_SL8;
         K_SL8: if (!m_busy) begin
-          arp_r <= {sl_dp, 8'b0};
+          arp_r <= sl_dp;
 
           xs    <= 4'd3;
           sst   <= K_FX;

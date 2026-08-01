@@ -138,8 +138,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire        s_snd_wt, s_ch_buzz;
   wire [1:0]  s_ch_det, old_mode_r;
   wire        old_alt_r;
-  wire [23:0] s_phase, s_phase2, s_old_phase;
-  wire [20:0] s_eff_inc, s_old_inc;
+  wire [15:0] s_phase, s_old_phase;
+  wire [23:0] s_phase2;
+  wire [13:0] s_eff_inc, s_old_inc;
   wire [16:0] old_q0;
   wire [15:0] ctrl_q;
   wire [7:0]  ctrl_addr;
@@ -154,10 +155,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .iss_sec(iss_sec), .iss_om(iss_om), .iss_os(iss_os),
     .dq_old_ctx(dq_old_ctx),
     .s_snd_wave(s_snd_wave), .s_snd_wt(s_snd_wt), .s_ch_det(s_ch_det),
-    .s_ch_buzz(s_ch_buzz), .s_phase_hi(s_phase[23:8]), .s_phase2(s_phase2),
-    .s_eff_inc_hi(s_eff_inc[20:8]),
-    .s_old_wave(s_old_wave), .s_old_phase_hi(s_old_phase[23:8]),
-    .s_old_inc_hi(s_old_inc[20:8]), .old_mode_r(old_mode_r),
+    .s_ch_buzz(s_ch_buzz), .s_phase_hi(s_phase), .s_phase2(s_phase2),
+    .s_eff_inc_hi(s_eff_inc[13:1]),
+    .s_old_wave(s_old_wave), .s_old_phase_hi(s_old_phase),
+    .s_old_inc_hi(s_old_inc[13:1]), .old_mode_r(old_mode_r),
     .old_alt_r(old_alt_r), .old_q0_lo(old_q0[15:0]),
     .z_eval(z_eval), .dq17(dq17), .q16(q16));
 
