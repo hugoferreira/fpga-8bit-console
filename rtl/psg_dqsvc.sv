@@ -19,9 +19,7 @@ module psg_dqsvc (
     input  logic        start,
     input  logic [12:0] start_a,
     input  logic [8:0]  start_k,
-    input  logic        start_tag,
     output logic [13:0] result,
-    output logic        result_tag,
     output logic        done,
     output logic        busy,
     output logic        start_ready
@@ -32,7 +30,6 @@ module psg_dqsvc (
   // carry the radix-4 sum before the combined register shifts by two.
   logic [26:0] p;
   logic [2:0]  count;
-  logic        active_tag;
   logic [12:0] start_a_hold;
 
   wire [13:0] acc = p[23:10];
@@ -50,8 +47,7 @@ module psg_dqsvc (
   // The walker already owns the destination registers.  Present the terminal
   // recurrence directly so it can capture on this edge instead of registering
   // an otherwise unconsumed result and copying it one clock later.
-  assign result = step_next[21:8];
-  assign result_tag = active_tag;
+  assign result = done ? step_next[21:8] : p[21:8];
   assign done = count == 1;
 
   always_ff @(posedge clk) begin
@@ -63,9 +59,9 @@ module psg_dqsvc (
           if (start) begin
             p            <= {17'b0, 1'b0, start_k};
             start_a_hold <= start_a;
-            active_tag   <= start_tag;
             count        <= 3'd5;
           end else begin
+            p     <= step_next;
             count <= 3'd0;
           end
         end else begin
@@ -75,7 +71,6 @@ module psg_dqsvc (
       end else if (start) begin
         p            <= {17'b0, 1'b0, start_k};
         start_a_hold <= start_a;
-        active_tag   <= start_tag;
         count        <= 3'd5;
       end
     end

@@ -433,26 +433,25 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   wire [1:0] dq_start_mode = dq_start_old ? dq_old_mode_now : s_ch_det;
   wire [8:0] dq_start_k = dq_coeff(s_snd_wt, dq_start_wave, dq_start_mode);
   wire [13:0] dq_result;
-  wire dq_result_tag, dq_done, dq_busy, dq_start_ready;
-  logic [13:0] dq_live_r, dq_old_r;
+  wire dq_done, dq_busy, dq_start_ready;
+  logic [13:0] dq_live_r;
 
   psg_dqsvc u_dq(
     .clk(clk), .reset(reset),
     .start(dq_start), .start_a(dq_start_a), .start_k(dq_start_k),
-    .start_tag(dq_start_old),
-    .result(dq_result), .result_tag(dq_result_tag), .done(dq_done),
+    .result(dq_result), .done(dq_done),
     .busy(dq_busy), .start_ready(dq_start_ready));
 
+  // The first terminal edge is also the fixed phase-24 old-context request.
+  // Capture that live result because the chained request overwrites the
+  // recurrence.  The final old result remains in the idle recurrence through
+  // its only consumer at W5, so it needs no duplicate walker register.
   always_ff @(posedge clk)
-    if (dq_done) begin
-      if (dq_result_tag)
-        dq_old_r <= dq_result;
-      else
-        dq_live_r <= dq_result;
-    end
+    if (dq_start && dq_start_old)
+      dq_live_r <= dq_result;
 
   wire [16:0] dq_visit = REALTIME_PREVIEW ? dq17
-                       : {3'b0, dq_old_ctx ? dq_old_r : dq_live_r};
+                       : {3'b0, dq_old_ctx ? dq_result : dq_live_r};
 
 `ifndef SYNTHESIS
   logic dq_live_valid, dq_old_valid;
@@ -461,8 +460,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       dq_live_valid <= 1'b0;
       dq_old_valid <= 1'b0;
     end else if (dq_done) begin
-      if (dq_result_tag) dq_old_valid <= 1'b1;
-      else               dq_live_valid <= 1'b1;
+      if (dq_start && dq_start_old) dq_live_valid <= 1'b1;
+      else                          dq_old_valid <= 1'b1;
     end
     if (!reset && dq_start && !dq_start_ready)
       $fatal(1, "psg_walk: dq request dropped at pph %0d", pph);
