@@ -1,10 +1,6 @@
-## 0. Coordination
+## 0. Baseline
 
-- [x] 0.1 Append a note to `docs/agent-coordination.md`: `rtl/psg.sv` is being
-      substantially rewritten, this changes the audio for celeste and breakout
-      too, and the other agent should not edit it while the rewrite is in
-      flight (re-read the file first, per the shared-file protocol)
-- [x] 0.2 Record the pre-change reference: render each game's music with
+- [x] 0.1 Record the pre-change reference: render each game's music with
       `make psg-wav` and keep the WAVs, so the rewrite can be A/B'd rather
       than judged from memory
 
@@ -132,8 +128,8 @@ an exact serial implementation to save LC.
       hold the CPU, PPU and compositor. Sixteen voices in flip-flops does not
       fit. `NV` is therefore left at 4 in the tree - the parameterisation is
       done and proven, the count moves once 2.2 lands. Whole-chip synthesis
-      could not be run: `bin/toplevel.json` currently depends on the other
-      agent's in-flight `rtl/golden/*.v`
+      could not be run because `bin/toplevel.json` depended on in-flight
+      `rtl/golden/*.v`
 
 ## 4. Hardware auto-allocation
 
@@ -175,8 +171,7 @@ an exact serial implementation to save LC.
 - [ ] 7.1 Collapse `src/nemo/sound.asm`'s `sfx_play` to a single store to the
       auto-allocate register; drop `sfx_busy` and the `bitmask` scan
 - [ ] 7.2 Do the same for breakout's copy in `src/main.asm`
-- [ ] 7.3 Check whether celeste auto-picks and convert it too (coordinate
-      first - it is the other agent's corpus)
+- [ ] 7.3 Check whether celeste auto-picks and convert it too
 - [ ] 7.4 Extend `--psg-trace` in `sim/console.cpp` to report voices with
       their tags, keeping the existing four-channel view derivable so
       `tools/p8_music_trace.py` comparisons still work

@@ -37,6 +37,31 @@ Judge a change on THAT delta - it counts the gates, carries and flops
 the change actually removed - and use placed cells only for the fit
 verdict.
 
+CARVE-OUT, measured 2026-07-31: the structural number is only a proxy
+because most of this design maps ~1:1, and that ratio is NOT uniform
+across cell families. Before believing a large structural delta, ask
+which family it came from:
+
+    carry-chain arithmetic      ~1:1   pre-map is honest
+    $div / $mod by a constant  ~11:1   pre-map is fiction
+    shared decode fabric         n/a   count drops, nothing retires
+
+The `/3` in the noise walk is the worked example. Ablating it reads
+-726 structural cells; the divider is 713 pre-map cells and 63 placed
+LCs, because yosys lowers $div to a restoring array BEFORE exploiting
+the constant divisor and abc9 then deletes ~92% of it as constant-zero.
+Its exact algebraic replacement is 108 pre-map cells that are all real,
+and maps WORSE. R.15 and design.md section 23 have the full numbers.
+Shared decode is the other direction, same lesson: R.29 removed 75
+structural cells off the pph fabric and gained 21 LUT4s, because the
+decode still exists for its other consumers.
+
+Rule of thumb: a structural delta is trustworthy when the retired cells
+are carry/LUT arithmetic on free variables. When it comes from a $div,
+a $mod, a wide constant-folded mux or a shared decode, re-measure the
+cone standalone (lift it registered-in/registered-out and run nextpnr)
+before it enters a ledger.
+
 Usage: psg_ff_census.py [netlist.json] [--top N]
 """
 

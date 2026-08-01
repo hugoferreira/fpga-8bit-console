@@ -210,8 +210,13 @@ const LANES = [
   {k:'ev',    label:'other sites',  color:'var(--ev)'},
   {k:'svc',   label:'multiply service', color:'var(--busy)'},
 ];
-const WAVE_FLAGS = ['ISS_SEC','ISS_OLDMAIN','ISS_OLDSEC','DQ_OLD'];
-const ARAM_FLAGS = ['SYN_A','SYN_B'];
+/* The control word once carried six named flag bits (ISS_SEC, SYN_A, …).
+ * One-hot made them aliases of the actions, so the bits went away and the
+ * extractor now reports the SIGNALS each action drives, read out of the RTL.
+ * Classify those by what they are rather than by a list that has to be
+ * rewritten every time the encoding moves. */
+const isWaveFlag = f => /^(iss_|dq_)/i.test(f) || /^(ISS_|DQ_)/.test(f);
+const isAramFlag = f => /^syn_/i.test(f) || /^SYN_/.test(f);
 const phaseHasWork = p => !!(p.cap || p.mul || (p.flags||[]).length
   || (p.load||[]).length || (p.sched||[]).length || (p.events||[]).length);
 
@@ -220,8 +225,8 @@ function laneHits(p, k) {
     case 'load': return p.load;
     case 'cap':  return p.cap ? [p.cap] : [];
     case 'mul':  return p.mul ? [p.mul_doc || ('mul arm ' + p.mul)] : [];
-    case 'wave': return (p.flags||[]).filter(f => WAVE_FLAGS.includes(f));
-    case 'aram': return (p.flags||[]).filter(f => ARAM_FLAGS.includes(f));
+    case 'wave': return (p.flags||[]).filter(isWaveFlag);
+    case 'aram': return (p.flags||[]).filter(isAramFlag);
     case 'ev':   return p.events;
     case 'svc':  return p.mul_busy || [];
   }

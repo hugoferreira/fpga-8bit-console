@@ -74,9 +74,7 @@ headroom for a microcoded, time-shared datapath. See `design.md`.
 - Affected code: `rtl/psg.sv` (substantially rewritten), `rtl/psg_tb.sv`,
   `src/nemo/sound.asm`, `src/main.asm` (breakout), `src/celeste/` audio if it
   auto-picks, `sim/console.cpp` (`--psg-trace` gains voices)
-- **Shared-file impact**: `rtl/psg.sv` is touched by both agents in this
-  checkout and this change alters the audio for every game. A coordination note
-  goes in `docs/agent-coordination.md` before any RTL lands.
+- **Cross-game impact**: this change alters the audio for every game.
 - Risk: this is the largest single change to the PSG since it was written. It
   is gated on the existing `make test-psg` suite passing unchanged, plus new
   cases for allocation and pooling, plus an A/B render of each game's music.
