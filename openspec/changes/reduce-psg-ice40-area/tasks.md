@@ -871,3 +871,33 @@
       **Reusable: when two arms of a wide selector want the same expression,
       select its OPERANDS - selection should happen where the values are
       narrowest.**
+- [x] R.37 Lifetime retirement: the old noise step has no register of its own.
+      `mx_old` is dead from the visit's start until CAP_W51 writes it at pph
+      60, and the old noise step is written at PNZ_LIVE (24) and read at
+      CAP_W1 (30) - thirty phases of clear air. |step| <= 33,324, so mx_old's
+      seventeen signed bits hold it exactly, and `nz2_step_r` retires.
+      **The two metrics DISAGREE here and the flop one is right**: pre-map
+      15,487 -> 15,505 (**+18**, the fanout-entanglement signature that
+      refuted reusing smp_a for gz_s1_r in R.18), but placed 7,907 -> **7,869
+      (-38)** with 6,861 LUT4 (-29) and 1,563 -> 1,545 flops (-18). The
+      retired flops were UNPACKABLE - whole logic cells - which is the entire
+      reason tools/psg_ff_census.py exists. **A lifetime retirement must be
+      judged on placed cells and the flop count, never on the pre-mapping
+      census.** 189 cells from placing.
+      `make test-psg` unchanged at 618/1,275 and 2,443/7,654, music 20
+      byte-identical over 400,000 samples, matrix 59/59 byte-exact vs PICO-8
+      AND byte-identical vs the anchor.
+- [ ] R.38 Record migration, RE-PRICED and the plan inverted. Collapsing each
+      array to a single shared register bounds what moving it into the record
+      can return: `sfx_id[8]` alone **-76** pre-map (~25 cells), `trg_row[4]` +
+      `trg_len[4]` **-134** (~44), additive at -210. **R.7's advice to lead
+      with sfx_id is backwards**: trg_row/trg_len are the bigger half AND the
+      easier one - one-shot parameters, CPU-written, consumed once at
+      T_FL/K_ADV and cleared - while sfx_id is read COMBINATIONALLY by
+      `ch_base = rec_base(sfx_id[c])` throughout the trigger pass, which is
+      what forced R.6b's working-register staging and made it price as a wash.
+      At this session's measured structural->placed conversion (~0.35) the
+      -210 bound is about -73 placed, and the asynchronous CPU writes eat into
+      it: they need either a direct record write when `etk_we` is free plus a
+      small pending buffer for collisions, or staging that costs back much of
+      what the array gave. Realistically -40..60 placed.

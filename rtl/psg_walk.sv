@@ -381,7 +381,6 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   wire signed [25:0]   nz_mul_pv =
       ($signed({1'b0, nz_j}) * nz_rand) >>> 8;
 
-  logic signed [17:0]  nz2_step_r;
   wire signed [17:0]   nz_step = REALTIME_PREVIEW ? nz_mul_pv[17:0]
                                : (nz_rand[8] ? nz_neg : nz_pos);
 
@@ -394,7 +393,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       $signed({{2{old_nz_seed_base[15]}}, old_nz_seed_base}) + nz_kick;
   wire signed [17:0] nz_old_pre =
       $signed({{2{s_old_phase[23]}}, s_old_phase[23:8]})
-      + (nz_tog ? nz2_step_r : 18'sd0);
+      + (nz_tog ? {mx_old[16], mx_old} : 18'sd0);
   wire signed [15:0] nz_old_next =
       (nz_old_pre > 18'sd6143)  ? 16'sd6143 :
       (nz_old_pre < -18'sd6143) ? -16'sd6143 : nz_old_pre[15:0];
@@ -1084,8 +1083,12 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           default: ;
         endcase
 
+        // The old noise step has no register of its own: mx_old is dead
+        // from the visit's start until CAP_W51 writes it, and this value is
+        // read at CAP_W1, thirty phases before that. |step| <= 33,324, so
+        // mx_old's seventeen signed bits hold it exactly.
         if (pph == 7'(PNZ_LIVE))
-          nz2_step_r <= nz2_rand[8] ? nz_neg : nz_pos;
+          mx_old <= 17'(nz2_rand[8] ? nz_neg : nz_pos);
 `ifndef SYNTHESIS
 
         if ((nz_req_old || nz_req_live) && m_busy)
