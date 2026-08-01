@@ -739,3 +739,30 @@
       band above. Buy the 13 phases back inside the visit (41 of the 85 are
       multiply-latency shadow) and R.30 is free; otherwise it is a fidelity
       trade to adjudicate on the five-track gate, not a free -307 cells.
+- [x] R.33 Radix-4 multiply service. The section-20 landing law generalises to
+      `m_p after M steps = |A|*B * 2^(12 - RADIX_BITS*M)`, so a radix-4 step
+      retiring TWO multiplier bits means **M = N/2 lands exactly where radix-2
+      at N did and no consumer slice moves anywhere**: 12->6, 10->5, 8->4,
+      6->3. Mode 3's nine is the one odd count; loading `B << 1` for that mode
+      alone restores its landing, and its B < 2^9 contract leaves room. Average
+      latency 10.0 -> 5.6 cycles. 3A is combinational: registering it costs 23
+      flops to save an adder and measured 282 LC / 99.7 MHz against 259 /
+      118.9. `tools/psg_mul_model.py` now reads the radix from the write-back
+      shift and the pre-shift from the m_p load, and gates the engine against
+      the SHIPPED radix-2 reference over every mode, every corner B, the whole
+      |A| sweep and both signs - a permanent check, not a one-off.
+      Fingerprint `6aaa743b4414`: pre-map 16,089 -> 16,173 (+84), Yosys 7,156
+      LUT4 (+91), 1,711 carries (+21), 1,553 flops (-1), 13 EBR unchanged,
+      placed 8,078 -> 8,171 (+93). The cost is real, not noise; R.34 pays it.
+      Buys with ZERO schedule work: the tick side stalls on `!m_busy`, not on
+      fixed phases, so `psg_tb` goes 3,555 -> **3,356** of 7,654 tick clocks
+      with zero late flips - **-199 clocks/tick free**. The walk stays at
+      714/1,275 because it is phase-pinned by the control ROM.
+      Renders untouched: matrix 59/59 byte-exact vs PICO-8 AND byte-identical
+      vs the anchor; music 20 byte-identical over 400,000 samples.
+      Rejected with numbers: radix-8 (+253 LC standalone, Fmax -41%); folding
+      the first step into the load cycle (+56 LC for one cycle, and it moves
+      when `m_busy` RISES, which psg_seq's fire-and-forget `ptick_pend &&
+      !m_busy` capture depends on - radix-4 only moves the deassert, which is
+      why it is transparent); per-site mode retuning (real over-provisioning,
+      but radix-4 collapses the gap to one cycle).

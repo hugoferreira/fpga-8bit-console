@@ -91,15 +91,103 @@ def parse_walk_params(lines):
 
 
 def parse_cap_enum(lines):
-    """CAP_* opcode name -> numeric value."""
+    """CAP_* name -> its number, however the RTL currently spells the list.
+
+    Matches any declaration form - a `typedef enum` of opcodes or a
+    `localparam int` of one-hot bit indices - because the walk has used both
+    and the number means something different in each. What the number MEANS is
+    settled by cap_decoder(), not here.
+    """
     text = "\n".join(lines)
-    m = re.search(r"CAP_NONE\s*=\s*0\s*,(.*?);", text, re.S)
-    if not m:
-        return {}
-    out = {"CAP_NONE": 0}
-    for name, val in re.findall(r"(CAP_[A-Z0-9_]+)\s*=\s*(\d+)", m.group(1)):
-        out[name] = int(val)
+    out = {}
+    for m in re.finditer(r"(CAP_[A-Z0-9_]+)\s*=\s*(\d+)", text):
+        out.setdefault(m.group(1), int(m.group(2)))
     return out
+
+
+def cap_decoder(lines, words, caps):
+    """word -> the action names it selects, derived rather than assumed.
+
+    The control word has been an encoded 5-bit opcode and is now a 16-bit
+    one-hot field; the tool must not care which. Decide from the evidence:
+    if every non-zero word the generator emits is a power of two AND the RTL
+    indexes the word (`cap[CAP_W1]`), the numbers are BIT POSITIONS. Otherwise
+    they are opcode values in the low field.
+
+    Getting this wrong is not a crash, it is a plausible wrong picture - every
+    phase labelled with the wrong action - so it is decided from two
+    independent signals rather than one.
+    """
+    text = "\n".join(lines)
+    nonzero = [w for w in words if w]
+    one_hot = bool(nonzero) and all(w & (w - 1) == 0 for w in nonzero)
+    indexed = bool(re.search(r"\bcap\s*\[\s*CAP_", text))
+    by_num = {}
+    for name, num in caps.items():
+        by_num.setdefault(num, name)
+
+    if one_hot and indexed:
+        def decode(w):
+            return [by_num[b] for b in range(16)
+                    if (w >> b) & 1 and b in by_num]
+        return decode, "one-hot"
+
+    def decode(w):
+        name = by_num.get(w & 0x1F)
+        return [name] if name and name != "CAP_NONE" else []
+    return decode, "encoded"
+
+
+def parse_cap_flags(lines, caps):
+    """Which named signals each action drives, e.g. CAP_W1 -> iss_sec.
+
+    The control word used to carry six explicit flag bits (ISS_SEC, SYN_A...).
+    One-hot made them ALIASES - each sits on a phase that already carries an
+    action - so the bits were removed and the signals are now driven straight
+    off `cap[CAP_Wn]`. Reading those assignments keeps the wave-pipe and
+    audio-RAM lanes populated without a transcribed bit list.
+    """
+    # Statement-wise, not line-wise: `assign iss_sec = REALTIME_PREVIEW ? ...
+    #  : prun && cap[CAP_W1];` wraps, and matching per line picks up whatever
+    # identifier happens to start the continuation (`pph`) instead of the
+    # signal being assigned.
+    text = "\n".join(strip_comment(ln) for ln in lines)
+    out = {}
+    for stmt in text.split(";"):
+        if "cap[" not in stmt.replace(" ", ""):
+            continue
+        m = re.search(r"(?:assign\s+|wire\s+(?:\[[^\]]*\]\s*)?)"
+                      r"([a-zA-Z_][a-zA-Z0-9_]*)\s*=", stmt)
+        if not m:
+            continue
+        for cap_name in re.findall(r"\bcap\s*\[\s*(CAP_[A-Z0-9_]+)\s*\]", stmt):
+            if cap_name in caps:
+                out.setdefault(cap_name, []).append(m.group(1))
+
+    # Signals set inside an `if (... cap[CAP_Wn])` arm rather than by a
+    # continuous assignment - syn_rd, the wavetable read strobe, is driven
+    # this way. Without this the audio-RAM lane is silently empty, which reads
+    # as "this phase issues no read" instead of "the tool did not look here".
+    for i, ln in enumerate(lines):
+        code = strip_comment(ln)
+        if not re.search(r"\bif\s*\(.*cap\s*\[", code):
+            continue
+        names = [c for c in re.findall(r"\bcap\s*\[\s*(CAP_[A-Z0-9_]+)\s*\]", code)
+                 if c in caps]
+        if not names:
+            continue
+        depth = 0
+        for j in range(i, min(i + 12, len(lines))):
+            body = strip_comment(lines[j])
+            depth += len(re.findall(r"\bbegin\b", body))
+            depth -= len(re.findall(r"\bend\b(?!case)", body))
+            for sig in re.findall(r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:<=|=)\s*1'b1",
+                                  body):
+                for c in names:
+                    out.setdefault(c, []).append(sig)
+            if j > i and depth <= 0:
+                break
+    return {k: sorted(set(v)) for k, v in out.items()}
 
 
 def trim_trailing_comments(body):
@@ -162,7 +250,9 @@ def parse_cap_arms(lines):
     """Each CAP_* case arm: its body and the commentary that explains it."""
     arms = {}
     for i, ln in enumerate(lines):
-        m = re.match(r"\s*(CAP_[A-Z0-9_]+):", ln)
+        # Both spellings: the encoded form labelled arms `CAP_W4:`, the
+        # one-hot form indexes the word as `cap[CAP_W4]:`.
+        m = re.match(r"\s*(?:cap\s*\[\s*)?(CAP_[A-Z0-9_]+)\s*\]?\s*:", ln)
         if not m:
             continue
         name = m.group(1)
@@ -300,14 +390,14 @@ def load_mul_iters():
     try:
         import psg_mul_model as M
         iters = {int(k): int(v) for k, v in M.parse_iters().items()}
-        short = int(getattr(M, "SHORT_ITERS", 6))
+        short = int(M.SHORT_STEPS[M.parse_radix_bits()])
     except Exception as e:
         print(f"warning: could not read psg_mulsvc iteration counts ({e}); "
               "latency figures below are NOT from the current RTL",
               file=sys.stderr)
         return {0: 8, 1: 10, 2: 12}, 6
     txt = "\n".join(read(os.path.join(ROOT, "rtl", "psg_mulsvc.sv")))
-    m = re.search(r"mul_start_short\s*\?\s*4'd(\d+)", txt)
+    m = re.search(r"mul_start_short\s*\?\s*\d+'d(\d+)", txt)
     if m:
         short = int(m.group(1))
     return iters, short
@@ -445,8 +535,8 @@ def operand_width(expr, widths):
 def parse_mul_arms(lines):
     """Each multiply arm's guard and the iteration count(s) it launches.
 
-    psg_mulsvc loads m_cnt with explicit short=6 or mode-selected 8/9/10/12
-    and decrements once per
+    psg_mulsvc loads m_cnt with an explicit short count or a mode-selected
+    one, ALL READ FROM THE RTL above, and decrements once per
     clock, so a request issued in phase p leaves m_busy high through
     p+iters and the product is readable in p+iters+1. That is the whole
     latency model, and psg_walk.sv states it independently for the preview
@@ -459,19 +549,26 @@ def parse_mul_arms(lines):
     # spare). Find the `case` that actually drives wmul_start rather than
     # assuming either shape - a tool whose whole claim is that it tracks the
     # RTL must not break when the RTL moves.
+    # Naming the case EXPRESSION was itself a transcription, and it broke
+    # twice: `case (ctrl_mul)` became `case (ctrl_cap)`, then the one-hot
+    # `(* parallel_case *) case (1'b1)`. Identify the block by what it DOES -
+    # drive wmul_start - which is the property that actually matters.
     s = None
-    for key in ("case (ctrl_cap)", "case (ctrl_mul)"):
-        for m in re.finditer(re.escape(key), txt):
-            blk = txt[m.start():]
-            blk = blk[:blk.index("endcase")]
-            if "wmul_start" in blk:
-                s = blk
-                break
-        if s:
+    for m in re.finditer(r"\bcase\s*\(", txt):
+        blk = txt[m.start():]
+        end = blk.find("endcase")
+        if end < 0:
+            continue
+        blk = blk[:end]
+        if "wmul_start" in blk and "wmul_a" in blk:
+            s = blk
             break
     if s is None:
         return {}
-    label = r"(?:CAP_[A-Z0-9_]+|4'd\d+)"
+    # Arm labels across all three encodings the mux has used: a numeric
+    # MUL_SEL (`4'd3:`), a capture opcode (`CAP_W17:`), and the one-hot index
+    # (`cap[CAP_W17]:`).
+    label = r"(?:cap\s*\[\s*CAP_[A-Z0-9_]+\s*\]|CAP_[A-Z0-9_]+|4'd\d+)"
     arms = {}
     for blk in re.finditer(rf"((?:{label}\s*,?\s*)+):(.*?)(?=\n\s+(?:{label}\s*[,:]|default))",
                            s, re.S):
@@ -584,6 +681,8 @@ def extract_walk():
     raw_params = parse_walk_params(lines)
     caps = parse_cap_enum(lines)
     cap_by_val = {v: k for k, v in caps.items()}
+    decode_cap, encoding = cap_decoder(lines, g.build(), caps)
+    cap_flags = parse_cap_flags(lines, caps)
     arms = parse_cap_arms(lines)
     blocks = parse_pph_cases(lines)
 
@@ -629,26 +728,28 @@ def extract_walk():
         if variant == "hw":
             for p in range(n):
                 w = words[p] if p < len(words) else 0
-                cap_v, mul_v = w & 0x1F, (w >> 5) & 0xF
-                name = cap_by_val.get(cap_v, "CAP_NONE")
+                names = decode_cap(w)
+                mul_v = (w >> 5) & 0xF if encoding == "encoded" else 0
                 ph = phases[p]
                 ph["word"] = w
-                # A phase launches a product if its capture opcode appears in
-                # the request mux (current encoding), or if the legacy MUL_SEL
-                # field is non-zero (older control words).
-                ph["mul"] = (name if name in mul_arms
-                             else (mul_v if mul_v else None))
+                name = names[0] if names else None
+                # A phase launches a product if one of its actions appears in
+                # the request mux; the legacy MUL_SEL field is the fallback for
+                # older control words.
+                launcher = next((nm for nm in names if nm in mul_arms), None)
+                ph["mul"] = launcher or (mul_v if mul_v else None)
                 ph["mul_doc"] = mul_doc.get(mul_v, "") or (
                     describe_arm(mul_arms.get(ph["mul"])) if ph["mul"] else "")
-                if name != "CAP_NONE":
+                if name:
                     ph["cap"] = name
-                    ph["sched"].append({"kind": "cap", "label": name,
-                                        "detail": arms.get(name, {})})
-                for bit, flag in ((9, "ISS_SEC"), (10, "ISS_OLDMAIN"),
-                                  (11, "ISS_OLDSEC"), (12, "DQ_OLD"),
-                                  (13, "SYN_A"), (14, "SYN_B")):
-                    if w & (1 << bit):
-                        ph["flags"].append(flag)
+                    for nm in names:
+                        ph["sched"].append({"kind": "cap", "label": nm,
+                                            "detail": arms.get(nm, {})})
+                # The six explicit flag bits became aliases when the word went
+                # one-hot; the signals each action drives are read from the
+                # RTL instead of from a transcribed bit list.
+                for nm in names:
+                    ph["flags"].extend(cap_flags.get(nm, []))
 
         for blk in blocks:
             if blk["variant"] not in ("both", variant):
@@ -1145,8 +1246,9 @@ def analyse(model):
                  (f"multiply requests carry up to {worst} phases of slack"),
         "measure": {
             "requests measured": len(rows),
-            "latency model": "request + iters + 1 (m_cnt loads explicit "
-                             "short=6 or mode-selected 8/9/10/12 and "
+            "latency model": "request + steps + 1 (m_cnt loads the "
+                             f"explicit short={SHORT_ITERS} or "
+                             f"mode-selected {'/'.join(str(MUL_ITERS[m]) for m in sorted(MUL_ITERS))} and "
                              "decrements once per clock)",
             "iterations by mode": ", ".join(f"mode {k}={v}"
                                             for k, v in MUL_ITERS.items()),

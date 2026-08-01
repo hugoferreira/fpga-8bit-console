@@ -1468,6 +1468,77 @@ adjudicated on the full-track gate as a FIDELITY trade, not booked as a free
    available.
 3. **Spend the fidelity** and adjudicate it explicitly on the five-track gate.
 
+### 25. Radix-4: the landing law makes the radix free
+
+Section 24 closed with "buy the thirteen phases back inside the visit" as the
+only option that costs nothing. The place to buy them is the service itself.
+
+`psg_mulsvc` was radix-2: one multiplier bit per clock, latency N+1. The
+landing law from section 20 is what makes a wider radix free. Restated
+generally, a product lands as many places short of bottom as there are
+multiplier bits still unretired:
+
+```
+m_p after M steps = |A| * B * 2^(12 - RADIX_BITS*M)
+```
+
+A radix-4 step retires TWO bits, so **M = N/2 lands exactly where the radix-2
+N-step request did** - 12->6, 10->5, 8->4, 6->3 steps - and **no consumer
+slice moves anywhere in the chip**. Mode 3's nine steps are the one odd count
+with no exact half; loading `B << 1` for that mode alone restores its landing,
+and mode 3's own B < 2^9 contract leaves room for the shift. Average latency
+falls 10.0 -> 5.6 cycles.
+
+`tools/psg_mul_model.py` now carries this as a permanent gate rather than a
+one-off: it reads the radix out of the RTL's write-back shift and the
+pre-shift out of the `m_p` load, and checks the engine against the SHIPPED
+radix-2 reference across every mode, every corner B, the whole |A| sweep and
+both signs. The "every named consume offset matches its launch" check is what
+states the no-slice-moves claim.
+
+3A is combinational, not registered: the 23 flops registering it would cost
+more than the adder they save, measured standalone at 282 LC / 99.7 MHz
+against 259 / 118.9.
+
+**Isolated** (harness minus an empty DUT), all five candidates proven
+bit-identical to the shipped engine over 6,000 cases:
+
+| variant | avg latency | LUT4 | carry | LC | Fmax |
+| --- | --- | --- | --- | --- | --- |
+| base (radix-2) | 10.0 | 127 | 43 | 207 | 124.2 |
+| r2fold (first step in the load cycle) | 9.0 | 167 | 43 | 263 | 91.9 |
+| **r4comb (retained)** | **5.6** | 178 | 64 | **259** | **118.9** |
+| r4reg (registered 3A) | 5.6 | 180 | 64 | 282 | 99.7 |
+| r4fold | 4.6 | 261 | 64 | 372 | 73.5 |
+| r8comb (radix-8) | 4.2 | 378 | 108 | 460 | 73.4 |
+
+**In design**, at RTL fingerprint `6aaa743b4414`: pre-mapping 16,089 ->
+16,173 (+84), Yosys mapping 7,156 LUT4s (+91), 1,711 carries (+21), 1,553
+flip-flops (-1) and 13 EBRs unchanged; nextpnr attempts 8,171 placed cells
+(+93). **The cost is real, not mapping noise** - it is paid for by section 26.
+
+What it buys with no schedule edit at all: the tick side reclaims immediately,
+because the sequencer stalls on `!m_busy` rather than on fixed phases. `psg_tb`
+goes from 3,555 to **3,356** of 7,654 tick-preparation clocks, zero late flips
+- **-199 clocks per tick, free.** The sample walk stays at 714/1,275 because it
+IS phase-pinned by the control ROM; collecting that is section 26's job.
+Renders are untouched: the frozen matrix is 59/59 byte-exact against PICO-8
+AND byte-identical against the anchor, and Celeste music 20 is byte-identical
+over 400,000 samples.
+
+Rejected with numbers:
+
+- **Radix-8.** 4.2 cycles average, but +253 LC standalone on a design that is
+  491 cells from placing, and Fmax down 41%.
+- **Folding the first step into the load cycle** (N+1 -> N). +56 LC for one
+  cycle, and it changes WHEN `m_busy` rises. `psg_seq`'s fire-and-forget
+  `ptick_pend && !m_busy` capture depends on `m_busy` being high the cycle
+  after a launch. Radix-4 only moves the DEASSERT earlier, which is exactly
+  why it is transparent; the fold is not.
+- **Per-site mode retuning.** `lfo_mag` is 2 bits on an 8-step request and
+  `sl_bhi` is 9 bits on a 12-step one - real over-provisioning, but radix-4
+  collapses the gap to one cycle and it stops being worth a stage.
+
 ## Risks / Trade-offs
 
 - **[Single-store contention]** Tick and sample work can request the voice EBR

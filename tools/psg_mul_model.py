@@ -21,6 +21,7 @@ The fixed iteration counts are read from psg_mulsvc.sv; the explicit short
 request is modelled separately.
 """
 import argparse
+import functools
 import os
 import re
 import sys
@@ -43,8 +44,41 @@ def mask(w):
     return (1 << w) - 1
 
 
+@functools.lru_cache(maxsize=None)
+def parse_radix_bits(path=MULSVC_SV):
+    """Multiplier bits retired per step, from the RTL's write-back shift.
+
+    `m_p <= {m_sum, m_p[11:k]}` retires k bits per step: k=1 is radix-2, k=2
+    radix-4. The engine went radix-4 because the landing law makes that free -
+    see `landing`.
+    """
+    txt = open(path).read()
+    m = re.search(r"m_p\s*<=\s*\{m_sum,\s*m_p\[11:(\d+)\]\}", txt)
+    if not m:
+        raise SystemExit(f"{path}: cannot find the m_p write-back shift")
+    return int(m.group(1))
+
+
+@functools.lru_cache(maxsize=None)
+def parse_preshift(path=MULSVC_SV):
+    """Modes whose B is loaded pre-shifted, and by how much.
+
+    Radix-4 retires an EVEN number of multiplier bits, so an odd radix-2
+    iteration count has no exact radix-4 twin. Mode 3's nine steps become five,
+    which would land the product one place low; loading `B << 1` puts it back.
+    """
+    txt = open(path).read()
+    out = {}
+    m = re.search(r"m_p\s*<=\s*\(mul_start_mode\s*==\s*2'd(\d+).*?"
+                  r"\{\d+'b0,\s*mul_start_b,\s*(\d+)'b0\}", txt, re.S)
+    if m:
+        out[int(m.group(1))] = int(m.group(2))
+    return out
+
+
+@functools.lru_cache(maxsize=None)
 def parse_iters(path=MULSVC_SV):
-    """mode -> iteration count, from the m_cnt load in the RTL."""
+    """mode -> step count, from the m_cnt load in the RTL."""
     txt = open(path).read()
     # `m_cnt <=` appears three times: the reset, the decrement, and the load.
     # Only the load mentions mul_start_mode, so pick by content rather than by
@@ -58,10 +92,10 @@ def parse_iters(path=MULSVC_SV):
     if body is None:
         raise SystemExit(f"{path}: could not find the m_cnt mode load")
     out = {}
-    for cond, val in re.findall(r"mul_start_mode\s*==\s*2'd(\d+)\)\s*\?\s*4'd(\d+)",
-                                body):
+    for cond, val in re.findall(
+            r"mul_start_mode\s*==\s*2'd(\d+)\)\s*\?\s*\d+'d(\d+)", body):
         out[int(cond)] = int(val)
-    tail = re.findall(r":\s*4'd(\d+)\s*$", body)
+    tail = re.findall(r":\s*\d+'d(\d+)\s*$", body)
     if tail:
         missing = [mode for mode in range(4) if mode not in out]
         if len(missing) != 1:
@@ -81,6 +115,7 @@ def parse_iters(path=MULSVC_SV):
 BOUNDARY = 12
 
 
+@functools.lru_cache(maxsize=None)
 def parse_boundary(path=MULSVC_SV):
     """The accumulator boundary, READ from the RTL's m_acc slice."""
     txt = open(path).read()
@@ -90,36 +125,50 @@ def parse_boundary(path=MULSVC_SV):
     return int(m.group(1))
 
 
+SHORT_STEPS = {1: 6, 2: 3}      # radix -> steps for an explicit short request
+
+
 def service_shape(b, mode, short=False):
-    """Return the live iteration count and accumulator boundary for a request."""
-    return (6 if short else parse_iters()[mode]), parse_boundary()
+    """Return the live step count and accumulator boundary for a request."""
+    steps = SHORT_STEPS[parse_radix_bits()] if short else parse_iters()[mode]
+    return steps, parse_boundary()
 
 
-def mulsvc(a, b, mode, iters=None, shift=None, short=False):
+def landing(mode, short=False):
+    """How far left this request lands its product: the consumer's offset.
+
+    boundary - (bits retired) + (any pre-shift of B). The whole point of the
+    radix-4 move is that this is UNCHANGED for every call site.
+    """
+    steps, boundary = service_shape(0, mode, short)
+    pre = 0 if short else parse_preshift().get(mode, 0)
+    return boundary - parse_radix_bits() * steps + pre
+
+
+def mulsvc(a, b, mode, iters=None, shift=None, short=False, radix_bits=None,
+           preshift=None):
     """One complete service transaction. Returns m_res, the whole 34-bit m_p.
 
-    Mirrors the always_ff exactly: strip the sign into m_a, load m_p with B,
-    then for each iteration add m_a into the accumulator slice when m_p[0] is
-    set and shift the whole register right by one. There is one result port
-    because there is one register - the former m_res/m_res_wide/m_res12 were
-    three widths of the same bits.
+    Mirrors the always_ff exactly: strip the sign into m_a, load m_p with B
+    (pre-shifted for the one mode that needs it), then for each step add
+    m_a * m_p[radix_bits-1:0] into the accumulator slice and shift the whole
+    register right by radix_bits. There is one result port because there is
+    one register.
     """
     live_it, live_sh = service_shape(b, mode, short)
     it = iters if iters is not None else live_it
     sh = shift if shift is not None else live_sh
+    r = radix_bits if radix_bits is not None else parse_radix_bits()
+    pre = preshift if preshift is not None else (
+        0 if short else parse_preshift().get(mode, 0))
     m_a = abs(a) & mask(A_BITS)
-    m_p = b & mask(B_BITS)
+    m_p = (b << pre) & mask(B_BITS)
     for _ in range(it):
         acc = (m_p >> sh) & mask(22)
-        s = (acc + (m_a if m_p & 1 else 0)) & mask(23)
-        m_p = ((s << (sh - 1)) | ((m_p >> 1) & mask(sh - 1))) & mask(P_BITS)
+        d = m_p & mask(r)
+        srt = (acc + m_a * d) & mask(24)
+        m_p = ((srt << (sh - r)) | ((m_p >> r) & mask(sh - r))) & mask(P_BITS)
     return m_p
-
-
-def landing(mode, short=False):
-    """How far left an N-iteration product lands: the consumer's slice offset."""
-    it, sh = service_shape(0, mode, short)
-    return sh - it
 
 
 def sweep(bits=A_BITS, dense=4096, extra=20000):
@@ -162,12 +211,14 @@ def check(name, ok, detail=""):
 def gate():
     iters = parse_iters()
     boundary = parse_boundary()
-    print("psg_mulsvc iteration counts (read from RTL): "
-          + ", ".join(f"mode {k}={v}" for k, v in iters.items())
-          + "; explicit short=6")
-    print(f"one accumulator boundary (read from RTL): m_p[33:{boundary}] — a "
-          f"request of N iterations lands its product {boundary} - N places "
-          "left")
+    rb = parse_radix_bits()
+    print(f"psg_mulsvc is radix-{1 << rb} (read from RTL): "
+          + ", ".join(f"mode {k}={v} steps" for k, v in iters.items())
+          + f"; explicit short={SHORT_STEPS[rb]}")
+    print(f"one accumulator boundary (read from RTL): m_p[33:{boundary}] — an "
+          f"M-step request lands its product {boundary} - {rb}*M places left"
+          + (f", plus a pre-shift on mode(s) {sorted(parse_preshift())}"
+             if parse_preshift() else ""))
     vals = sweep()
     ok = True
 
@@ -180,15 +231,17 @@ def gate():
     #    still sitting above the multiplier field at load time and is
     #    corrupted before the first iteration. That contract is unchanged.
     bad_land = []
-    for mode, it in list(iters.items()) + [("short", 6)]:
+    for mode, it in list(iters.items()) + [("short", None)]:
         short = mode == "short"
-        n = 6 if short else it
+        n = SHORT_STEPS[rb] if short else it
         md = 1 if short else mode
-        for b in (0, 1, 3, 63, 171, 255, 341, 1023, (1 << n) - 1):
-            if b.bit_length() > n:
+        width = rb * n - (0 if short else parse_preshift().get(md, 0))
+        off = landing(md, short)
+        for b in (0, 1, 3, 63, 171, 255, 341, 1023, (1 << width) - 1):
+            if b.bit_length() > width:
                 continue
             for a in vals:
-                want = (abs(a) * b) << (boundary - n)
+                want = (abs(a) * b) << off
                 if mulsvc(a, b, md, short=short) != want:
                     bad_land.append((mode, a, b))
                     break
@@ -196,17 +249,21 @@ def gate():
                 break
         if bad_land:
             break
-    ok &= check("every request returns |A|*B << (12 - iterations)",
+    ok &= check("every request returns |A|*B << its landing",
                 not bad_land,
-                f"{len(vals)} values of |A| per multiplier, all five "
-                "iteration counts" if not bad_land else f"{bad_land[:3]}")
+                f"{len(vals)} values of |A| per multiplier, all five step "
+                "counts" if not bad_land else f"{bad_land[:3]}")
 
     # 1a. And it fits: the widest landing is the narrowest request, so the
     #     shift never pushes a product out of the 34-bit register.
-    bad_fit = [(mode, it) for mode, it in list(iters.items()) + [("short", 6)]
-               if (A_CEILING * ((1 << (6 if mode == "short" else it)) - 1)
-                   << (boundary - (6 if mode == "short" else it))
-                   ) >= (1 << P_BITS)]
+    bad_fit = []
+    for mode in list(iters) + ["short"]:
+        sh = mode == "short"
+        md = 1 if sh else mode
+        n = SHORT_STEPS[rb] if sh else iters[mode]
+        width = rb * n - (0 if sh else parse_preshift().get(md, 0))
+        if (A_CEILING * ((1 << width) - 1) << landing(md, sh)) >= (1 << P_BITS):
+            bad_fit.append((mode, n))
     ok &= check("no landing overflows the 34-bit accumulator", not bad_fit,
                 "|A| <= 0x1CE0<<8 and B < 2^N bound every shifted product "
                 "by 2^33" if not bad_fit else f"{bad_fit}")
@@ -216,6 +273,50 @@ def gate():
     ok &= check("a B wider than its mode is corrupted (the trap)",
                 mulsvc(7, 341, 0) != (7 * 341) << landing(0),
                 "341 cannot be evaluated by mode 0's byte ceiling")
+
+    # 1c. THE RADIX CLAIM. A radix-4 step retires TWO multiplier bits, so a
+    #     request of M steps lands at boundary - 2M; M = N/2 therefore lands
+    #     exactly where the radix-2 N-step request did, and no consumer slice
+    #     moves. Mode 3's nine steps are odd and have no exact half - loading
+    #     B << 1 for that one mode puts its landing back. Checked against the
+    #     radix-2 reference on every mode, every corner B, the whole |A| sweep
+    #     and both signs, so the engine's radix is an implementation choice the
+    #     rest of the chip cannot observe.
+    R2 = {0: 8, 1: 10, 2: 12, 3: 9}          # the shipped radix-2 counts
+    R4 = {0: 4, 1: 5, 2: 6, 3: 5}            # their radix-4 twins
+    PRE4 = {3: 1}                            # ...and the one that needs a nudge
+    bad_radix = []
+    for mode, n2 in R2.items():
+        for b in (0, 1, 3, 63, 171, 255, 341, 511, 1023, 4095,
+                  (1 << n2) - 1):
+            if b.bit_length() > n2:
+                continue
+            for a in vals[::7]:
+                for sgn in (1, -1):
+                    ref = mulsvc(sgn * a, b, mode, iters=n2, radix_bits=1,
+                                 preshift=0)
+                    got = mulsvc(sgn * a, b, mode, iters=R4[mode], radix_bits=2,
+                                 preshift=PRE4.get(mode, 0))
+                    if ref != got:
+                        bad_radix.append((mode, a, b, sgn))
+                        break
+                if bad_radix:
+                    break
+            if bad_radix:
+                break
+        if bad_radix:
+            break
+    ok &= check("radix-4 at N/2 steps lands exactly where radix-2 at N did",
+                not bad_radix,
+                f"4 modes x corner B x {len(vals[::7])} values of |A| x both signs"
+                if not bad_radix else f"{bad_radix[:3]}")
+    # And the same for the explicit short request: six radix-2 steps, three
+    # radix-4 ones.
+    bad_short = [a for a in vals[:2000]
+                 if mulsvc(a, 63, 1, iters=6, radix_bits=1, preshift=0, short=True)
+                 != mulsvc(a, 63, 1, iters=3, radix_bits=2, preshift=0, short=True)]
+    ok &= check("short request: three radix-4 steps == six radix-2 steps",
+                not bad_short, f"{len(vals[:2000])} values of |A|")
 
     # 2. Mode 0 remains the original eight-cycle path for byte operands.
     bad, n = equivalent(255, 1, 0, values=vals)

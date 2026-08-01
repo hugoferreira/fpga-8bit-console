@@ -1,8 +1,8 @@
 // PSG multiply service: the one shift-add multiplier the whole chip shares.
 //
 // Every product the effect unit and the synthesis walk need is a magnitude
-// times a small unsigned multiplier, so one unit serves them all: 6/8/9/10/12
-// iterations of a 23-bit add, against the ~1500 LUTs parallel array
+// times a small unsigned multiplier, so one unit serves them all: 3/4/5/6
+// radix-4 steps of a 24-bit add, against the ~1500 LUTs parallel array
 // multipliers cost. An effect evaluation runs six of them, four channels 120
 // times a second - about 240 clocks in a tick.
 //
@@ -23,7 +23,7 @@ module psg_mulsvc (input  bit          clk,
                    input  logic signed [24:0] mul_start_a,
                    input  logic [11:0] mul_start_b,
                    input  logic [1:0]  mul_start_mode,  // 0: 8-bit B, 3: 9, 1: 10, 2: 12
-                   input  logic        mul_start_short, // six steps
+                   input  logic        mul_start_short, // three steps
                    // ONE view of the accumulator. The three former ports
                    // (32/34/28 bits) were the same register sliced three ways,
                    // and picking the wrong one is the bug class the comments
@@ -37,7 +37,7 @@ module psg_mulsvc (input  bit          clk,
   // (products peak at 22 bits real, 33 structural).
   logic [20:0] m_a;
   logic [33:0] m_p;                  // accumulator plus the 12-bit multiplier
-  logic [3:0]  m_cnt;
+  logic [2:0]  m_cnt;
   // Reset contract: m_cnt is validity/control state and resets to idle.
   // m_a/m_p are datapath: every one is overwritten by the six-op program
   // before it is observed.
@@ -48,22 +48,38 @@ module psg_mulsvc (input  bit          clk,
   // same shift-add spelled four times: a 22-bit four-way mux on the read and
   // a 34-bit four-way mux on the write-back, both pure alignment.
   //
-  // Fixing the boundary at 12 makes an N-step product land N steps short of
-  // bottom, so its value is the exact product shifted LEFT by (12 - N):
+  // Fixing the boundary at 12 makes a product land as many places short of
+  // bottom as there are multiplier bits still unretired, so its value is the
+  // exact product shifted LEFT by that count:
   //
-  //     m_p after N iterations = |A| * B * 2^(12-N)      (N = 6, 8, 9, 10, 12)
+  //     m_p after M steps = |A| * B * 2^(12 - RADIX_BITS*M)
   //
-  // proven over the whole |A| sweep by tools/psg_mul_model.py. Every call site
-  // has a fixed iteration count, so its consumer's shift is a constant and the
-  // compensation is WIRING - the slices below moved, no gate was added, and
-  // every consumed value is bit-identical. The mode now names an iteration
-  // count and nothing else; `mul_start_short` was already the same idea (six
-  // steps at mode 1's boundary, landing four bits left), generalised here.
+  // THAT IS WHAT MAKES THE RADIX FREE. A radix-4 step retires TWO multiplier
+  // bits, so M = N/2 lands exactly where the radix-2 N-step request did and
+  // NO consumer slice moves: 12->6, 10->5, 8->4, 6->3 steps. Mode 3's nine is
+  // odd and has no exact half; loading `B << 1` for that one mode puts its
+  // landing back, and mode 3's B < 2^9 contract leaves room for the shift.
+  // Average latency falls 10.0 -> 5.6 cycles. Proven against the shipped
+  // radix-2 engine, every mode, every corner B, the whole |A| sweep and both
+  // signs, by tools/psg_mul_model.py.
   //
-  // The width still fits: |A| < 2^21 and a mode-N request contracts B < 2^N,
-  // so |A|*B*2^(12-N) < 2^33 for every N.
+  // Every call site has a fixed step count, so its consumer's offset is a
+  // constant and the compensation is WIRING - no gate was added and every
+  // consumed value is bit-identical. The mode names a step count and nothing
+  // else; `mul_start_short` was already the same idea, generalised here.
+  //
+  // The width still fits: |A| < 2^21 and a mode contracts B below its own
+  // retired-bit count, so every landed product stays under 2^33.
   wire  [21:0] m_acc = m_p[33:12];
-  wire  [22:0] m_sum = {1'b0, m_acc} + (m_p[0] ? {2'b0, m_a} : 23'd0);
+  // Two multiplier bits per step. 3A is COMBINATIONAL on purpose: registering
+  // it costs 23 flops to save one adder, which measured both larger and
+  // slower (282 LC / 99.7 MHz against 259 / 118.9 standalone).
+  wire  [1:0]  m_d   = m_p[1:0];
+  wire  [22:0] m_add = (m_d == 2'd0) ? 23'd0
+                     : (m_d == 2'd1) ? {2'b0, m_a}
+                     : (m_d == 2'd2) ? {1'b0, m_a, 1'b0}
+                     :                 ({2'b0, m_a} + {1'b0, m_a, 1'b0});
+  wire  [23:0] m_sum = {2'b0, m_acc} + {1'b0, m_add};
 
   // Bit k of m_res is bit k of the product shifted as above. The
   // microinstruction contract's "volumes use m_res[15:8]" is a semantic Q8
@@ -76,7 +92,7 @@ module psg_mulsvc (input  bit          clk,
     if (reset)
       m_cnt <= 0;
     else if (m_cnt != 0) begin
-      m_p   <= {m_sum, m_p[11:1]};
+      m_p   <= {m_sum, m_p[11:2]};
       m_cnt <= m_cnt - 1;
     end else if (mul_start) begin
       // The one place signs are stripped: requesters pass raw signed
@@ -86,12 +102,14 @@ module psg_mulsvc (input  bit          clk,
       // domain exactly as before.
       m_a    <= mul_start_a[24] ? (21'd0 - mul_start_a[20:0])
                                 : mul_start_a[20:0];
-      m_p    <= {22'b0, mul_start_b};
-      m_cnt  <= mul_start_short ? 4'd6
-              : (mul_start_mode == 2'd2) ? 4'd12
-              : (mul_start_mode == 2'd1) ? 4'd10
-              : (mul_start_mode == 2'd3) ? 4'd9
-              : 4'd8;
+      // Mode 3 alone loads B << 1; see the landing note above.
+      m_p    <= (mul_start_mode == 2'd3 && !mul_start_short)
+                  ? {21'b0, mul_start_b, 1'b0} : {22'b0, mul_start_b};
+      m_cnt  <= mul_start_short ? 3'd3
+              : (mul_start_mode == 2'd2) ? 3'd6
+              : (mul_start_mode == 2'd1) ? 3'd5
+              : (mul_start_mode == 2'd3) ? 3'd5
+              : 3'd4;
     end
   end
 
