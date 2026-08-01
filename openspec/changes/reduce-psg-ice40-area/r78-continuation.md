@@ -70,9 +70,43 @@ git history; do not repeat them without the recorded changed condition.
   and request phases eliminate a held transaction lifetime.  Do not retry by
   adding another flat held operand bundle.
 
+### R.80 - Factor the complete reciprocal coefficient family
+
+- **Hypothesis:** the common `/3`, `/7`, and `/15` waveform reconstruction
+  currently selects six shifted terms into one wide sum.  After the second
+  quotient fold, its divisor-specific coefficient is exactly 85, 73, or 17.
+  Factor the complete family as `85h = 5*(17h)`, `73h = 8*(9h)+h`, and
+  `17h = 17h`, then add the common folded quotient and remainder terms.  Two
+  selected shift/add stages should be cheaper than the present independently
+  gated term set without adding a register, port, or schedule phase.
+- **Scope:** `rtl/psg_wave.sv`, an exhaustive mathematical proof in
+  `tools/psg_hw_forms.py`, and standard PSG proof artifacts.  The reciprocal
+  EBR, its one registered port, waveform pipeline boundaries, detune service,
+  walker schedule, and all result lifetimes stay unchanged.
+- **Baseline:** live R.78 fingerprint `dd6d98592a1d`; 6,536 LUT4s, 1,596
+  carries, 1,490 flops, 525 unpackable flops, 14 EBRs; seed-1 router2 7,437
+  LCs at 144.80 MHz fast / 29.94 MHz PSG.
+- **Change:** tested the factored two-step coefficient network at the existing
+  combinational pipeline boundary.  Exhaustive proof covered all 65,536 phase
+  inputs in both tilt modes, actual second-fold bounds `(255,335,1439)`, and
+  every possible seven-bit plus six-bit folded term.
+- **Result:** exact algebra, wrong mapped partition.  Candidate fingerprint
+  `7f3fb27d04ab` maps 6,543 LUT4s, 1,630 carries, 1,490 flops and 14 EBRs:
+  **+7 LUT4s, +34 carries**, unchanged flops/EBRs versus R.78.  Unpackable
+  flops rise 525 -> 529.  Placement remains 7,437 LCs and its post-place
+  estimates clear timing at 128.14 MHz fast / 31.01 MHz PSG, but router2 is
+  stuck with two overused wires after 12,439 iterations.  The route was
+  stopped because the deterministic mapped-area gate had already failed;
+  structural and render gates were therefore not run.
+- **Decision:** rejected and experimental RTL/proof code restored exactly to
+  R.78.  Factoring the visible constant coefficients does not make the mapper
+  share this already-optimized combinational family.
+- **Repeat only if:** coefficient selection, reciprocal folding, pipeline
+  boundaries, or mapper arithmetic inference changes materially.
+
 ## Handoff rule
 
-Before opening R.80, record its row with exact formula, transaction, schedule,
+Before opening R.81, record its row with exact formula, transaction, schedule,
 render, mapped, placed, routed and timing evidence.
 Commit either the accepted RTL or the reverted-source rejection record as one
 scoped iteration.  Never stage unrelated files from the dirty main worktree.
