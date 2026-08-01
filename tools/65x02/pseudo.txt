@@ -30,3 +30,21 @@ bnzero       4     5       4      5        6      add-isa-test-and-branch
 # add-isa-word-ops, already built. Kept as the calibration entry: the projection
 # below should reproduce the migration's actual result of 6 bytes per site.
 addw16      12    18       6     12       12      add-isa-word-ops
+
+# add-isa-width-suffixes. The counted `asr a, N` forms are N times the single
+# form and are not listed separately; `migrate_ext.py --pseudo` counts sites,
+# and a run of N is N sites of the same idiom.
+#
+# Cycles are this core's, from docs/cpu-timing-v2.json: `ror zp` is 4 here and 5
+# on NMOS, so costing asrw off NMOS numbers would inflate it by 2 cycles - the
+# exact error gate G4 exists to catch.
+#
+#   asr     cmp #$80 (2b/2c) + ror     (1b/2c)                  = 3b / 4c
+#   asrw    lda zp+1 (2b/3c) + cmp #$80 (2b/2c)
+#           + ror zp+1 (2b/4c) + ror zp (2b/4c)                 = 8b / 13c
+#
+# hw_c for asrw is a claim: a zero-page word read-modify-write has to fetch the
+# operand, read both halves and write both back, so it cannot beat two `ror zp`
+# (8 cycles) by much. Claimed 8-10 rather than the 6 an optimistic reading gives.
+asr          3     4       1      2        2      add-isa-width-suffixes
+asrw         8    13       2      8       10      add-isa-width-suffixes

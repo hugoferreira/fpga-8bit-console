@@ -175,6 +175,212 @@
 }
 
 ; ---------------------------------------------------------------------------
+; Counted accumulator shifts and rotates (redesign-celeste-for-inlay task 10.9)
+;
+; `asl a, 3` is exactly three accumulator `asl` instructions: same bytes, same
+; carry chain, same final flags. This buys NO bytes at all - it is a source
+; legibility slice, and `make pseudo-check` asserts the ROM is bit-identical
+; across the migration. The measurement must not credit it with a saving.
+;
+; Contract: identical to repeating the instruction N times. Rotates feed each
+; repetition's carry output into the next. Accepted range is 1..8.
+;
+; WHY THE SPELLING IS `asl a, N` AND NOT `asl N`
+;
+; Because `asl N` is not implementable here - it SILENTLY MISCOMPILES.
+; `asl {zaddr: u8}` in nmos6502.asm already matches a bare expression, so
+; `asl 3` matches both it and any counted rule. customasm 0.14.1 resolves that
+; by preferring the SMALLER encoding without warning: with a 3-repetition rule
+; in scope, `asl 3` assembles to `06 03` - a read-modify-write of zero page
+; address 3 - not to three shifts. Verified against customasm v0.14.1. The
+; explicit `a` operand is what makes the counted form unambiguous, and it
+; matches the `asl a` accumulator spelling nmos6502.asm already carries.
+;
+; WHY THE COUNTS ARE WRITTEN OUT ONE BY ONE
+;
+; The compact encoding `0x0a0a0a0a0a0a0a0a`64[8 * n - 1 : 0]` works for 1..8
+; but ZERO-EXTENDS above it: `asl a, 9` emits `00` (BRK) followed by eight
+; shifts, silently. Enumerating the counts makes the accepted range structural
+; - an out-of-range count matches no rule and fails to assemble - instead of
+; depending on a slice bound that degrades quietly.
+; ---------------------------------------------------------------------------
+#ruledef pseudo_counted_shift
+{
+    asl a, 1 => 0x0a
+    asl a, 2 => 0x0a @ 0x0a
+    asl a, 3 => 0x0a @ 0x0a @ 0x0a
+    asl a, 4 => 0x0a @ 0x0a @ 0x0a @ 0x0a
+    asl a, 5 => 0x0a @ 0x0a @ 0x0a @ 0x0a @ 0x0a
+    asl a, 6 => 0x0a @ 0x0a @ 0x0a @ 0x0a @ 0x0a @ 0x0a
+    asl a, 7 => 0x0a @ 0x0a @ 0x0a @ 0x0a @ 0x0a @ 0x0a @ 0x0a
+    asl a, 8 => 0x0a @ 0x0a @ 0x0a @ 0x0a @ 0x0a @ 0x0a @ 0x0a @ 0x0a
+
+    lsr a, 1 => 0x4a
+    lsr a, 2 => 0x4a @ 0x4a
+    lsr a, 3 => 0x4a @ 0x4a @ 0x4a
+    lsr a, 4 => 0x4a @ 0x4a @ 0x4a @ 0x4a
+    lsr a, 5 => 0x4a @ 0x4a @ 0x4a @ 0x4a @ 0x4a
+    lsr a, 6 => 0x4a @ 0x4a @ 0x4a @ 0x4a @ 0x4a @ 0x4a
+    lsr a, 7 => 0x4a @ 0x4a @ 0x4a @ 0x4a @ 0x4a @ 0x4a @ 0x4a
+    lsr a, 8 => 0x4a @ 0x4a @ 0x4a @ 0x4a @ 0x4a @ 0x4a @ 0x4a @ 0x4a
+
+    rol a, 1 => 0x2a
+    rol a, 2 => 0x2a @ 0x2a
+    rol a, 3 => 0x2a @ 0x2a @ 0x2a
+    rol a, 4 => 0x2a @ 0x2a @ 0x2a @ 0x2a
+    rol a, 5 => 0x2a @ 0x2a @ 0x2a @ 0x2a @ 0x2a
+    rol a, 6 => 0x2a @ 0x2a @ 0x2a @ 0x2a @ 0x2a @ 0x2a
+    rol a, 7 => 0x2a @ 0x2a @ 0x2a @ 0x2a @ 0x2a @ 0x2a @ 0x2a
+    rol a, 8 => 0x2a @ 0x2a @ 0x2a @ 0x2a @ 0x2a @ 0x2a @ 0x2a @ 0x2a
+
+    ror a, 1 => 0x6a
+    ror a, 2 => 0x6a @ 0x6a
+    ror a, 3 => 0x6a @ 0x6a @ 0x6a
+    ror a, 4 => 0x6a @ 0x6a @ 0x6a @ 0x6a
+    ror a, 5 => 0x6a @ 0x6a @ 0x6a @ 0x6a @ 0x6a
+    ror a, 6 => 0x6a @ 0x6a @ 0x6a @ 0x6a @ 0x6a @ 0x6a
+    ror a, 7 => 0x6a @ 0x6a @ 0x6a @ 0x6a @ 0x6a @ 0x6a @ 0x6a
+    ror a, 8 => 0x6a @ 0x6a @ 0x6a @ 0x6a @ 0x6a @ 0x6a @ 0x6a @ 0x6a
+}
+
+; ---------------------------------------------------------------------------
+; add-isa-width-suffixes: operand width as a mnemonic suffix.
+;
+; A bare mnemonic is the 8-bit form and a trailing `w` is the little-endian
+; zero-page pair, matching `addw`/`subw`/`cmpw` - the spelling this ISA already
+; uses for width. Nothing existing moves.
+;
+; WHY NOT `asr.b` / `asr.w`, WHICH IS WHERE THIS STARTED
+;
+; The m68k dotted form assembles perfectly well in raw customasm. It cannot be
+; used here because `.` is the Inlay frontend's MEMBER SEPARATOR - the same dot
+; in `Fixed.word1` and `CelesteObject.core` - so at statement position a dotted
+; mnemonic is lexically indistinguishable from a qualified name. Inlay resolves
+; `asr.w Fixed.word1` as a namespace reference and emits
+; `__inlay_q3_asr1_w __inlay_q5_Fixed5_word1`, which then fails to assemble.
+; Teaching the frontend to except a mnemonic whitelist would make `.` mean one
+; thing at statement start and another everywhere else - positional ambiguity,
+; which is exactly the failure the counted-shift block above exists to avoid.
+;
+; The suffix is still a distinct token, so it cannot collide with an addressing
+; mode the way `asl N` collides with `asl {zaddr: u8}`.
+;
+; The convention governs THIS FILE only. `addw`/`subw`/`cmpw`/`ldab`/`stab` are
+; decode rows in rtl/cpu6502_decode.sv and keep the spelling the hardware uses.
+;
+; Arithmetic shift right is the operation that earned the axis. The 6502 has no
+; ASR, so all three corpora open-code one; counted as a single instruction with
+; two widths it occurs 9 times across celeste and breakout, which clears gate
+; G3. Counted as two instructions, 7 and 2, both would fail it.
+;
+; CONTRACTS - and the two widths do NOT get the same one.
+;
+;   asr     EXACT. `cmp #$80` puts the sign in C and `ror` rotates it back into
+;           bit 7. N is the preserved sign, Z is set when the result is zero, C
+;           is the bit shifted out, V is untouched - precisely what a hardware
+;           `ASR A` would leave, so neither form refines the other. Verified
+;           over all 256 accumulator values x both carries x both overflows.
+;           Clobbers A, which is the result.
+;
+;   asrw    WEAKER THAN ITS HARDWARE FORM, like addw16 below.
+;             clobbers A - it must load the high byte to test the sign, where
+;                          hardware would preserve A under purity rule P2;
+;             Z AND N ARE UNDEFINED - the expansion leaves them from the LOW
+;                          byte, the last `ror` executed, while hardware would
+;                          set them from the 16-bit result.
+;           Do not branch on the result of asrw without re-testing it.
+; ---------------------------------------------------------------------------
+#ruledef pseudo_width
+{
+    ; signed halve, accumulator                                          -> ASR
+    asr => asm { cmp #$80
+                   ror }
+
+    ; and the counted form, composing with the counted-shift block above
+    asr a, 1 => asm { cmp #$80
+                        ror }
+    asr a, 2 => asm { cmp #$80
+                        ror
+                        cmp #$80
+                        ror }
+    asr a, 3 => asm { cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror }
+    asr a, 4 => asm { cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror }
+    asr a, 5 => asm { cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror }
+    asr a, 6 => asm { cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror }
+    asr a, 7 => asm { cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror }
+    asr a, 8 => asm { cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror
+                        cmp #$80
+                        ror }
+
+    ; signed halve, zero-page pair                                     -> ASR.W
+    asrw {loc: u8} => {
+        hi = loc + 1
+        asm { lda {hi}
+              cmp #$80
+              ror {hi}
+              ror {loc} }
+    }
+}
+
+; ---------------------------------------------------------------------------
 ; add-isa-word-ops, in its pre-hardware form. Not used by the corpus, which is
 ; already on the real instructions - it is here as the worked example of a
 ; contract where neither side refines the other.

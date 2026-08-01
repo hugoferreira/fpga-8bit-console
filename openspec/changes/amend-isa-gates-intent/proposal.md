@@ -107,9 +107,8 @@ it claims to measure.
   mem-to-mem move showing up as instructions. Intent-based measurement makes
   that case stronger, not weaker.
 - **This changes a shared metric.** `plumbing` and the G-series are used by all
-  three corpora and every recorded baseline. Per the standing agreement in
-  `docs/agent-coordination.md`, this is proposed rather than applied, and needs
-  all three corpora re-measured in one commit if adopted.
+  three corpora and every recorded baseline, so all three corpora need to be
+  re-measured together if it is adopted.
 - **Risk: intent counting is soft.** Semantic operations in Lua are not a
   hard unit, and the counting above is crude. It is a denominator for comparing
   two encodings of the *same* program, not an absolute. It must never become a

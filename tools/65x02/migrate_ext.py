@@ -124,8 +124,10 @@ MNEMONICS |= {m.group(1).lower() for m in
 # makes two instructions look adjacent when they are not.
 PSEUDO_DEF = "src/isa/pseudo.asm"
 PSEUDO_REG = "tools/65x02/pseudo.txt"
+# The character class must admit the `.b`/`.w` width suffixes, or a migrated
+# corpus reads as unknown mnemonics and this tool refuses to run on it.
 PSEUDO = {m.group(1).lower() for m in
-          re.finditer(r"^\s*([a-z][a-z0-9_]*)\s+[^\n]*=>", open(PSEUDO_DEF).read(),
+          re.finditer(r"^\s*([a-z][a-z0-9_.]*)\s+[^\n]*=>", open(PSEUDO_DEF).read(),
                       re.M)} if os.path.exists(PSEUDO_DEF) else set()
 MNEMONICS |= PSEUDO
 

@@ -192,7 +192,7 @@ def main():
         # access - 6 such sites in breakout, 22 in nemo, 169 in celeste - so a
         # pointer-heavy corpus reports an artificially low ratio and drags the
         # frame-bound average down with it. See docs/corpora.md, section "The
-        # pointer-setup blind spot", and docs/agent-coordination.md note 5.
+        # pointer-setup blind spot".
         if any(r["name"] == "celeste" for r in results):
             print("\n  NOTE: the ratios above under-count pointer setup, which")
             print("  makes celeste look ~7 points cleaner than it is. Read")
