@@ -96,10 +96,22 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // with it, and PSTOR, PFOLD and PLAST moved with the timetable. Everything
   // below that is phase-relative reads its position from these, or from the
   // control word, so the two cannot drift apart.
-  localparam int PWORK = REALTIME_PREVIEW ? 12 : 19;
-  localparam int PFOLD = REALTIME_PREVIEW ? 23 : 62;
-  localparam int PSTOR = REALTIME_PREVIEW ? 16 : 43;
-  localparam int PLAST = REALTIME_PREVIEW ? 23 : 62;
+  localparam int PWORK = REALTIME_PREVIEW ? 12 : 29;
+  localparam int PFOLD = REALTIME_PREVIEW ? 23 : 72;
+  localparam int PSTOR = REALTIME_PREVIEW ? 16 : 53;
+  localparam int PLAST = REALTIME_PREVIEW ? 23 : 72;
+  // The two noise steps are service requests now, and they run in the load
+  // window - where the service is otherwise idle, the walk's first other
+  // request being CAP_W4. Their phases are ABSOLUTE because the load window
+  // does not move with PWORK.
+  //
+  // NZ_OLD waits for the whole load: its increment has to be the one CAP_W0
+  // will leave behind, and that restart decision needs s_eff_a, the last word
+  // in (PLOSC+4). Four radix-4 steps put it back at 24, which is the cycle
+  // NZ_LIVE takes the service - so the old product is read out on exactly the
+  // phase the live one is requested, and only it needs a register.
+  localparam int PNZ_OLD  = 19;
+  localparam int PNZ_LIVE = 24;
 
 
   // The synthesis walk's working copy: parameters and oscillator state loaded
@@ -347,6 +359,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // exactly "the schedule has no action at pph 0" - asserted in
   // tools/gen_psg_ctrl.py so a future schedule cannot quietly rely on one.
   wire [15:0] cap = (pph == 7'd0) ? 16'd0 : ctrl_q;
+  // The noise products are keyed on the phase directly: they run before
+  // PWORK, in the load window the control store's action field does not
+  // reach.
+  wire nz_req_old  = !REALTIME_PREVIEW && (pph == 7'(PNZ_OLD));
+  wire nz_req_live = !REALTIME_PREVIEW && (pph == 7'(PNZ_LIVE));
 
 
   // The wave-pipe issues and the dq context sit on the same phases as W1/W2
@@ -609,23 +626,69 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
   // bank flip. Modelled as R2f in the noise-variants harness: repeat
   // slope 29..5% vs PICO-8's 29..6%, centroid 0.998, rms 1.004, HF-share
   // 1.002 of the recorded reference.
-  wire  [12:0] nz2_dp  = s_old_inc[20:8];
+  // The restart copy, factored out. CAP_W0 acts on it, and the old noise
+  // product - which now runs BEFORE that edge - has to see the increment the
+  // copy will leave behind, because the old form got that for free by
+  // evaluating at W1, after it. Every term is stable from the end of the
+  // record load (s_ch_* at PLOSC+3, s_eff_a at PLOSC+4, so pph 19) until
+  // CAP_W2 rewrites the last_* registers, so one cone serves both readers.
+  wire blend_restart =
+      play_bits[pc_ch]
+      && (s_eff_inc != s_last_inc || g_live != s_last_G
+          || s_snd_wave != s_last_wave
+          || s_ch_det != last_mode_r
+          || s_ch_rev != last_rev_r
+          || s_ch_buzz != last_alt_r
+          // Noise restarts the blend EVERY tick, changed or not: the binary's
+          // per-tick state copy is only identity for deterministic waves. The
+          // old-walk task write overrides CAP_W0's s_old_phase copy with the
+          // live accumulator.
+          || (s_snd_wave == 3'd6 && !s_snd_wt && !s_ch_buzz && nz_tick_r));
+  wire  [20:0] nz2_inc = blend_restart ? s_last_inc : s_old_inc;
+  wire  [12:0] nz2_dp  = nz2_inc[20:8];
   wire  [16:0] nz2_j   = {1'b0, nz2_dp, 3'b0} + 17'd1120;
   wire  [7:0]  nz2_adv = {lfsr2[7] ^ lfsr2[6], lfsr2[8] ^ lfsr2[7],
                           lfsr2[9] ^ lfsr2[8], lfsr2[10] ^ lfsr2[9],
                           lfsr2[11] ^ lfsr2[10], lfsr2[12] ^ lfsr2[11],
                           lfsr2[13] ^ lfsr2[12], lfsr2[14] ^ lfsr2[13]};
   wire  signed [8:0]  nz2_rand = $signed({nz2_adv[7], nz2_adv});
-  logic signed [8:0]  nz2_rand_r;
-  // The live sample is consumed after W0; the old continuation is not issued
-  // until W2. Use that idle W1 between them to evaluate the old step through
-  // the same variable multiplier instead of building two parallel products.
-  wire                 nz_mul_old = !REALTIME_PREVIEW && cap[CAP_W1];
-  wire        [16:0]   nz_mul_j = nz_mul_old ? nz2_j : nz_j;
-  wire signed [8:0]    nz_mul_rand = nz_mul_old ? nz2_rand_r : nz_rand;
-  wire signed [25:0]   nz_mul_full =
-      ($signed({1'b0, nz_mul_j}) * nz_mul_rand) >>> 8;
-  wire signed [17:0]   nz_step = nz_mul_full[17:0];
+
+  // Both noise steps ride the SHARED service. This was the last `*` in the
+  // hardware lowering - a 17x8 parallel array on a fabric with no DSP, next
+  // to a perfectly good iterative multiplier - and the largest LUT4 family in
+  // the design.
+  //
+  // |A| = j is 17 bits, inside the service's 2^21 ceiling; B = |rand| <= 128
+  // fits mode 0's byte contract, so each is one ordinary mode-0 request. Mode
+  // 0 is four radix-4 steps and lands its product four places left, hence
+  // m_res[27:4].
+  //
+  // THE SEMANTIC TRAP: `(j * rand) >>> 8` is an arithmetic shift of a SIGNED
+  // product, which is FLOOR; the service works in the magnitude domain, which
+  // truncates toward zero. They differ by one whenever the product is
+  // negative and its low eight bits are nonzero, so the negative arm rounds
+  // up. Checked against the old expression over every (j, rand) corner by
+  // tools/psg_mul_model.py.
+  wire [23:0]        nz_m   = m_res[27:4];             // |j| * |rand|
+  wire signed [17:0] nz_mag = $signed({2'b0, nz_m[23:8]});
+  wire signed [17:0] nz_pos = nz_mag;
+  wire signed [17:0] nz_neg = -(nz_mag + 18'(|nz_m[7:0]));
+  wire [8:0]         nz_mag_b  = nz_rand[8]  ? 9'(-nz_rand)  : 9'(nz_rand);
+  wire [8:0]         nz2_mag_b = nz2_rand[8] ? 9'(-nz2_rand) : 9'(nz2_rand);
+  // The preview flavour never uses the service - its whole point is a compact
+  // lowering - so it keeps the parallel form. REALTIME_PREVIEW is a parameter
+  // and this arm is removed from hardware and oracle builds.
+  wire signed [25:0]   nz_mul_pv =
+      ($signed({1'b0, nz_j}) * nz_rand) >>> 8;
+  // The old step completes on the phase the live one is requested, so it is
+  // captured; the live step is read straight out of the service at CAP_W0,
+  // where nothing else has launched since. Both draws are pre-advance by
+  // construction now - the LFSRs step at CAP_W0, long after these phases -
+  // which retires the nz2_rand_r staging register the serialized W1 product
+  // needed.
+  logic signed [17:0]  nz2_step_r;
+  wire signed [17:0]   nz_step = REALTIME_PREVIEW ? nz_mul_pv[17:0]
+                               : (nz_rand[8] ? nz_neg : nz_pos);
   // At the restart sample s_old_wave/old_alt_r are being copied this very
   // cycle, so the decision reads the last-tick registers instead; the
   // registered old_nz_r_on carries it to the later consume cycles.
@@ -638,7 +701,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
       $signed({{2{old_nz_seed_base[15]}}, old_nz_seed_base}) + nz_kick;
   wire signed [17:0] nz_old_pre =
       $signed({{2{s_old_phase[23]}}, s_old_phase[23:8]})
-      + (nz_tog ? nz_step : 18'sd0);
+      + (nz_tog ? nz2_step_r : 18'sd0);
   wire signed [15:0] nz_old_next =
       (nz_old_pre > 18'sd6143)  ? 16'sd6143 :
       (nz_old_pre < -18'sd6143) ? -16'sd6143 : nz_old_pre[15:0];
@@ -774,6 +837,18 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
         // Product and capture are functions of the same phase wherever a
         // dependency allows; CAP_W75 names the sole launch-only blend step.
         (* parallel_case *) case (1'b1)
+          nz_req_old: begin
+            wmul_start = 1'b1;
+            wmul_a = {8'b0, nz2_j};
+            wmul_b = {3'b0, nz2_mag_b};
+            wmul_mode = 2'd0;
+          end
+          nz_req_live: begin
+            wmul_start = 1'b1;
+            wmul_a = {8'b0, nz_j};
+            wmul_b = {3'b0, nz_mag_b};
+            wmul_mode = 2'd0;
+          end
           cap[CAP_W4]: begin
             wmul_start = 1'b1;
             if (s_snd_wt) begin
@@ -1434,7 +1509,6 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             lfsr2 <= {lfsr2[13:0], lfsr2[14] ^ lfsr2[10]};
             // Preserve the pre-advance old-walk draw for its serialized W1
             // product; otherwise W1 would consume the next LFSR value.
-            nz2_rand_r <= nz2_rand;
             // `_mix_osc_tick_new` returns before touching oscillator state
             // when its amplitude is zero.  This is observable with repeated
             // fade-in rows: their silent first ticks freeze phase rather than
@@ -1461,19 +1535,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
             // The reverb digit counts as a sounding parameter: the two
             // blocks comb at their own levels, so a level change alone
             // makes the blend audible (filter-reverb-onset/-level).
-            if (play_bits[pc_ch]
-                && (s_eff_inc != s_last_inc || g_live != s_last_G
-                    || s_snd_wave != s_last_wave
-                    || s_ch_det != last_mode_r
-                    || s_ch_rev != last_rev_r
-                    || s_ch_buzz != last_alt_r
-                    // Noise restarts the blend EVERY tick, changed or not:
-                    // the binary's per-tick state copy is only identity for
-                    // deterministic waves. The old-walk task write (called
-                    // below) overrides this block's s_old_phase copy with
-                    // the live accumulator.
-                    || (s_snd_wave == 3'd6 && !s_snd_wt && !s_ch_buzz
-                        && nz_tick_r))) begin
+            if (blend_restart) begin
               bl_cnt <= 7'd0;
               s_old_phase <= s_phase;
               old_q0 <= s_phase2[16:0];
@@ -1633,6 +1695,18 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0)
           end
           default: ;
         endcase
+        // The old noise product completes on the phase the live one is
+        // requested; capture it before that launch takes the service.
+        if (pph == 7'(PNZ_LIVE))
+          nz2_step_r <= nz2_rand[8] ? nz_neg : nz_pos;
+`ifndef SYNTHESIS
+        // The request mux DROPS a request rather than queueing it, so a busy
+        // service here would silently skip a noise step. Both phases are
+        // chosen clear of one; say so where it can fail.
+        if ((nz_req_old || nz_req_live) && m_busy)
+          $error("psg_walk: noise product dropped, m service busy at pph %0d",
+                 pph);
+`endif
         // The fold's phase IS PLAST, the visit-close test above, so one-hot
         // spends no bit on a condition the walk already decodes.
         if (pph == 7'(PLAST)) fold_launch();

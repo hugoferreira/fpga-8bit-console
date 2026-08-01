@@ -819,3 +819,32 @@
       band levels. The baseline is fidelity against PICO-8, NOT against our own
       previous render: ours is not ground truth. That is what lets a schedule
       change that moves samples pass while a change that moves the sound fails.
+- [x] R.30 DONE. The noise walk's 17x8 PARALLEL multiplier - the last `*` in
+      the hardware lowering, and the largest LUT4 family in the design - moves
+      onto the shared service as two ordinary mode-0 requests. |A| = j is 17
+      bits (inside the 2^21 ceiling), B = |rand| <= 128 fits mode 0, and mode 0
+      is four radix-4 steps landing four places left, so the magnitude is
+      `m_res[27:4]`. Three requirements, all met:
+      (1) `>>> 8` on a signed product is FLOOR while the magnitude domain
+      truncates toward zero, so the negative arm rounds up (+255 equivalent);
+      (2) the old step used to be evaluated at CAP_W1, AFTER CAP_W0's edge, so
+      on a restart sample it saw the s_last_inc that CAP_W0 had just copied
+      into s_old_inc - running it in the load window needs that decision
+      factored into `blend_restart` and the increment selected as
+      `blend_restart ? s_last_inc : s_old_inc`. Missing this was wrong on
+      exactly the tick boundaries (2,202 music-20 samples in an earlier
+      attempt); (3) the service is idle through the load window, so NZ_OLD
+      launches at 19 (the first phase its cone is valid, s_eff_a being the last
+      word in) readable at 24, and NZ_LIVE takes the service on that cycle,
+      readable at 29 - so only the old product needs a register. PWORK 19 -> 29
+      with PSTOR/PFOLD/PLAST following. A simulation assertion fires if either
+      phase ever finds the service busy, because the request mux drops rather
+      than queues. `nz2_rand_r` retires - both draws are pre-advance now.
+      Fingerprint `2dc67844558a`: pre-map 16,138 -> **15,674 (-464)**, 6,923
+      LUT4 (-171), 1,718 carries, 1,563 flops (+10), 13 EBR, placed 8,123 ->
+      **7,931 (-192)**. **103% of the HX8K, 251 cells from placing.**
+      Visit 63 -> 73 phases: walk 538 -> 618 of 1,275, still 96 below where
+      this session started; tick pre-run 2,443/7,654, 5,211 spare, zero late
+      flips. Music 20 byte-identical over 400,000 samples, matrix 59/59
+      byte-exact vs PICO-8 AND byte-identical vs the anchor, PICO-8 fidelity
+      within tolerance on all five entry points.

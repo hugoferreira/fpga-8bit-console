@@ -41,10 +41,10 @@ Bit layout (must match rtl/psg_walk.sv's CAP_* one-hot indices):
 
 # Hardware-flavour schedule constants (rtl/psg_walk.sv, REALTIME_PREVIEW=0).
 PLOSC = 14
-PWORK = 19
-PFOLD = 62
-PSTOR = 43
-PLAST = 62
+PWORK = 29
+PFOLD = 72
+PSTOR = 53
+PLAST = 72
 
 # pph offset from PWORK -> one-hot bit index.
 CAPS = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6,

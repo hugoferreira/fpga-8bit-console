@@ -1631,6 +1631,60 @@ is what lets a schedule change that moves samples pass, and a change that
 moves the sound fail, which is the discrimination this campaign kept having to
 make by eye.
 
+### 28. The noise walk joins the shared service
+
+Section 23 measured the last `*` in the hardware lowering - a 17x8 parallel
+array feeding `nz_out_r`, the largest LUT4 family in the design - at -307
+placed cells, and section 24 priced its migration at "the sequencer loses 104
+of its 565 cycles a sample". Section 26 bought that out: the walk is 63
+phases, so the ten this needs cost the sequencer nothing it was using.
+
+Both steps are now ordinary mode-0 requests. |A| = j is 17 bits, inside the
+service's 2^21 ceiling; B = |rand| <= 128 fits mode 0's byte contract; mode 0
+is four radix-4 steps and lands four places left, so the magnitude is
+`m_res[27:4]`. Three things had to be right:
+
+1. **The semantics.** `(j * rand) >>> 8` is an arithmetic shift of a SIGNED
+   product - floor - while the service works in the magnitude domain, which
+   truncates toward zero. They differ by one whenever the product is negative
+   and its low eight bits are nonzero, so the negative arm rounds up. Proven
+   before any RTL moved.
+2. **The increment the old step multiplies.** The old product used to be
+   evaluated at CAP_W1, AFTER CAP_W0's edge - so on a restart sample it saw
+   the `s_last_inc` that CAP_W0's params-changed block had just copied into
+   `s_old_inc`. Running it in the load window means reading the copy that has
+   not happened yet, so the restart decision is factored into `blend_restart`
+   and the product selects `blend_restart ? s_last_inc : s_old_inc`. Without
+   this the render was wrong on exactly the tick boundaries - 2,202 samples of
+   music 20 in an earlier attempt. One cone serves both readers: every term is
+   stable from pph 19 (s_eff_a is the last word in) until CAP_W2 rewrites the
+   `last_*` registers.
+3. **The phases.** The service is idle through the whole load window - the
+   walk's first other request is CAP_W4 - so NZ_OLD launches at 19, the first
+   phase its restart cone is valid, and is readable at 24; NZ_LIVE takes the
+   service on that same cycle and is readable at 29. The old product is
+   therefore read out on exactly the phase the live one is requested, and only
+   it needs a register. PWORK moves 19 -> 29 and PSTOR/PFOLD/PLAST with it.
+   The request mux DROPS rather than queues, so a simulation assertion fires
+   if either phase ever finds the service busy.
+
+`nz2_rand_r` retires: both draws are pre-advance by construction now, because
+the LFSRs step at CAP_W0, long after these phases.
+
+At RTL fingerprint `2dc67844558a`: pre-mapping 16,138 -> **15,674 (-464)**,
+Yosys 6,923 LUT4s (-171), 1,718 carries unchanged, 1,563 flip-flops (+10, the
+capture register), 13 EBRs unchanged; nextpnr attempts **7,931 placed cells
+(-192)**. That is **103% of the HX8K, 251 cells from placing**, against 491
+before this session's last three stages.
+
+The visit grows 63 -> 73 phases, so the walk goes 538 -> 618 of 1,275 clocks
+per sample - still 96 below where this session found it - and the tick pre-run
+sits at 2,443 of 7,654 with 5,211 spare and zero late flips.
+
+Renders: Celeste music 20 byte-identical over 400,000 samples, the frozen
+matrix 59/59 byte-exact against PICO-8 AND byte-identical against the anchor,
+and fidelity against PICO-8 within tolerance on all five entry points.
+
 ## Risks / Trade-offs
 
 - **[Single-store contention]** Tick and sample work can request the voice EBR
