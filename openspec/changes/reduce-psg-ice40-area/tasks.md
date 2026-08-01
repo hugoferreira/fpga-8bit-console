@@ -758,8 +758,22 @@
       fixed phases, so `psg_tb` goes 3,555 -> **3,356** of 7,654 tick clocks
       with zero late flips - **-199 clocks/tick free**. The walk stays at
       714/1,275 because it is phase-pinned by the control ROM.
-      Renders untouched: matrix 59/59 byte-exact vs PICO-8 AND byte-identical
-      vs the anchor; music 20 byte-identical over 400,000 samples.
+      **NOT render-neutral, and the mechanism matters.** The arithmetic is
+      bit-identical (matrix 59/59 byte-exact vs PICO-8 AND byte-identical vs
+      the anchor; music 20 byte-identical over 400,000 samples), but
+      `psg_seq`'s effect microprogram STALLS on the service - `K_FX: if
+      (!m_busy && ...)` gates the whole arm - so a shorter latency advances the
+      micro-PC ~5 cycles earlier per product, six per slot, and the tick
+      program finishes sooner. Where that crosses a sample boundary the render
+      moves: **music 10, 2,202 of 848,896 samples (0.26%), first at 25.496 s**;
+      the other four entry points byte-identical. Every fidelity number is
+      unchanged (pitch 87.9%, spectrum 0.997, lock 0.72 at 37/75, rms 5,529 vs
+      5,534) and the gate passes. SEQ_BUDGET would NOT have made this
+      transparent - a fixed offer still lets a faster sequencer get further.
+      Byte-neutrality would need `m_busy` padded to the radix-2 window, which
+      is mutually exclusive with the recompaction unless the walk and the
+      sequencer get separate busy signals. Retained as a render change on the
+      evidence that no fidelity metric moves.
       Rejected with numbers: radix-8 (+253 LC standalone, Fmax -41%); folding
       the first step into the load cycle (+56 LC for one cycle, and it moves
       when `m_busy` RISES, which psg_seq's fire-and-forget `ptick_pend &&

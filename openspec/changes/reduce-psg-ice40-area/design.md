@@ -1522,9 +1522,29 @@ because the sequencer stalls on `!m_busy` rather than on fixed phases. `psg_tb`
 goes from 3,555 to **3,356** of 7,654 tick-preparation clocks, zero late flips
 - **-199 clocks per tick, free.** The sample walk stays at 714/1,275 because it
 IS phase-pinned by the control ROM; collecting that is section 26's job.
-Renders are untouched: the frozen matrix is 59/59 byte-exact against PICO-8
-AND byte-identical against the anchor, and Celeste music 20 is byte-identical
-over 400,000 samples.
+**It is NOT render-neutral, and the reason is worth stating.** The arithmetic
+is bit-identical - the frozen matrix is 59/59 byte-exact against PICO-8 AND
+byte-identical against the anchor, and Celeste music 20 is byte-identical over
+400,000 samples. But `psg_seq`'s effect microprogram STALLS on the service:
+`K_FX: if (!m_busy && ...)` gates the whole arm, so the micro-PC does not
+advance while a product is in flight. Halving the latency advances it about
+five cycles earlier per product, six products a slot, and the tick program
+finishes sooner. Where that crosses a sample boundary the render moves -
+**Celeste music 10, 2,202 of 848,896 samples (0.26%), first at 25.496 s**; the
+other four entry points are byte-identical. Every fidelity number is
+unchanged: pitch 87.9%, spectrum cosine 0.997, lock 0.72 at 37/75 blocks, rms
+5,529 against 5,534. The gate passes.
+
+This is section 24's unbounded sequencer seen from the other side, and note
+that SEQ_BUDGET would NOT have made it transparent: a fixed cycle offer still
+lets a faster sequencer get further within it. The only way to make radix-4
+byte-neutral is to hold `m_busy` for the radix-2 duration while the product is
+ready early - and that is mutually exclusive with the recompaction, whose
+whole point is to space the walk's launches by the TRUE latency. Two busy
+signals (true for the walk's request mux, padded for the sequencer) would give
+both, at the cost of a small counter and of preserving an accident: nothing
+but the stall ties the sequencer's pace to the multiplier's latency. Retained
+as a render change on the evidence that no fidelity metric moves.
 
 Rejected with numbers:
 
