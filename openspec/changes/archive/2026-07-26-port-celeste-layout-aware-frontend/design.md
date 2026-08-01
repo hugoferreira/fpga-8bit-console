@@ -6,10 +6,9 @@ contiguous `O_*` block in `src/celeste/memmap.asm`. The
 a host customasm emitter, but intentionally stops at an isolated conformance
 fixture.
 
-The Celeste files are concurrently owned by another agent. This adoption must
-therefore prove a real full-game pipeline without rewriting those files in
-place. Generated sources belong under `build/` and may adapt the old interface
-at the build boundary.
+This adoption must prove a real full-game pipeline without rewriting the
+Celeste files in place. Generated sources belong under `build/` and may adapt
+the old interface at the build boundary.
 
 ## Goals / Non-Goals
 
@@ -24,7 +23,7 @@ at the build boundary.
 
 **Non-Goals:**
 
-- Rewrite the concurrently owned Celeste modules in place.
+- Rewrite the Celeste modules in place.
 - Convert every existing `O_*` operand to typed field syntax in this change.
 - Add a native encoder or duplicate opcode metadata.
 - Change Celeste behavior, memory layout, ISA rules, assets or hardware.

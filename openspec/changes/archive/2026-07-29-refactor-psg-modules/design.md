@@ -19,8 +19,8 @@ verification anchor this change builds on:
   `build/psg_oracle/adopt-exact`, `psg_tb` ALL PASS, zero Verilator
   warnings in three configs (psg_tb build, standalone, REALTIME_PREVIEW=1).
 
-Composition context: `rtl/chip.sv` (shared with the other agent) and
-`rtl/target_psg.sv` both `` `include "psg.sv" `` — neither may change.
+Composition context: `rtl/chip.sv` and `rtl/target_psg.sv` both
+`` `include "psg.sv" `` — neither may change.
 `rtl/psg_tb.sv` holds 46 hierarchical `dut.*` binds over 18 signals.
 `sim/psg_wav.cpp` (the oracle harness) is port-only. `synth_ice40`
 flattens before mapping, so hierarchy is free at the netlist level.
@@ -47,7 +47,7 @@ flattens before mapping, so hierarchy is free at the netlist level.
 - No preview/hardware schedule unification, no service redesign, no
   retiming.
 - No edits to `rtl/chip.sv`, `rtl/target_psg.sv`, `sim/psg_wav.cpp`,
-  the Makefile, or anything the Celeste/NEMO agent touches.
+  or the Makefile.
 
 ## Decisions
 
@@ -152,7 +152,7 @@ name and become the census's family keys.
   (no preview respelling exists in any stage); preview lint config stays
   a gate; residual risk accepted and noted, matching the pre-existing
   preview status (open task 6.2 in reduce-psg-ice40-area).
-- [Concurrent agent edits rtl/ during a measurement] → the synth targets
+- [RTL changes during a measurement] → the synth targets
   print `rtl <hash> @ <commit>`; a stage's before/after must share the
   hash modulo its own diff or the measurement is discarded.
 - [iverilog use-before-declare count grows] → accepted; the iverilog flow

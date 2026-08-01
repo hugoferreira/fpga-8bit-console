@@ -66,8 +66,8 @@ one-access-per-cycle model.
   `$0000-$01FF` and letting bank 1 rotate for code and data costs no block RAM
   at all and never needs re-activating.
 
-  > This replaces an earlier plan to keep them in BRAM. The PPU agent measured
-  > the device off the yosys netlist: **the PPU takes 16 of the 32 block RAMs
+  > This replaces an earlier plan to keep them in BRAM. The yosys netlist shows
+  > that **the PPU takes 16 of the 32 block RAMs
   > and the PSG takes the other 16. There is no spare block RAM today.** The
   > pinned-row scheme is better anyway — it is free, and it does not compete
   > with the video and audio paths for a resource that is already exhausted.

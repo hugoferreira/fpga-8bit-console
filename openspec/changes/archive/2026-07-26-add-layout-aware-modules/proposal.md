@@ -19,7 +19,7 @@ multi-file Celeste migration and for the eventual in-console editor.
   deterministically.
 - Generate layout-owned Celeste module copies beneath `build/`, converting
   byte-equivalent direct `pObj`/`pOth` field operations to typed paths without
-  editing concurrently owned corpus files.
+  editing corpus files.
 - Retain the focused and complete-ROM byte-equivalence gates.
 
 ## Capabilities

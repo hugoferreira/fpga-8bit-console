@@ -73,5 +73,3 @@ requirement changes, no edits to `rtl/chip.sv` or `rtl/target_psg.sv`
 - **Tooling upside**: `tools/psg_ff_census.py` cone/family rankings gain
   functional attribution from flattened instance name prefixes
   (`u_wave.*`, `u_walk.*`, ...).
-- **Coordination**: all touched files are PSG-domain; nothing shared with
-  the Celeste/NEMO agent changes.

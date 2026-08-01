@@ -161,9 +161,8 @@
 
 ## 8. Integration and Documentation
 
-- [x] 8.1 Re-read `docs/agent-coordination.md` and the current `Makefile`, then
-  add only an append-style opt-in `test-layout-asm` target without reformatting
-  or reordering either corpus block.
+- [x] 8.1 Add the opt-in `test-layout-asm` target without reformatting or
+  reordering either corpus block.
 - [x] 8.2 Add the frontend tests to the relevant non-production test aggregate
   while confirming all existing game assembly commands retain their current
   prerequisites and source paths.

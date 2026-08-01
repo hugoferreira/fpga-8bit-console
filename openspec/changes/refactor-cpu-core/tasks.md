@@ -262,9 +262,7 @@ would have been unlikely to reach — see task 4.1.
       Remove the `cpu_rdy` workaround at `rtl/memory_arbiter.sv:76-85`, let
       `dma_request` assert freely, and confirm DMA runs with the CPU mid-write
 - [x] 6.5 Update the comment block at `rtl/memory_arbiter.sv:76-84` to record that
-      the limitation is fixed, and update `docs/hardware-gaps.md`. Comment
-      updated; `docs/hardware-gaps.md` left alone - it is append-only and shared,
-      and the entry there is the PPU/PSG agents' to keep
+      the limitation is fixed, and update `docs/hardware-gaps.md`
 - [ ] 6.6 Run gates T4, T5, T6 and T8; record results against
       `docs/cpu-baseline.json`
 - [x] 6.7 Delete `rtl/cpu6502_arlet.sv` and `rtl/cpu6502_alu.sv` once all gates
@@ -305,7 +303,7 @@ Repairs made on the way through, all of which were pre-existing:
   iverilog cannot bind. `make test` now elaborates and passes for the first
   time in this repo's history.
 
-## 7. Coordination and documentation
+## 7. Integration and documentation
 
 - [ ] 7.1 Amend `add-isa-ergonomic-gates`: restate G4 against
       `docs/cpu-timing.json` in wall-clock time, and restate G7's compatibility

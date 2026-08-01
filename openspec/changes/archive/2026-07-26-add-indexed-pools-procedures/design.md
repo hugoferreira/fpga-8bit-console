@@ -9,7 +9,7 @@ Three related gaps remain. Array paths cannot carry a runtime index; fixed
 object pools are still handwritten addresses and tables; and procedure
 boundaries cannot describe their physical parameters or stack responsibility.
 The implementation must remain bounded C89 in the portable layer and must not
-edit the concurrently owned Celeste sources.
+edit the Celeste sources.
 
 ## Goals / Non-Goals
 

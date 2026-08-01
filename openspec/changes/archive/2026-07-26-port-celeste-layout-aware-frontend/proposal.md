@@ -11,7 +11,7 @@ largest body of manually maintained field offsets and pointer accesses.
   `CelesteObject` shape and derives the existing `O_*` compatibility symbols
   from generated properties.
 - Generate build-only Celeste body and memory-map adapters without modifying
-  the concurrently owned `src/celeste/` corpus sources.
+  the `src/celeste/` corpus sources.
 - Route `make GAME=celeste hex` through the portable frontend and then the
   existing pinned customasm encoder.
 - Gate the port on exact instruction bytes for representative typed operands

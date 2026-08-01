@@ -25,7 +25,7 @@ or unbounded recursion to the portable semantic layer.
 
 - Interpret or replace raw customasm `#include`.
 - Add a package manager, search-path language or conditional compilation.
-- Edit concurrently owned `src/celeste/` files.
+- Edit `src/celeste/` files.
 - Convert `(zp),Y` sequences whose replacement would change instruction bytes.
 - Add native instruction encoding.
 
