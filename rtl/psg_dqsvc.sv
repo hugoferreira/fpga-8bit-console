@@ -47,18 +47,19 @@ module psg_dqsvc (
 
   assign busy = count != 0;
   assign start_ready = count == 0 || count == 1;
+  // The walker already owns the destination registers.  Present the terminal
+  // recurrence directly so it can capture on this edge instead of registering
+  // an otherwise unconsumed result and copying it one clock later.
+  assign result = step_next[21:8];
+  assign result_tag = active_tag;
+  assign done = count == 1;
 
   always_ff @(posedge clk) begin
     if (reset) begin
       count <= 3'd0;
-      done  <= 1'b0;
     end else begin
-      done <= 1'b0;
       if (count != 0) begin
         if (count == 1) begin
-          result     <= step_next[21:8];
-          result_tag <= active_tag;
-          done       <= 1'b1;
           if (start) begin
             p            <= {17'b0, 1'b0, start_k};
             start_a_hold <= start_a;

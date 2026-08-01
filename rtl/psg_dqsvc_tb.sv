@@ -61,14 +61,16 @@ module psg_dqsvc_tb;
 
     // Exercise the terminal-cycle handoff used by phases 19 and 24.
     launch(13'd8191, 9'd508, 1'b0);
-    while (!(busy && start_ready)) @(negedge clk);
+    while (!(done && busy && start_ready)) @(negedge clk);
+    if (result !== 14'd16254 || result_tag !== 1'b0)
+      $fatal(1, "dq chained first result mismatch: got %0d/%0b",
+             result, result_tag);
     start_a = 13'd7331;
     start_k = 9'd193;
     start_tag = 1'b1;
     start = 1'b1;
     @(negedge clk);
     start = 1'b0;
-    await_result(13'd8191, 9'd508, 1'b0);
     await_result(13'd7331, 9'd193, 1'b1);
 
     $display("psg_dqsvc_tb: PASS (57,344 exhaustive + chained transactions)");
