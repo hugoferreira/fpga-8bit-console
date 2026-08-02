@@ -1528,7 +1528,7 @@ class SampleCommitSite:
 
 def validate_sample_relocated_commit_manifest(
         program: list[int], actions: Actions,
-        labels: dict[int, str]) -> str:
+        labels: dict[int, str]) -> tuple[str, list[int]]:
     """Build the H-D2 mirror-free fixed-edge commit candidate.
 
     This deliberately does not replace the accepted image yet.  It proves a
@@ -1671,9 +1671,76 @@ def validate_sample_relocated_commit_manifest(
     assert sum(word != 0 for word in candidate) == 222
     changed = sum(a != b for a, b in zip(program, candidate))
     assert changed == 39, changed
-    return ("H-D2A candidate: 16 fixed write actions at numbered finalization "
-            f"edges; 39 image words change; counts remain 222 words / 782 "
-            "clocks / 172 reads / 158 writes; accepted image untouched")
+    result = ("H-D2A candidate: 16 fixed write actions at numbered "
+              "finalization edges; 39 image words change; counts remain 222 "
+              "words / 782 clocks / 172 reads / 158 writes; accepted image "
+              "untouched")
+    return result, candidate
+
+
+def validate_sample_relocated_value_gap(candidate: list[int]) -> str:
+    """Reject H-D2B at its first information and provenance failures.
+
+    This is the corrected D2A instruction stream, before any accepted-image
+    change.  Prove the strongest built-in allocation: even reusing every H-C
+    field dead on that path cannot carry the independent values required at
+    PC 1b.  Also convict two later values whose read arrives on an anonymous
+    HOLD edge and therefore has no fixed consumer in a mirror-free adapter.
+    """
+    hold = COMMON_ACTION["HOLD"]
+
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(candidate[pc])
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    # Worst built-in case: current wave6+buzz retains updated brown through
+    # W4 while selected old wave6/non-alt retains its old-noise step through
+    # W1.  At PC 1b the q stream presents word14 and the IR primes word13.
+    assert q_word(0x1b) == 14
+    assert decoded(0x1b) == Instruction(Op.EXEC, action=hold, word=13)
+    payload = {
+        "dq_live": 14,
+        "old_noise_step": 17,
+        "phase_delta": 13,
+        "live_amplitude": 12,
+        "noise_lowpass": 16,
+        "updated_brown": 13,
+    }
+    assert sum(payload.values()) == 85
+    # A/B/N/O provide 70.  On a built-in path only H-C's ARAM phase index
+    # (6) and snd_id (3) are dead; all live/old wave controls and old_q remain
+    # required by W0--W5.  The strongest possible overlay is still short.
+    available = 70 + 6 + 3
+    assert sum(payload.values()) > available
+    shortfall = sum(payload.values()) - available
+    assert shortfall == 6
+
+    # Updated word20 is presented at PC 2f, but PC 2f is one of many generic
+    # HOLD/word-zero instructions.  Nothing fixed can capture selected
+    # old_rev there before the stream moves on.
+    assert decoded(0x2e).word == 20
+    assert q_word(0x2f) == 20
+    assert decoded(0x2f) == Instruction(Op.EXEC, action=hold, word=0)
+    anonymous_zero_holds = sum(
+        decoded(pc) == Instruction(Op.EXEC, action=hold, word=0)
+        for pc in range(SAMPLE_START, 0x4e))
+    assert anonymous_zero_holds > 1
+
+    # Likewise PC 38 consumes q14 and primes word15; q15 arrives at another
+    # anonymous HOLD at PC 39 and is overwritten before W84 can use it.
+    assert q_word(0x38) == 14 and decoded(0x38).word == 15
+    assert q_word(0x39) == 15
+    assert decoded(0x39) == Instruction(Op.EXEC, action=hold, word=0)
+    return ("H-D2B rejected: PC 1b needs 85 independent bits against the "
+            f"strongest 79-bit pool/H-C overlay ({shortfall}-bit shortfall); "
+            "q20 at PC 2f and q15 at PC 39 have no fixed consumer")
 
 
 def reachable_to_idle(nodes: list[Node]) -> None:
@@ -3603,8 +3670,9 @@ def main() -> int:
                                                  sample_labels)
     sample_tail_gap = validate_sample_fixed_tail_gap(sample_program, actions,
                                                      sample_labels)
-    sample_relocated = validate_sample_relocated_commit_manifest(
+    sample_relocated, sample_candidate = validate_sample_relocated_commit_manifest(
         sample_program, actions, sample_labels)
+    sample_value_gap = validate_sample_relocated_value_gap(sample_candidate)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -3668,6 +3736,7 @@ def main() -> int:
     print("sample stored-wait manifest: " + sample_waits)
     print("sample fixed-tail manifest: " + sample_tail_gap)
     print("sample relocated-commit manifest: " + sample_relocated)
+    print("sample relocated-value gate: " + sample_value_gap)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)

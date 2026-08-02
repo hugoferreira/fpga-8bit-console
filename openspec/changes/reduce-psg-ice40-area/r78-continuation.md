@@ -1661,6 +1661,27 @@ git history; do not repeat them without the recorded changed condition.
   write lacks a value composed solely from its fixed `state_q` source and
   bounded live state; accept only with unchanged 222/782/172/158 counts and
   explicit external-hold freeze coverage.
+- **R.84H-D2B result and decision:** rejected before image or RTL.  In the
+  worst built-in current-wave6+buzz plus selected-old-wave6/non-alt case, PC
+  `0x1b` must retain independent DQ-live14, old-noise-step17, phase-delta13,
+  amplitude12, noise-lowpass16 and updated-brown13 values: **85 bits**.  The
+  A18+B18+N17+O17 pool plus every H-C field dead on that path (ARAM index6 and
+  built-in-unused sound ID3) provides at most **79 bits**, an unavoidable
+  six-bit shortfall.  Two later physical-stream holes independently convict
+  the candidate: updated word20 reaches `state_q` on anonymous HOLD/word-zero
+  PC `0x2f`, and filter-low word15 does the same on PC `0x39`; neither has a
+  fixed consumer before the stream overwrites it.  The model asserts all
+  three failures against the exact D2A candidate.  No accepted image or RTL
+  changes.
+- **R.84H-D2C next permitted hypothesis:** spend the two already-counted
+  duplicate word14/15 tail writes as typed early transactions.  Move the
+  word14 repeat to PC `0x1b` so updated brown plus selected old mode commit
+  while q14 is present, then prefetch that stored word for W4; retain the
+  post-W84 word14 final rewrite.  Move the word15 repeat to PC `0x39` so the
+  filter-low q15 edge is typed without adding a write, action or state bit;
+  retain the post-W84 word15 final rewrite.  Move the word20 prime to the last
+  pre-W40 wait so unique CAP_W40 consumes q20.  Re-run the numbered q-source,
+  operation-count and allocation proof before retrying the no-mirror machine.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
