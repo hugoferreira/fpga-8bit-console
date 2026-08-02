@@ -1517,6 +1517,163 @@ def validate_sample_fixed_tail_gap(program: list[int], actions: Actions,
             "oracle mirror is 202 record + 42 parameter bits before Trace")
 
 
+@dataclass(frozen=True)
+class SampleCommitSite:
+    pc: int
+    action: str
+    destination: int
+    q_source: int | None
+    final_after: str
+
+
+def validate_sample_relocated_commit_manifest(
+        program: list[int], actions: Actions,
+        labels: dict[int, str]) -> str:
+    """Build the H-D2 mirror-free fixed-edge commit candidate.
+
+    This deliberately does not replace the accepted image yet.  It proves a
+    complete alternative instruction/address manifest first: every relocated
+    write remains an OP_WRITE, its action owns one literal destination, and
+    the instruction word primes the following fixed state_q source.  No
+    action-side extra write is counted.
+    """
+    candidate = list(program)
+    pc_of = {label: pc for pc, label in labels.items()}
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+
+    def set_insn(pc: int, insn: Instruction) -> None:
+        candidate[pc] = insn.encode()
+
+    def set_word(label: str, word: int) -> None:
+        pc = pc_of[label]
+        insn = Instruction.decode(candidate[pc])
+        assert insn.op in (Op.READ, Op.WRITE, Op.EXEC)
+        set_insn(pc, Instruction(insn.op, action=insn.action, word=word))
+
+    # The twelve old unique tail writes displaced onto finalization waits
+    # become elapsed service clocks.  Word14/15 stay immediately after W84;
+    # the two deliberate lowpass repeats at PCs 4a/4b remain writes.
+    for pc in range(0x3c, 0x4a):
+        set_insn(pc, Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"]))
+
+    sites = (
+        SampleCommitSite(0x14, "STORE_10_20", 20, 20, "restart select"),
+        SampleCommitSite(0x15, "STORE_11_21", 21, 21, "restart select"),
+        SampleCommitSite(0x16, "STORE_12_22", 22, 22, "restart select"),
+        SampleCommitSite(0x17, "STORE_8_18", 18, 18, "restart select"),
+        SampleCommitSite(0x19, "STORE_9_19", 19, 19, "restart select"),
+        SampleCommitSite(0x24, "STORE_13_23", 23, 23, "W0"),
+        SampleCommitSite(0x25, "STORE_0_10", 10, 10, "W1"),
+        SampleCommitSite(0x27, "STORE_1_11", 11, 11, "W5"),
+        SampleCommitSite(0x28, "STORE_6_16", 16, 16, "W5"),
+        SampleCommitSite(0x29, "STORE_7_17", 17, 17, "W5"),
+        SampleCommitSite(0x2a, "STORE_3_13", 13, 13, "W6"),
+        SampleCommitSite(0x2d, "STORE_2_12", 12, 12, "W6"),
+        SampleCommitSite(0x3c, "STORE_4_14", 14, 14, "W84"),
+        SampleCommitSite(0x3d, "STORE_5_15", 15, 15, "W84"),
+        SampleCommitSite(0x4a, "STORE_14_15", 15, None, "W84 repeat"),
+        SampleCommitSite(0x4b, "STORE_15_14", 14, None, "W84 repeat"),
+    )
+    next_prefetch = {
+        0x13: 20, 0x14: 21, 0x15: 22, 0x16: 18,
+        0x18: 19, 0x19: 23,
+        0x23: 23, 0x24: 10,
+        0x26: 11, 0x27: 16, 0x28: 17, 0x29: 13,
+        0x2c: 12, 0x2d: 17,
+        0x3b: 14, 0x3c: 15,
+    }
+    for pc, word in next_prefetch.items():
+        insn = Instruction.decode(candidate[pc])
+        assert insn.op in (Op.READ, Op.WRITE, Op.EXEC)
+        set_insn(pc, Instruction(insn.op, action=insn.action, word=word))
+    for site in sites:
+        old = Instruction.decode(candidate[site.pc])
+        word = old.word
+        set_insn(site.pc, Instruction(
+            Op.WRITE, action=action_by_name[site.action], word=word))
+
+    # Non-writing prefetch/capture edges.  H-C's retained old-q/tuple and the
+    # 70-bit pool consume these words; none is a hidden semantic READ.
+    set_word("nz_live_hold_1", 14)  # brown + lowpass sign
+    set_word("nz_live_hold_2", 13)  # phase2 high + ack/nz phase/gain high
+    set_word("nz_live_hold_3", 10)  # W0 current phase
+    set_word("cap_W2", 18)          # selected old-inc low for W3/W4
+    set_word("cap_W3", 19)          # selected old-inc high for W4/W5
+    set_word("cap_W26_wait_hold_3", 19)  # old-gain low at W26
+    set_word("cap_W40_wait_hold_1", 20)  # selected old reverb
+    set_word("cap_W51", 26)         # damp/current reverb at W75
+    set_word("cap_W75", 14)         # original filter high before W84
+    set_word("cap_W84_wait_hold_0", 15)  # original filter low
+
+    # Every literal STORE action appears exactly once, and its fixed write
+    # destination remains the one named by that action even when ir.word is a
+    # next-read prefetch.  This is a 16-entry fixed decoder, not an index mux.
+    action_destination = {
+        action_by_name[f"STORE_{index}_{10 + index}"]: 10 + index
+        for index in range(14)
+    }
+    action_destination.update({
+        action_by_name["STORE_14_15"]: 15,
+        action_by_name["STORE_15_14"]: 14,
+    })
+    seen: list[tuple[int, int, int | None]] = []
+    q_word: int | None = None
+    for pc in range(SAMPLE_START, 0x4e):
+        insn = Instruction.decode(candidate[pc])
+        if insn.op == Op.WRITE and insn.action in action_destination:
+            seen.append((pc, action_destination[insn.action], q_word))
+        if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+            q_word = insn.word
+    assert [pc for pc, _, _ in seen] == [site.pc for site in sites]
+    assert [dst for _, dst, _ in seen] == [site.destination for site in sites]
+    for actual, site in zip(seen, sites):
+        if site.q_source is not None:
+            assert actual[2] == site.q_source, (actual, site)
+    assert len({Instruction.decode(candidate[site.pc]).action
+                for site in sites}) == 16
+
+    # Control flow and operation counts are unchanged: twelve writes moved
+    # onto twelve HOLDs.  Owner one is not part of this candidate at all.
+    def execute_counts(image: list[int]) -> tuple[int, ...]:
+        pc, slot = SAMPLE_START, 0
+        counts = [0] * 8
+        for _ in range(2_000):
+            insn = Instruction.decode(image[pc])
+            counts[int(insn.op)] += 1
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = slot == 0
+                pc = insn.target if take == bool(insn.sense) \
+                    else (pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                break
+            else:
+                raise AssertionError(insn)
+        else:
+            raise AssertionError("relocated sample candidate did not finish")
+        return tuple(counts)
+
+    base_counts = execute_counts(program)
+    candidate_counts = execute_counts(candidate)
+    assert candidate_counts == base_counts
+    assert sum(candidate_counts) == 782
+    assert candidate_counts[int(Op.READ)] == 172
+    assert candidate_counts[int(Op.WRITE)] == 158
+    assert sum(word != 0 for word in candidate) == 222
+    changed = sum(a != b for a, b in zip(program, candidate))
+    assert changed == 40, changed
+    return ("H-D2 candidate: 16 fixed STORE actions at numbered finalization "
+            f"edges; 40 image words change; counts remain 222 words / 782 "
+            "clocks / 172 reads / 158 writes; accepted image untouched")
+
+
 def reachable_to_idle(nodes: list[Node]) -> None:
     graph = {node.name: set(node.successors) for node in nodes}
     assert "S_IDLE" in graph
@@ -3444,6 +3601,8 @@ def main() -> int:
                                                  sample_labels)
     sample_tail_gap = validate_sample_fixed_tail_gap(sample_program, actions,
                                                      sample_labels)
+    sample_relocated = validate_sample_relocated_commit_manifest(
+        sample_program, actions, sample_labels)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -3506,6 +3665,7 @@ def main() -> int:
     print("sample action inventory: " + sample_inventory)
     print("sample stored-wait manifest: " + sample_waits)
     print("sample fixed-tail manifest: " + sample_tail_gap)
+    print("sample relocated-commit manifest: " + sample_relocated)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)

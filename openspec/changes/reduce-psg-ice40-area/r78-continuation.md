@@ -1622,6 +1622,20 @@ git history; do not repeat them without the recorded changed condition.
   a numbered commit table with physical `state_q` source, packed merge inputs,
   write address and finalization edge, then execute it without `loaded_words`,
   `params_words`, `SampleTrace` or direct memory reads before any RTL.
+- **R.84H-D2 commit-manifest foundation:** an alternate owner-zero image is
+  now generated and checked in memory without replacing `psg_exec.hex`.
+  Sixteen fixed STORE actions still appear exactly once: words 20/21/22/18/19
+  commit in the pre-W0 waits after restart selection; word23 and word10 commit
+  between W6 and W15; words 11/16/17/13 commit before W26, word12 before W40,
+  words 14/15 immediately after W84, and the existing word15/14 repeats remain
+  at the tail.  Twelve displaced unique tail writes become elapsed HOLDs, so
+  the candidate remains exactly 222 words, 782 active clocks, 172 semantic
+  reads and 158 writes.  Each action owns one literal write address while its
+  instruction word primes the next fixed `state_q` source; there is no hidden
+  action-side write or dynamic destination.  Forty owner-zero image
+  words differ and owner one is untouched.  This is an address/lifetime
+  candidate only: the accepted image remains byte-identical, and value
+  construction without the Python record/trace oracle is still the next gate.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
