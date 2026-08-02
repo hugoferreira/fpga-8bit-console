@@ -350,9 +350,29 @@ git history; do not repeat them without the recorded changed condition.
   6k budget trajectory and seed-1 placement improves; an accepted stage must
   then pass exact schedule, formula/transaction, 59-render, P.1/P.2,
   `click-v1`, lint, clock, Celeste, routing and both-clock timing gates.
-- **Decision:** active.  The ownership, ladder, schedule, map and retirement
-  set are now fixed before RTL.  Repeat R.83 only through this address-state
-  executor; do not add another flat waveform request/result service.
+- **R.84B fixed-cost result:** the controller shell implements one dynamic
+  eight-bit PC, owner, slot, four conditions, direct 64-word-per-slot state
+  addresses and branch/jump/slot/owner/done formats around a 256x16 program.
+  The first spelling assigned the instruction register from reset, launch and
+  advance sites, so Yosys could not infer a block ROM.  The retained spelling
+  has one reset-free clocked read enabled only by launch or advance; reset is
+  safe because `active` remains false until the first fetched instruction.
+  Icarus self-checks taken/untaken branches, hold, state copy, owner, slot and
+  completion.  Testbench and target Verilator lint pass.  Yosys infers exactly
+  one `SB_RAM40_4K` and maps **43 LUT4s, 7 carries, 14 flops, 10 unpackable
+  flops, one EBR and a 53-LC floor**.  Seed-1 nextpnr places and routes **57
+  LCs / one EBR at 122.22 MHz** against 28.125 MHz.  With the R.84A fixed-base
+  model this shell alone predicts 2,829 placed LCs; behavior-bearing actions
+  may still spend 4,171/3,171/2,671/2,171 floor cells before the
+  7k/6k/5.5k/5k rungs respectively.  This is a cost decomposition, not a PSG
+  area claim: action logic, persistent-state ownership and exact program
+  behavior are not yet implemented.
+- **Decision:** R.84A's bound and R.84B's physical foundation are accepted;
+  the complete R.84 migration remains active.  The fixed controller cost is
+  negligible and the program really occupies the fifteenth EBR, so the next
+  gate is the generated action/program model required above.  Repeat R.83
+  only through this address-state executor; do not add another flat waveform
+  request/result service.
 
 ### Active task queue
 
@@ -367,6 +387,9 @@ git history; do not repeat them without the recorded changed condition.
       register-fed generic ALU or a partial decode migration.
 - [x] Re-derive the 7k/6k/5k ladder from measured whole-substrate ownership
       before writing R.84 RTL.
+- [x] R.84B: infer and route the complete one-EBR controller shell before
+      action logic; 43 LUT4s, 14 flops, 53-LC floor, 57 placed LCs and
+      122.22 MHz, with self-check and both lint configurations clean.
 
 ## Handoff rule
 
