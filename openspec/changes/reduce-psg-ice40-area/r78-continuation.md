@@ -2689,6 +2689,45 @@ git history; do not repeat them without the recorded changed condition.
   no Trace record, semantic sidecar, partial PC graft or generic RTL edit is
   permitted.  Stop before atomic integration or physical claims unless every
   candidate PC, service transaction and final commit is mechanically joined.
+- **C2-C result and decision:** rejected before RTL because the bounded
+  bench-only composition has no source-derived enabled-successor contract at
+  its first semantic edge.  After the fourteen oscillator and four parameter
+  words have streamed in, candidate PC `0x13` / `NZ_OLD_LOAD_PAR_3` must use
+  q20 to derive restart, selected-old, blend and noise context, launch the
+  real DQ and multiplier work, and form values committed immediately by
+  PCs `0x14..0x19`.  `validate_sample_d2fca_manifest()` proves widths,
+  lifetimes, q provenance and eighteen fixed destinations but deliberately no
+  value transition.  `validate_sample_b3b2a_slice_map()` starts at the later
+  W1/W2/W3 frame and fills its roots with deterministic synthetic `source()`
+  values.  `SampleImageMachine.begin_trace()` instead calls the complete
+  direct `evaluate_sample_slot()` oracle and stores a `SampleTrace`; C2-B's
+  real controller likewise still drives synthetic write data.  None is a
+  legal implementation source for C2-C.
+- **C2-C RTL audit:** the H-C compatibility wrapper overrides HOLD/CAP read
+  addresses and therefore cannot carry the candidate q stream; the core must
+  be instantiated directly.  No owner-zero action-to-fixed-destination/write-
+  data decoder exists, and CAP_W51 remains `OP_EXEC word26` while the only
+  26/30 parameter-bank remap is `OP_READ`-qualified.  Wave/ARAM, DQ and the
+  multiplier have hold-correct cores but no D2F operand/result/tag adapter;
+  ring, seven-node fold, leaf/dry publication and persistent/global commits
+  remain private legacy-walker behavior.  Thus a nominal C2-C implementation
+  must either inject `SampleTrace` values, retain a parallel semantic record,
+  hand-graft selected legacy PCs, or silently become the full production
+  adapter.  The first three violate the hypothesis and the last is not the
+  bounded bench-only iteration claimed here.  No model, image or RTL changes
+  land; accepted C2-B `4340adb` remains the scratch executable checkpoint.
+- **Next permitted C2-C-A:** establish the missing complete source-bound
+  semantic transition contract before another adapter attempt.  It must cover
+  every owner-zero action from the eighteen literal state loads through the
+  final fold/dry commit, bind each input/result to a real legacy-walker edge or
+  hold-correct primitive issue/take, and contain no sampled result values,
+  direct-oracle output, `SampleTrace`, working-record mirror or synthetic root.
+  The contract must be executable by an RTL harness and checked against a live
+  `psg_walk` oracle across enabled and held edges; a generated package may
+  describe widths, slices, producers, destinations and guards, but not carry
+  semantic values.  Only after complete action/PC/root coverage may the D2F
+  adapter consume it.  Generic PSG/Tang RTL remains untouched until the board
+  task releases ownership or an atomic integration boundary is coordinated.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
