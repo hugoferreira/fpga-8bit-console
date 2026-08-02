@@ -14,6 +14,7 @@
 module psg_execdp(input  bit          clk,
                   input  bit          reset,
                   input  logic        active,
+                  input  logic        hold,
                   input  logic [2:0]  op,
                   input  logic [6:0]  action,
                   input  logic [15:0] state_q,
@@ -53,7 +54,8 @@ module psg_execdp(input  bit          clk,
   logic [15:0] arith_lhs, arith_operand, arith_rhs;
   logic arith_sub, arith_cin;
 
-  wire exec = active && op == OP_EXEC && action[6:4] == FAMILY_COMMON;
+  wire exec = active && !hold && op == OP_EXEC
+              && action[6:4] == FAMILY_COMMON;
   wire [3:0] fn = action[3:0];
 
   always_comb begin
