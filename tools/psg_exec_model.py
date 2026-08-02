@@ -4,7 +4,7 @@
 This is deliberately a control/data-movement model, not an audio model.  It
 answers the questions that must be closed before replacing psg_walk/psg_seq:
 
-* does one 256x16 image hold the sample, tick/effect, and trigger/music pages;
+* do two owner-selected 256x16 banks hold the sample and tick/flow programs;
 * can the 64-word sample page represent every persistent read/write and the
   ordered fold without reintroducing pph;
 * do synchronous state reads line up with the action that consumes them;
@@ -36,6 +36,10 @@ IMAGE = ROOT / "rtl" / "psg_exec.hex"
 PAGE_SAMPLE = range(0x00, 0x40)
 PAGE_TICK = range(0x40, 0xC0)
 PAGE_FLOW = range(0xC0, 0x100)
+PROGRAM_BANK_WORDS = 256
+PROGRAM_BANKS = 2
+OWNER_SAMPLE = 0
+OWNER_TICK = 1
 SAMPLE_START = 0x01
 SAMPLE_CLOCK_LIMIT = 1003
 
@@ -703,8 +707,9 @@ def main() -> int:
     states = sequencer_states(seq)
     successors = state_successors(seq, states)
     actions = Actions()
-    program = [0] * 256
-    sample_labels = build_sample(actions, program)
+    sample_program = [0] * PROGRAM_BANK_WORDS
+    tick_program = [0] * PROGRAM_BANK_WORDS
+    sample_labels = build_sample(actions, sample_program)
 
     seq_nodes = expand_sequencer(states, successors, actions)
     tick_nodes, flow_nodes = split_pages(seq_nodes)
@@ -712,32 +717,48 @@ def main() -> int:
     tick_labels = layout(tick_nodes, PAGE_TICK)
     flow_labels = layout(flow_nodes, PAGE_FLOW)
     labels = {**tick_labels, **flow_labels}
-    tick_used = emit(tick_nodes, PAGE_TICK, labels, program)
-    flow_used = emit(flow_nodes, PAGE_FLOW, labels, program)
+    tick_used = emit(tick_nodes, PAGE_TICK, labels, tick_program)
+    flow_used = emit(flow_nodes, PAGE_FLOW, labels, tick_program)
+    program = sample_program + tick_program
 
     validate_instruction_codec(program)
     validate_explicit_emission()
-    validate_node_contract(seq_nodes, program)
+    validate_node_contract(seq_nodes, tick_program)
     sample_cycles, sample_spare, sample_used = validate_sample(
-        program, actions, sample_labels)
+        sample_program, actions, sample_labels)
     reachable_to_idle(seq_nodes)
     addresses = state_address_inventory(seq)
     commits = output_commit_inventory(seq, walk)
 
-    # Every emitted branch/jump target must name a compiled instruction.
-    live_pcs = set(sample_labels) | set(tick_labels.values()) \
-        | set(flow_labels.values())
-    for pc, word in enumerate(program):
-        insn = Instruction.decode(word)
-        if insn.op in (Op.BRANCH, Op.JUMP) and word != 0:
-            assert insn.target in live_pcs, \
-                f"pc {pc:02x}: target {insn.target:02x} is not a label"
+    # Branches and jumps never cross an owner-selected bank.  OP_OWNER is the
+    # only instruction allowed to select the other bank for the next fetch.
+    bank_contracts = (
+        (OWNER_SAMPLE, sample_program, set(sample_labels)),
+        (OWNER_TICK, tick_program,
+         set(tick_labels.values()) | set(flow_labels.values())),
+    )
+    for owner, bank, live_pcs in bank_contracts:
+        assert len(bank) == PROGRAM_BANK_WORDS
+        for pc, word in enumerate(bank):
+            insn = Instruction.decode(word)
+            if insn.op in (Op.BRANCH, Op.JUMP) and word != 0:
+                assert insn.target in live_pcs, \
+                    f"owner {owner} pc {pc:02x}: target " \
+                    f"{insn.target:02x} is not a same-bank label"
 
-    print("R.84C executor contract: PASS")
-    print(f"sample page: {sample_used}/64 words, {sample_cycles}/"
+    assert len(program) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
+    assert sample_used == 62
+    assert tick_used + flow_used == 125
+    normalized_tick, normalized_flow = 148, 75
+    assert normalized_tick + normalized_flow == 223
+    assert normalized_tick + normalized_flow <= PROGRAM_BANK_WORDS
+
+    print("R.84G-D owner-banked executor contract: PASS")
+    print(f"sample bank: {sample_used}/256 words, {sample_cycles}/"
           f"{SAMPLE_CLOCK_LIMIT} conservative clocks, {sample_spare} spare")
-    print(f"tick/effect page: {tick_used}/128 words; "
-          f"trigger/music page: {flow_used}/64 words")
+    print(f"tick/flow bank: {tick_used + flow_used}/256 words "
+          f"({tick_used} tick/effect + {flow_used} trigger/music); "
+          f"normalized capacity {normalized_tick + normalized_flow}/256")
     print(f"legacy sequencer: {len(states)} states -> {len(seq_nodes)} PC nodes; "
           "all nodes can reach S_IDLE")
     lowered = sum(node.lowered for node in seq_nodes)
