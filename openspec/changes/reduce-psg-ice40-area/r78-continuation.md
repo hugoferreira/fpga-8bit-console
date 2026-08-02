@@ -2472,6 +2472,48 @@ git history; do not repeat them without the recorded changed condition.
   consumption.  Reject before whole executor code unless every production
   edge has a literal overlap-free row and no semantic value comes from a
   context/oracle sidecar.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1-B active hypothesis:** starting from clean
+  scratch `c9e40bf`, add only a source-derived physical transition-schema
+  proof.  It may name production state words, public inputs and the existing
+  service recurrence state, but no sampled `Path`/`SlotContext`, injected
+  value or final-output oracle.  Every admitted PC row must carry literal
+  physical slices, guard, q/address origin, enabled successor and last use;
+  every service must balance independently.  Bind the instantiated radix-2
+  multiplier, parameter bits 13:10, physical ARAM base/stride, stopped held
+  `seq_q`, DQ phase commits and ring validity.  Exercise a real CE-selected
+  successor and explicit rejected wrong-kind/origin takes.  Stop before value
+  execution, record/fold/public semantics, image, RTL, area or render work and
+  revert if any row still depends on a semantic sidecar or prose ownership.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1-B result and decision:** rejected and
+  reverted after two independent audits; no model, image or RTL lands.  The
+  draft correctly bound the HX8K target to `RADIX_BITS=1`, parameter damp/rev
+  to q bits 13:12/11:10, and all 1,024 reachable three-bit-sound-ID ARAM
+  addresses to `256+68*id+wrapped_index`.  It also preserved the candidate's
+  sixteen named action PCs, late state words and corrected built-O versus
+  wavetable-N and Q-versus-O destination spelling.  These are source facts,
+  not a transition proof.
+- **B1-B1-B proof defects:** its 26 hand-written transition rows cover only 19
+  of the 42 PCs from 13 through 3c.  Guard/source/result/last-use fields are
+  unchecked prose, row validation sees neither cross-row lifetime collisions
+  nor the H-C aliases, and the six late snapshots omit live path/control bits.
+  The radix-2 slow+six-fast CDC successor, DQ terminal-and-relaunch edge,
+  W0-W5 wave tags, ARAM replay/stopped `seq_q`, ring validity/RP/write and W0
+  clear-qualified seventeen-bit lowpass were not executed.  Equal service
+  tuples, an invented `Boundary` ternary and Boolean wrong-token probes do not
+  prove balance, CE freeze or rejected takes.  PC36 bank-one still physically
+  reads word26 because the required OP_EXEC CAP_W51 26->30 override is absent.
+- **Stop rule and next permitted evidence:** B1-B1-A and B1-B1-B are two
+  consecutive rejected Python mirrors of the same transition mechanism; do
+  not retry it with another prose manifest, sampled context or Python state
+  machine.  A future B1-B1-C is permitted only if it changes the evidence
+  source: instrument the existing RTL primitive benches to emit deterministic
+  per-edge traces for the instantiated radix-2 multiplier, chained DQ, wave
+  pipeline, ARAM borrow/replay and ring NBA sequence, then mechanically join
+  those traces to all 42 literal candidate PCs and the existing D2F-C-A slice
+  lifetimes.  Require the real held clock enables and deliberately invalid
+  kind/origin requests to be observed at the RTL boundary.  Stop before an
+  executor or generic integration until that trace join has no missing PC,
+  live bit, q/address origin or service transition.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
