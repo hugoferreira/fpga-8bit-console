@@ -636,6 +636,45 @@ git history; do not repeat them without the recorded changed condition.
   a complete lowered program proves that removing later pack/move actions
   retires more than this isolated 167-cell excess over R.84E.  Do not retry by
   changing action count or flag spelling around the same field projections.
+- **R.84G-C active hypothesis:** normalize legacy counter, length, loop-bound
+  and row fields into fixed addressed 16-bit scratch words before arithmetic.
+  A pure movement layer may zero-extend a fixed byte/row field or merge one
+  normalized result into a fixed persistent word, but it owns no register,
+  carry chain, comparison or accumulator feedback.  The unchanged R.84D
+  common actions then perform all increment, decrement and compare operations
+  on whole `acc`/`state_q` words, and explicit branches preserve foreground
+  length-stop, released-loop suppression, loop-before-end priority and the two
+  row layouts.  This is the changed substrate permitted by R.84G-B: selection
+  terminates at an address-selected write rather than feeding arithmetic or
+  the accumulator D mux.
+- **R.84G-C first gate:** derive the complete synchronous microprogram and
+  prove its instruction count against the 29 spare tick and 38 spare flow
+  words, allowing explicit cross-page edges before editing the image.  Price
+  the fixed normalizer beside the exact R.84E datapath before program
+  expansion.  Reject if it adds a carry or flop, loses the one-EBR inference,
+  exceeds a 430-LC floor, or needs a general source/destination index.  If it
+  passes, exhaust every counter/speed tuple and every length/row/loop/released
+  combination, then lower only the complete EA family; no partial generic-PSG
+  integration or whole-PSG area claim is permitted at this stage.
+- **R.84G-C hold prerequisite:** the resume audit found that `psg_execctl` and
+  `psg_execmove` suppress advance and writes on `hold`, but `psg_execdp`
+  qualifies execution only with `active`.  A held common ADD/SUB/shift would
+  therefore re-execute on every frozen clock after integration.  Gate the one
+  datapath commit site with the same hold signal, inject a hold over a live
+  arithmetic instruction in the self-check, and re-price the isolated R.84E
+  baseline before accepting any normalizer result.  This is a correctness
+  prerequisite, not an area hypothesis.
+- **R.84G-C hold prerequisite result:** accepted as an independent correctness
+  foundation.  `psg_execdp` now qualifies its sole commit site with `!hold`,
+  and the arithmetic self-check holds a live ADD while proving accumulator and
+  flags remain unchanged.  Controller, movement, generated-image/model and
+  both production lint modes pass; the common datapath still passes all
+  327,680 arithmetic pairs.  The canonical isolated HX8K target maps **328
+  LUT4s, 24 carries, 34 flops, 25 unpackable flops, one EBR and a 353-LC
+  floor** and seed-1 router2 places **359 LCs** at **54.76 MHz**, versus
+  R.84E's 324/24/34/27/one-EBR/351-floor/357-placed result.  The two-cell
+  cost is retained because every integrated executor must freeze atomically;
+  it does not establish any R.84G-C normalizer or whole-PSG result.
 
 ### Active task queue
 
@@ -667,6 +706,8 @@ git history; do not repeat them without the recorded changed condition.
       synchronous address-state micro-operations through the common chain.
 - [x] R.84G-A: make explicit branch/default/page/action metadata a
       byte-identical generated-control foundation before lowering the family.
+- [x] R.84G hold prerequisite: prevent common datapath commits while the
+      controller and movement layer are frozen; re-prove and re-price R.84E.
 - [ ] R.84G-B: price field-selected operations through the existing common
       chain before spending program words on the complete advance sequence.
 

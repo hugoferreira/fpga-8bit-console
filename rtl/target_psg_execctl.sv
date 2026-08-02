@@ -30,7 +30,7 @@ module target_psg_execctl(input  bit          clk,
   /* verilator lint_on UNUSEDSIGNAL */
 
   psg_execdp u_dp(
-    .clk(clk), .reset(reset), .active(active), .op(op_dbg),
+    .clk(clk), .reset(reset), .active(active), .hold(hold), .op(op_dbg),
     .action(action), .state_q(state_q), .cond_ext(cond_ext),
     .state_wd(state_wd_dp), .cond(cond), .acc_dbg(acc_dbg),
     .flags_dbg(flags_dbg));

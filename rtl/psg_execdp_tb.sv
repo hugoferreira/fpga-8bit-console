@@ -5,6 +5,7 @@ module psg_execdp_tb;
   bit clk;
   bit reset = 1;
   logic active;
+  logic hold;
   logic [2:0] op;
   logic [6:0] action;
   logic [15:0] state_q;
@@ -25,7 +26,8 @@ module psg_execdp_tb;
   end
 
   psg_execdp dut(
-    .clk(clk), .reset(reset), .active(active), .op(op), .action(action),
+    .clk(clk), .reset(reset), .active(active), .hold(hold), .op(op),
+    .action(action),
     .state_q(state_q), .cond_ext(cond_ext), .state_wd(state_wd),
     .cond(cond), .acc_dbg(acc), .flags_dbg(flags));
 
@@ -81,6 +83,7 @@ module psg_execdp_tb;
 
   initial begin
     active = 1'b0;
+    hold = 1'b0;
     op = OP_EXEC;
     action = {3'd7, A_HOLD};
     state_q = 0;
@@ -151,6 +154,17 @@ module psg_execdp_tb;
                  1'b1, 1'b0, 1'b0);
     check_result(A_NEG, 16'h8000, 0, 1'b0, 16'h8000,
                  1'b1, 1'b1, 1'b0);
+
+    load(16'h1234);
+    expected = acc;
+    expected_c = flags[2];
+    expected_v = flags[3];
+    hold = 1'b1;
+    exec(A_ADD, 16'h1111);
+    if (acc !== expected || flags !== {expected_v, expected_c, 1'b0, 1'b0})
+      $fatal(1, "held datapath re-executed acc=%h flags=%b", acc, flags);
+    action = {3'd7, A_HOLD};
+    hold = 1'b0;
 
     load(16'h55aa);
     active = 1'b0;
