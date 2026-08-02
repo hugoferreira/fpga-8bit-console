@@ -18,6 +18,7 @@ Sections:
   svc   - the G*z product as two passes of the 24x10 m-service shape
   tzpow - the biased-arithmetic-shift idiom for every tz-by-2^k site
   blend - the crossfade as one multiply instead of two
+  wtsign - fold wavetable product sign into the interpolation addition
   dq    - the seven per-wave dq constants as add/ceil forms
   amp   - G, the detune boost and vibrato as pure shift-adds
   aram  - page-local audio-upload address and range decode
@@ -489,6 +490,23 @@ def sec_blend() -> None:
            "needs one 7x18 product (i * (new-old)), not two")
 
 
+# --- wtsign: fold product sign into the interpolation addition --------------
+
+def sec_wtsign() -> None:
+    print("wtsign: +/-m == (m XOR sign-mask) + sign in a 20-bit word")
+    mag = np.arange(1 << 19, dtype=np.int64)
+    word_mask = (1 << 20) - 1
+    ok = True
+    for sign in (0, 1):
+        current = np.where(sign, -mag, mag) & word_mask
+        sign_mask = word_mask if sign else 0
+        candidate = ((mag ^ sign_mask) + sign) & word_mask
+        ok &= np.array_equal(current, candidate)
+    report("wtsign.addsub_carry", ok,
+           "all 1,048,576 19-bit magnitude/sign tuples; the following "
+           "base add and arithmetic shift therefore remain identical")
+
+
 # --- dq: the per-wave secondary increments as add/ceil forms ----------------
 
 def sec_dq() -> None:
@@ -900,6 +918,7 @@ def sec_noise() -> None:
 
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
             "svc": sec_svc, "tzpow": sec_tzpow, "blend": sec_blend,
+            "wtsign": sec_wtsign,
             "dq": sec_dq, "amp": sec_amp, "aram": sec_aram,
             "timing": sec_timing, "pitch": sec_pitch, "noise": sec_noise,
             "bound": sec_bound,

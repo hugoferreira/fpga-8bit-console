@@ -343,12 +343,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       $signed({wt_p1[7], wt_p1}) - $signed(smp_a[8:0]);
   wire signed [8:0] wt_qd =
       $signed({wt_q1[7], wt_q1}) - $signed(smp_b[8:0]);
-  wire signed [19:0] wt_prod =
-      mxs_new ? -$signed({1'b0, m_res[20:2]})
-              :  $signed({1'b0, m_res[20:2]});
-
+  wire signed [19:0] wt_mag = $signed({1'b0, m_res[20:2]});
+  wire signed [19:0] wt_op = wt_mag ^ $signed({20{mxs_new}});
   wire signed [17:0] wt_base = cap[CAP_W26] ? smp_b : smp_a;
-  wire signed [19:0] wt_sum = $signed({wt_base[9:0], 10'b0}) + wt_prod;
+  wire signed [19:0] wt_sum = $signed({wt_base[9:0], 10'b0})
+                            + wt_op + $signed({19'b0, mxs_new});
   wire signed [17:0] wt_z = 18'(wt_sum >>> 3);
 
   // Pitched-noise recurrence. lfsr supplies the held sample and random step;
