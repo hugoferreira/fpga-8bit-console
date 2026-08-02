@@ -3237,6 +3237,42 @@ git history; do not repeat them without the recorded changed condition.
   target, read address/availability edge and hold drift.  C-A remains
   controller/address only: no D2F lifetime sites, pool reads/definitions,
   primitive values, adapter, RTL, image, synthesis or area claim.
+- **C2-C-D1-C-A result and decision:** accepted as the bounded future
+  direct-core controller/address-obligation foundation.  The model emits, and
+  an independent closed
+  checker reconstructs from the anchored candidate and C2-C-C manifest,
+  **782 enabled occurrences per parameter bank / 1,564 total** with all **222**
+  static owner-zero PCs and all eight slot classes reached in each run.  Each
+  bank contains 172 READ, 406 EXEC, 158 WRITE, 29 SLOT, eight JUMP, eight
+  BRANCH and one DONE occurrence; its state-read classes are 742 literal
+  instruction words, 32 current-RTL active-bank parameter reads and eight
+  future action-qualified CAP_W51 q26/q30 address obligations.  Every enabled
+  occurrence records its exact predecessor q origin, state address and
+  successor availability edge.  Of 316 write occurrences, **256** are the
+  sixteen manifest-anchored remapped fixed-write address obligations across
+  both banks; the 32 leaf and 28 fold writes already use their literal 48/49
+  destinations.  No write data is present.
+  External hold is a separate self-edge with controller/microcode/state/service
+  enables disabled and state_q retained.  The canonical artifact is SHA-256
+  `f86698f6...`; independent A/B generation, source inventory, full checker and
+  value logs are byte-identical.  Hard anchors remain candidate `6f5713e2...`,
+  C2-C-C manifest `438d85a0...`, owner-zero words `521f0bbd...` and production
+  image `59b6f86e...`.  Ten mutations are convicted: branch target 50->51,
+  fold slot destination, PC1c word10->11, loop jump 0->1, read address,
+  q-availability edge, external-hold drift, manifest/graph collusion, unknown
+  schema field and numeric bool/int type coercion.  A first audit found that
+  Python object equality admitted the last class; acceptance uses canonical
+  JSON byte equality and the repaired checker was independently re-audited.
+  The full model, C2-C-C source/value proofs, unchanged D1-B source inventory,
+  Python compilation and `make test-psg` pass (524/850 sample clocks,
+  4008/5103 tick clocks, zero late flips).  Production/candidate images and
+  generic RTL remain untouched.  Production `psg_execmove` implements the
+  parameter-bank override, but does **not** yet implement candidate CAP_W51 or
+  the sixteen remapped owner-zero write-address sidebands; this artifact proves
+  their manifest-anchored obligation, not current-RTL equivalence.  This proves no
+  pool definition/use, service
+  value, primitive arithmetic, adapter, integration, synthesis, timing,
+  routing, render or area property, and yields no RTL change hypothesis.
 - **Following C2-C-D1-C-B boundary:** only after C-A closes, attach literal
   pool definitions/uses and service issue/result/take roots to exact enabled
   occurrences with pre/post phase.  Repair fold assembly, STEP8, result-write

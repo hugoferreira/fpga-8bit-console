@@ -29,6 +29,7 @@ import hashlib
 import json
 import re
 import runpy
+from collections import Counter
 from dataclasses import dataclass, replace
 from enum import IntEnum
 from pathlib import Path
@@ -6316,6 +6317,273 @@ def write_candidate_image(path: Path, accepted: list[int],
             "0 owner-one differences, 222 owner-zero nonzero words")
 
 
+def write_sample_d1_controller_edges(path: Path, candidate: list[int],
+                                     actions: Actions,
+                                     labels: dict[int, str]) -> str:
+    """Emit the complete direct-core owner-zero controller edge relation.
+
+    This is address/control proof only.  It records no pool field, service
+    value or arithmetic result; ``state_q`` is represented solely by the
+    enabled predecessor read that makes it available on the next edge.
+    """
+    output = path.resolve()
+    assert output != IMAGE.resolve(), \
+        "D1 controller edges must not replace rtl/psg_exec.hex"
+    if output.exists():
+        assert not output.samefile(IMAGE), \
+            "D1 controller edges must not hard-link rtl/psg_exec.hex"
+    production_before = IMAGE.read_bytes()
+    assert len(candidate) == PROGRAM_BANK_WORDS
+    assert set(labels) == {pc for pc, word in enumerate(candidate) if word}
+
+    action_by_code = actions.by_owner["sample"]
+    fixed_destinations = {
+        name: destination
+        for _pc, name, _q_source, destination, _origin in SAMPLE_FIXED_WRITES
+    }
+    assert len(fixed_destinations) == 18
+
+    def instruction_row(insn: Instruction) -> dict[str, object]:
+        row: dict[str, object] = {"op": insn.op.name,
+                                 "raw": insn.encode()}
+        if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+            row.update({"action": insn.action, "word": insn.word})
+        elif insn.op == Op.BRANCH:
+            row.update({"condition": insn.cond, "sense": insn.sense,
+                        "target": insn.target})
+        elif insn.op == Op.SLOT:
+            row.update({"increment": insn.slot_inc,
+                        "slot_value": insn.slot_value})
+        elif insn.op in (Op.JUMP, Op.OWNER):
+            row["target"] = insn.target
+        return row
+
+    def action_name(insn: Instruction) -> str | None:
+        if insn.op not in (Op.READ, Op.WRITE, Op.EXEC):
+            return None
+        action = action_by_code.get(insn.action)
+        return None if action is None else action.name
+
+    def read_word(insn: Instruction, name: str | None,
+                  spar_bank: int) -> tuple[int, str]:
+        literal = insn.encode() & 0x3f
+        if insn.op == Op.READ and insn.word >> 2 == 6:
+            return 24 + (spar_bank << 2) + (insn.word & 3), \
+                "sample-parameter-bank"
+        if name == "CAP_W51":
+            assert insn.op == Op.EXEC and insn.word == 26
+            return (30 if spar_bank else 26), "cap-w51-active-bank"
+        return literal, "instruction-low6"
+
+    edges: list[dict[str, object]] = []
+    run_counts: list[dict[str, object]] = []
+    for spar_bank in (0, 1):
+        pc = SAMPLE_START
+        slot = 0
+        predecessor_read: dict[str, object] | None = None
+        op_counts: Counter[str] = Counter()
+        read_override_counts: Counter[str] = Counter()
+        branch_taken = branch_not_taken = 0
+        run_start = len(edges)
+        for occurrence in range(900):
+            raw = candidate[pc]
+            assert raw != 0, (spar_bank, occurrence, pc)
+            insn = Instruction.decode(raw)
+            name = action_name(insn)
+            effective_word, read_kind = read_word(insn, name, spar_bank)
+            read = {
+                "enabled": True,
+                "kind": read_kind,
+                "literal_word": raw & 0x3f,
+                "effective_word": effective_word,
+                "address": (slot << 6) | effective_word,
+                "available_on": (None if insn.op == Op.DONE else {
+                    "run_bank": spar_bank, "occurrence": occurrence + 1,
+                }),
+            }
+            read_override_counts[read_kind] += 1
+
+            write: dict[str, object] | None = None
+            if insn.op == Op.WRITE:
+                if name in fixed_destinations:
+                    write_word = fixed_destinations[name]
+                    write_kind = "fixed-action-destination"
+                else:
+                    write_word = insn.word
+                    write_kind = "instruction-word"
+                write = {"enabled": True, "kind": write_kind,
+                         "effective_word": write_word,
+                         "address": (slot << 6) | write_word,
+                         "requires_address_override": write_word != insn.word}
+
+            next_pc = (pc + 1) & 0xff
+            next_slot = slot
+            successor_kind = "fallthrough"
+            guard: dict[str, object] = {"kind": "unconditional"}
+            terminal = False
+            if insn.op == Op.BRANCH:
+                assert insn.cond == COND_SAMPLE_SLOT_WRAP
+                take = (slot == 0) == bool(insn.sense)
+                next_pc = insn.target if take else (pc + 1) & 0xff
+                successor_kind = "branch-taken" if take \
+                    else "branch-fallthrough"
+                guard = {"kind": "sample-slot-wrap",
+                         "condition": insn.cond, "sense": insn.sense,
+                         "slot_is_zero": slot == 0, "taken": take}
+                branch_taken += take
+                branch_not_taken += not take
+            elif insn.op == Op.JUMP:
+                next_pc = insn.target
+                successor_kind = "jump"
+            elif insn.op == Op.SLOT:
+                next_slot = ((slot + 1) & 7
+                             if insn.slot_inc else insn.slot_value)
+                successor_kind = "slot-update"
+            elif insn.op == Op.DONE:
+                terminal = True
+                successor_kind = "done"
+
+            edge = {
+                "run_bank": spar_bank,
+                "occurrence": occurrence,
+                "pc": pc,
+                "slot": slot,
+                "instruction": instruction_row(insn),
+                "action_name": name,
+                "guard": guard,
+                "pre_edge_q": predecessor_read,
+                "state_read": read,
+                "state_write": write,
+                "successor": {
+                    "kind": successor_kind,
+                    "terminal": terminal,
+                    "pc": None if terminal else next_pc,
+                    "slot": None if terminal else next_slot,
+                },
+            }
+            edges.append(edge)
+            op_counts[insn.op.name] += 1
+            if terminal:
+                assert occurrence == 781
+                break
+            predecessor_read = {
+                "run_bank": spar_bank,
+                "occurrence": occurrence,
+                "pc": pc,
+                "slot": slot,
+                "effective_word": effective_word,
+                "address": (slot << 6) | effective_word,
+                "phase": "successor-pre-edge",
+            }
+            pc, slot = next_pc, next_slot
+        else:
+            raise AssertionError("D1 controller run did not terminate")
+
+        run_edges = edges[run_start:]
+        assert len(run_edges) == 782
+        assert len({row["pc"] for row in run_edges}) == 222
+        assert {row["slot"] for row in run_edges} == set(range(8))
+        assert dict(op_counts) == {
+            "READ": 172, "EXEC": 406, "WRITE": 158,
+            "SLOT": 29, "JUMP": 8, "BRANCH": 8, "DONE": 1,
+        }
+        assert (branch_taken, branch_not_taken) == (1, 7)
+        assert dict(read_override_counts) == {
+            "instruction-low6": 742,
+            "sample-parameter-bank": 32,
+            "cap-w51-active-bank": 8,
+        }
+        assert sum(row["state_write"] is not None for row in run_edges) == 158
+        assert sum(row["state_write"] is not None
+                   and row["state_write"]["requires_address_override"]
+                   for row in run_edges) == 128
+        assert run_edges[0]["pre_edge_q"] is None
+        assert all(row["pre_edge_q"] is not None for row in run_edges[1:])
+        run_counts.append({
+            "run_bank": spar_bank,
+            "edges": len(run_edges),
+            "static_pcs": len({row["pc"] for row in run_edges}),
+            "op_counts": dict(op_counts),
+            "read_kinds": dict(read_override_counts),
+            "writes": sum(row["state_write"] is not None
+                          for row in run_edges),
+            "address_overrides": sum(
+                row["state_write"] is not None
+                and row["state_write"]["requires_address_override"]
+                for row in run_edges),
+            "branch_taken": branch_taken,
+            "branch_not_taken": branch_not_taken,
+        })
+
+    assert len(edges) == 1564
+    owner_zero_bytes = b"".join(
+        word.to_bytes(2, "big") for word in candidate)
+    manifest = {
+        "schema": "psg_exec_d1_controller_edges_v1",
+        "claim": "future-direct-core-controller-address-obligations-only",
+        "candidate_owner_zero_sha256": hashlib.sha256(
+            owner_zero_bytes).hexdigest(),
+        "source_contract": {
+            "current_controller":
+                "psg_execctl-state-read-every-enabled-edge",
+            "current_movement":
+                "psg_execmove-sample-parameter-read-bank-only",
+            "future_address_sidebands":
+                "c2cc-cap-w51-q26-q30-and-16-remapped-fixed-write-destinations",
+            "excluded_current_rtl_claim":
+                "cap-w51-and-16-remapped-owner-zero-writes-not-implemented",
+            "wave_adapter": "direct-core-literal-words",
+            "excluded_compatibility_override": "hc-hold-to-word10",
+        },
+        "external_hold": {
+            "successor": "self",
+            "controller_advance": "disabled",
+            "ucode_read": "disabled",
+            "state_read": "disabled",
+            "state_write": "disabled",
+            "service_transaction": "disabled",
+            "state_q": "retain",
+        },
+        "counts": {
+            "runs": 2, "edges": len(edges), "edges_per_run": 782,
+            "static_pcs_per_run": 222,
+            "future_address_overrides": sum(
+                row["state_write"] is not None
+                and row["state_write"]["requires_address_override"]
+                for row in edges),
+        },
+        "run_counts": run_counts,
+        "edges": edges,
+    }
+    encoded = json.dumps(manifest, sort_keys=True, indent=2) + "\n"
+
+    def forbidden_keys(value: object) -> list[str]:
+        found: list[str] = []
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"value", "expected", "result", "sample_trace",
+                           "final_words", "record_commit", "state_wd",
+                           "pool", "expression", "expr"}:
+                    found.append(key)
+                found.extend(forbidden_keys(child))
+        elif isinstance(value, list):
+            for child in value:
+                found.extend(forbidden_keys(child))
+        return found
+
+    assert not forbidden_keys(manifest)
+    assert "SampleTrace" not in encoded \
+        and "evaluate_sample_slot" not in encoded
+    assert json.dumps(json.loads(encoded), sort_keys=True, indent=2) + "\n" \
+        == encoded
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(encoded)
+    assert output.read_text() == encoded
+    assert IMAGE.read_bytes() == production_before
+    return (f"{output}: 2 banks x 782 enabled edges; 222 static PCs/run; "
+            "1,564 state reads and 316 writes; controller/address only")
+
+
 def write_sample_d1_requirement_manifest(
         path: Path, packing_rows: tuple[D2FPackingRow, ...],
         built_fields: tuple[D2FLiveField, ...],
@@ -7092,10 +7360,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--d1-requirements-out", type=Path,
         help="write the unbound D1 physical-pool requirements/source catalog")
+    parser.add_argument(
+        "--d1-controller-edges-out", type=Path,
+        help="write D1's controller/address-only dynamic edge relation")
     args = parser.parse_args()
     if args.write and (args.candidate_out or args.binding_out
                        or args.binding_control_out
-                       or args.d1_requirements_out):
+                       or args.d1_requirements_out
+                       or args.d1_controller_edges_out):
         parser.error("--write is mutually exclusive with proof outputs")
     if args.binding_control_out and not args.binding_out:
         parser.error("--binding-control-out requires --binding-out")
@@ -7105,6 +7377,7 @@ def parse_args() -> argparse.Namespace:
             ("binding", args.binding_out),
             ("binding control", args.binding_control_out),
             ("D1 requirements", args.d1_requirements_out),
+            ("D1 controller edges", args.d1_controller_edges_out),
         ) if path is not None
     ]
     for index, (left_name, left_path) in enumerate(proof_outputs):
@@ -7286,6 +7559,10 @@ def main() -> int:
         print("D1 requirements: " + write_sample_d1_requirement_manifest(
             args.d1_requirements_out, d2fb_rows, d2f_built,
             d2f_wavetable, d2f_fold, atomic_roots))
+    if args.d1_controller_edges_out:
+        print("D1 controller edges: " + write_sample_d1_controller_edges(
+            args.d1_controller_edges_out, sample_b3b2a_candidate,
+            actions, sample_labels))
     print("warning: owner-zero actions and remaining owner-one actions are "
           "manifests, not semantic RTL; whole-PSG schedule/render/area "
           "equivalence remain atomic integration gates")

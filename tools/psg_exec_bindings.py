@@ -30,6 +30,14 @@ D1_LIVE_LAYOUT_SHA256 = \
     "55bb4b046212d20d8074bfcd074883c4a53e702d99e63fd91b43490b9f2c2075"
 D1_SOURCE_PLAN_SHA256 = \
     "c5d274619488bb26e647ed5dd9a2b7291a37bb0856d1386304695fbaf5028dac"
+D1_CANDIDATE_SHA256 = \
+    "6f5713e22197d8c03bffeac070b3d9b9b2b2f7b20df98dbff4566d778b5e9177"
+D1_BINDING_MANIFEST_SHA256 = \
+    "438d85a0d7ea9f212cb5ad6efeafefd7a9eb2c8950d182e44abe8895c11249c3"
+D1_PRODUCTION_IMAGE_SHA256 = \
+    "59b6f86e1917c069762c2c67c3cfc33d3d1a7652c518e99f9f8437e019d4ebcf"
+D1_OWNER_ZERO_WORDS_SHA256 = \
+    "521f0bbdbc4085ea55cb64db5e4132a210d48cf6f50efed4751f6c320ed71986"
 
 # A typed state-q read is a legal D1 source only when it arrives from outside
 # the unproved owner-zero write graph at the exact consuming edge.  Presently
@@ -624,6 +632,406 @@ def write_pool_source_inventory(path: Path, inventory: Json,
             "D1 source inventory readback changed")
 
 
+def canonical_json(value: Json) -> bytes:
+    return (json.dumps(value, sort_keys=True, indent=2) + "\n").encode()
+
+
+def canonical_image(words: list[int]) -> bytes:
+    return "".join(f"{word:04x}\n" for word in words).encode()
+
+
+def validate_d1_controller_anchors(manifest: Json,
+                                   candidate: list[int]) -> None:
+    require(hashlib.sha256(canonical_json(manifest)).hexdigest()
+            == D1_BINDING_MANIFEST_SHA256,
+            "D1 controller binding manifest is not the accepted C2-C-C anchor")
+    require(len(candidate) == 512 and all(0 <= word <= 0xffff
+                                          for word in candidate),
+            "D1 controller candidate is not one complete two-bank image")
+    require(hashlib.sha256(canonical_image(candidate)).hexdigest()
+            == D1_CANDIDATE_SHA256,
+            "D1 controller candidate image is not the accepted anchor")
+    require(hashlib.sha256(IMAGE.read_bytes()).hexdigest()
+            == D1_PRODUCTION_IMAGE_SHA256,
+            "production executor image changed during D1 controller proof")
+    owner_zero = b"".join(
+        word.to_bytes(2, "big") for word in candidate[:256])
+    require(hashlib.sha256(owner_zero).hexdigest()
+            == D1_OWNER_ZERO_WORDS_SHA256,
+            "D1 owner-zero candidate words changed")
+
+
+def load_d1_candidate(path: Path) -> list[int]:
+    lines = path.read_text().splitlines()
+    require(len(lines) == 512, "D1 candidate must contain exactly 512 words")
+    require(all(len(line) == 4 and line == line.lower()
+                and all(char in "0123456789abcdef" for char in line)
+                for line in lines),
+            "D1 candidate is not canonical lowercase four-hex-word text")
+    words = [int(line, 16) for line in lines]
+    require(canonical_image(words) == path.read_bytes(),
+            "D1 candidate has non-canonical formatting")
+    return words
+
+
+def d1_instruction_row(raw: int) -> Json:
+    op = (raw >> 13) & 7
+    names = ("READ", "WRITE", "BRANCH", "SLOT",
+             "JUMP", "OWNER", "DONE", "EXEC")
+    row: Json = {"op": names[op], "raw": raw}
+    if op in (0, 1, 7):
+        row.update({"action": (raw >> 6) & 0x7f, "word": raw & 0x3f})
+    elif op == 2:
+        row.update({"condition": (raw >> 9) & 0xf,
+                    "sense": (raw >> 8) & 1, "target": raw & 0xff})
+    elif op == 3:
+        row.update({"increment": bool((raw >> 3) & 1),
+                    "slot_value": raw & 7})
+    elif op in (4, 5):
+        row["target"] = raw & 0xff
+    return row
+
+
+def build_d1_controller_edges(manifest: Json,
+                              candidate: list[int]) -> Json:
+    """Independently reconstruct the direct-core dynamic control relation."""
+    validate_d1_controller_anchors(manifest, candidate)
+    owner_zero = candidate[:256]
+    action_by_code = {int(row["code"]): row["name"]
+                      for row in manifest["actions"]}
+    require(len(action_by_code) == 61, "D1 action code map changed")
+    fixed_destinations = {
+        row["action"]: int(row["destination"])
+        for row in manifest["fixed_writes"]
+    }
+    require(len(fixed_destinations) == 18,
+            "D1 fixed-destination map changed")
+    cap_w51 = next(row for row in manifest["actions"]
+                   if row["name"] == "CAP_W51")
+    require(cap_w51["code"] == 0x2d
+            and cap_w51["occurrences"] == [{
+                "changed": True, "op": "EXEC", "pc": 0x36,
+                "physical_read_words": [26, 30], "q_source": 4,
+                "word": 26,
+            }], "CAP_W51 q26/q30 binding changed")
+
+    def action_name(row: Json) -> str | None:
+        if row["op"] not in {"READ", "WRITE", "EXEC"}:
+            return None
+        return action_by_code.get(int(row["action"]))
+
+    def effective_read(row: Json, name: str | None,
+                       bank: int) -> tuple[int, str]:
+        literal = int(row["raw"]) & 0x3f
+        if row["op"] == "READ" and int(row["word"]) >> 2 == 6:
+            return 24 + (bank << 2) + (int(row["word"]) & 3), \
+                "sample-parameter-bank"
+        if name == "CAP_W51":
+            require(row["op"] == "EXEC" and row["word"] == 26,
+                    "CAP_W51 instruction changed")
+            return (30 if bank else 26), "cap-w51-active-bank"
+        return literal, "instruction-low6"
+
+    edges: list[Json] = []
+    run_counts: list[Json] = []
+    for bank in (0, 1):
+        pc, slot = 1, 0
+        predecessor: Json | None = None
+        op_counts: Counter[str] = Counter()
+        read_counts: Counter[str] = Counter()
+        taken = not_taken = 0
+        run_start = len(edges)
+        for occurrence in range(900):
+            raw = owner_zero[pc]
+            require(raw != 0,
+                    f"D1 run bank {bank} reached zero word at PC {pc:02x}")
+            instruction = d1_instruction_row(raw)
+            op = instruction["op"]
+            name = action_name(instruction)
+            word, read_kind = effective_read(instruction, name, bank)
+            state_read: Json = {
+                "enabled": True,
+                "kind": read_kind,
+                "literal_word": raw & 0x3f,
+                "effective_word": word,
+                "address": (slot << 6) | word,
+                "available_on": (None if op == "DONE" else {
+                    "run_bank": bank, "occurrence": occurrence + 1,
+                }),
+            }
+
+            state_write: Json | None = None
+            if op == "WRITE":
+                if name in fixed_destinations:
+                    write_word = fixed_destinations[name]
+                    write_kind = "fixed-action-destination"
+                else:
+                    write_word = int(instruction["word"])
+                    write_kind = "instruction-word"
+                state_write = {
+                    "enabled": True, "kind": write_kind,
+                    "effective_word": write_word,
+                    "address": (slot << 6) | write_word,
+                    "requires_address_override":
+                        write_word != int(instruction["word"]),
+                }
+
+            next_pc, next_slot = (pc + 1) & 0xff, slot
+            successor_kind = "fallthrough"
+            guard: Json = {"kind": "unconditional"}
+            terminal = False
+            if op == "BRANCH":
+                require(instruction["condition"] == 8,
+                        "owner-zero branch is not sample-slot-wrap")
+                branch_taken = ((slot == 0)
+                                == bool(instruction["sense"]))
+                if branch_taken:
+                    next_pc = int(instruction["target"])
+                    successor_kind = "branch-taken"
+                    taken += 1
+                else:
+                    successor_kind = "branch-fallthrough"
+                    not_taken += 1
+                guard = {
+                    "kind": "sample-slot-wrap", "condition": 8,
+                    "sense": int(instruction["sense"]),
+                    "slot_is_zero": slot == 0, "taken": branch_taken,
+                }
+            elif op == "JUMP":
+                next_pc = int(instruction["target"])
+                successor_kind = "jump"
+            elif op == "SLOT":
+                next_slot = ((slot + 1) & 7 if instruction["increment"]
+                             else int(instruction["slot_value"]))
+                successor_kind = "slot-update"
+            elif op == "DONE":
+                terminal = True
+                successor_kind = "done"
+            else:
+                require(op in {"READ", "WRITE", "EXEC"},
+                        f"unsupported owner-zero opcode {op}")
+
+            edges.append({
+                "run_bank": bank,
+                "occurrence": occurrence,
+                "pc": pc,
+                "slot": slot,
+                "instruction": instruction,
+                "action_name": name,
+                "guard": guard,
+                "pre_edge_q": predecessor,
+                "state_read": state_read,
+                "state_write": state_write,
+                "successor": {
+                    "kind": successor_kind,
+                    "terminal": terminal,
+                    "pc": None if terminal else next_pc,
+                    "slot": None if terminal else next_slot,
+                },
+            })
+            op_counts[op] += 1
+            read_counts[read_kind] += 1
+            if terminal:
+                require(occurrence == 781,
+                        "D1 owner-zero run terminated at the wrong edge")
+                break
+            predecessor = {
+                "run_bank": bank,
+                "occurrence": occurrence,
+                "pc": pc,
+                "slot": slot,
+                "effective_word": word,
+                "address": (slot << 6) | word,
+                "phase": "successor-pre-edge",
+            }
+            pc, slot = next_pc, next_slot
+        else:
+            raise AssertionError("D1 owner-zero run did not terminate")
+
+        run = edges[run_start:]
+        require(len(run) == 782 and len({row["pc"] for row in run}) == 222,
+                "D1 dynamic/static controller coverage changed")
+        require({row["slot"] for row in run} == set(range(8)),
+                "D1 controller run misses a slot class")
+        require(dict(op_counts) == {
+            "READ": 172, "EXEC": 406, "WRITE": 158,
+            "SLOT": 29, "JUMP": 8, "BRANCH": 8, "DONE": 1,
+        }, "D1 controller opcode counts changed")
+        require((taken, not_taken) == (1, 7),
+                "D1 sample-slot branch guards changed")
+        require(dict(read_counts) == {
+            "instruction-low6": 742,
+            "sample-parameter-bank": 32,
+            "cap-w51-active-bank": 8,
+        }, "D1 controller read classes changed")
+        require(run[0]["pre_edge_q"] is None
+                and all(row["pre_edge_q"] is not None for row in run[1:]),
+                "D1 state-q predecessor coverage changed")
+        require(sum(row["state_write"] is not None
+                    and row["state_write"]["requires_address_override"]
+                    for row in run) == 128,
+                "D1 future address-override count changed")
+        run_counts.append({
+            "run_bank": bank,
+            "edges": len(run),
+            "static_pcs": len({row["pc"] for row in run}),
+            "op_counts": dict(op_counts),
+            "read_kinds": dict(read_counts),
+            "writes": sum(row["state_write"] is not None for row in run),
+            "address_overrides": sum(
+                row["state_write"] is not None
+                and row["state_write"]["requires_address_override"]
+                for row in run),
+            "branch_taken": taken,
+            "branch_not_taken": not_taken,
+        })
+
+    owner_zero_bytes = b"".join(
+        word.to_bytes(2, "big") for word in owner_zero)
+    return {
+        "schema": "psg_exec_d1_controller_edges_v1",
+        "claim": "future-direct-core-controller-address-obligations-only",
+        "candidate_owner_zero_sha256": hashlib.sha256(
+            owner_zero_bytes).hexdigest(),
+        "source_contract": {
+            "current_controller":
+                "psg_execctl-state-read-every-enabled-edge",
+            "current_movement":
+                "psg_execmove-sample-parameter-read-bank-only",
+            "future_address_sidebands":
+                "c2cc-cap-w51-q26-q30-and-16-remapped-fixed-write-destinations",
+            "excluded_current_rtl_claim":
+                "cap-w51-and-16-remapped-owner-zero-writes-not-implemented",
+            "wave_adapter": "direct-core-literal-words",
+            "excluded_compatibility_override": "hc-hold-to-word10",
+        },
+        "external_hold": {
+            "successor": "self",
+            "controller_advance": "disabled",
+            "ucode_read": "disabled",
+            "state_read": "disabled",
+            "state_write": "disabled",
+            "service_transaction": "disabled",
+            "state_q": "retain",
+        },
+        "counts": {
+            "runs": 2, "edges": len(edges), "edges_per_run": 782,
+            "static_pcs_per_run": 222,
+            "future_address_overrides": sum(
+                row["state_write"] is not None
+                and row["state_write"]["requires_address_override"]
+                for row in edges),
+        },
+        "run_counts": run_counts,
+        "edges": edges,
+    }
+
+
+def validate_d1_controller_edges(controller: Json, manifest: Json,
+                                 candidate: list[int]) -> None:
+    expected = build_d1_controller_edges(manifest, candidate)
+    forbidden = forbidden_manifest_fields(controller)
+    require(not forbidden,
+            f"D1 controller relation carries semantic fields: {forbidden}")
+    encoded = json.dumps(controller, sort_keys=True)
+    require("SampleTrace" not in encoded
+            and "evaluate_sample_slot" not in encoded,
+            "D1 controller relation names a semantic oracle")
+    require(canonical_json(controller) == canonical_json(expected),
+            "D1 controller relation differs from independent reconstruction")
+
+
+def check_d1_controller_mutations(controller: Json, manifest: Json,
+                                  candidate: list[int]) -> int:
+    convictions = 0
+
+    def reject(mutated: Json, label: str,
+               *, changed_manifest: Json | None = None,
+               changed_candidate: list[int] | None = None) -> None:
+        nonlocal convictions
+        rejected = False
+        try:
+            validate_d1_controller_edges(
+                mutated,
+                manifest if changed_manifest is None else changed_manifest,
+                candidate if changed_candidate is None else changed_candidate)
+        except (AssertionError, StopIteration):
+            rejected = True
+        require(rejected, f"D1 controller mutation survived: {label}")
+        convictions += 1
+
+    branch = copy.deepcopy(controller)
+    for row in branch["edges"]:
+        if row["pc"] == 0 and row["instruction"]["op"] == "BRANCH":
+            row["instruction"]["target"] = 0x51
+            row["instruction"]["raw"] = \
+                (int(row["instruction"]["raw"]) & 0xff00) | 0x51
+            if row["successor"]["kind"] == "branch-taken":
+                row["successor"]["pc"] = 0x51
+    reject(branch, "branch target 50 to 51")
+
+    fold_slot = copy.deepcopy(controller)
+    for row in fold_slot["edges"]:
+        if row["pc"] == 0x61:
+            row["instruction"]["slot_value"] = 7
+            row["instruction"]["raw"] = \
+                (int(row["instruction"]["raw"]) & ~7) | 7
+            row["successor"]["slot"] = 7
+    reject(fold_slot, "fold slot destination")
+
+    hold_word = copy.deepcopy(controller)
+    for row in hold_word["edges"]:
+        if row["pc"] == 0x1c:
+            row["instruction"]["word"] = 11
+            row["instruction"]["raw"] += 1
+            row["state_read"]["literal_word"] = 11
+            row["state_read"]["effective_word"] = 11
+            row["state_read"]["address"] += 1
+    reject(hold_word, "PC1c word10 to word11")
+
+    loop = copy.deepcopy(controller)
+    for row in loop["edges"]:
+        if row["pc"] == 0x4f:
+            row["instruction"]["target"] = 1
+            row["instruction"]["raw"] += 1
+            row["successor"]["pc"] = 1
+    reject(loop, "loop jump zero to one")
+
+    read_address = copy.deepcopy(controller)
+    read_address["edges"][1]["state_read"]["address"] ^= 1
+    reject(read_address, "state-read address")
+
+    q_edge = copy.deepcopy(controller)
+    q_edge["edges"][0]["state_read"]["available_on"]["occurrence"] += 1
+    reject(q_edge, "state-q availability edge")
+
+    hold = copy.deepcopy(controller)
+    hold["external_hold"]["successor"] = "fallthrough"
+    reject(hold, "external hold drift")
+
+    colluding_manifest = copy.deepcopy(manifest)
+    colluding_graph = copy.deepcopy(controller)
+    fixed = next(row for row in colluding_manifest["fixed_writes"]
+                 if row["action"] == "STORE_10_20")
+    fixed["destination"] = 19
+    for row in colluding_graph["edges"]:
+        if row["action_name"] == "STORE_10_20":
+            row["state_write"]["effective_word"] = 19
+            row["state_write"]["address"] = (row["slot"] << 6) | 19
+    reject(colluding_graph, "manifest and graph collusion",
+           changed_manifest=colluding_manifest)
+
+    unknown = copy.deepcopy(controller)
+    unknown["oracle_output"] = 0
+    reject(unknown, "unknown schema field")
+
+    wrong_type = copy.deepcopy(controller)
+    wrong_type["edges"][0]["state_read"]["available_on"]["occurrence"] = True
+    reject(wrong_type, "numeric field coerced to Boolean")
+    require(convictions == 10, "D1 controller mutation count changed")
+    return convictions
+
+
 def pair_trace(rows: list[Json], key_fields: tuple[str, ...]) \
         -> list[tuple[Json, Json]]:
     grouped: dict[tuple[Any, ...], dict[str, Json]] = defaultdict(dict)
@@ -1060,6 +1468,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--execwave", type=Path, required=True)
     parser.add_argument("--pool-requirements", type=Path)
     parser.add_argument("--pool-out", type=Path)
+    parser.add_argument("--d1-controller-edges", type=Path)
+    parser.add_argument("--candidate", type=Path)
     return parser.parse_args()
 
 
@@ -1067,6 +1477,8 @@ def main() -> int:
     args = parse_args()
     require((args.pool_requirements is None) == (args.pool_out is None),
             "--pool-requirements and --pool-out must be used together")
+    require((args.d1_controller_edges is None) == (args.candidate is None),
+            "--d1-controller-edges and --candidate must be used together")
     manifest = load_json(args.manifest)
     legacy = load_jsonl(args.legacy)
     mul = load_jsonl(args.mul)
@@ -1078,6 +1490,13 @@ def main() -> int:
     result.update(check_multiplier(mul))
     result.update(check_dq(dq))
     result.update(check_execwave(execwave))
+    if args.d1_controller_edges is not None:
+        controller = load_json(args.d1_controller_edges)
+        candidate = load_d1_candidate(args.candidate)
+        validate_d1_controller_edges(controller, manifest, candidate)
+        result["controller_edges"] = controller["counts"]["edges"]
+        result["controller_mutations"] = check_d1_controller_mutations(
+            controller, manifest, candidate)
     if args.pool_requirements is not None:
         requirements = load_json(args.pool_requirements)
         inventory = build_pool_source_inventory(requirements, manifest)
@@ -1092,7 +1511,8 @@ def main() -> int:
     print("psg_exec_bindings: PASS "
           + " ".join(f"{key}={value}" for key, value in result.items()))
     print("boundary: structural source/source-completeness inventory only; "
-          "no semantic values, pool transitions, adapter equivalence, "
+          "controller/address relation may be included; no semantic values, "
+          "pool transitions, adapter equivalence, "
           "generic integration, synthesis or area claim")
     return 0
 
