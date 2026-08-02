@@ -1341,6 +1341,133 @@ git history; do not repeat them without the recorded changed condition.
   bundle, general result register, second arithmetic chain or partial generic
   handoff.
 
+### R.84H-D - Compile the complete sample service graph into stored waits
+
+- **Hypothesis:** H-A already stores every service edge and elapsed clock, and
+  every EXEC/HOLD word already has an independent six-bit `state_word` field.
+  Compile the remaining sample graph into those existing fields: ordinary
+  service actions name issue/consume edges, while HOLD words name physical
+  operand prefetches or fixed ring/fold microsteps.  One 70-bit transient pool
+  can cover the mutually dead waveform/multiply values and then be reused by
+  the post-walk fold.  This should lower the complete owner-zero dataflow
+  without another opcode, PC, fold counter, flat request/result bundle,
+  scratch file or arithmetic chain.
+- **Grounded instruction result:** all 81 current HOLD words encode action
+  `0x70` with word zero.  `psg_execctl` already exposes `state_word` and clocks
+  the state EBR on every active instruction.  Regenerate the owner-zero image
+  so the final pre-W0 HOLD reads word 10, W0 and W1 retain the word-12 and
+  word-16 primes, the four W40--W51 holds name the ring read/capture sequence,
+  and each fold node's eight holds name steps one through eight.  Other HOLD
+  fields may directly prefetch a persistent operand for the following fixed
+  action.  Remove H-C's blanket HOLD-to-word-10 override; retain no previous-PC
+  or previous-word tag register.
+- **Image claim:** the generated bank remains 222/256 words, 782/1,003 active
+  clocks, 172 semantic reads, 158 writes and the same action histogram, but it
+  is intentionally no longer byte-identical to H-C because stored HOLD operand
+  fields become meaningful.  Owner one must remain byte-identical.  Every
+  changed word, physical read and following consumer must be emitted and
+  checked by the executable model before RTL.
+- **Exact service schedule:** action 0x20 at W-10 launches the old-noise
+  multiply and live-DQ recurrence; both terminate on action 0x21 at W-5, which
+  consumes the old-noise result, captures live DQ and chains the old-DQ
+  request.  The four following HOLDs end at W0, where the live-noise result and
+  old-DQ terminal value are ready.  W0--W6 retain the accepted wave/ARAM
+  issue/consume cadence and consume old/live DQ at W5/W6.  W4->W15,
+  W15->W26/W27, W27->W40, W40->W51 and W75->W84 are the existing fixed
+  multiplier transactions; no request may depend on a dynamic ready branch.
+- **Ring schedule:** in REVERB builds the W40--W51 gap names current-tap read,
+  old-tap read plus current capture, old capture and one drain edge.  W75 sees
+  both captured values, and the existing pre-close edge writes filtered PCM
+  only for a playing slot.  `ring_rp` advances exactly once per sample.  The
+  HX8K target keeps REVERB disabled, but generic semantic proof must cover both
+  elaborations without charging nonexistent ring storage to the HX8K row.
+- **Critical W0--W3 substitution law:** W0 issues the pre-update primary phase.
+  W1 must issue the post-W0 secondary phase, including the amplitude-zero
+  clear.  W2 must issue the restart/noise-selected old primary after W0 and
+  the possible W1 old-noise advance.  W3 must issue the restart-selected old
+  secondary, not H-C's stale retained old-q.  These are explicit H-D inputs to
+  the accepted direct wave/ARAM boundary; duplicating or retiming the waveform
+  service is forbidden.
+- **Restart and phase priority:** at W0, restart snapshots the live tuple into
+  the old tuple; an amplitude-zero restart clears current phase and phase2;
+  the noise/filter step may then replace snapped old phase with the selected
+  noise seed.  W1 applies old-noise advance, W5 applies old DQ only when old
+  gain is nonzero and old noise is off, and W6 applies live DQ only while the
+  current slot is playing with nonzero amplitude.  The model must reproduce
+  this source/NBA order rather than algebraically commuting the writes.
+- **Transient information bound:** use four shared fields A18, B18, N17 and
+  O17, exactly **70 bits**, as the candidate sample pool.  Wavetable A/B pack
+  `{fraction10,signed-byte8}` then hold their reachable signed-15 interpolated
+  results.  N/O successively hold DQ/noise bridges, gain limbs and current/old
+  arms; dead A bits hold sign/audible flags, and W84 may overwrite a dead arm
+  with the final filtered value.  This is a hypothesis to prove in the model,
+  not permission to add a general result register or action-selected mux.
+- **Fold reuse bound:** after all eight leaves are committed to words 48/49,
+  every sample transient is dead.  The signed fold therefore reuses the same
+  pool.  Its simultaneous minimum is A18 plus B-low16 plus the seven-bit
+  `fdiv5_q`; threshold class bits reuse dead B bits, and HOLD step tags replace
+  `fmc`.  The literal seven-node tree and word-48/49 signed representation stay
+  exact.  Do not allocate another stack, counter or EBR, and do not confuse
+  this owner-zero `fdiv5` table with owner-one `psg_divsvc`.
+- **Scratch boundary:** words 48/49 remain the only owner-zero scratch, for
+  leaves and fold intermediates.  Words 34..47 and 50..63 remain unallocated
+  unless the executable lifetime proof demonstrates a value that cannot fit
+  the 70-bit pool and a separate measured variant justifies the spill.  A
+  convenience mirror of the persistent oscillator record is not such proof.
+- **Hold and readiness contract:** stored HOLD instructions are elapsed active
+  service clocks and continue to advance services.  External executor hold
+  freezes PC/IR/state output, the 70-bit pool, H-C wave/ARAM state, DQ, slow and
+  fast multiplier handshakes, ring captures and fold state together.  Prove
+  the DQ terminal-edge chained request, all multiplier consume gaps and fold
+  worst-case padding explicitly; an assertion-only dropped request is not a
+  transaction proof.
+- **Fold formula domains:** keep the 262,144 signed-18 word-pair encodings
+  distinct from arithmetic coverage.  The independent model must cover all
+  131,071 signed-int16 sums and all 40,961 reachable `/5` excess values, plus
+  exact threshold, rounding, sign and literal-tree order.  The final action
+  writes slot-zero word48/49, publishes `dry16`, pulses `dry_valid` once and
+  then reaches DONE.
+- **Scope:** first extend `psg_exec_model.py` and regenerate `psg_exec.hex` with
+  the exact prefetch/tag manifest and value/lifetime model.  Only after that
+  passes, add one bounded owner-zero sample adapter, direct service tests and
+  isolated/paired synthesis targets.  Retain `psg_wave`, `psg_aram`,
+  `psg_dqsvc`, `psg_mulmp` and one `fdiv5` EBR as services.  Generic `psg.sv`,
+  `psg_walk`, `psg_seq`, public arbitration and state-memory integration remain
+  outside H-D.
+- **Required semantic proof:** execute both banks and all slots from the
+  production image; check every physical prefetch, semantic read/write,
+  service request/result association, persistent word 10..23 writeback,
+  leaf/fold word 48/49 value and external hold boundary.  Prove built-in and
+  wavetable paths, playing/hidden/inactive slots, amplitude zero/nonzero,
+  restart/no-restart, noise/buzz/detune/dampen modes, transition counts and
+  optional ring.  Re-run H-C wave/ARAM, H-B transport, G-F owner-one,
+  controller/datapath/movement, full/PREVIEW lint and strict OpenSpec.  H-D
+  still makes no generic schedule, render or whole-PSG equivalence claim.
+- **Physical lower bound:** H-C row A is 642 floor cells.  The retained DQ
+  service is 133 floor cells and the literal fold island is 295 LUT4s plus up
+  to 67 flops, one EBR and a conservative 295--362 floor cells.  H-C plus these
+  disjoint irreducibles is already **1,070--1,137 floor cells** before request,
+  substitution, ring and writeback logic.  A credible accepted cumulative
+  H-C+H-D result should be **1,800--1,900 floor cells**; reject at or above
+  **2,200 floor or placed cells**, or below 28.125 MHz routed timing.
+- **Capacity and EBR law:** the corrected fixed placed base leaves replacement
+  ceilings 4,431/3,431/2,931/2,431 cells for the 7k/6k/5.5k/5k ladder.  H-C
+  leaves H-D+H-E 3,789/2,789/2,289/1,789 cells respectively.  The paired H-D
+  build has program2 + ARAM9 + wave1 + fold1 = **13 EBRs**; adding the two-EBR
+  state store reaches the final **15-EBR ceiling**.  H-D may add no EBR, and
+  H-E must re-home the legacy sequencer constants rather than retain another.
+- **Physical proof rows:** report (A) H-C executor/adapter plus the complete
+  owner-zero adapter, DQ and fold with retained external services abstracted;
+  and (B) identical kept wave/ARAM/multiplier cores with and without H-D while
+  retaining every request/result stream.  Credit none of the multiplier's
+  approximately 590-LUT request-input cone until row B measures its removal.
+  Save canonical mapped, placed, routed and timing artifacts before deciding.
+- **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
+  state-word layout, retained service latency, signed fold formula, public
+  priority or measured fixed-base budget changes.  Do not retry with a second
+  working-record mirror, general action ALU, new result register, fold stack or
+  partial generic handoff.
+
 ### Active task queue
 
 - [x] Prove exact waveform formulae, cycle state, widths and `/4` schedule.
