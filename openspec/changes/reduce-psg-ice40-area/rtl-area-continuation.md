@@ -24,35 +24,38 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H013.
+- Next hypothesis ID: H014.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
   `build/experiments/h009/`, `build/experiments/h010/`, and
-  `build/experiments/h012/` synthesis, placement, click, recovery, and smoke
-  artifacts as applicable.
+  `build/experiments/h012/` and `build/experiments/h013/` synthesis,
+  placement, click, recovery, and smoke artifacts as applicable.
 - Latest decision: H007 accepted. Its 46-LUT4, 13-carry, and two-flop mapped
   reductions are deterministic; the 57-LC placed improvement is positive but
   remains just inside the known roughly 60-LC placement-sensitivity band and
   is not claimed as robust.
-- Latest rejected variant: H012 proves the true-busy OR is invariant-redundant
-  and locally saves one LUT4, but whole-PSG mapping adds 48 LUT4s/five carries
-  and seed-1 placement regresses by 50 LCs. H011 proves the reflected ramp is
-  a bitwise complement, but both spellings map identically in the registered-
-  use cone. H010's phase-qualified pending bit is exact and saves four LUT4s/
-  one flop in the isolated timing cone, but whole-PSG mapping adds 29 LUT4s/
-  five carries and seed-1 placement regresses by 36 LCs. H009's shift token
-  failed similarly; H005's `< 3` suffix remains rejected on fast-clock timing;
-  H004, H006, and H008 remain rejected as indexed below.
+- Latest rejected variant: H013 proves the internal multiplier recurrence fits
+  29 bits, but both the two-service and target-only forms add 24 LUT4s/three
+  carries and 26 placed LCs while removing two flops. H012 proves the true-
+  busy OR is invariant-redundant and locally saves one LUT4, but whole-PSG
+  mapping adds 48 LUT4s/five carries and seed-1 placement regresses by 50 LCs.
+  H011 proves the reflected ramp is a bitwise complement, but both spellings
+  map identically in the registered-use cone. H010's phase-qualified pending
+  bit is exact and saves four LUT4s/one flop in the isolated timing cone, but
+  whole-PSG mapping adds 29 LUT4s/five carries and seed-1 placement regresses
+  by 36 LCs. H009's shift token failed similarly; H005's `< 3` suffix remains
+  rejected on fast-clock timing; H004, H006, and H008 remain rejected as
+  indexed below.
 - Best accepted result: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs;
   seed-1 7,392/7,680 LCs; 134.70 MHz fast and 30.95 MHz PSG.
 - Last updated: 2026-08-02.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H013 resume audit and record one new,
-  bounded, source-exact generic-RTL hypothesis before editing RTL.
-- Required verification for any accepted H013: focused algebraic or exhaustive
+- Next permitted experiment: perform the H014 resume audit and record one new,
+  bounded, source-exact generic-RTL hypothesis outside multiplier widths.
+- Required verification for any accepted H014: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -78,6 +81,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H010 | rejected | Keep the countdown form: the exact pending bit saves one local flop but adds 29 LUT4s, five carries, and 36 placed LCs in the full PSG. |
 | H011 | rejected | Keep the subtract spelling: Yosys already maps `16'hffff - wx` exactly as `~wx`, with identical registered-use resources. |
 | H012 | rejected | Keep the defensive true-busy OR: removing it is exact in-contract and locally smaller but adds 48 LUT4s, five carries, and 50 placed LCs globally. |
+| H013 | rejected | Keep the 34-bit internal service form: the proved 29-bit recurrence removes two flops but adds 24 LUT4s, three carries, and 26 placed LCs. |
 
 ## Hypothesis H001
 
@@ -518,6 +522,49 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   after the CDC latency, padding contract, clock ratio/phase, mapper output
   factoring, or sequencer-busy consumer changes materially.
 
+## Hypothesis H013
+
+- **ID:** H013.
+- **Hypothesis:** the earlier 34-bit service width predated the current live-
+  request audit. Every A is now signed-18-bit-or-narrower, so `|A| <= 131072`;
+  every legal B/count/landing combination yields at most 536,739,840, below
+  `2^29`. At every step the accumulator stays below `2^17`, the radix-2 sum
+  below `2^18`, and radix-4 sum below `2^19`. Narrowing both internal products
+  to 29 bits and those sums to their proved widths should retire invisible
+  sequential/arithmetic bits while the 34-bit public result remains aligned
+  by five leading zeros.
+- **Scope:** `rtl/psg_mulsvc.sv`, `rtl/psg_mulmp.sv`, permanent cycle-model
+  bounds in `tools/psg_mul_model.py`, multiplier transaction/relative-phase
+  proofs, whole-PSG mapping, and the complete H007 acceptance battery if the
+  mapped result improves. No request count, schedule, state, public result
+  width, EBR, R.84, or tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H012 through
+  `516c176`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1 7,392
+  LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Change:** first narrow both multiplier implementations to a 29-bit product,
+  17-bit accumulator, 18-bit radix-2 sum, and 19-bit radix-4 sum while padding
+  the public result with five zeros. Then attribute the result with a second
+  form that restores `psg_mulsvc` byte-for-byte and narrows only the
+  multipumped implementation instantiated by the HX8K target.
+- **Result:** the exact model proves every live landing and named consume slice
+  on 13,874 magnitudes, both signs, all modes, and both radices. The binding
+  maxima are accumulator 131,008, radix-2 sum 262,080, radix-4 sum 524,160,
+  and product 536,739,840, each below the proposed width. Both forms pass
+  6,020 randomized/boundary transactions and all ten 1-ns relative phases,
+  comparing the complete 34-bit public result. Both forms also map and place
+  identically: 6,546 LUT4 / 1,556 carry / 1,474 FF / 14 EBR and 7,418 seed-1
+  LCs, routed at 134.95 MHz fast / 33.10 MHz PSG. Relative to H007 this is +24
+  LUT4, +3 carries, -2 flops, and +26 LCs. Production RTL and the conditional
+  model extension are reverted byte-for-byte; the full fidelity battery is
+  correctly skipped.
+- **Decision:** rejected after two mapped variants. The invisible bound is
+  mathematically sound but narrower sequential/arithmetic covering costs more
+  logic and placement than the two realized flops save, closing this width
+  family under the ledger stop rule.
+- **Repeat only if:** a rejected internal-width form may be retried only after
+  live A/B bounds, iteration counts, landing offsets, radix recurrence,
+  mapper sequential-width inference, or result consumers change materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -548,10 +595,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h009/candidate.{synth,pnr}.log` | canonical synthesis with the rejected shift token | Exact isolated win, but whole-PSG mapped and placed regression. |
 | `build/experiments/h010/candidate.{synth,pnr}.log` | canonical synthesis with the rejected pending bit | Exact isolated flop/LUT win, but whole-PSG mapped and placed regression. |
 | `build/experiments/h012/candidate.{synth,pnr}.log` | canonical synthesis with the rejected sequencer-busy output | CDC proofs pass, but whole-PSG mapped and placed area regress. |
+| `build/experiments/h013/candidate.{synth,pnr}.log` | canonical synthesis with both services narrowed | Exact width proof, but whole-PSG mapped and placed area regress. |
+| `build/experiments/h013/candidate-v2.{synth,pnr}.log` | canonical synthesis with only the multipumped service narrowed | Mapping-identical attribution variant; rejected. |
 
 ## Handoff
 
-- Next allowed experiment: H013 only after its hypothesis row and baseline are
+- Next allowed experiment: H014 only after its hypothesis row and baseline are
   recorded; it must use a new generic-RTL mechanism outside R.84 ownership.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
@@ -563,6 +612,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   representation family is closed unless its mapped context changes. H011 was
   rejected before production because its exact spelling maps identically.
   H012 CDC proofs pass, but its global map regresses and production RTL is
-  reverted.
+  reverted. H013's two width variants are exact but physically worse; all
+  production/proof changes are reverted and the multiplier-width family closes.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
