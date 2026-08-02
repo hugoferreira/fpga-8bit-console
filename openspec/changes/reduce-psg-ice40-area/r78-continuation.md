@@ -801,6 +801,46 @@ git history; do not repeat them without the recorded changed condition.
   predicates, effect priority or K_ADV/EA transition graph changes.  Do not
   return to the unreproducible 65/49 prose bound or treat the 30 spare words as
   proof that the missing RTL decoder is behaviorally complete.
+- **R.84G-F active hypothesis:** the exact 117-word G-E manifest can execute
+  the complete foreground and instrument advance transaction through a fixed
+  six-action normalization/merge decoder plus R.84D's unchanged common ALU,
+  without recreating G-B's field-selected accumulator mux.  Each action has a
+  fixed source or destination shape: zero-extend one low byte, high byte or
+  voice/instrument row into the already addressed word; or merge one
+  normalized row/value back into its fixed persistent word.  Synchronous read
+  overrides and writes are derived from the numbered manifest, not inferred
+  from action names.  Branch conditions add only the four exact owner facts
+  `trig_req`, `walk_tick && playing`, `ins_use` and `released`.
+- **R.84G-F scope and baseline:** work only in the isolated executor/model,
+  movement/datapath/controller tests, generated image and this ledger; generic
+  `psg.sv`, `psg_walk`, `psg_seq`, Tang/H015 and atomic integration remain
+  untouched.  Baseline G-E is 328 LUT4s, 24 carries, 34 flops, 27 unpackable
+  flops, exactly two EBRs, a 355-LC floor, 361 placed LCs and 61.85 MHz.  The
+  fixed decoder must add no carry, flop, EBR, general register index or free-
+  variable arithmetic expression.  Its only data selection must terminate at
+  a fixed addressed write; all increment, decrement and compare work remains
+  whole-word execution through the existing `wide` chain.
+- **R.84G-F transaction gates:** initialize scratch 34 to one at `V_LD0` and
+  scratch 35 to 32 at `K_ADV`; select active parameter word 26 or 30 from
+  `spar_bank`, and derive every P/PC active/inactive publication address from
+  the same bank.  Instrument previous pitch is persistent word 9 bits 5:0 and
+  previous volume is bits 11:9.  Prove every manifest instruction against a
+  real synchronous memory model, including read-issue/consume alignment,
+  every fixed merge, all four new predicates, both parameter banks, trigger,
+  skip, stop, loop and instrument exits.  Keep `pend_stop` and `cpz` updates in
+  the sequencer's existing arbitrated sequential owner in the future adapter;
+  the isolated harness must emit effects rather than create a competing
+  writer, and must prove same-edge priority before generic integration.
+- **R.84G-F decision:** active.  Accept only after the complete synchronous
+  transaction is exhaustively equal to the legacy advance semantics, all
+  controller/datapath/movement/model/lint/image gates pass, and isolated HX8K
+  mapping retains exactly two EBRs while staying on the 6k replacement-floor
+  trajectory.  This iteration still makes no whole-PSG behavior, render or
+  area claim; those belong to the atomic integration gate.
+- **Repeat only if:** the numbered manifest, state-word layout, parameter-bank
+  publication rule, synchronous read latency, side-effect arbitration or
+  legacy field layout changes.  Do not retry G-B's selected arithmetic or
+  G-C's one-bank capacity shape inside this decoder.
 
 ### Active task queue
 
