@@ -187,14 +187,16 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
 
   // State-memory addresses stream oscillator words followed by the selected
   // sounding bank. Late full-schedule writes commit dampen state.
+  logic [4:0] wlk_roff;
   always_comb begin
     if (pph < 7'(PLOSC))
-      wlk_ra = {pc_ch, PSG_V_OSC + 5'(pph)};
+      wlk_roff = PSG_V_OSC + 5'(pph);
     else if (pph < 7'(PLOSC + PSG_SPAR))
-      wlk_ra = {pc_ch, (spar_bank ? PSG_V_PAR1 : PSG_V_PAR0)
-                       + 5'(pph - 7'(PLOSC))};
+      wlk_roff = (spar_bank ? PSG_V_PAR1 : PSG_V_PAR0)
+                 + 5'(pph - 7'(PLOSC));
     else
-      wlk_ra = {pc_ch, PSG_V_OSC};
+      wlk_roff = PSG_V_OSC;
+    wlk_ra = {pc_ch, 1'b0, wlk_roff};
 
     if (state_lp_we) begin
       wlk_wa = {pc_ch, (pph == 7'(PLAST - 1)) ? PSG_V_OSC + 5'd5
