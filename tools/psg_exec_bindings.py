@@ -19,6 +19,12 @@ from typing import Any, Callable, Iterable
 
 Json = dict[str, Any]
 
+FIXED_GUARD_FIELDS = {
+    "guard_wavetable", "guard_reverb", "guard_audible", "guard_blend",
+    "guard_restart", "guard_clear", "guard_play", "guard_amplitude",
+    "guard_noise", "guard_brown", "guard_hidden",
+}
+
 
 def require(condition: bool, message: str) -> None:
     if not condition:
@@ -150,11 +156,30 @@ def check_manifest(manifest: Json) -> None:
                 f"root {row['name']} lacks a source binding")
 
     writes = manifest["fixed_writes"]
-    require(len(writes) == 18 and len({row["pc"] for row in writes}) == 18,
+    require(len(writes) == 18 and len({row["pc"] for row in writes}) == 18
+            and len({row["action"] for row in writes}) == 18,
             "fixed-write manifest")
+    leaf_destinations = {
+        row["action"]: int(row["destination"])
+        for row in writes if row["action"].startswith("STORE_LEAF_")
+    }
+    require(leaf_destinations == {"STORE_LEAF_LO": 48,
+                                  "STORE_LEAF_HI": 49},
+            "leaf fixed writes must target distinct words 48/49")
     for row in writes:
-        require(row.get("source_binding"),
+        binding = row.get("source_binding")
+        require(binding,
                 f"fixed write {row['action']} lacks a source binding")
+        obligations = binding.get("guard_obligations")
+        require(isinstance(obligations, list) and obligations,
+                f"fixed write {row['action']} lacks guard obligations")
+        fields = [obligation.get("field") for obligation in obligations]
+        require(len(fields) == len(set(fields))
+                and set(fields) <= FIXED_GUARD_FIELDS,
+                f"fixed write {row['action']} has invalid guard predicates")
+        require(all(isinstance(obligation.get("reason"), str)
+                    and obligation["reason"] for obligation in obligations),
+                f"fixed write {row['action']} lacks guard reasons")
 
 
 def cap_mask(manifest: Json, name: str) -> int:
@@ -196,6 +221,14 @@ def rows_for_event(manifest: Json, legacy: list[Json], event: str) -> list[Json]
 def check_guard(root: Json, rows: list[Json]) -> None:
     guard = root["guard"]
     if guard == "always":
+        return
+    if guard == "wavetable&&play":
+        values = {
+            int(bool(row["guard_wavetable"]) and bool(row["guard_play"]))
+            for row in rows
+        }
+        require(values == {0, 1},
+                f"root {root['name']} does not exercise both {guard} classes")
         return
     field = {
         "wavetable": "guard_wavetable",

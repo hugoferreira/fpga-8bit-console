@@ -6470,22 +6470,154 @@ def write_sample_binding_manifest(path: Path, accepted: list[int],
     assert len(changed_pc_bindings) == 44
     assert {row["pc"] for row in changed_pc_bindings} == set(changed_pcs)
 
+    def observation(event: str, phase: str, field: str,
+                    *, selected_by: str | None = None,
+                    field_when_one: str | None = None,
+                    field_when_zero: str | None = None) \
+            -> dict[str, object]:
+        row: dict[str, object] = {"event": event, "phase": phase,
+                                 "field": field}
+        if selected_by is not None:
+            assert field_when_one is not None and field_when_zero is not None
+            row["selected_by"] = selected_by
+            row["field_when_one"] = field_when_one
+            row["field_when_zero"] = field_when_zero
+        return row
+
+    # Each fixed transport names only the live Boolean classes that can
+    # change its source value.  C2-C-C must observe both sides of every named
+    # predicate at that action's real source edge; a global profile-wide
+    # guard count cannot discharge an individual write's obligation.
+    fixed_guard_obligations = {
+        "STORE_10_20": (("guard_restart", "selected old/current tuple"),),
+        "STORE_11_21": (("guard_restart", "restart-qualified current increment"),),
+        "STORE_12_22": (
+            ("guard_wavetable", "wave/mode control word"),
+            ("guard_noise", "noise-mode control word"),
+            ("guard_brown", "brown-mode control word"),
+            ("guard_play", "playing-state gain"),
+            ("guard_amplitude", "effective gain"),
+        ),
+        "STORE_8_18": (("guard_restart", "selected old increment"),),
+        "STORE_9_19": (
+            ("guard_restart", "selected old gain/increment"),
+            ("guard_amplitude", "old effective gain"),
+        ),
+        "STORE_15_14": (
+            ("guard_clear", "early clear-qualified state"),
+            ("guard_wavetable", "wave/mode state"),
+            ("guard_noise", "noise-mode state"),
+            ("guard_brown", "brown-mode state"),
+            ("guard_play", "playing-state filter"),
+            ("guard_amplitude", "effective-gain filter"),
+        ),
+        "CAP_W0": tuple(
+            (field, "W0 final noise/phase transaction") for field in (
+                "guard_restart", "guard_clear", "guard_wavetable",
+                "guard_play", "guard_amplitude", "guard_noise",
+                "guard_brown")),
+        "CAP_W1": tuple(
+            (field, "W1 final phase transaction") for field in (
+                "guard_restart", "guard_wavetable", "guard_play",
+                "guard_amplitude")),
+        "STORE_1_11": (
+            ("guard_restart", "old-q/noise hold"),
+            ("guard_noise", "noise hold"),
+            ("guard_brown", "brown-noise hold"),
+        ),
+        "STORE_6_16": tuple(
+            (field, "final old phase") for field in (
+                "guard_restart", "guard_wavetable", "guard_play",
+                "guard_amplitude")),
+        "STORE_7_17": (
+            ("guard_blend", "blend/old-q state"),
+            ("guard_restart", "restart-selected old-q state"),
+        ),
+        "STORE_3_13": tuple(
+            (field, "ack/gain/noise/phase2 state") for field in (
+                "guard_restart", "guard_clear", "guard_wavetable",
+                "guard_play", "guard_amplitude", "guard_noise",
+                "guard_brown")),
+        "STORE_2_12": tuple(
+            (field, "final phase2") for field in (
+                "guard_restart", "guard_wavetable", "guard_play",
+                "guard_amplitude")),
+        "STORE_14_15": tuple(
+            (field, "clear-qualified filter state") for field in (
+                "guard_clear", "guard_wavetable", "guard_play",
+                "guard_amplitude", "guard_noise", "guard_brown")),
+        "STORE_4_14": tuple(
+            (field, "final filter/mode state") for field in (
+                "guard_clear", "guard_wavetable", "guard_play",
+                "guard_amplitude", "guard_noise", "guard_brown")),
+        "STORE_5_15": tuple(
+            (field, "final filter state") for field in (
+                "guard_clear", "guard_wavetable", "guard_play",
+                "guard_amplitude", "guard_noise", "guard_brown")),
+        "STORE_LEAF_LO": tuple(
+            (field, "retained leaf source") for field in (
+                "guard_wavetable", "guard_reverb", "guard_blend",
+                "guard_noise", "guard_brown")),
+        "STORE_LEAF_HI": tuple(
+            (field, "retained leaf source") for field in (
+                "guard_wavetable", "guard_reverb", "guard_blend",
+                "guard_noise", "guard_brown")),
+    }
+    assert set(fixed_guard_obligations) == {
+        name for _pc, name, _q_word, _destination, _origin
+        in SAMPLE_FIXED_WRITES
+    }
+
     fixed_write_rows = []
     for pc, name, q_word, destination, origin in SAMPLE_FIXED_WRITES:
         if name.startswith("CAP_"):
-            event = {"trace": "legacy", "event": "cap",
-                     "cap": name.removeprefix("CAP_")}
+            cap_name = name.removeprefix("CAP_")
+            event = {"trace": "legacy", "event": "cap", "cap": cap_name}
+            source_field = ("s_noise_lp_word" if cap_name == "W0"
+                            else "s_phase_low16")
+            event["source_observation"] = observation(
+                cap_name, "post", source_field)
+            event["consumer_observation"] = observation(
+                "STATE_WRITE", "pre", "state_wd")
         elif name.startswith("STORE_LEAF_"):
-            event = {"trace": "legacy", "event": "leaf_commit"}
+            source_field = ("leaf_lo" if name.endswith("_LO") else "leaf_hi")
+            consumer_by_slot = {
+                "0": "fstk0", "1": "fold_fdb", "2": "fstk1",
+                "3": "fold_fdb", "4": "fstk1", "5": "fold_fdb",
+                "6": "fstk2", "7": "fold_fdb",
+            }
+            event = {"trace": "legacy", "event": "leaf_commit",
+                     "source_observation": observation(
+                         "LEAF_COMMIT", "pre", source_field),
+                     "consumer_observation": observation(
+                         "LEAF_COMMIT", "post", "consumer_by_slot"),
+                     "consumer_by_slot": consumer_by_slot,
+                     "consumer_slice": ("low16" if name.endswith("_LO")
+                                        else "sign_hi16")}
         else:
             event = {"trace": "legacy", "event": "state_write",
-                     "word": destination}
+                     "word": destination,
+                     "source_observation": observation(
+                         "STATE_WRITE", "pre", "state_wd"),
+                     "consumer_observation": observation(
+                         "STATE_WRITE", "post", "state_mem_w")}
+        for key in ("source_observation", "consumer_observation"):
+            event[key]["physical_width"] = 16
+            event[key]["physical_signed"] = False
+        event["guard_obligations"] = [
+            {"field": field, "reason": reason}
+            for field, reason in fixed_guard_obligations[name]
+        ]
         fixed_write_rows.append({
             "pc": pc, "action": name, "q_source": q_word,
             "destination": destination, "provenance": origin,
             "source_binding": event,
         })
     assert len(fixed_write_rows) == 18
+    assert {
+        row["action"]: row["destination"] for row in fixed_write_rows
+        if row["action"].startswith("STORE_LEAF_")
+    } == {"STORE_LEAF_LO": 48, "STORE_LEAF_HI": 49}
 
     cap_pcs = {name.removeprefix("CAP_"): action_pcs[name]
                for name in action_pcs if name.startswith("CAP_")}
@@ -6531,10 +6663,10 @@ def write_sample_binding_manifest(path: Path, accepted: list[int],
         "dq_live_issue": "always", "noise_old_issue": "always",
         "noise_old_hold": "always", "dq_live_hold": "always",
         "dq_old_issue": "always", "noise_live_issue": "always",
-        "wave_0_issue": "!wavetable", "aram_0_issue": "wavetable",
-        "wave_1_issue": "!wavetable", "aram_1_issue": "wavetable",
-        "wave_2_issue": "!wavetable", "aram_2_issue": "wavetable",
-        "wave_3_issue": "!wavetable", "aram_3_issue": "wavetable",
+        "wave_0_issue": "!wavetable", "aram_0_issue": "wavetable&&play",
+        "wave_1_issue": "!wavetable", "aram_1_issue": "wavetable&&play",
+        "wave_2_issue": "!wavetable", "aram_2_issue": "wavetable&&play",
+        "wave_3_issue": "!wavetable", "aram_3_issue": "wavetable&&play",
         "mul_live_w4": "!wavetable", "mul_primary_interp": "wavetable",
         "mul_old_interp": "wavetable", "mul_live_recip": "!wavetable",
         "mul_live_w27": "wavetable", "mul_old_w27": "!wavetable",
@@ -6545,8 +6677,134 @@ def write_sample_binding_manifest(path: Path, accepted: list[int],
         "lfsr_next": "always", "lfsr2_next": "always",
     }
     assert set(root_guards) == {root.name for root in roots}
+    # C2-C-C names only raw testbench trace endpoints.  Service results use
+    # result-ready events derived from live issue/busy/done strobes, followed
+    # by a distinct later capture or take.  No endpoint compares one wire to
+    # itself and no phase label can create a service result without a live
+    # transaction.
+    root_value_bindings = {
+        "dq_live_issue": (observation("DQ_RESULT_LIVE", "pre", "dq_result"),
+                          observation("DQ_CAPTURE_LIVE", "post", "dq_live_r"), False),
+        "noise_old_issue": (
+            observation("MUL_RESULT_NZ_OLD", "post", "selected_old_noise",
+                        selected_by="nz2_sign",
+                        field_when_one="nz_neg17",
+                        field_when_zero="nz_pos17"),
+            observation("NZ_LIVE", "post", "mx_old"), False),
+        "noise_old_hold": (observation("NZ_LIVE", "post", "mx_old"),
+                           observation("W1", "pre", "mx_old"), False),
+        "dq_live_hold": (observation("NZ_LIVE", "post", "dq_live_r"),
+                         observation("W6", "pre", "dq_visit"), False),
+        "dq_old_issue": (observation("DQ_RESULT_OLD", "pre", "dq_result"),
+                         observation("W5", "pre", "dq_visit"), False),
+        "noise_live_issue": (observation("MUL_RESULT_NZ_LIVE", "post", "nz_step"),
+                             observation("W0", "pre", "nz_step"), False),
+        "wave_0_issue": (observation("WAVE_RESULT_0", "post", "z_eval"),
+                         observation("W2", "post", "smp_a"), False),
+        "aram_0_issue": (observation("ARAM_RESULT_0", "post", "seq_q"),
+                         observation("W1", "post", "smp_a_byte"), False),
+        "wave_1_issue": (observation("WAVE_RESULT_1", "post", "z_eval"),
+                         observation("W3", "post", "smp_b"), False),
+        "aram_1_issue": (observation("ARAM_RESULT_1", "post", "seq_q"),
+                         observation("W2", "post", "wt_p1_byte"), False),
+        "wave_2_issue": (observation("WAVE_RESULT_2", "post", "z_eval"),
+                         observation("W4", "post", "smp_b"), False),
+        "aram_2_issue": (observation("ARAM_RESULT_2", "post", "seq_q"),
+                         observation("W3", "post", "smp_b_byte"), False),
+        "wave_3_issue": (observation("WAVE_RESULT_3", "post", "z_eval"),
+                         observation("W5", "pre", "z_eval"), False),
+        "aram_3_issue": (observation("ARAM_RESULT_3", "post", "seq_q"),
+                         observation("W4", "post", "wt_q1_byte"), False),
+        "mul_live_w4": (observation("MUL_RESULT_LIVE_W4", "post", "mul_limb17"),
+                        observation("W15", "post", "gz_s1_r"), False),
+        "mul_primary_interp": (observation("MUL_RESULT_PRIMARY_INTERP", "post", "wt_mag19"),
+                               observation("W15", "pre", "wt_mag19"), False),
+        "mul_old_interp": (observation("MUL_RESULT_OLD_INTERP", "post", "wt_mag19"),
+                           observation("W26", "pre", "wt_mag19"), False),
+        "mul_live_recip": (observation("MUL_RESULT_LIVE_RECIP", "post", "arm_new_w51"),
+                           observation("W27", "post", "mx_new"), False),
+        "mul_live_w27": (observation("MUL_RESULT_LIVE_W27", "post", "mul_limb17"),
+                         observation("W40", "post", "gz_s1_r"), False),
+        "mul_old_w27": (observation("MUL_RESULT_OLD_W27", "post", "mul_limb17"),
+                        observation("W40", "post", "gz_s1_r"), False),
+        "mul_arm_recip": (
+            observation("MUL_RESULT_ARM_RECIP", "post", "selected_arm",
+                        selected_by="guard_wavetable",
+                        field_when_one="arm_new_w51",
+                        field_when_zero="arm_old_w51"),
+            observation("W51", "post", "selected_arm",
+                        selected_by="guard_wavetable",
+                        field_when_one="mx_new", field_when_zero="mx_old"),
+            False),
+        "mul_blend": (observation("MUL_RESULT_BLEND", "post", "blend_mag23"),
+                      observation("W84", "pre", "bl_res"), False),
+        "ring_current": (observation("RING_RESULT_CURRENT", "pre", "ring_rd"),
+                         observation("RING2", "post", "ring_q"), False),
+        "ring_old": (observation("RING_RESULT_OLD", "pre", "ring_rd"),
+                     observation("RING3", "post", "ring_q_old"), False),
+        "expected_arm": (
+            observation("W51", "post", "selected_arm",
+                        selected_by="guard_wavetable",
+                        field_when_one="mx_new", field_when_zero="mx_old"),
+            observation("W75", "pre", "selected_arm",
+                        selected_by="guard_wavetable",
+                        field_when_one="mx_new", field_when_zero="mx_old"),
+            False),
+        "blend_control": (observation("W0", "post", "bl_cnt"),
+                          observation("W75", "pre", "bl_cnt"), False),
+        "leaf_commit": (observation("LEAF_COMMIT", "pre", "mix_leaf"),
+                        observation("LEAF_COMMIT", "post", "fold_leaf_sink"),
+                        False),
+        "record_commit": (observation("STATE_WRITE", "pre", "state_wd"),
+                          observation("STATE_WRITE", "post", "state_mem_w"),
+                          False),
+        "lfsr_next": (observation("W0", "post", "lfsr"),
+                      observation("NEXT_STATE_READ", "pre", "lfsr"), False),
+        "lfsr2_next": (observation("W0", "post", "lfsr2"),
+                       observation("NEXT_STATE_READ", "pre", "lfsr2"), False),
+    }
+
+    root_transactions = {
+        "dq_live_issue": ("dq", "live"),
+        "noise_old_issue": ("mul", "nz_old"),
+        "dq_old_issue": ("dq", "old"),
+        "noise_live_issue": ("mul", "nz_live"),
+        "wave_0_issue": ("wave", "primary"),
+        "wave_1_issue": ("wave", "secondary"),
+        "wave_2_issue": ("wave", "old_primary"),
+        "wave_3_issue": ("wave", "old_secondary"),
+        "aram_0_issue": ("aram", "base0"),
+        "aram_1_issue": ("aram", "adjacent1"),
+        "aram_2_issue": ("aram", "base2"),
+        "aram_3_issue": ("aram", "adjacent3"),
+        "mul_live_w4": ("mul", "live_w4"),
+        "mul_primary_interp": ("mul", "primary_interp"),
+        "mul_old_interp": ("mul", "old_interp"),
+        "mul_live_recip": ("mul", "live_recip"),
+        "mul_live_w27": ("mul", "live_w27"),
+        "mul_old_w27": ("mul", "old_w27"),
+        "mul_arm_recip": ("mul", "arm_recip"),
+        "mul_blend": ("mul", "blend"),
+        "ring_current": ("ring", "current"),
+        "ring_old": ("ring", "old"),
+    }
+    signed_value_roots = {
+        "noise_old_issue", "noise_old_hold", "noise_live_issue",
+        "wave_0_issue", "wave_1_issue", "wave_2_issue", "wave_3_issue",
+        "mul_live_recip", "mul_arm_recip", "ring_current", "ring_old",
+        "expected_arm", "leaf_commit",
+    }
+    assert set(root_value_bindings) == {root.name for root in roots}
     root_rows = []
     for root in roots:
+        producer_observation, consumer_observation, same_net = \
+            root_value_bindings[root.name]
+        assert not same_net
+        is_signed = root.name in signed_value_roots
+        for endpoint in (producer_observation, consumer_observation):
+            endpoint["physical_width"] = root.width
+            endpoint["physical_signed"] = is_signed
+        transaction = root_transactions.get(root.name)
         root_rows.append({
             "name": root.name,
             "group": root.group,
@@ -6560,9 +6818,17 @@ def write_sample_binding_manifest(path: Path, accepted: list[int],
             "consumer_pcs": event_pcs(root.dead, root.name),
             "owner": root.owner,
             "guard": root_guards[root.name],
+            "signed": is_signed,
             "source_binding": {"trace": "legacy",
                                "producer_event": root.born,
-                               "consumer_event": root.dead},
+                               "consumer_event": root.dead,
+                               "producer_observation": producer_observation,
+                               "consumer_observation": consumer_observation,
+                               "transaction": ({"service": transaction[0],
+                                                "kind": transaction[1]}
+                                               if transaction is not None
+                                               else None),
+                               "observe_inactive": root.name == "leaf_commit"},
         })
     assert len(root_rows) == 30
     assert len({row["group"] for row in root_rows}) == 27

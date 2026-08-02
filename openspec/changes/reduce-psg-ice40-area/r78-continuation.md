@@ -2933,6 +2933,52 @@ git history; do not repeat them without the recorded changed condition.
   one of the 30 roots/eighteen commits remains prose-only.  No adapter,
   persistent/fold/dry equivalence, generic integration, synthesis or area
   claim is permitted in this iteration.
+- **C2-C-C accepted live-value foundation:** proof-only instrumentation emits
+  adjacent `psg_legacy_value_v1` pre/post-NBA rows from the real multipumped
+  legacy target.  The metadata manifest now types distinct physical producer
+  and consumer observations for all **30 roots / 27 value groups**, binds the
+  **18 fixed writes** to their real sixteen-bit source and commit observations,
+  fixes fold-leaf destinations at low word 48/high word 49 and records 75
+  action-specific guard obligations.  The checker streams the trace rather
+  than loading or evaluating a slot: it compares live state-memory movement,
+  DQ/multiplier/wave/ARAM issue-result-take identities, current/old ring
+  transactions keyed by kind/slot/recomputed physical address, ordered fold
+  stack writes, leaf/LFSR retention and `dry16` publication.  Held edges freeze
+  every carried value and emit no transaction.  It contains no waveform,
+  filter, record-transition or candidate-write evaluator.
+- **C2-C-C deterministic evidence:** two current generator runs are
+  byte-identical at candidate SHA-256 `6f5713e2...`, control
+  `a9233d6d...` and manifest `438d85a0...`.  Two fresh 400-sample structural
+  traces are byte-identical SHA-256 `d9b79b51...` (**152,893 rows** each);
+  two live-value traces are byte-identical SHA-256 `d5cdf3ae...`
+  (**385,792 rows / 192,896 pairs** each).  The structural checker observes
+  57,600 state reads, 51,200 writes and 2,800 fold nodes.  The value checker
+  proves all roots/groups/writes in both banks and all eight slots, 43,459
+  balanced service transactions, 4,914 fold-stack writes, 400 dry/PCM
+  publications, exactly four right-censored end-of-trace LFSR producers and
+  three explicit held pairs.  C1 contributes only primitive cadence/freeze
+  evidence; every value identity comes from this live RTL stream.
+- **C2-C-C conviction and regression gates:** missing guard obligations,
+  leaf 49-to-48 aliasing, same producer/consumer endpoints, forbidden semantic
+  fields, current/old ring-address corruption, a self-consistent wrong ring
+  identity, missing guard or bank/slot classes, corrupt PCM and an unmatched
+  DQ result all reject.  Two independent read-only audits accept the current
+  `build/c2cc-*` evidence and explicitly reject older `build/r84-c2cc/*`
+  artifacts as stale.  Full/PREVIEW/executor lint, Python compilation,
+  `PATH=/opt/homebrew/bin:$PATH make test-psg` (fidelity, 93 analysis tests,
+  524/850 sample clocks and 4008/5103 tick clocks with zero late flips),
+  strict OpenSpec, `git diff --check` and production image/RTL immutability
+  pass.  The accepted image remains SHA-256 `59b6f86e...`.
+- **C2-C-C boundary and next permitted C2-C-D:** this accepts only the
+  manifest-bound live source/value oracle.  It earns no candidate write data,
+  adapter equivalence, persistent/fold/public equivalence, generic
+  integration, synthesis, area, routing, timing or render claim.  The next
+  bounded step may build one isolated fixed-write value adapter from the
+  candidate's addressed state/service inputs and D2F physical pool, then
+  compare its eighteen action-qualified outputs to this oracle.  The oracle's
+  legacy values may appear only at the comparison boundary, never as adapter
+  inputs; no production image, generic RTL or main landing is permitted until
+  the complete isolated adapter passes every bank/slot/guard/hold class.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
