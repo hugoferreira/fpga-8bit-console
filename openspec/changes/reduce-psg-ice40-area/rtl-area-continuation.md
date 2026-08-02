@@ -24,7 +24,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H017.
+- Next hypothesis ID: H018.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
@@ -35,7 +35,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   reductions are deterministic; the 57-LC placed improvement is positive but
   remains just inside the known roughly 60-LC placement-sensitivity band and
   is not claimed as robust.
-- Latest rejected variant: H016 proves a nine-bit restoring subtract is exact
+- Latest rejected variant: H017's full context sharing maps locally much
+  smaller but globally adds 16 LUT4s and 36 placed LCs; scale-only sharing
+  still adds 11 LUT4s and 22 placed LCs. Both save six mapped carries. H016 proves a nine-bit restoring subtract is exact
   and locally trades one carry for one LUT, but whole-PSG mapping adds 60
   LUT4s, eight carries, and 67 placed LCs. H015 proves the final detune subtract qualifier is
   algebraically redundant, but both registered cones map identically at 188
@@ -60,10 +62,10 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H017 resume audit and record one new,
-  bounded, source-exact generic-RTL hypothesis outside the closed divider,
-  detune, delayed-tick, multiplier, and R.84 families.
-- Required verification for any accepted H017: focused algebraic or exhaustive
+- Next permitted experiment: perform the H018 resume audit and record one new,
+  bounded, source-exact generic-RTL hypothesis outside the closed gain-context,
+  divider, detune, delayed-tick, multiplier, and R.84 families.
+- Required verification for any accepted H018: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -93,6 +95,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H014 | rejected | Keep the nine-bit source contract: all values fit eight bits, but Yosys already prunes the unreachable position and both forms map identically. |
 | H015 | rejected | Keep the explicit subtract qualifier: the unconditional form is exact but maps identically in the registered full-detune cone. |
 | H016 | rejected | Keep the ten-bit restoring subtract: the nine-bit form is exact and locally -1 carry/+1 LUT, but globally adds 60 LUT4s, eight carries, and 67 LCs. |
+| H017 | rejected | Keep separate new/old gain cones: full and scale-only sharing save carries locally/globally but both add LUT4s and placed LCs in the whole PSG. |
 
 ## Hypothesis H001
 
@@ -676,6 +679,46 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   after the restoring recurrence, divisor width/domain, mapper subtract
   lowering, or downstream quotient/remainder contract changes materially.
 
+## Hypothesis H017
+
+- **ID:** H017.
+- **Hypothesis:** full-schedule gain reconstruction has three mutually
+  exclusive consumers: W27 uses the new non-wavetable context, W51 uses the
+  new wavetable context or the old non-wavetable context. Selecting the narrow
+  `{wave, sign}` context first should let one scale mux and negate feed both
+  destination arms, replacing `gz_scaled`, `gz_old_scaled`, `mx_new_w51`, and
+  `mx_old_w51` with one source-exact result and simpler code.
+- **Scope:** `rtl/psg_walk.sv`, exhaustive W27/W51 context equivalence in
+  `tools/psg_hw_forms.py`, isolated registered-use synthesis, whole-PSG
+  mapping, and the complete H007 acceptance battery if mapping improves. No
+  arithmetic value, schedule/action, register lifetime, interface, EBR, R.84,
+  or tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H016 through
+  `2bf1a29`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1 7,392
+  LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Changed condition versus prior grouping:** R.36/H007 grouped identical
+  multiplier request operands before a wide request mux. H017 applies the same
+  accepted narrow-selection law to a different, post-multiply gain consumer
+  whose three schedule contexts are now explicit and mutually exclusive.
+- **Change:** first select old/new wave and sign before one scale/negate chain.
+  Then attribute the result with a scale-only variant that selects the wave
+  before one scale mux but keeps sign selection at the destination arms.
+- **Result:** all 768 valid W27/W51 context combinations match. Isolated full
+  sharing moves 99 LUT4 / 30 carry / 34 flop to 59 / 15 / 34; whole-PSG
+  mapping instead moves to 6,538 LUT4 / 1,547 carry / 1,476 FF / 14 EBR and
+  7,428 LCs, with routed clocks 134.70 MHz fast / 30.27 MHz PSG. The scale-only
+  form maps locally to 90 LUT4 / 15 carry / 34 flop, but globally to 6,533
+  LUT4 / 1,547 carry / 1,476 FF / 14 EBR and 7,414 LCs, routed at 140.92 MHz
+  fast / 26.11 MHz PSG. Relative to H007, v1 is +16 LUT4/-6 carry/+36 LCs and
+  v2 is +11 LUT4/-6 carry/+22 LCs. Production RTL and the conditional proof
+  are reverted byte-for-byte; the full fidelity battery is correctly skipped.
+- **Decision:** rejected after two whole-PSG variants. Selecting narrow context
+  operands reduces the isolated cone, but its new schedule-control fanout
+  worsens flattened destination covering and violates the placement gate.
+- **Repeat only if:** a rejected selected-context gain form may be retried only
+  after the W27/W51 schedule, gain reconstruction, sign ownership, mapper
+  destination covering, or old/new lifetime changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -712,12 +755,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h015/isolated-{baseline,candidate}.log` | registered full-detune `synth_ice40` comparison | Unconditional subtract maps identically; production patch rejected. |
 | `build/experiments/h016/isolated-{baseline,candidate}.log` | full registered divider `synth_ice40` comparison | Exact nine-bit form trades one carry for one LUT locally. |
 | `build/experiments/h016/candidate.{synth,pnr}.log` | canonical synthesis with the nine-bit restoring subtract | Whole-PSG mapped and placed area regress; rejected. |
+| `build/experiments/h017/isolated-{baseline,candidate}.log` | registered gain-consumer synthesis | Full context sharing is locally much smaller. |
+| `build/experiments/h017/isolated-candidate-v2.log` | registered gain-consumer synthesis | Scale-only attribution form; locally smaller. |
+| `build/experiments/h017/candidate-v1.{synth,pnr}.log` | canonical synthesis with full context sharing | Mapped and placed area regress; rejected. |
+| `build/experiments/h017/candidate-v2.{synth,pnr}.log` | canonical synthesis with scale-only sharing | Smaller regression, but placement still exceeds H007; rejected. |
 
 ## Handoff
 
-- Next allowed experiment: H017 only after its resume audit and hypothesis row
+- Next allowed experiment: H018 only after its resume audit and hypothesis row
   are recorded; it must use a new generic-RTL mechanism outside the closed
-  divider and R.84 families.
+  gain-context and R.84 families.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -736,5 +783,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   patches are reverted and no behavior or physical gate remains.
   H016's nine-bit restoring subtract is exact but globally worse; its
   production/proof patches are reverted and no behavior gate remains.
+  H017's two context-sharing variants are exact but globally worse; all
+  production/proof patches are reverted and the family closes.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
