@@ -546,25 +546,26 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
                             : {1'b0, s_eff_a};
   wire [12:0] g_live = g_a + {1'b0, g_a[12:1]};
 
-  logic signed [16:0] mx_filt;
+  // The gain-series limb is dead after W51; W84 reuses the same 17-bit
+  // register for the final filtered sample consumed by the store/fold tail.
+  logic signed [16:0] gz_filt_r;
   logic [9:0]  ring_rp;
 
   logic        mx_aud;
   logic        mxs_new, mxs_old;
-  logic [16:0] gz_s1_r;
 
   logic signed [16:0] mx_new, mx_old;
   wire [25:0] gz_171_twice =
-      m_res[28:3] + {9'b0, gz_s1_r};
+      m_res[28:3] + {9'b0, gz_filt_r};
   wire [24:0] gz_171 = gz_171_twice[25:1];
   wire [33:0] gz_q3acc =
       {m_res[27:3], 9'b0} + {9'b0, gz_171};
 
   wire [16:0] gz_scaled = (!s_snd_wt && s_snd_wave == 3'd6)
-                            ? {1'b0, gz_s1_r[16:1]}
+                            ? {1'b0, gz_filt_r[16:1]}
                             : {2'b0, gz_q3acc[33:19]};
   wire [16:0] gz_old_scaled = (s_old_wave == 3'd6)
-                            ? {1'b0, gz_s1_r[16:1]}
+                            ? {1'b0, gz_filt_r[16:1]}
                             : {2'b0, gz_q3acc[33:19]};
   wire signed [16:0] mx_new_w51 =
       mxs_new ? -$signed(gz_scaled) : $signed(gz_scaled);
@@ -688,7 +689,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       REALTIME_PREVIEW
         ? (mxs_new ? -$signed({1'b0, pv_prod_r})
                    :  $signed({1'b0, pv_prod_r}))
-        : {mx_filt[15], mx_filt[15:0]};
+        : {gz_filt_r[15], gz_filt_r[15:0]};
   wire signed [17:0] n_contrib = {mix_prod[16], mix_prod};
 
   wire signed [17:0] mix_leaf = mx_aud ? n_contrib : 18'sd0;
@@ -721,7 +722,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       + 19'($signed(preview_blend_prod) >>> 5);
   wire signed [17:0] preview_blend_leaf = preview_blend_wide[17:0];
   wire signed [17:0] fold_leaf = REALTIME_PREVIEW
-      ? (mx_aud ? {mx_filt[16], mx_filt} : 18'sd0) : mix_leaf;
+      ? (mx_aud ? {gz_filt_r[16], gz_filt_r} : 18'sd0) : mix_leaf;
 
   localparam signed [22:0] SA_TH = 23'sd24576;
 
@@ -849,7 +850,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
         ring_q_old <= $signed(ring_rd);
       if (prun && !ctrl_stall && pph == 7'(PLAST - 1)
           && play_bits[pc_ch])
-        ringm[{4'b0, pc_ch} * 732 + {3'b0, ring_rp}] <= mx_filt[15:0];
+        ringm[{4'b0, pc_ch} * 732 + {3'b0, ring_rp}] <= gz_filt_r[15:0];
     end
   end else begin : g_noring
     always_comb ring_q = 16'sd0;
@@ -1139,7 +1140,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
             7'(PSTOR): begin
               if (preview_trigger)
                 clr_ack_pv[pc_ch] <= clr_tog[pc_ch];
-              mx_filt <= (preview_restart || old_q0[4:0] != 0)
+              gz_filt_r <= (preview_restart || old_q0[4:0] != 0)
                            ? preview_blend_leaf[16:0] : mix_leaf[16:0];
               if (preview_restart) begin
                 old_q0[4:0] <= 5'd1;
@@ -1248,7 +1249,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
               mxs_new <= wt_qd[8];
             end else begin
 
-              gz_s1_r <= m_res[26:10];
+              gz_filt_r <= m_res[26:10];
               mxs_old <= z_old_sel[17];
             end
           end
@@ -1284,7 +1285,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
           end
           cap[CAP_W40]: begin
 
-            gz_s1_r <= m_res[26:10];
+            gz_filt_r <= m_res[26:10];
           end
           cap[CAP_W51]: begin
             if (s_snd_wt)
@@ -1300,7 +1301,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
               $fatal(1, "psg_walk: early blend consume got %0d, expected %0d, busy=%0b",
                      bl_res, blend_prod_check[22:0], m_busy);
 `endif
-            mx_filt <= filt_y;
+            gz_filt_r <= filt_y;
             if (s_ch_damp != 2'd0)
               s_lp <= dmp_y;
           end
