@@ -23,6 +23,7 @@ Sections:
   aram  - page-local audio-upload address and range decode
   timing - parameter-derived fractional sample-accumulator width
   pitch - signed pitch-sum bounds and prefix saturation
+  noise - signed noise-phase clamp prefix
   bound - exact worst-case interval propagation through the whole
           pipeline (comb feedback to its fixpoint), and the int16 verdict
           for the mix bus (buffer SIZES live in tools/psg_buffers.py)
@@ -765,10 +766,32 @@ def sec_pitch() -> None:
            f"all 4,096 operand pairs stay in [{lo}, {hi}] and signed8 clamp exactly")
 
 
+def sec_noise() -> None:
+    print("noise: signed-18 phase clamp at +/-6143")
+
+    ok = True
+    for bits in range(1 << 18):
+        value = bits - (1 << 18) if bits & (1 << 17) else bits
+        reference = 6143 if value > 6143 else -6143 if value < -6143 else value
+        pos_over = not (bits & (1 << 17)) and (
+            bool(bits & (0xf << 13)) or bool(bits & (1 << 12) and bits & (1 << 11)))
+        neg_under = bool(bits & (1 << 17)) and (
+            ((bits >> 13) & 0xf) != 0xf
+            or (not (bits & (1 << 12))
+                and (not (bits & (1 << 11)) or not (bits & 0x7ff))))
+        low16 = bits & 0xffff
+        candidate = 6143 if pos_over else -6143 if neg_under else (
+            low16 - (1 << 16) if low16 & (1 << 15) else low16)
+        ok &= candidate == reference
+    report("noise.clamp6143_prefix", ok,
+           "prefix form equals signed clamp for all 262,144 signed18 inputs")
+
+
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
             "svc": sec_svc, "tzpow": sec_tzpow, "blend": sec_blend,
             "dq": sec_dq, "amp": sec_amp, "aram": sec_aram,
-            "timing": sec_timing, "pitch": sec_pitch, "bound": sec_bound,
+            "timing": sec_timing, "pitch": sec_pitch, "noise": sec_noise,
+            "bound": sec_bound,
             "csd": sec_csd, "rom": sec_rom}
 
 
