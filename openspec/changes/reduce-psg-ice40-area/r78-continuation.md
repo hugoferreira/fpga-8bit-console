@@ -22,10 +22,11 @@ git history; do not repeat them without the recorded changed condition.
   EBR to `u_seq`.  Their joint floor is **4,935 cells**; the full netlist floor
   is 7,130 and actual placement adds 374 cells, so the corrected fixed base
   outside both controllers is 2,569 placed cells.
-- **Isolated shared executor:** accepted R.84G-F / `9cd5ab3` maps 530 LUT4s,
-  23 carries, 34 flops, 26 unpackable flops and exactly two EBRs, for a
-  556-cell floor and 561 placed LCs at 64.01 MHz.  It proves the normalized
-  advance family only; it is not composed into the generic PSG.
+- **Isolated shared executor:** accepted R.84H-B maps 528 LUT4s, 23 carries,
+  34 flops, 26 unpackable flops and exactly two EBRs, for a 554-cell floor and
+  559 placed LCs at 68.24 MHz.  It proves G-F's normalized advance family plus
+  the complete owner-zero address/data transaction boundary; it implements no
+  sample service semantics and is not composed into the generic PSG.
 - Exact generic gates at the last full checkpoint remain 530 walker + 272
   sequencer clocks in the 850-clock `/6` interval; 59/59 hardware renders
   byte-identical; P.1/P.2 and `click-v1` clean; full/PREVIEW lint, clocks and
@@ -1102,11 +1103,12 @@ git history; do not repeat them without the recorded changed condition.
   transaction graph without copying the oscillator record into another
   register or scratch file and without selecting any service result.
 - **Scope:** `rtl/psg_execmove.sv`, a new owner-zero production-image
-  synchronous transaction test, the isolated executor target only if its
-  fixed decoder connection changes, `tools/psg_exec_model.py` only for
-  machine-checkable transaction metadata, and this ledger.  The 512-word
-  image, generic `psg.sv`, `psg_walk`, `psg_seq`, sample-service semantics,
-  fold arithmetic and public-state arbitration remain unchanged.
+  synchronous transaction test, and the controller/target plus existing
+  owner-one harnesses only as needed to expose and prove the state-memory
+  read enable.  `tools/psg_exec_model.py` and the 512-word image remain
+  unchanged.  Generic `psg.sv`, `psg_state_mem`, `psg_walk`, `psg_seq`,
+  sample-service semantics, fold arithmetic and public-state arbitration
+  remain unchanged.
 - **Grounded transaction count:** one complete bank run is the accepted 782
   clocks and issues exactly **172 reads / 158 writes**: 144 persistent reads
   across eight slots plus 28 literal fold reads; 128 persistent oscillator
@@ -1131,11 +1133,53 @@ git history; do not repeat them without the recorded changed condition.
   **585 LCs**, or if routed timing falls below 28.125 MHz.  Passing proves an
   address/data transaction boundary only; it is not sample semantics,
   schedule equivalence or a generic-PSG area result.
+- **Rejected read-enable drafts:** the first transaction harness privately
+  clock-enabled its test memory and therefore concealed that the committed
+  generic state memory updates its output unconditionally during controller
+  hold.  Adding `state_re` only for `OP_READ` closed that owner-zero test but
+  broke the accepted G-F owner-one production image: WRITE and EXEC actions
+  deliberately prime the synchronous operand stream, including P_W3, K_ROT,
+  V_ST0..3 and normalized whole-word operations.  Neither draft is a valid
+  state-EBR contract.
+- **Retained read-enable contract:** `state_re = active && !hold`.  Every
+  executing instruction edge may prime `state_q` for its successor, exactly
+  as G-F's synchronous model already does; external hold freezes the output
+  register with PC, IR and slot.  The owner-zero harness counts only
+  `OP_READ` instructions as semantic reads while exercising this wider
+  physical clock enable.  Atomic H-F integration must connect `state_re` to
+  the real state EBR output-register enable; H-B does not claim that the
+  currently unchanged generic `psg_state_mem.sv` already implements it.
+- **Functional result:** controller, movement, all 327,680 common-datapath
+  pairs and the eleven-path owner-one production-image harness pass.  The new
+  owner-zero harness executes both parameter banks and proves exactly 782
+  active instructions per run: 172 READ, 158 WRITE, 406 EXEC, 29 SLOT, eight
+  JUMP, eight BRANCH and one DONE.  It checks every read issue/next-action
+  consume, all eight slots, active words 24..27 or 28..31, the late overwrites
+  of words 15/14, leaf/intermediate words 48/49, all 158 injected writes and a
+  three-clock held PC5 with stable `state_q` and no transaction.  The model
+  still passes 19,728,640 decomposed cases and 131,087 owner-one synchronous
+  transactions, and the generated image remains byte-identical.  Isolated,
+  full and PREVIEW lint plus strict OpenSpec validation pass.
+- **Physical result and decision:** canonical Yosys maps **528 LUT4s / 23
+  carries / 34 flops / 26 unpackable / two EBRs / 554-cell floor**; seed-1
+  router2 places **559 LCs** and routes at **68.24 MHz** against 28.125 MHz.
+  Relative to H-A this is -2 LUT4s, unchanged carry/flop/unpackable/EBR, -2
+  floor cells and -2 placed cells.  The small decrease is an abc9 cover
+  reshuffle, not a negative intrinsic cost assigned to the decoder.  Accept
+  H-B as the address/data transport boundary under the original 580-floor /
+  585-placed gate.  It proves no waveform, ARAM, noise, detune, multiply,
+  divide, fold or public-state behavior and no generic-PSG schedule, render or
+  area equivalence.
 - **Repeat only if:** the per-slot state layout, active-bank convention,
   synchronous read latency, H-A literal fold graph or controller write-data
   boundary changes.  Do not satisfy this row with a second record image,
   owner-zero working-register bundle, action-selected service mux or inferred
   transaction trace that does not execute the production image.
+- **R.84H-C next permitted hypothesis:** lower the fixed-latency `psg_wave`
+  and adjacent ARAM issue/consume cadence onto the accepted addressed stream.
+  Preserve service-owned request state, use explicit stored waits, and do not
+  open noise/detune/multiply/divide/fold semantics or generic composition in
+  the same iteration.
 
 ### Active task queue
 
@@ -1190,7 +1234,7 @@ git history; do not repeat them without the recorded changed condition.
       manifests, owner-qualified conditions, explicit wait states, fold
       schedule and one global-public priority function before adding another
       action decoder.
-- [ ] R.84H-B: prove all owner-zero persistent/scratch reads and writes through
+- [x] R.84H-B: prove all owner-zero persistent/scratch reads and writes through
       one synchronous state-memory transaction harness before adding service
       semantics or touching generic PSG composition.
 

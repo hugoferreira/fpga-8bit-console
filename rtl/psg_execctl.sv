@@ -30,6 +30,7 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
                    output logic       done,
                    output logic       owner,
                    output logic [2:0] slot,
+                   output logic       state_re,
                    output logic [8:0] state_ra,
                    output logic       state_we,
                    output logic [8:0] state_wa,
@@ -110,6 +111,10 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
   end
 
   always_comb begin
+    // The state EBR is a pipelined operand stream, not an OP_READ-only port.
+    // Every executing instruction may prime state_q for its successor; hold
+    // must freeze that output register together with the controller.
+    state_re = active && !hold;
     state_ra = {slot, state_ra_override_i ? state_ra_word_i : ir[5:0]};
     state_wa = {slot, state_we_i ? state_wa_word_i : ir[5:0]};
     state_we = active && !hold && (op == OP_WRITE || state_we_i);
