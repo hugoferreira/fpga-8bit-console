@@ -53,6 +53,21 @@ OWNER_TICK = 1
 SAMPLE_START = 0x01
 SAMPLE_CLOCK_LIMIT = 1003
 
+D1_CONTROLLER_SHA256 = \
+    "f86698f67769c1d53bc976ad4868df004755ddb46cd218cab7b9d27d8b5439b4"
+D1_REQUIREMENTS_SHA256 = \
+    "5a7b9809b74b0e9094c864597de89c42e7f269ca1169aefd88f803999792c92e"
+D1_BINDING_MANIFEST_SHA256 = \
+    "438d85a0d7ea9f212cb5ad6efeafefd7a9eb2c8950d182e44abe8895c11249c3"
+D1_CANDIDATE_SHA256 = \
+    "6f5713e22197d8c03bffeac070b3d9b9b2b2f7b20df98dbff4566d778b5e9177"
+D1_PRODUCTION_IMAGE_SHA256 = \
+    "59b6f86e1917c069762c2c67c3cfc33d3d1a7652c518e99f9f8437e019d4ebcf"
+D1_PACKING_LAYOUT_SHA256 = \
+    "242bfc8183feab4d80e81e10f04fec297bbdbffa6a358f2587aa5bd5c7f3efb0"
+D1_LIVE_LAYOUT_SHA256 = \
+    "55bb4b046212d20d8074bfcd074883c4a53e702d99e63fd91b43490b9f2c2075"
+
 
 class Op(IntEnum):
     READ = 0
@@ -6584,6 +6599,379 @@ def write_sample_d1_controller_edges(path: Path, candidate: list[int],
             "1,564 state reads and 316 writes; controller/address only")
 
 
+def write_sample_d1_event_dictionary(
+        path: Path, controller_path: Path, requirements_path: Path,
+        binding_path: Path, candidate: list[int]) -> str:
+    """Bind symbolic D1 lifecycle events to dynamic controller occurrences.
+
+    This is an identity dictionary only.  It records no physical-slice update,
+    arithmetic value or candidate write data.  Service completions remain the
+    already accepted C2-C-C observations; the controller references here only
+    identify their issue/take boundaries.
+    """
+    output = path.resolve()
+    production_before = IMAGE.read_bytes()
+    proof_inputs = (controller_path.resolve(), requirements_path.resolve(),
+                    binding_path.resolve())
+    assert output != IMAGE.resolve() and output not in proof_inputs
+    if output.exists():
+        assert not output.samefile(IMAGE)
+        assert all(not output.samefile(source) for source in proof_inputs)
+
+    controller_bytes = controller_path.read_bytes()
+    requirements_bytes = requirements_path.read_bytes()
+    binding_bytes = binding_path.read_bytes()
+    assert hashlib.sha256(controller_bytes).hexdigest() \
+        == D1_CONTROLLER_SHA256
+    assert hashlib.sha256(requirements_bytes).hexdigest() \
+        == D1_REQUIREMENTS_SHA256
+    assert hashlib.sha256(binding_bytes).hexdigest() \
+        == D1_BINDING_MANIFEST_SHA256
+    assert hashlib.sha256("".join(
+        f"{word:04x}\n" for word in candidate
+    ).encode()).hexdigest() == D1_CANDIDATE_SHA256
+    assert hashlib.sha256(IMAGE.read_bytes()).hexdigest() \
+        == D1_PRODUCTION_IMAGE_SHA256
+
+    controller = json.loads(controller_bytes)
+    requirements = json.loads(requirements_bytes)
+    binding = json.loads(binding_bytes)
+    assert controller["schema"] == "psg_exec_d1_controller_edges_v1"
+    assert requirements["schema"] == "psg_exec_pool_requirements_v2"
+    assert binding["schema"] == "psg_exec_binding_v1"
+    assert requirements["packing_layout_sha256"] \
+        == D1_PACKING_LAYOUT_SHA256
+    assert requirements["live_layout_sha256"] == D1_LIVE_LAYOUT_SHA256
+    assert controller["counts"]["edges"] == 1564
+
+    edges = controller["edges"]
+    actions_by_name = {row["name"]: row for row in binding["actions"]}
+    fixed_writes = binding["fixed_writes"]
+    root_catalog = {row["name"]: row
+                    for row in requirements["source_catalog"]}
+    bound_roots = {row["name"]: row for row in binding["roots"]}
+    assert len(root_catalog) == len(bound_roots) == 30
+
+    def action_pc(name: str) -> int:
+        row = actions_by_name[name]
+        pcs = {int(item["pc"]) for item in row["occurrences"]}
+        assert len(pcs) == 1, (name, pcs)
+        pc = pcs.pop()
+        selected = [edge for edge in edges if int(edge["pc"]) == pc]
+        assert selected and all(edge["action_name"] == name
+                                for edge in selected), (name, pc)
+        return pc
+
+    def references(pcs: set[int], phase: str) -> list[dict[str, object]]:
+        assert phase in {"pre", "post"} and pcs
+        selected = [row for row in edges if int(row["pc"]) in pcs]
+        assert selected and {int(row["pc"]) for row in selected} == pcs
+        refs = [{
+            "bank": int(row["run_bank"]),
+            "slot": int(row["slot"]),
+            "occurrence": int(row["occurrence"]),
+            "pc": int(row["pc"]),
+            "phase": phase,
+        } for row in selected]
+        assert len({(row["bank"], row["occurrence"], row["phase"])
+                    for row in refs}) == len(refs)
+        return refs
+
+    def coverage(refs: list[dict[str, object]], semantic_guard: str) \
+            -> dict[str, object]:
+        selected = {(int(ref["bank"]), int(ref["occurrence"]))
+                    for ref in refs}
+        source_edges = [row for row in edges
+                        if (int(row["run_bank"]), int(row["occurrence"]))
+                        in selected]
+        guards = sorted({json.dumps(row["guard"], sort_keys=True,
+                                    separators=(",", ":"))
+                         for row in source_edges})
+        return {
+            "banks": sorted({int(ref["bank"]) for ref in refs}),
+            "slots": sorted({int(ref["slot"]) for ref in refs}),
+            "controller_guards": [json.loads(guard) for guard in guards],
+            "semantic_guard": semantic_guard,
+            "occurrences": len(refs),
+        }
+
+    leaf_pcs = {int(row["pc"]) for row in fixed_writes
+                if row["action"].startswith("STORE_LEAF_")}
+    record_pcs = {int(row["pc"]) for row in fixed_writes
+                  if not row["action"].startswith("STORE_LEAF_")}
+    slot_pc = {int(row["pc"]) for row in edges
+               if row["run_bank"] == 0
+               and row["instruction"]["op"] == "SLOT"
+               and row["instruction"]["increment"]}
+    assert len(leaf_pcs) == 2 and len(record_pcs) == 16 \
+        and len(slot_pc) == 1
+
+    root_events: list[dict[str, object]] = []
+    for name in sorted(bound_roots):
+        root = bound_roots[name]
+        catalog = root_catalog[name]
+        for key in ("name", "group", "width", "owner",
+                    "producer_event", "consumer_event"):
+            assert root[key] == catalog[key], (name, key)
+        transaction = root["source_binding"]["transaction"]
+        identity = {key: root[key] for key in
+                    ("name", "group", "width", "owner", "guard")}
+        identity["transaction"] = transaction
+        for endpoint in ("producer", "consumer"):
+            event_name = root[f"{endpoint}_event"]
+            observation = root["source_binding"][f"{endpoint}_observation"]
+            if endpoint == "consumer" and name == "leaf_commit":
+                pcs, basis = leaf_pcs, "leaf-fixed-writes"
+            elif endpoint == "consumer" and name == "record_commit":
+                pcs, basis = record_pcs, "record-fixed-writes"
+            elif endpoint == "consumer" and name in {
+                    "lfsr_next", "lfsr2_next"}:
+                pcs, basis = slot_pc, "per-slot-increment"
+            else:
+                pcs = {int(pc) for pc in root[f"{endpoint}_pcs"]}
+                basis = "manifest-pcs"
+            if endpoint == "producer":
+                phase = "post" if transaction is not None \
+                    else observation["phase"]
+                roles = ["issue"] if transaction is not None else ["define"]
+            else:
+                phase = observation["phase"]
+                roles = (["take", "consume"] if transaction is not None
+                         else ["consume"])
+                if event_name == "STORES":
+                    roles.append("commit")
+            refs = references(pcs, phase)
+            row: dict[str, object] = {
+                "id": f"root:{name}:{endpoint}",
+                "root": identity,
+                "endpoint": endpoint,
+                "symbolic_event": event_name,
+                "selection_basis": basis,
+                "roles": roles,
+                "observation": {
+                    "event": observation["event"],
+                    "phase": observation["phase"],
+                },
+                "coverage": coverage(refs, root["guard"]),
+                "occurrences": refs,
+            }
+            if endpoint == "producer" and transaction is not None:
+                completion_refs = references(pcs, observation["phase"])
+                row["transaction_completion"] = {
+                    "role": "complete",
+                    "service": transaction["service"],
+                    "kind": transaction["kind"],
+                    "observation_event": observation["event"],
+                    "observation_phase": observation["phase"],
+                    "occurrences": completion_refs,
+                }
+            root_events.append(row)
+    assert len(root_events) == 60
+
+    def cap_pc(event: str) -> int:
+        assert event.startswith("W") and event[1:].isdigit(), event
+        return action_pc(f"CAP_{event}")
+
+    def sample_event_pcs(event: str) -> tuple[set[int], str]:
+        if event == "PRE_W15":
+            return {cap_pc("W6")}, "post-w6"
+        if event == "DONE":
+            return {action_pc("STORE_LEAF_HI")}, "post-leaf-high"
+        if event.startswith("W"):
+            return {cap_pc(event)}, "cap-action"
+        if re.fullmatch(r"PC[0-9A-F]{2}", event):
+            return {int(event[2:], 16)}, "literal-pc"
+        raise AssertionError(f"unknown sample lifecycle event {event}")
+
+    fold_entry = 0x50
+
+    def fold_pc(node: int, event: str) -> tuple[set[int], str]:
+        assert 0 <= node < len(FOLD_NODES)
+        base = fold_entry + node * 20
+        input_slot = FOLD_NODES[node][1]
+        destination_slot = FOLD_NODES[node][2]
+
+        def fold_site(pc: int, *, action: str | None = None,
+                      step: int | None = None, slot: int) -> None:
+            selected = [edge for edge in edges if int(edge["pc"]) == pc]
+            assert selected and all(int(edge["slot"]) == slot
+                                    for edge in selected), (node, event, pc)
+            if action is not None:
+                assert all(edge["action_name"] == action
+                           for edge in selected), (node, event, pc)
+            if step is not None:
+                assert all(edge["instruction"]["op"] == "EXEC"
+                           and int(edge["instruction"]["action"]) == 0x70
+                           and int(edge["instruction"]["word"]) == step
+                           for edge in selected), (node, event, pc)
+
+        if event == "INPUTS":
+            fold_site(base + 7, action="FOLD_START", slot=input_slot)
+            return {base + 7}, "fold-start"
+        if event.startswith("STEP"):
+            step = int(event[4:])
+            assert 1 <= step <= 8
+            fold_site(base + 8 + step, step=step, slot=input_slot)
+            return {base + 8 + step}, "hold-step-tag"
+        if event == "WRITE_LO":
+            fold_site(base + 18, action="FOLD_WRITE_LO",
+                      slot=destination_slot)
+            return {base + 18}, "fold-write-low"
+        if event == "WRITE_HI":
+            fold_site(base + 19, action="FOLD_WRITE_HI",
+                      slot=destination_slot)
+            return {base + 19}, "fold-write-high"
+        if event == "DONE":
+            if node < 6:
+                fold_site(base + 19, action="FOLD_WRITE_HI",
+                          slot=destination_slot)
+                return {base + 19}, "node-write-high"
+            fold_site(0xdc, action="FOLD_FINISH", slot=destination_slot)
+            return {0xdc}, "root-fold-finish"
+        raise AssertionError(f"unknown fold lifecycle event {event}")
+
+    lifetime_events: list[dict[str, object]] = []
+    live_fields = requirements["live_fields"]
+    assert len(live_fields) == 78
+    assert len({(row["path"], row["name"]) for row in live_fields}) == 78
+    for field in live_fields:
+        for endpoint in ("born", "dead"):
+            symbolic = field[endpoint]
+            phase = "post" if endpoint == "born" else "pre"
+            basis: str
+            if field["path"] == "fold":
+                if symbolic == "DONE":
+                    phase = "post"
+                pcs: set[int] = set()
+                bases: set[str] = set()
+                for node in range(len(FOLD_NODES)):
+                    node_pcs, node_basis = fold_pc(node, symbolic)
+                    pcs.update(node_pcs)
+                    bases.add(node_basis)
+                basis = "+".join(sorted(bases))
+                path_guard = "fold"
+            else:
+                pcs, basis = sample_event_pcs(symbolic)
+                if symbolic == "DONE":
+                    phase = "post"
+                path_guard = field["path"]
+            refs = references(pcs, phase)
+            lifetime_events.append({
+                "id": (f"lifetime:{field['path']}:{field['name']}:"
+                       f"{endpoint}"),
+                "lifetime": {key: field[key] for key in
+                             ("path", "name", "width", "pieces")},
+                "endpoint": endpoint,
+                "symbolic_event": symbolic,
+                "selection_basis": basis,
+                "roles": ["define" if endpoint == "born" else "consume"],
+                "coverage": coverage(refs, path_guard),
+                "occurrences": refs,
+            })
+    assert len(lifetime_events) == 156
+
+    fold_events: list[dict[str, object]] = []
+    fold_topology = binding["source_contract"]["fold_nodes"]
+    assert len(fold_topology) == len(FOLD_NODES) == 7
+    for node, topology in enumerate(fold_topology):
+        assert tuple(topology) == FOLD_NODES[node]
+        for event in ("INPUTS", *(f"STEP{step}" for step in range(1, 9)),
+                      "WRITE_LO", "WRITE_HI", "DONE"):
+            pcs, basis = fold_pc(node, event)
+            refs = references(pcs, "post")
+            if event == "INPUTS":
+                roles = ["define"]
+            elif event.startswith("STEP"):
+                roles = ["consume", "define"]
+            elif event.startswith("WRITE"):
+                roles = ["consume", "commit"]
+            else:
+                roles = ["complete"]
+            fold_events.append({
+                "id": f"fold:{node}:{event}",
+                "node": node,
+                "topology": {"a_slot": topology[0],
+                             "b_slot": topology[1],
+                             "destination_slot": topology[2]},
+                "symbolic_event": event,
+                "selection_basis": basis,
+                "roles": roles,
+                "coverage": coverage(refs, "fold"),
+                "occurrences": refs,
+            })
+    finish_refs = references({action_pc("FOLD_FINISH")}, "post")
+    fold_events.append({
+        "id": "fold:root:FOLD_FINISH",
+        "node": "root",
+        "symbolic_event": "FOLD_FINISH",
+        "selection_basis": "fold-finish-action",
+        "roles": ["consume", "complete", "commit"],
+        "coverage": coverage(finish_refs, "fold"),
+        "occurrences": finish_refs,
+    })
+    assert len(fold_events) == 85
+
+    manifest = {
+        "schema": "psg_exec_d1_event_dictionary_v1",
+        "claim": "dynamic-event-identity-only-no-values-or-pool-updates",
+        "anchors": {
+            "controller_sha256": D1_CONTROLLER_SHA256,
+            "candidate_sha256": D1_CANDIDATE_SHA256,
+            "binding_manifest_sha256": D1_BINDING_MANIFEST_SHA256,
+            "requirements_sha256": D1_REQUIREMENTS_SHA256,
+            "packing_layout_sha256": D1_PACKING_LAYOUT_SHA256,
+            "live_layout_sha256": D1_LIVE_LAYOUT_SHA256,
+            "production_image_sha256": D1_PRODUCTION_IMAGE_SHA256,
+        },
+        "external_hold": controller["external_hold"],
+        "counts": {
+            "root_events": len(root_events),
+            "lifetime_events": len(lifetime_events),
+            "fold_events": len(fold_events),
+            "root_occurrences": sum(len(row["occurrences"])
+                                    for row in root_events),
+            "transaction_completions": sum(
+                "transaction_completion" in row for row in root_events),
+            "transaction_completion_occurrences": sum(
+                len(row["transaction_completion"]["occurrences"])
+                for row in root_events
+                if "transaction_completion" in row),
+            "lifetime_occurrences": sum(len(row["occurrences"])
+                                        for row in lifetime_events),
+            "fold_occurrences": sum(len(row["occurrences"])
+                                    for row in fold_events),
+        },
+        "root_events": root_events,
+        "lifetime_events": lifetime_events,
+        "fold_events": fold_events,
+    }
+
+    def forbidden_keys(value: object) -> list[str]:
+        forbidden: list[str] = []
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"value", "expected", "result", "pool",
+                           "pool_update", "state_wd", "record_commit",
+                           "final_words", "expression", "expr"}:
+                    forbidden.append(key)
+                forbidden.extend(forbidden_keys(child))
+        elif isinstance(value, list):
+            for child in value:
+                forbidden.extend(forbidden_keys(child))
+        return forbidden
+
+    assert not forbidden_keys(manifest)
+    encoded = json.dumps(manifest, sort_keys=True, indent=2) + "\n"
+    assert "SampleTrace" not in encoded \
+        and "evaluate_sample_slot" not in encoded
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(encoded)
+    assert output.read_text() == encoded
+    assert IMAGE.read_bytes() == production_before
+    return (f"{output}: 60 root endpoints, 22 transaction completions, "
+            "156 lifetime endpoints, 85 fold events; dynamic identity only")
+
+
 def write_sample_d1_requirement_manifest(
         path: Path, packing_rows: tuple[D2FPackingRow, ...],
         built_fields: tuple[D2FLiveField, ...],
@@ -7363,11 +7751,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--d1-controller-edges-out", type=Path,
         help="write D1's controller/address-only dynamic edge relation")
+    parser.add_argument(
+        "--d1-event-dictionary-out", type=Path,
+        help="write D1's proof-only dynamic lifecycle event dictionary")
+    parser.add_argument(
+        "--d1-controller-edges-in", type=Path,
+        help="accepted D1 controller edges used by the event dictionary")
+    parser.add_argument(
+        "--d1-requirements-in", type=Path,
+        help="accepted D1 requirements used by the event dictionary")
+    parser.add_argument(
+        "--d1-binding-manifest-in", type=Path,
+        help="accepted C2-C-C manifest used by the event dictionary")
     args = parser.parse_args()
+    event_inputs = (args.d1_controller_edges_in, args.d1_requirements_in,
+                    args.d1_binding_manifest_in)
+    if args.d1_event_dictionary_out and not all(event_inputs):
+        parser.error("--d1-event-dictionary-out requires all three D1 inputs")
+    if not args.d1_event_dictionary_out and any(event_inputs):
+        parser.error("D1 event inputs require --d1-event-dictionary-out")
     if args.write and (args.candidate_out or args.binding_out
                        or args.binding_control_out
                        or args.d1_requirements_out
-                       or args.d1_controller_edges_out):
+                       or args.d1_controller_edges_out
+                       or args.d1_event_dictionary_out):
         parser.error("--write is mutually exclusive with proof outputs")
     if args.binding_control_out and not args.binding_out:
         parser.error("--binding-control-out requires --binding-out")
@@ -7378,6 +7785,7 @@ def parse_args() -> argparse.Namespace:
             ("binding control", args.binding_control_out),
             ("D1 requirements", args.d1_requirements_out),
             ("D1 controller edges", args.d1_controller_edges_out),
+            ("D1 event dictionary", args.d1_event_dictionary_out),
         ) if path is not None
     ]
     for index, (left_name, left_path) in enumerate(proof_outputs):
@@ -7563,6 +7971,11 @@ def main() -> int:
         print("D1 controller edges: " + write_sample_d1_controller_edges(
             args.d1_controller_edges_out, sample_b3b2a_candidate,
             actions, sample_labels))
+    if args.d1_event_dictionary_out:
+        print("D1 event dictionary: " + write_sample_d1_event_dictionary(
+            args.d1_event_dictionary_out, args.d1_controller_edges_in,
+            args.d1_requirements_in, args.d1_binding_manifest_in,
+            sample_b3b2a_candidate + tick_program))
     print("warning: owner-zero actions and remaining owner-one actions are "
           "manifests, not semantic RTL; whole-PSG schedule/render/area "
           "equivalence remain atomic integration gates")

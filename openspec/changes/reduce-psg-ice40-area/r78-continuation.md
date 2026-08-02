@@ -3310,6 +3310,36 @@ git history; do not repeat them without the recorded changed condition.
   checks.  No candidate/production RTL or image, adapter, generic integration,
   synthesis, timing, routing, render or area claim is permitted.  Any later
   RTL hypothesis must first be sent to the coordinating optimization task.
+- **C2-C-D1-C-B1 result and decision:** accepted as the bounded dynamic-event
+  dictionary foundation only; D1-C-B remains unproved.  Schema
+  `psg_exec_d1_event_dictionary_v1` independently reconstructs **60 root
+  endpoints / 1,216 dynamic occurrences**, **22 transaction completions / 352
+  exact completion occurrences**, **156 lifetime endpoints / 2,452
+  occurrences** and **85 fold events / 170 occurrences**.  Every reference
+  uses the complete `{bank,slot,occurrence,pc,pre|post}` key.  Transaction
+  issue, result completion and take phases are separate, so pre-edge DQ/ring
+  completions cannot alias their post-edge issue.  Both parameter banks and
+  all eight sample slots are covered where the event is per-slot.  `PRE_W15`
+  is the post-edge of PC35/CAP_W6, sample `DONE` is the post-edge of
+  PC77/STORE_LEAF_HI, and each ordered fold node is anchored to its literal
+  input slot, `(base+8)+STEP1..8` action-0x70 word tag, low/high write and final
+  PC220/FOLD_FINISH action rather than to an unproved name alone.  Composite
+  leaf, sixteen-record and per-slot-increment consumers remain distinct.
+  Two complete 19,728,640-formula / 131,087-transaction model generations are
+  byte-identical at SHA-256 `5b178017...`; the independently regenerated D1-B
+  source inventory remains `95619e61...`.  Ten mutations reject a missing or
+  duplicate dynamic event, wrong completion phase, bank/slot loss, name-only
+  join, copied predecessor PC, hold drift, colluding controller/dictionary,
+  unknown field and numeric Boolean coercion.  Both full structural checkers
+  pass 152,893 legacy rows, the C2-C-C value checker passes 192,896 value
+  pairs / 43,459 service transactions, Python compilation and strict OpenSpec
+  pass, and `make test-psg` remains at 524/850 sample clocks with fixed
+  530+272 credits and 48 spare, 4,008/5,103 tick clocks and zero late flips.
+  Candidate, controller, manifest, requirements, layout and production-image
+  anchors remain byte-identical.  The dictionary carries no value, pool
+  update, primitive equation or fixed-write data and proves no pool SSA,
+  adapter, RTL, image, integration, synthesis, timing, routing, render or area
+  property.
 - **C2-C-D1-C-B2 boundary:** only after B1 closes, attach literal
   pool definitions/uses and service issue/result/take roots to exact enabled
   occurrences with pre/post phase.  Repair fold assembly, STEP8, result-write

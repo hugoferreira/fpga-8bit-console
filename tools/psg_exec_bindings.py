@@ -14,6 +14,7 @@ import argparse
 import copy
 import hashlib
 import json
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -38,6 +39,10 @@ D1_PRODUCTION_IMAGE_SHA256 = \
     "59b6f86e1917c069762c2c67c3cfc33d3d1a7652c518e99f9f8437e019d4ebcf"
 D1_OWNER_ZERO_WORDS_SHA256 = \
     "521f0bbdbc4085ea55cb64db5e4132a210d48cf6f50efed4751f6c320ed71986"
+D1_CONTROLLER_SHA256 = \
+    "f86698f67769c1d53bc976ad4868df004755ddb46cd218cab7b9d27d8b5439b4"
+D1_REQUIREMENTS_SHA256 = \
+    "5a7b9809b74b0e9094c864597de89c42e7f269ca1169aefd88f803999792c92e"
 
 # A typed state-q read is a legal D1 source only when it arrives from outside
 # the unproved owner-zero write graph at the exact consuming edge.  Presently
@@ -1032,6 +1037,425 @@ def check_d1_controller_mutations(controller: Json, manifest: Json,
     return convictions
 
 
+def build_d1_event_dictionary(requirements: Json, manifest: Json,
+                              candidate: list[int], controller: Json) -> Json:
+    """Independently reconstruct D1's dynamic event identity dictionary."""
+    validate_pool_requirements(requirements, manifest)
+    validate_d1_controller_edges(controller, manifest, candidate)
+    require(hashlib.sha256(canonical_json(controller)).hexdigest()
+            == D1_CONTROLLER_SHA256,
+            "D1 event dictionary controller is not the accepted C-A anchor")
+    require(hashlib.sha256(canonical_json(requirements)).hexdigest()
+            == D1_REQUIREMENTS_SHA256,
+            "D1 event dictionary requirements are not the accepted anchor")
+
+    edges = controller["edges"]
+    action_rows = {row["name"]: row for row in manifest["actions"]}
+    fixed = manifest["fixed_writes"]
+    source_rows = {row["name"]: row
+                   for row in requirements["source_catalog"]}
+    roots = {row["name"]: row for row in manifest["roots"]}
+    require(len(source_rows) == len(roots) == 30,
+            "D1 event root catalog changed")
+
+    def only_action_pc(name: str) -> int:
+        pcs = {int(row["pc"]) for row in action_rows[name]["occurrences"]}
+        require(len(pcs) == 1, f"D1 event {name} is not one static PC")
+        pc = next(iter(pcs))
+        selected = [edge for edge in edges if int(edge["pc"]) == pc]
+        require(bool(selected)
+                and all(edge["action_name"] == name for edge in selected),
+                f"D1 event {name} is not the controller action at {pc:02x}")
+        return pc
+
+    def event_refs(pcs: set[int], phase: str) -> list[Json]:
+        require(phase in {"pre", "post"} and bool(pcs),
+                "D1 event phase/PC set invalid")
+        matched = [edge for edge in edges if int(edge["pc"]) in pcs]
+        require(bool(matched)
+                and {int(edge["pc"]) for edge in matched} == pcs,
+                f"D1 event PCs absent from controller: {sorted(pcs)}")
+        refs = [{
+            "bank": int(edge["run_bank"]),
+            "slot": int(edge["slot"]),
+            "occurrence": int(edge["occurrence"]),
+            "pc": int(edge["pc"]),
+            "phase": phase,
+        } for edge in matched]
+        require(len({(ref["bank"], ref["occurrence"], ref["phase"])
+                     for ref in refs}) == len(refs),
+                "D1 event dynamic key is not unique")
+        return refs
+
+    def event_coverage(refs: list[Json], guard: str) -> Json:
+        keys = {(int(ref["bank"]), int(ref["occurrence"])) for ref in refs}
+        source = [edge for edge in edges
+                  if (int(edge["run_bank"]), int(edge["occurrence"]))
+                  in keys]
+        encoded_guards = sorted({json.dumps(
+            edge["guard"], sort_keys=True, separators=(",", ":")
+        ) for edge in source})
+        return {
+            "banks": sorted({int(ref["bank"]) for ref in refs}),
+            "slots": sorted({int(ref["slot"]) for ref in refs}),
+            "controller_guards": [json.loads(value)
+                                  for value in encoded_guards],
+            "semantic_guard": guard,
+            "occurrences": len(refs),
+        }
+
+    leaf_pcs = {int(row["pc"]) for row in fixed
+                if str(row["action"]).startswith("STORE_LEAF_")}
+    record_pcs = {int(row["pc"]) for row in fixed
+                  if not str(row["action"]).startswith("STORE_LEAF_")}
+    increment_pcs = {
+        int(edge["pc"]) for edge in edges
+        if edge["run_bank"] == 0
+        and edge["instruction"]["op"] == "SLOT"
+        and edge["instruction"]["increment"] is True
+    }
+    require((len(leaf_pcs), len(record_pcs), len(increment_pcs)) == (2, 16, 1),
+            "D1 composite root event partitions changed")
+
+    root_events: list[Json] = []
+    for name in sorted(roots):
+        root, source = roots[name], source_rows[name]
+        for key in ("name", "group", "width", "owner",
+                    "producer_event", "consumer_event"):
+            require(root[key] == source[key],
+                    f"D1 root {name} structured identity changed at {key}")
+        transaction = root["source_binding"]["transaction"]
+        root_identity = {key: root[key] for key in
+                         ("name", "group", "width", "owner", "guard")}
+        root_identity["transaction"] = transaction
+        for endpoint in ("producer", "consumer"):
+            symbolic = root[f"{endpoint}_event"]
+            observed = root["source_binding"][f"{endpoint}_observation"]
+            if endpoint == "consumer" and name == "leaf_commit":
+                pcs, basis = set(leaf_pcs), "leaf-fixed-writes"
+            elif endpoint == "consumer" and name == "record_commit":
+                pcs, basis = set(record_pcs), "record-fixed-writes"
+            elif endpoint == "consumer" and name in {
+                    "lfsr_next", "lfsr2_next"}:
+                pcs, basis = set(increment_pcs), "per-slot-increment"
+            else:
+                pcs = {int(pc) for pc in root[f"{endpoint}_pcs"]}
+                basis = "manifest-pcs"
+            if endpoint == "producer":
+                phase = "post" if transaction is not None \
+                    else observed["phase"]
+                roles = ["issue"] if transaction is not None else ["define"]
+            else:
+                phase = observed["phase"]
+                roles = (["take", "consume"] if transaction is not None
+                         else ["consume"])
+                if symbolic == "STORES":
+                    roles.append("commit")
+            refs = event_refs(pcs, phase)
+            event: Json = {
+                "id": f"root:{name}:{endpoint}",
+                "root": root_identity,
+                "endpoint": endpoint,
+                "symbolic_event": symbolic,
+                "selection_basis": basis,
+                "roles": roles,
+                "observation": {"event": observed["event"],
+                                "phase": observed["phase"]},
+                "coverage": event_coverage(refs, root["guard"]),
+                "occurrences": refs,
+            }
+            if endpoint == "producer" and transaction is not None:
+                completion_refs = event_refs(pcs, observed["phase"])
+                event["transaction_completion"] = {
+                    "role": "complete",
+                    "service": transaction["service"],
+                    "kind": transaction["kind"],
+                    "observation_event": observed["event"],
+                    "observation_phase": observed["phase"],
+                    "occurrences": completion_refs,
+                }
+            root_events.append(event)
+    require(len(root_events) == 60, "D1 root endpoint count changed")
+
+    def cap_pc(symbolic: str) -> int:
+        require(bool(re.fullmatch(r"W[0-9]+", symbolic)),
+                f"D1 CAP event malformed: {symbolic}")
+        return only_action_pc("CAP_" + symbolic)
+
+    def sample_site(symbolic: str) -> tuple[set[int], str]:
+        if symbolic == "PRE_W15":
+            return {cap_pc("W6")}, "post-w6"
+        if symbolic == "DONE":
+            return {only_action_pc("STORE_LEAF_HI")}, "post-leaf-high"
+        if symbolic.startswith("W"):
+            return {cap_pc(symbolic)}, "cap-action"
+        require(bool(re.fullmatch(r"PC[0-9A-F]{2}", symbolic)),
+                f"unknown D1 sample lifecycle event {symbolic}")
+        return {int(symbolic[2:], 16)}, "literal-pc"
+
+    fold_nodes = manifest["source_contract"]["fold_nodes"]
+    require(len(fold_nodes) == 7, "D1 fold topology changed")
+
+    def fold_site(node: int, symbolic: str) -> tuple[set[int], str]:
+        require(0 <= node < 7, "D1 fold node out of range")
+        base = 0x50 + 20 * node
+        input_slot = fold_nodes[node][1]
+        destination_slot = fold_nodes[node][2]
+
+        def require_site(pc: int, *, action: str | None = None,
+                         step: int | None = None, slot: int) -> None:
+            selected = [edge for edge in edges if int(edge["pc"]) == pc]
+            require(bool(selected)
+                    and all(int(edge["slot"]) == slot for edge in selected),
+                    f"D1 fold {node} {symbolic} slot/site changed")
+            if action is not None:
+                require(all(edge["action_name"] == action
+                            for edge in selected),
+                        f"D1 fold {node} {symbolic} action changed")
+            if step is not None:
+                require(all(edge["instruction"]["op"] == "EXEC"
+                            and int(edge["instruction"]["action"]) == 0x70
+                            and int(edge["instruction"]["word"]) == step
+                            for edge in selected),
+                        f"D1 fold {node} {symbolic} step tag changed")
+
+        if symbolic == "INPUTS":
+            require_site(base + 7, action="FOLD_START", slot=input_slot)
+            return {base + 7}, "fold-start"
+        if symbolic.startswith("STEP"):
+            step = int(symbolic[4:])
+            require(1 <= step <= 8, "D1 fold step out of range")
+            require_site(base + 8 + step, step=step, slot=input_slot)
+            return {base + 8 + step}, "hold-step-tag"
+        if symbolic == "WRITE_LO":
+            require_site(base + 18, action="FOLD_WRITE_LO",
+                         slot=destination_slot)
+            return {base + 18}, "fold-write-low"
+        if symbolic == "WRITE_HI":
+            require_site(base + 19, action="FOLD_WRITE_HI",
+                         slot=destination_slot)
+            return {base + 19}, "fold-write-high"
+        if symbolic == "DONE":
+            if node < 6:
+                require_site(base + 19, action="FOLD_WRITE_HI",
+                             slot=destination_slot)
+                return {base + 19}, "node-write-high"
+            require_site(0xdc, action="FOLD_FINISH",
+                         slot=destination_slot)
+            return {0xdc}, "root-fold-finish"
+        raise AssertionError(f"unknown D1 fold lifecycle event {symbolic}")
+
+    lifetime_events: list[Json] = []
+    fields = requirements["live_fields"]
+    require(len(fields) == 78
+            and len({(field["path"], field["name"])
+                     for field in fields}) == 78,
+            "D1 live-field identities changed")
+    for field in fields:
+        for endpoint in ("born", "dead"):
+            symbolic = field[endpoint]
+            phase = "post" if endpoint == "born" else "pre"
+            if field["path"] == "fold":
+                if symbolic == "DONE":
+                    phase = "post"
+                pcs: set[int] = set()
+                bases: set[str] = set()
+                for node in range(7):
+                    node_pcs, basis = fold_site(node, symbolic)
+                    pcs.update(node_pcs)
+                    bases.add(basis)
+                selection_basis = "+".join(sorted(bases))
+                guard = "fold"
+            else:
+                pcs, selection_basis = sample_site(symbolic)
+                if symbolic == "DONE":
+                    phase = "post"
+                guard = field["path"]
+            refs = event_refs(pcs, phase)
+            lifetime_events.append({
+                "id": (f"lifetime:{field['path']}:{field['name']}:"
+                       f"{endpoint}"),
+                "lifetime": {key: field[key] for key in
+                             ("path", "name", "width", "pieces")},
+                "endpoint": endpoint,
+                "symbolic_event": symbolic,
+                "selection_basis": selection_basis,
+                "roles": ["define" if endpoint == "born" else "consume"],
+                "coverage": event_coverage(refs, guard),
+                "occurrences": refs,
+            })
+    require(len(lifetime_events) == 156,
+            "D1 lifetime endpoint count changed")
+
+    fold_events: list[Json] = []
+    for node, slots in enumerate(fold_nodes):
+        for symbolic in ("INPUTS", *(f"STEP{step}" for step in range(1, 9)),
+                         "WRITE_LO", "WRITE_HI", "DONE"):
+            pcs, selection_basis = fold_site(node, symbolic)
+            refs = event_refs(pcs, "post")
+            if symbolic == "INPUTS":
+                roles = ["define"]
+            elif symbolic.startswith("STEP"):
+                roles = ["consume", "define"]
+            elif symbolic.startswith("WRITE"):
+                roles = ["consume", "commit"]
+            else:
+                roles = ["complete"]
+            fold_events.append({
+                "id": f"fold:{node}:{symbolic}",
+                "node": node,
+                "topology": {"a_slot": slots[0], "b_slot": slots[1],
+                             "destination_slot": slots[2]},
+                "symbolic_event": symbolic,
+                "selection_basis": selection_basis,
+                "roles": roles,
+                "coverage": event_coverage(refs, "fold"),
+                "occurrences": refs,
+            })
+    finish_refs = event_refs({only_action_pc("FOLD_FINISH")}, "post")
+    fold_events.append({
+        "id": "fold:root:FOLD_FINISH",
+        "node": "root",
+        "symbolic_event": "FOLD_FINISH",
+        "selection_basis": "fold-finish-action",
+        "roles": ["consume", "complete", "commit"],
+        "coverage": event_coverage(finish_refs, "fold"),
+        "occurrences": finish_refs,
+    })
+    require(len(fold_events) == 85, "D1 fold event count changed")
+
+    return {
+        "schema": "psg_exec_d1_event_dictionary_v1",
+        "claim": "dynamic-event-identity-only-no-values-or-pool-updates",
+        "anchors": {
+            "controller_sha256": D1_CONTROLLER_SHA256,
+            "candidate_sha256": D1_CANDIDATE_SHA256,
+            "binding_manifest_sha256": D1_BINDING_MANIFEST_SHA256,
+            "requirements_sha256": D1_REQUIREMENTS_SHA256,
+            "packing_layout_sha256": D1_PACKING_LAYOUT_SHA256,
+            "live_layout_sha256": D1_LIVE_LAYOUT_SHA256,
+            "production_image_sha256": D1_PRODUCTION_IMAGE_SHA256,
+        },
+        "external_hold": controller["external_hold"],
+        "counts": {
+            "root_events": len(root_events),
+            "lifetime_events": len(lifetime_events),
+            "fold_events": len(fold_events),
+            "root_occurrences": sum(len(row["occurrences"])
+                                    for row in root_events),
+            "transaction_completions": sum(
+                "transaction_completion" in row for row in root_events),
+            "transaction_completion_occurrences": sum(
+                len(row["transaction_completion"]["occurrences"])
+                for row in root_events
+                if "transaction_completion" in row),
+            "lifetime_occurrences": sum(len(row["occurrences"])
+                                        for row in lifetime_events),
+            "fold_occurrences": sum(len(row["occurrences"])
+                                    for row in fold_events),
+        },
+        "root_events": root_events,
+        "lifetime_events": lifetime_events,
+        "fold_events": fold_events,
+    }
+
+
+def validate_d1_event_dictionary(dictionary: Json, requirements: Json,
+                                 manifest: Json, candidate: list[int],
+                                 controller: Json) -> None:
+    forbidden = forbidden_manifest_fields(dictionary)
+    require(not forbidden,
+            f"D1 event dictionary carries semantic fields: {forbidden}")
+    encoded = json.dumps(dictionary, sort_keys=True)
+    for spelling in ("state_wd", "final_words",
+                     "pool_update", "SampleTrace", "evaluate_sample_slot"):
+        require(spelling not in encoded,
+                f"D1 event dictionary names forbidden {spelling}")
+    expected = build_d1_event_dictionary(
+        requirements, manifest, candidate, controller)
+    require(canonical_json(dictionary) == canonical_json(expected),
+            "D1 event dictionary differs from independent reconstruction")
+
+
+def check_d1_event_mutations(dictionary: Json, requirements: Json,
+                             manifest: Json, candidate: list[int],
+                             controller: Json) -> int:
+    convictions = 0
+
+    def reject(mutated: Json, label: str, *,
+               changed_manifest: Json | None = None,
+               changed_controller: Json | None = None) -> None:
+        nonlocal convictions
+        rejected = False
+        try:
+            validate_d1_event_dictionary(
+                mutated, requirements,
+                manifest if changed_manifest is None else changed_manifest,
+                candidate,
+                controller if changed_controller is None else changed_controller)
+        except (AssertionError, KeyError, StopIteration, ValueError):
+            rejected = True
+        require(rejected, f"D1 event mutation survived: {label}")
+        convictions += 1
+
+    missing = copy.deepcopy(dictionary)
+    missing["root_events"][0]["occurrences"].pop()
+    reject(missing, "missing dynamic event")
+
+    ambiguous = copy.deepcopy(dictionary)
+    ambiguous["root_events"][0]["occurrences"].append(
+        copy.deepcopy(ambiguous["root_events"][0]["occurrences"][0]))
+    reject(ambiguous, "ambiguous duplicate event")
+
+    phase = copy.deepcopy(dictionary)
+    completion = next(
+        row["transaction_completion"] for row in phase["root_events"]
+        if row.get("transaction_completion", {}).get("observation_phase")
+        == "pre")
+    completion["occurrences"][0]["phase"] = "post"
+    reject(phase, "wrong pre/post phase")
+
+    coverage = copy.deepcopy(dictionary)
+    coverage["root_events"][0]["occurrences"] = [
+        row for row in coverage["root_events"][0]["occurrences"]
+        if row["bank"] == 0 and row["slot"] != 7]
+    reject(coverage, "bank and slot loss")
+
+    name_only = copy.deepcopy(dictionary)
+    name_only["root_events"][0]["root"]["group"] = "same-name-wrong-group"
+    reject(name_only, "name-only root match")
+
+    copied_q = copy.deepcopy(dictionary)
+    copied_q["lifetime_events"][0]["occurrences"][0]["pc"] -= 1
+    reject(copied_q, "copied predecessor q word")
+
+    hold = copy.deepcopy(dictionary)
+    hold["external_hold"]["state_read"] = "enabled"
+    reject(hold, "external hold drift")
+
+    colluding_controller = copy.deepcopy(controller)
+    colluding = copy.deepcopy(dictionary)
+    for edge in colluding_controller["edges"]:
+        if edge["pc"] == 0x26:
+            edge["pc"] = 0x25
+    for row in colluding["root_events"] + colluding["lifetime_events"]:
+        for ref in row["occurrences"]:
+            if ref["pc"] == 0x26:
+                ref["pc"] = 0x25
+    reject(colluding, "colluding controller and dictionary",
+           changed_controller=colluding_controller)
+
+    unknown = copy.deepcopy(dictionary)
+    unknown["semantic_value"] = 0
+    reject(unknown, "unknown schema field")
+
+    wrong_type = copy.deepcopy(dictionary)
+    wrong_type["root_events"][0]["occurrences"][0]["occurrence"] = True
+    reject(wrong_type, "numeric bool/int coercion")
+    require(convictions == 10, "D1 event mutation count changed")
+    return convictions
+
+
 def pair_trace(rows: list[Json], key_fields: tuple[str, ...]) \
         -> list[tuple[Json, Json]]:
     grouped: dict[tuple[Any, ...], dict[str, Json]] = defaultdict(dict)
@@ -1469,6 +1893,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pool-requirements", type=Path)
     parser.add_argument("--pool-out", type=Path)
     parser.add_argument("--d1-controller-edges", type=Path)
+    parser.add_argument("--d1-event-dictionary", type=Path)
     parser.add_argument("--candidate", type=Path)
     return parser.parse_args()
 
@@ -1479,6 +1904,11 @@ def main() -> int:
             "--pool-requirements and --pool-out must be used together")
     require((args.d1_controller_edges is None) == (args.candidate is None),
             "--d1-controller-edges and --candidate must be used together")
+    if args.d1_event_dictionary is not None:
+        require(args.d1_controller_edges is not None
+                and args.pool_requirements is not None,
+                "D1 event dictionary requires controller, candidate and "
+                "pool requirements")
     manifest = load_json(args.manifest)
     legacy = load_jsonl(args.legacy)
     mul = load_jsonl(args.mul)
@@ -1508,10 +1938,21 @@ def main() -> int:
             (args.manifest, args.pool_requirements, args.legacy,
              args.mul, args.dq, args.execwave))
         result.update(inventory["counts"])
+    if args.d1_event_dictionary is not None:
+        dictionary = load_json(args.d1_event_dictionary)
+        controller = load_json(args.d1_controller_edges)
+        candidate = load_d1_candidate(args.candidate)
+        requirements = load_json(args.pool_requirements)
+        validate_d1_event_dictionary(
+            dictionary, requirements, manifest, candidate, controller)
+        result["event_mutations"] = check_d1_event_mutations(
+            dictionary, requirements, manifest, candidate, controller)
+        result.update({f"event_{key}": int(value)
+                       for key, value in dictionary["counts"].items()})
     print("psg_exec_bindings: PASS "
           + " ".join(f"{key}={value}" for key, value in result.items()))
     print("boundary: structural source/source-completeness inventory only; "
-          "controller/address relation may be included; no semantic values, "
+          "controller/address/event relations may be included; no semantic values, "
           "pool transitions, adapter equivalence, "
           "generic integration, synthesis or area claim")
     return 0
