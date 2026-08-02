@@ -3239,8 +3239,8 @@ git history; do not repeat them without the recorded changed condition.
   primitive values, adapter, RTL, image, synthesis or area claim.
 - **C2-C-D1-C-A result and decision:** accepted as the bounded future
   direct-core controller/address-obligation foundation.  The model emits, and
-  an independent closed
-  checker reconstructs from the anchored candidate and C2-C-C manifest,
+  an independent closed checker reconstructs from the anchored candidate and
+  C2-C-C manifest,
   **782 enabled occurrences per parameter bank / 1,564 total** with all **222**
   static owner-zero PCs and all eight slot classes reached in each run.  Each
   bank contains 172 READ, 406 EXEC, 158 WRITE, 29 SLOT, eight JUMP, eight
@@ -3269,11 +3269,48 @@ git history; do not repeat them without the recorded changed condition.
   generic RTL remain untouched.  Production `psg_execmove` implements the
   parameter-bank override, but does **not** yet implement candidate CAP_W51 or
   the sixteen remapped owner-zero write-address sidebands; this artifact proves
-  their manifest-anchored obligation, not current-RTL equivalence.  This proves no
-  pool definition/use, service
-  value, primitive arithmetic, adapter, integration, synthesis, timing,
+  their manifest-anchored obligation, not current-RTL equivalence.  This proves
+  no pool definition/use, service value, primitive arithmetic, adapter,
+  integration, synthesis, timing,
   routing, render or area property, and yields no RTL change hypothesis.
-- **Following C2-C-D1-C-B boundary:** only after C-A closes, attach literal
+- **C2-C-D1-C-B active hypothesis:** the accepted C-A occurrence graph can
+  carry one literal-slice SSA relation without reintroducing a semantic
+  executor.  Every D1 physical definition/use and every C2-C-C service
+  issue/result/take must bind to an exact dynamic key
+  `{bank,slot,occurrence,pc,pre|post}`; symbolic W/NZ/fold names, copied word
+  numbers and static PCs are not identities.  Definitions are limited to
+  tagged prior-edge state_q slices, transaction-bound C2-C-C root slices,
+  constants and already-defined physical slices.  Transport may retain,
+  slice, concatenate, extend or relocate bits.  Select, add, clamp, filter,
+  multiply, divide and fold work remains a named primitive obligation with no
+  Python result value.  The graph must close both parameter banks, all eight
+  slots, all path guards, every overwrite/death and all eighteen fixed-write
+  comparison boundaries without consuming `state_wd`, `record_commit`,
+  `final_words` or another legacy final value.
+- **C2-C-D1-C-B1 active foundation:** first replace the remaining symbolic
+  lifecycle vocabulary with a closed event dictionary.  Mechanically join all
+  30 C2-C-C root producer/consumer events and all 78 D1 live-field birth/death
+  names to exact C-A occurrence/phase sets, including the seven ordered fold
+  nodes, STEP8 correction, low/high result writes and root FOLD_FINISH.  Each
+  event row must state its bank/slot/guard coverage and whether it defines,
+  consumes, issues, completes or takes a transaction; it must not carry a
+  value or pool update.  Anchor C-A `f86698f6...`, candidate `6f5713e2...`,
+  C2-C-C manifest `438d85a0...`, packing/live layouts `242bfc81...` /
+  `55bb4b04...` and production image `59b6f86e...`.  Reject an ambiguous or
+  missing event, wrong pre/post phase, bank/slot loss, name-only root match,
+  copied q word, hold drift, colluding input/output mutation, unknown field or
+  bool/int coercion.  Only after B1 closes may B2 add literal slice
+  definitions/uses and enforce no-read-before-unique-definition.
+- **C2-C-D1-C-B scope and reject gates:** work only in
+  `tools/psg_exec_model.py`, `tools/psg_exec_bindings.py`, generated `build/`
+  evidence and this ledger.  Require deterministic A/B generation,
+  independent reconstruction from anchored inputs, mutation convictions, the
+  full model, D1-B inventory, C2-C-C structural/value proofs, Python
+  compilation, `make test-psg`, strict OpenSpec, image immutability and diff
+  checks.  No candidate/production RTL or image, adapter, generic integration,
+  synthesis, timing, routing, render or area claim is permitted.  Any later
+  RTL hypothesis must first be sent to the coordinating optimization task.
+- **C2-C-D1-C-B2 boundary:** only after B1 closes, attach literal
   pool definitions/uses and service issue/result/take roots to exact enabled
   occurrences with pre/post phase.  Repair fold assembly, STEP8, result-write
   and final-FINISH lifetimes there; reject any read before a unique guarded
