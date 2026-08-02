@@ -3197,6 +3197,48 @@ git history; do not repeat them without the recorded changed condition.
   OpenSpec, production-image immutability and diff checks.  No RTL, candidate
   image, adapter equivalence, synthesis, routing, timing, render or area claim
   is permitted in D1-C.
+- **C2-C-D1-C result and decision:** rejected before commit as an edge-SSA or
+  transition-completeness proof; the experimental model/checker changes are
+  reverted.  The bounded positive result is a static instruction-site
+  partition only: the candidate still has exactly **222** nonzero owner-zero
+  words split uniquely into **114 action / 56 fold-step HOLD / 4 ring HOLD /
+  23 other HOLD / 25 control** sites, and two generated static artifacts were
+  byte-identical.  Both independent audits found that the graph named PCs,
+  not enabled successor edges.  It had no branch-successor guards or dynamic
+  slot occurrences, no explicit pool reads/definitions, and no exact
+  service issue/result/take identity.  Its `q_source()` skipped control
+  instructions even though `psg_execctl` issues a synchronous state read on
+  every enabled instruction: at least **22** action operands at fold-control
+  boundaries were therefore false or incomplete.  The requirements-v3 event
+  PCs were hard-coded and self-digesting rather than related to action phase;
+  fold input assembly, STEP8 correction and intermediate/root DONE meanings
+  remained ambiguous.  Stronger colluding mutations of action q sources and
+  fixed destinations, arbitrary labels, an unchecked semantic payload and a
+  pool read before birth survived.  The unchanged D1-B source inventory and
+  C2-C-C value gates still passed, and `make test-psg` passed, but those gates
+  cannot repair the missing transition relation.  No RTL/image/integration or
+  physical claim changes, and no D1-derived RTL hypothesis exists.
+- **Next permitted C2-C-D1-C-A:** prove the controller edge relation before
+  returning to pool SSA.  Emit every reachable enabled transition occurrence,
+  not one row per static PC: predecessor PC/slot, exact instruction, branch
+  guard and successor PC/slot, effective state-read address after every
+  owner/action override, and the successor edge on which that registered
+  `state_q` becomes available.  Derive the relation from the candidate image
+  plus literal `psg_execctl`/`psg_execmove` address rules; anchor the accepted
+  candidate and C2-C-C manifest rather than accepting colluding mutations.
+  External hold must be a separate self-edge with no controller advance,
+  memory enable or service transaction.  First prove complete reachability,
+  unique successor guards, all eight slot classes, exact 782-cycle execution,
+  and mutations for branch target, slot destination, HOLD prime word, loop
+  target, read address/availability edge and hold drift.  C-A remains
+  controller/address only: no D2F lifetime sites, pool reads/definitions,
+  primitive values, adapter, RTL, image, synthesis or area claim.
+- **Following C2-C-D1-C-B boundary:** only after C-A closes, attach literal
+  pool definitions/uses and service issue/result/take roots to exact enabled
+  occurrences with pre/post phase.  Repair fold assembly, STEP8, result-write
+  and final-FINISH lifetimes there; reject any read before a unique guarded
+  definition.  A static site inventory or self-digesting event table is not a
+  substitute.
 - **Following C2-C-D1-D boundary:** prove each non-transport D1-C primitive
   separately against the live `psg_walk.sv` cone with width, signedness,
   truncation, pre/post-NBA edge phase and guard explicit.  Existing service
