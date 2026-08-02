@@ -24,7 +24,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003 and H005 accepted.
-- Next hypothesis ID: H006.
+- Next hypothesis ID: H007.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/` synthesis, placement, click, recovery, and smoke
@@ -34,16 +34,17 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   known roughly 60-LC placement-sensitivity band and is not claimed as robust.
 - Latest rejected variant: H005's `< 3` page suffix maps smaller but fails the
   routed 112.5-MHz fast-clock constraint at 109.12 MHz. H004 remains the last
-  rejected hypothesis family.
+  rejected production hypothesis family; H006 is rejected before production
+  because its direct step-count bits map larger than the current ternary.
 - Best accepted result: 6,568 LUT4s, 1,566 carries, 1,478 flops, 14 EBRs;
   seed-1 7,449/7,680 LCs; 137.65 MHz fast and 31.16 MHz PSG.
 - Last updated: 2026-08-02.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H006 resume audit and record one new,
+- Next permitted experiment: perform the H007 resume audit and record one new,
   bounded, source-exact generic-RTL hypothesis before editing RTL.
-- Required verification for any accepted H006: focused algebraic or exhaustive
+- Required verification for any accepted H007: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -62,6 +63,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H003 | accepted | Keep the exact high-bit prefix test; the deterministic result is 19 fewer LUT4s and two fewer carries. |
 | H004 | rejected | Do not narrow the square/pulse threshold comparator: Yosys already removes the aligned low bits. |
 | H005 | accepted | Keep the five-bit page subtract and explicit upload-page decode; the durable result is nine fewer carries with no placed regression. |
+| H006 | rejected | Keep the existing multiplier step-count ternary: it already maps to one LUT, while direct result-bit logic needs two. |
 
 ## Hypothesis H001
 
@@ -270,6 +272,30 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Partial schedule/control encodings: R.68, R.69 and R.84 partial integration.
 - Reciprocal memory topology: R.67.
 
+## Hypothesis H006
+
+- **ID:** H006.
+- **Hypothesis:** normal radix-4 multiplier counts are 4, 5, 6, 5 for modes
+  0, 1, 2, 3, so spelling the result directly as
+  `{1'b1, mode[1] && !mode[0], mode[0]}` should remove the duplicate mode-1
+  and mode-3 comparisons in `psg_mulsvc.m_cnt` and `psg_mulmp.seq_pad`.
+- **Scope:** exhaustive scratch truth-table proof and isolated registered iCE40
+  synthesis. Production multiplier RTL and fidelity gates are conditional on
+  an isolated deterministic mapped improvement.
+- **Baseline:** accepted H005 commit `5a5a0db`. The isolated current registered
+  ternary maps to one LUT4 and three flip-flops.
+- **Change:** scratch-only direct count-bit expression; no production file
+  changed.
+- **Result:** all eight short-request/mode combinations match exactly. Isolated
+  `synth_ice40` maps the direct expression to two LUT4s and three flip-flops,
+  one LUT4 more than the existing ternary. Yosys already shares the equal
+  mode-1 and mode-3 results through its current priority expression.
+- **Decision:** rejected before production RTL. The apparent duplicate source
+  comparisons are not duplicate mapped logic, and the direct bit form is
+  strictly larger in the isolated authoritative metric.
+- **Repeat only if:** request modes, step counts, mapper lowering, or the
+  surrounding registered load contract changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -297,12 +323,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Handoff
 
-- Next allowed experiment: H006 only after its hypothesis row and baseline are
+- Next allowed experiment: H007 only after its hypothesis row and baseline are
   recorded; it must be a new generic-RTL mechanism outside R.84 ownership.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003 or H005. H004 was
   rejected before production RTL; H005's timing-failing spelling remains
-  rejected.
+  rejected. H006 was rejected before production RTL.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
