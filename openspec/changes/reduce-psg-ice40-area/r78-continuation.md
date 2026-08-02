@@ -2614,6 +2614,33 @@ git history; do not repeat them without the recorded changed condition.
   lineage only: synthetic write data, the 44-word D2F candidate, C1
   multiplier/DQ causality, ring, semantic commits, fold/public, integration
   and physical results remain outside the claim.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1-C2-B active hypothesis:** materialize the
+  latest literal D2F control candidate and execute its complete instruction
+  stream in the real controller before adding a semantic adapter.  The model's
+  `sample_b3b2a_candidate` is a complete 256-word owner-zero bank: it retains
+  222 nonzero words and is exactly 44 words different from the accepted bank;
+  all later D2F-B/C-A/B1 validators consume it read-only and produce no newer
+  image.  Add an explicit candidate-output option that serializes this bank
+  plus the unchanged 256-word owner-one bank as one deterministic 512-word
+  artifact under `build/`, while keeping `rtl/psg_exec.hex` byte-identical.
+  A new candidate-only bench shall load that full artifact into the existing
+  non-`TEST_PROGRAM` controller after its time-zero production-image load and
+  before the first clock, deriving the 44-word difference mask mechanically
+  from the two full images.  Require every fetched IR to equal the candidate,
+  every changed PC to execute in all eight slots, unchanged termination and
+  782/172/158 plus operation histogram, synchronous state-q read origin, and
+  three-cycle hold/resume identity at each of the 44 changed PCs.  No changed
+  PC list or action meaning may be hand-authored into the bench.  Baseline is
+  clean C2-A `f4342c5`; scope is this ledger, `tools/psg_exec_model.py` and one
+  new RTL testbench.  Do not edit the accepted image, controller, movement,
+  generic PSG, Tang or ring RTL.  This proves only deterministic candidate
+  artifact/fetch/control-flow/state-port behavior: synthetic write data, fixed
+  destinations, CAP_W51's pending active-bank 26/30 remap, packed A/B/N/O+H-C
+  transitions, wave/ARAM/DQ/multiplier causality, persistent commits, fold/
+  public behavior, integration and physical results remain later gates.
+  Reject if materialization mutates `rtl/psg_exec.hex`, emits a partial/patch
+  image, needs a production loader change, or if any changed PC is unreachable
+  or cannot hold/resume from its real candidate IR.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
