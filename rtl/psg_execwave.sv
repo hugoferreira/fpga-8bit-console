@@ -1,10 +1,11 @@
 // Fixed owner-zero waveform and wavetable cadence for the shared PSG executor.
 //
-// The core accepts H-D's explicit post-update W1/W2/W3 phase contexts while
-// the H-C compatibility wrapper below reconstructs them from the old addressed
-// stream.  Fixed wave controls and one six-bit phase index survive in the
-// core.  Wave and ARAM results remain streaming events; neither boundary owns
-// a result register or scratch-memory write.
+// The core accepts H-D's explicit post-update W1/W2/W3 phases and old
+// wave/mode/alternate tuple while the H-C compatibility wrapper below
+// reconstructs them from the old addressed stream.  Fixed live-wave controls
+// and one six-bit phase index survive in the core.  Wave and ARAM results
+// remain streaming events; neither boundary owns a result register or
+// scratch-memory write.
 
 `timescale 1ns/1ps
 
@@ -20,6 +21,9 @@ module psg_execwave_core(input  logic        clk,
                          input  logic [16:0] phase_w1_raw,
                          input  logic [15:0] phase_w2_raw,
                          input  logic [16:0] phase_w3_raw,
+                         input  logic [2:0]  old_wave_raw,
+                         input  logic [1:0]  old_mode_raw,
+                         input  logic        old_alt_raw,
                          input  logic        play,
 
                          output logic        wave_ce,
@@ -37,8 +41,6 @@ module psg_execwave_core(input  logic        clk,
                          output logic        aram_take);
 
   localparam logic [6:0]
-    LOAD_OSC_14 = 7'h05,
-    LOAD_OSC_22 = 7'h0d,
     LOAD_PAR_1  = 7'h11,
     LOAD_PAR_2  = 7'h12,
     CAP_W0      = 7'h22,
@@ -57,10 +59,6 @@ module psg_execwave_core(input  logic        clk,
   logic [2:0]  snd_wave;
   logic [1:0]  snd_mode;
   logic        snd_alt;
-  logic [2:0]  old_wave;
-  logic [1:0]  old_mode;
-  logic        old_alt;
-
   wire sample_step = active && !hold && !owner;
   wire at_w0 = sample_step && action == CAP_W0;
   wire at_w1 = sample_step && action == CAP_W1;
@@ -86,19 +84,14 @@ module psg_execwave_core(input  logic        clk,
 
   wire [15:0] phase_w1 = phase_view(phase_w1_raw[15:0], snd_wave,
                                     snd_mode, snd_wt);
-  wire [15:0] phase_w3 = phase_view(phase_w3_raw[15:0], old_wave,
-                                    old_mode, 1'b0);
+  wire [15:0] phase_w3 = phase_view(phase_w3_raw[15:0], old_wave_raw,
+                                    old_mode_raw, 1'b0);
 
   // The LOAD actions consume the preceding synchronous state word.  No reset
   // is required: every field is overwritten before the first W0 of a slot.
   always_ff @(posedge clk) begin
     if (sample_step) begin
       case (action)
-        LOAD_OSC_14: old_mode <= state_q[14:13];
-        LOAD_OSC_22: begin
-          old_alt <= state_q[14];
-          old_wave <= state_q[10:8];
-        end
         LOAD_PAR_1: begin
           snd_id <= state_q[14:12];
           snd_wt <= state_q[11];
@@ -131,12 +124,12 @@ module psg_execwave_core(input  logic        clk,
       wave_secondary = 1'b1;
     end else if (at_w2) begin
       wave_phase = phase_w2_raw;
-      wave_sel = old_wave;
-      wave_alt = old_alt;
+      wave_sel = old_wave_raw;
+      wave_alt = old_alt_raw;
     end else if (at_w3) begin
       wave_phase = phase_w3;
-      wave_sel = old_wave;
-      wave_alt = old_alt;
+      wave_sel = old_wave_raw;
+      wave_alt = old_alt_raw;
       wave_secondary = 1'b1;
     end
 
@@ -181,20 +174,31 @@ module psg_execwave(input  logic        clk,
                     output logic        aram_take);
   localparam logic [6:0]
     LOAD_OSC_11 = 7'h02,
+    LOAD_OSC_14 = 7'h05,
     LOAD_OSC_17 = 7'h08,
+    LOAD_OSC_22 = 7'h0d,
     CAP_W0      = 7'h22,
     CAP_W1      = 7'h23,
     HOLD_ACTION = 7'h70;
 
   logic [15:0] old_q;
+  logic [2:0] old_wave;
+  logic [1:0] old_mode;
+  logic       old_alt;
   wire sample_step = active && !hold && !owner;
 
   always_ff @(posedge clk)
     if (sample_step) begin
       if (action == LOAD_OSC_11)
         old_q[7:0] <= state_q[7:0];
+      else if (action == LOAD_OSC_14)
+        old_mode <= state_q[14:13];
       else if (action == LOAD_OSC_17)
         old_q[15:8] <= state_q[7:0];
+      else if (action == LOAD_OSC_22) begin
+        old_alt <= state_q[14];
+        old_wave <= state_q[10:8];
+      end
     end
 
   always_comb begin
@@ -215,7 +219,9 @@ module psg_execwave(input  logic        clk,
   psg_execwave_core u_core(
     .clk(clk), .active(active), .hold(hold), .owner(owner), .action(action),
     .state_q(state_q), .phase_w1_raw({1'b0, state_q}),
-    .phase_w2_raw(state_q), .phase_w3_raw({1'b0, old_q}), .play(play),
+    .phase_w2_raw(state_q), .phase_w3_raw({1'b0, old_q}),
+    .old_wave_raw(old_wave), .old_mode_raw(old_mode),
+    .old_alt_raw(old_alt), .play(play),
     .wave_ce(wave_ce), .wave_issue(wave_issue), .wave_take(wave_take),
     .wave_phase(wave_phase), .wave_sel(wave_sel), .wave_alt(wave_alt),
     .wave_secondary(wave_secondary), .aram_req(aram_req),

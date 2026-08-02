@@ -1571,6 +1571,35 @@ git history; do not repeat them without the recorded changed condition.
   reshuffle, not an H-D area credit.  Accept this three-file explicit-context
   prerequisite only; the 70-bit semantic adapter, production-image RTL and
   routed H-D rows remain unproved.
+- **Explicit old-tuple prerequisite hypothesis:** the semantic-composition
+  audit found that the accepted core makes only W1/W2/W3 phase values
+  explicit.  It still captures `old_wave`, `old_mode` and `old_alt` from the
+  initial LOAD stream, while the legacy W0 restart edge replaces that exact
+  tuple with `last_wave`, `last_mode` and `last_alt` before W2/W3 issue.  A
+  semantic adapter cannot reproduce the source/NBA oracle through the current
+  boundary.  Move those six context bits to explicit core inputs, retain the
+  same six LOAD-captured bits in the H-C compatibility wrapper, and convict
+  the direct core with contradictory LOAD versus explicit contexts.  Reject
+  if the legacy production cadence, 38-bit H-C wrapper state, exhaustive wave
+  proof, hold behavior or isolated H-C physical row changes materially.  This
+  is a bounded interface prerequisite only; it adds no 70-bit adapter state,
+  sample arithmetic, state write, generic caller or integration claim.
+- **Explicit old-tuple prerequisite result:** accepted as the final waveform
+  interface prerequisite.  The direct core now receives the exact six-bit
+  old wave/mode/alternate tuple, while the source-compatible H-C wrapper keeps
+  those same six LOAD-captured bits; contradictory direct-core LOAD values
+  prove that only the explicit tuple controls W2/W3.  Direct 24-context
+  W0--W3/ARAM/hold proof, unchanged production-image cadence, all 2,097,152
+  waveform contexts, ARAM replay, 524,288 DQ formulae plus 57,344 chained
+  transactions, 6,020 multi-pumped transactions, controller, 327,680-pair
+  datapath, movement, both owner-zero banks, eleven owner-one paths, the full
+  semantic model, full/PREVIEW/executor lint and strict OpenSpec pass.  Row A
+  is **606 LUT4 / 23 carries / 72 flops / 60 unpackable / two EBRs / 666-cell
+  floor / 671 placed / 72.87 MHz**, versus 582/23/72/60/two/642/647 before.
+  The +24-cell movement is below the measured roughly 60-cell abc9 sensitivity
+  band; no flop, EBR or service state was added.  Retain this correctness
+  boundary without area credit.  The 70-bit adapter, semantic sample RTL and
+  complete H-D physical rows remain unproved.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

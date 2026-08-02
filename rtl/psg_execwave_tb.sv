@@ -66,8 +66,8 @@ module psg_execwave_tb;
       {u_cadence.old_q, u_cadence.u_core.phase_index_hold,
        u_cadence.u_core.snd_id, u_cadence.u_core.snd_wt,
        u_cadence.u_core.snd_wave, u_cadence.u_core.snd_mode,
-       u_cadence.u_core.snd_alt, u_cadence.u_core.old_wave,
-       u_cadence.u_core.old_mode, u_cadence.u_core.old_alt};
+       u_cadence.u_core.snd_alt, u_cadence.old_wave,
+       u_cadence.old_mode, u_cadence.old_alt};
   logic signed [17:0] expected_wave_z[0:7][0:3];
 
   localparam logic [2:0] OP_READ = 3'd0;

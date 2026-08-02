@@ -12,6 +12,9 @@ module psg_execwave_core_tb;
   logic [16:0] phase_w1_raw;
   logic [15:0] phase_w2_raw;
   logic [16:0] phase_w3_raw;
+  logic [2:0] old_wave_raw;
+  logic [1:0] old_mode_raw;
+  logic old_alt_raw;
 
   logic wave_ce, wave_issue, wave_take;
   logic [15:0] wave_phase;
@@ -36,7 +39,9 @@ module psg_execwave_core_tb;
   psg_execwave_core dut(
     .clk(clk), .active(active), .hold(hold), .owner(owner), .action(action),
     .state_q(state_q), .phase_w1_raw(phase_w1_raw),
-    .phase_w2_raw(phase_w2_raw), .phase_w3_raw(phase_w3_raw), .play(play),
+    .phase_w2_raw(phase_w2_raw), .phase_w3_raw(phase_w3_raw),
+    .old_wave_raw(old_wave_raw), .old_mode_raw(old_mode_raw),
+    .old_alt_raw(old_alt_raw), .play(play),
     .wave_ce(wave_ce), .wave_issue(wave_issue), .wave_take(wave_take),
     .wave_phase(wave_phase), .wave_sel(wave_sel), .wave_alt(wave_alt),
     .wave_secondary(wave_secondary), .aram_req(aram_req),
@@ -77,11 +82,16 @@ module psg_execwave_core_tb;
       input logic old_alt,
       input logic [2:0] snd_id);
     begin
+      old_wave_raw = old_wave;
+      old_mode_raw = old_mode;
+      old_alt_raw = old_alt;
+      // Deliberately present contradictory LOAD values.  H-D owns the
+      // post-restart tuple explicitly; only the legacy wrapper may capture it.
       action = LOAD_OSC_14;
-      state_q = {1'b0, old_mode, 13'h1555};
+      state_q = {1'b0, ~old_mode, 13'h1555};
       tick();
       action = LOAD_OSC_22;
-      state_q = {1'b0, old_alt, 3'b101, old_wave, 8'h6d};
+      state_q = {1'b0, ~old_alt, 3'b101, ~old_wave, 8'h6d};
       tick();
       action = LOAD_PAR_1;
       state_q = {1'b0, snd_id, live_wt, live_wave, 8'h3c};
@@ -233,7 +243,7 @@ module psg_execwave_core_tb;
       tick();
       saved_context = {dut.phase_index_hold, dut.snd_id, dut.snd_wt,
                        dut.snd_wave, dut.snd_mode, dut.snd_alt,
-                       dut.old_wave, dut.old_mode, dut.old_alt};
+                       old_wave_raw, old_mode_raw, old_alt_raw};
       hold = 1'b1;
       action = CAP_W1;
       state_q = 16'hffff;
@@ -245,7 +255,7 @@ module psg_execwave_core_tb;
         tick();
         if ({dut.phase_index_hold, dut.snd_id, dut.snd_wt,
              dut.snd_wave, dut.snd_mode, dut.snd_alt,
-             dut.old_wave, dut.old_mode, dut.old_alt} !== saved_context)
+             old_wave_raw, old_mode_raw, old_alt_raw} !== saved_context)
           $fatal(1, "external hold changed core context");
       end
       hold = 1'b0;
@@ -274,6 +284,9 @@ module psg_execwave_core_tb;
     phase_w1_raw = 17'd0;
     phase_w2_raw = 16'd0;
     phase_w3_raw = 17'd0;
+    old_wave_raw = 3'd0;
+    old_mode_raw = 2'd0;
+    old_alt_raw = 1'b0;
     prove_builtin_contexts();
     prove_wavetable_contexts();
     prove_external_hold();
