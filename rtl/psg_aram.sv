@@ -13,6 +13,12 @@ module psg_aram_core(input  bit          clk,
                      input  logic [7:0]  addr,
                      input  logic [7:0]  di,
 
+                     // Diagnostic CPU read of the current upload address. This
+                     // borrows the synchronous read port; cpu_q is valid one
+                     // clock later and the upload address auto-increments.
+                     input  bit          cpu_rd,
+                     output wire [7:0]   cpu_q,
+
                      input  logic [12:0] seq_addr,
 
                      input  logic        syn_rd,
@@ -26,29 +32,7 @@ module psg_aram_core(input  bit          clk,
   logic [15:0] wraddr;
   logic        replay;
 
-  // A synthesis read replaces the sequencer address for one cycle. The
-  // sequencer stays frozen through the following replay cycle.
-  assign seq_frozen = syn_rd | replay;
-
-  // Sequencer reads are issued one state before they are consumed.  An
-  // ordinary freeze therefore holds the registered RAM output: the held
-  // state's current seq_addr already names the following byte.  A synthesis
-  // borrow still replaces that output, so its replay cycle forcibly reissues
-  // the held sequencer address before the output is held again.
-  wire aram_rd = !syn_freeze && (syn_rd | replay | !seq_hold);
-  wire [12:0] aram_addr = syn_rd ? syn_addr : seq_addr;
-
-  always_ff @(posedge clk) begin
-    if (aram_rd)
-      seq_q <= aram[aram_addr];
-    if (reset) begin
-      replay <= 0;
-    end else if (!syn_freeze) begin
-      replay <= syn_rd;
-    end
-  end
-
-  // CPU writes use PICO-8 addresses; the memory itself is zero-based.  The
+  // CPU accesses use PICO-8 addresses; the memory itself is zero-based.  The
   // upload base is page-aligned, so only the five-bit page number subtracts.
   wire [4:0]  up_page = wraddr[12:8] - 5'd17;
   wire [12:0] up_idx = {up_page, wraddr[7:0]};
@@ -56,6 +40,31 @@ module psg_aram_core(input  bit          clk,
       (wraddr[15:12] == 4'h3 && |wraddr[11:8]) ||
       (wraddr[15:12] == 4'h4 && !(|wraddr[11:10]) &&
        wraddr[9:8] != 2'b11);
+  assign cpu_q = seq_q;
+
+  // A synthesis or diagnostic read replaces the sequencer address for one
+  // cycle. The sequencer stays frozen through the following replay cycle.
+  assign seq_frozen = cpu_rd | syn_rd | replay;
+
+  // Sequencer reads are issued one state before they are consumed.  An
+  // ordinary freeze therefore holds the registered RAM output: the held
+  // state's current seq_addr already names the following byte.  A synthesis
+  // borrow still replaces that output, so its replay cycle forcibly reissues
+  // the held sequencer address before the output is held again.
+  wire aram_rd = !syn_freeze &&
+      (cpu_rd | syn_rd | replay | !seq_hold);
+  wire [12:0] aram_addr = cpu_rd ? up_idx
+      : (syn_rd ? syn_addr : seq_addr);
+
+  always_ff @(posedge clk) begin
+    if (aram_rd)
+      seq_q <= aram[aram_addr];
+    if (reset) begin
+      replay <= 0;
+    end else if (!syn_freeze) begin
+      replay <= cpu_rd | syn_rd;
+    end
+  end
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -71,6 +80,8 @@ module psg_aram_core(input  bit          clk,
         end
         default: ;
       endcase
+    end else if (cpu_rd && !syn_freeze) begin
+      wraddr <= wraddr + 1'b1;
     end
   end
 
@@ -88,6 +99,12 @@ module psg_aram (input  bit          clk,
                  input  logic [7:0]  addr,
                  input  logic [7:0]  di,
 
+                 // Diagnostic CPU read of the current upload address. This
+                 // borrows the existing synchronous read port; cpu_q is valid
+                 // one clock later and the address auto-increments.
+                 input  bit          cpu_rd,
+                 output wire [7:0]   cpu_q,
+
                  input  logic [12:0] seq_addr,
 
                  input  logic        syn_rd,
@@ -99,6 +116,7 @@ module psg_aram (input  bit          clk,
   psg_aram_core u_core(
     .clk(clk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di),
+    .cpu_rd(cpu_rd), .cpu_q(cpu_q),
     .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
     .syn_freeze(1'b0), .seq_hold(seq_hold),
     .seq_q(seq_q), .seq_frozen(seq_frozen));

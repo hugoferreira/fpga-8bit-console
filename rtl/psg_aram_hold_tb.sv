@@ -14,6 +14,7 @@ module psg_aram_hold_tb;
   psg_aram_core dut(
     .clk(clk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di),
+    .cpu_rd(1'b0), .cpu_q(),
     .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
     .syn_freeze(syn_freeze), .seq_hold(seq_hold),
     .seq_q(seq_q), .seq_frozen(seq_frozen));
@@ -23,6 +24,7 @@ module psg_aram_hold_tb;
   psg_aram legacy(
     .clk(clk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di),
+    .cpu_rd(1'b0), .cpu_q(),
     .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
     .seq_hold(seq_hold), .seq_q(legacy_seq_q),
     .seq_frozen(legacy_seq_frozen));

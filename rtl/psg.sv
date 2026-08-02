@@ -152,10 +152,13 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   logic cs_wr_q;
   always_ff @(posedge clk) cs_wr_q <= cs && rw;
   wire  cs_wr = (cs && rw) && !cs_wr_q;
+  wire  aram_cpu_rd = cs && !rw && addr == 8'h02;
+  wire [7:0] aram_cpu_q;
 
   psg_aram u_aram(
     .clk(clk), .reset(reset),
     .cs(cs_wr), .rw(rw), .addr(addr), .di(di),
+    .cpu_rd(aram_cpu_rd), .cpu_q(aram_cpu_q),
     .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
     .seq_hold(prun | state_replay | fold_busy | seq_starved),
     .seq_q(seq_q), .seq_frozen(seq_frozen));
@@ -340,13 +343,21 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     else if (dry_valid) pcm <= dry16;
   end
 
-  // CPU readback. Channel row/SFX reads report the audible slot: foreground
-  // while it plays, otherwise the continuously advancing music slot.
+  // CPU readback. Audio-RAM data is synchronous: a read of $02 borrows the
+  // shared RAM port, then commits its byte here on the following clock.
+  // Channel row/SFX reads report the audible slot: foreground while it plays,
+  // otherwise the continuously advancing music slot.
+  logic aram_rd_pending;
   always_ff @(posedge clk) begin
     if (reset) begin
       dout <= 0;
+      aram_rd_pending <= 1'b0;
+    end else if (aram_rd_pending) begin
+      dout <= aram_cpu_q;
+      aram_rd_pending <= aram_cpu_rd;
     end else if (cs && !rw) begin
-      case (addr)
+      aram_rd_pending <= aram_cpu_rd;
+      if (addr != 8'h02) case (addr)
 
         8'h03: dout <= {mus_playing, 3'b0,
                         play_bits[3:0] | trig_req[3:0]};
@@ -365,12 +376,14 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
           else
             dout <= 8'h00;
       endcase
+    end else begin
+      aram_rd_pending <= 1'b0;
     end
   end
 
   // Keep debug generation removable when no hardware consumer exists.
   generate
-  if (DBG_PORT) begin : g_dbg
+  if (DBG_PORT == 1) begin : g_dbg
     always_comb begin
       dbg = 64'b0;
       dbg[7:0]   = {mus_playing, 1'b0, mus_pat};
@@ -380,6 +393,19 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         dbg[16 + ch*6 +: 6] = aud_sfx_bits[ch*6 +: 6];
         dbg[40 + ch*6 +: 6] = {1'b0, aud_row_bits[ch*5 +: 5]};
       end
+    end
+  end else if (DBG_PORT == 2) begin : g_pcm_dbg
+    // The PCM output register commits dry16 on dry_valid. Delay that condition
+    // one clock so a same-domain diagnostic consumer observes the new stable
+    // pcm word, not the preceding word from the commit edge.
+    logic pcm_commit;
+    always_ff @(posedge clk) begin
+      if (reset) pcm_commit <= 1'b0;
+      else       pcm_commit <= dry_valid;
+    end
+    always_comb begin
+      dbg = 64'b0;
+      dbg[0] = pcm_commit;
     end
   end else begin : g_no_dbg
     always_comb dbg = 64'b0;

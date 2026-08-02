@@ -149,6 +149,7 @@ module target_psg_execwave_services #(parameter WITH_ADAPTER = 1)
   psg_aram_core u_aram(
     .clk(clk), .reset(reset), .cs(aram_cs), .rw(aram_rw),
     .addr(aram_addr), .di(aram_di), .seq_addr(seq_addr),
+    .cpu_rd(1'b0), .cpu_q(),
     .syn_rd(aram_req), .syn_addr(syn_addr),
     .syn_freeze(active && !owner && hold), .seq_hold(seq_hold),
     .seq_q(seq_q), .seq_frozen(seq_frozen));

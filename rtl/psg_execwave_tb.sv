@@ -240,6 +240,7 @@ module psg_execwave_tb;
 
   psg_aram_core u_aram(
     .clk(clk), .reset(reset), .cs(1'b0), .rw(1'b0), .addr(8'd0), .di(8'd0),
+    .cpu_rd(1'b0), .cpu_q(),
     .seq_addr(SEQ_ADDR), .syn_rd(aram_req), .syn_addr(syn_addr),
     .syn_freeze(active && !owner && hold), .seq_hold(1'b1),
     .seq_q(seq_q), .seq_frozen(seq_frozen));
