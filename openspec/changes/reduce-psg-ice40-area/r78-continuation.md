@@ -500,15 +500,45 @@ git history; do not repeat them without the recorded changed condition.
   an isolated executor result: legacy macro actions, exact schedule/renders
   and whole-PSG area are not yet proven, and the accepted full PSG still uses
   `psg_walk` plus `psg_seq` until the atomic integration gate.
-- **R.84F next permitted hypothesis:** lower the complete flow-owned advance
-  family (`K_ADV` plus `EA0..EA6`) into explicit state-read, accumulator and
-  state-write micro-operations.  It is the smallest closed macro-arithmetic
-  family that exercises both banks' words 0..2, carry/compare flags and branch
-  decisions without requesting any named legacy working register.  Prove all
-  tcnt/fcnt/lps/lpe/play_len/sp combinations and both bank layouts against the
-  legacy transition before measuring; reject if it needs a second operand
-  register, a general register index, or exceeds the remaining tick-page and
-  6k floor budgets.
+- **R.84F hypothesis:** lower the complete flow-owned advance family
+  (`K_ADV` plus `EA0..EA5`; the earlier `EA6` spelling was a ledger error) as
+  address-selected macro actions before changing the generated program.  This
+  first price isolates the exact counter, previous-value, length and row
+  formulae from microcode capacity and synchronous-read ordering.  Reject the
+  shape even when it fits the gross 6k budget if mutually exclusive formulae
+  rebuild arithmetic that the legacy schedule already shares.
+- **R.84F result:** the ten-action macro passed 58,982,912 exhaustive RTL
+  transactions over every counter/speed tuple, every previous-value field,
+  every encoded play length and row, and every loop bound/released state.
+  The R.84D datapath still passed 327,680 arithmetic pairs and both production
+  lint modes were clean.  This proves the individual formulae only: the
+  generated `EA0..EA5` nodes remained placeholders, so no program, synchronous
+  controller or whole-PSG behavior claim was made.
+- **R.84F physical result:** against R.84E's 324 LUT4 / 24 carry / 34 flop /
+  351-floor / 357-placed baseline, the isolated target mapped **512 LUT4s, 101
+  carries, 34 flops, 12 unpackable flops, one EBR and a 524-LC floor**.  Seed-1
+  placed and routed **581 LCs / one EBR / 71.48 MHz** against 28.125 MHz: +188
+  LUT4s, +77 carries, -15 unpackable flops, +173 floor cells and +224 placed
+  LCs.  The macro module alone is 190 LUT4s and 77 carries.  Those 77 carries
+  are the separately spelt rollover, two loop/end families, bound compare,
+  counter increment and length decrement; legacy `psg_seq` deliberately
+  time-selects these through one `ta_a`/`ta_b` compare.
+- **R.84F decision:** rejected and fully reverted before commit.  Although its
+  524-cell floor fits the gross R.84 budget, it repeats R.83's foundational
+  failure inside the new executor: parallel operation cones selected after
+  computation instead of time-serialized address-state work.  Do not retry
+  the macro shape merely because it fits.  The exhaustive result is retained
+  in this row; no R.84F RTL, test harness or stale generated image lands.
+- **Repeat only if:** the macro actions select operands before the existing
+  common arithmetic chain, rather than owning any independent `+`, `-`, `<`
+  or `>=` expression, or a later whole-program measurement proves that added
+  branch/read words cost more than the 77 duplicated carries they replace.
+- **R.84G next permitted hypothesis:** make branch condition and sense
+  explicit in the `Node` contract, then lower the real foreground and
+  instrument advance paths as synchronous reads, common-ALU operations,
+  branches and writes.  Duplicate control words across the two bank layouts
+  where that removes `abank` data muxes; spend the measured 29 tick-page and
+  38 flow-page spare words before introducing any named working register.
 
 ### Active task queue
 
@@ -534,9 +564,10 @@ git history; do not repeat them without the recorded changed condition.
       not rebuild their wide source/destination muxes behind action decode.
 - [x] R.84E: lower and prove one complete record-movement family through a
       real synchronous state-memory transaction model before macro arithmetic.
-- [ ] R.84F: lower and prove the complete flow-owned advance family through
-      explicit state-read/accumulator/write micro-operations before any wider
-      effect or waveform action family.
+- [x] R.84F: reject the parallel advance-macro shape after exhaustive formula
+      proof and mapped attribution show 190 LUT4s / 77 duplicated carries.
+- [ ] R.84G: lower the same exact family as explicit condition-indexed,
+      synchronous address-state micro-operations through the common chain.
 
 ## Handoff rule
 
