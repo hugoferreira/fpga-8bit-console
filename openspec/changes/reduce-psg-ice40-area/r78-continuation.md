@@ -261,6 +261,99 @@ git history; do not repeat them without the recorded changed condition.
   operations without another wide request/result mux, or measured `u_wave`
   ownership changes materially.
 
+### R.84 - Replace both mutually exclusive controllers with one stored-state executor
+
+- **Hypothesis:** the full-schedule walker and tick sequencer are not two
+  concurrent machines.  `prun | state_replay | fold_busy` freezes the
+  sequencer for the complete sample job, and the walker is idle for every
+  sequencer credit.  Replace both full-mode controllers, their decoded
+  working-register files and their separate destination muxes atomically with
+  one micro-PC, one 16-bit program word and the unused per-slot state words as
+  an address-selected working store.  Keep PREVIEW on the accepted controller
+  pair.  This is the whole-substrate/address-selected condition left open by
+  R.83, not another register-fed ALU or partial control-word migration.
+- **Scope:** a new full-only executor and generated 256x16 program image,
+  `psg.sv` composition, the existing state-store port, exact executor/model
+  tests, `tools/psg_ff_census.py`, and the standard PSG gates.  The current
+  `psg_walk`/`psg_seq` stay as the PREVIEW implementation until the full
+  executor is accepted.  Audio RAM, waveform formulae, multiplier/divider
+  arithmetic, public register behavior and frozen renders do not change.
+- **Baseline:** accepted R.81B fingerprint `2cae31b4a425`; 6,520 LUT4s,
+  1,592 carries, 1,478 flops, 533 unpackable flops, 14 EBRs and 7,421 placed
+  LCs at 128.12 MHz fast / 29.90 MHz PSG.  `psg_ff_census.py --scopes` now
+  derives preserved-scope ownership directly from the mapped JSON:
+
+  | subtree | LUT4 | carry | flop | unpackable | EBR | LC floor |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | full design | 6,520 | 1,592 | 1,478 | 533 | 14 | 7,053 |
+  | `u_walk` including `u_dq` | 2,216 | 572 | 564 | 150 | 1 | 2,366 |
+  | `u_seq` | 2,027 | 349 | 531 | 252 | 1 | 2,279 |
+  | both controllers | 4,243 | 921 | 1,095 | 402 | 2 | 4,645 |
+
+  The pair therefore owns 65% of mapped LUTs, 74% of flops and 66% of the
+  netlist's `LUT4 + unpackable-flop` placement floor.  The remaining
+  conservative floor is 2,408.  Actual placement exceeds the total floor by
+  368 cells, so, holding that routing/packing overhead fixed, a replacement
+  executor predicts `placed = 2,776 + executor_floor`.
+- **Milestone bound:** the maximum replacement floors are 4,224 for 7,000
+  LCs, 3,224 for 6,000, 2,724 for the 5,500-LC OpenSpec ceiling and 2,224 for
+  5,000.  Against the current 4,645-floor pair these require reductions of
+  421, 1,421, 1,921 and 2,421.  Replacing only the walker leaves a predicted
+  5,055-cell zero-cost base; its replacement budgets are 1,945/945/445/-55.
+  Replacing only the sequencer leaves 5,142; its budgets are
+  1,858/858/358/-142.  Therefore neither one-controller rewrite can establish
+  the 5k rung even with a free replacement: the ownership merge is mandatory.
+  The bound is conservative because the shared subtotal still includes the
+  multiplier's 448-LUT `req_a` and 179-LUT `req_b` selection families, which
+  a stored-state requester may reduce.
+- **Clock schedule:** retain exactly 272 sequencer advances after each sample,
+  the R.54 invariant that makes clock changes render-neutral.  `/6` leaves
+  578 clocks for sample execution (48 beyond today's 530); `/5` leaves 748;
+  `/4` leaves 1,003.  R.84 uses the `/4` full-mode budget for synchronous
+  operand reads and keeps the shipped single-clock radix-4 sequencer-busy
+  duration.  A sample program must commit `dry_valid` by clock 1,003; tick
+  code receives exactly 272 non-sample executor clocks regardless of the
+  remaining interval slack.  PREVIEW retains its current 159-clock compact
+  schedule.  A later `/5` or `/6` return is a separate recompaction result,
+  not assumed in the area bound.
+- **Program and address map:** retain the existing constants EBR and fold-
+  quotient EBR, and spend at most the one remaining block on a 256x16
+  full-executor program, for 15 EBRs total.  Program pages are sample/fold
+  `0x00..0x3f`, tick/effect `0x40..0xbf`, and trigger/music flow
+  `0xc0..0xff`; ordinary instructions advance implicitly and branch-format
+  words carry an eight-bit target.  Persistent per-slot words `0..32` remain
+  byte-for-byte unchanged and word 33 remains reserved.  Words `34..63` are
+  the mutually exclusive working store: 34/35 operand A low/high+flags,
+  36/37 operand B low/high+context, 38/39 result low/high+flags, 40..43 four
+  scalar temporaries, 44..46 the three fold-stack words, 47 fold metadata,
+  and 48..63 owner-specific workspace.  Sample ownership uses the workspace
+  for phase/wave/noise/gain/filter intermediates; tick ownership overlays the
+  same addresses with voice/instrument fields, accumulator/word staging,
+  volume and slide-affine intermediates.  One synchronous read supplies the
+  next operand; the existing independent write port commits one result by
+  address.  No general register index or wide source/destination mux is added.
+- **Complete retirement boundary:** the accepted candidate removes the full
+  elaborations of `u_walk` (including `u_dq`) and `u_seq`, their `pph`, `fmc`,
+  `sst`, `xs`, `vcnt`, per-owner slot/control state, decoded record load/store
+  muxes, walker working copies, sequencer voice/instrument working copies,
+  slide/effect temporaries, and register-resident fold stack.  One executor
+  micro-PC/owner/slot/flags set replaces their control state.  Semantic state
+  does not disappear: `playing`, SFX/row/trigger/release arrays, music/fade
+  state, LFSRs and persistent oscillator fields are re-homed unchanged behind
+  executor actions or the existing record.  The constants/fold tables remain
+  one block each, while the new program consumes the fifteenth block.
+- **First implementation gate:** switch the complete full controller pair in
+  one elaboration boundary; do not migrate one `pph`/`sst` consumer at a time.
+  Prove generated program size/targets, every state address and every output
+  commit in an executor model before integrated synthesis.  Reject before
+  renders unless the deterministic mapped result is below the 3,224-floor
+  6k budget trajectory and seed-1 placement improves; an accepted stage must
+  then pass exact schedule, formula/transaction, 59-render, P.1/P.2,
+  `click-v1`, lint, clock, Celeste, routing and both-clock timing gates.
+- **Decision:** active.  The ownership, ladder, schedule, map and retirement
+  set are now fixed before RTL.  Repeat R.83 only through this address-state
+  executor; do not add another flat waveform request/result service.
+
 ### Active task queue
 
 - [x] Prove exact waveform formulae, cycle state, widths and `/4` schedule.
@@ -272,7 +365,7 @@ git history; do not repeat them without the recorded changed condition.
       the 15-block ceiling for a complete shared control store and keep
       operands/results in address-selected state; do not retry task 4.1's
       register-fed generic ALU or a partial decode migration.
-- [ ] Re-derive the 7k/6k/5k ladder from measured whole-substrate ablations
+- [x] Re-derive the 7k/6k/5k ladder from measured whole-substrate ownership
       before writing R.84 RTL.
 
 ## Handoff rule

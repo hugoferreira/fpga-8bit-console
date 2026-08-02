@@ -62,7 +62,7 @@ a $mod, a wide constant-folded mux or a shared decode, re-measure the
 cone standalone (lift it registered-in/registered-out and run nextpnr)
 before it enters a ledger.
 
-Usage: psg_ff_census.py [netlist.json] [--top N]
+Usage: psg_ff_census.py [netlist.json] [--top N] [--scopes]
 """
 
 from __future__ import annotations
@@ -103,8 +103,17 @@ def load_top(path: Path) -> dict:
     raise SystemExit(f"{path}: no top module")
 
 
+def cell_scope(name: str, scopes: list[str]) -> str:
+    """Return the innermost preserved yosys scope containing a mapped cell."""
+    for scope in scopes:
+        if name.startswith(scope + "."):
+            return scope
+    return "<top>"
+
+
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    show_scopes = "--scopes" in sys.argv[1:]
     top_n = 20
     for a in sys.argv[1:]:
         if a.startswith("--top"):
@@ -112,6 +121,11 @@ def main() -> int:
     path = Path(args[0]) if args else Path("build/targets/psg.json")
     mod = load_top(path)
     cells = mod["cells"]
+    scopes = sorted(
+        (name for name, cell in cells.items() if cell["type"] == "$scopeinfo"),
+        key=len,
+        reverse=True,
+    )
 
     # net bit -> the cell that drives it, and how many sinks it has
     driver: dict[int, tuple[str, dict]] = {}
@@ -159,6 +173,49 @@ def main() -> int:
         o = cell["connections"].get("O", [])
         ob = o[0] if o and isinstance(o[0], int) else None
         fam_lut[family(label.get(ob, cname))] += 1
+
+    if show_scopes:
+        # Attribute each mapped primitive to its innermost preserved scope,
+        # then roll descendants into their parents.  LUT + unpackable FF is a
+        # placement floor: every LUT consumes one LC and every unpackable FF
+        # consumes another.  Routing can make the final placed result larger.
+        direct: dict[str, Counter[str]] = defaultdict(Counter)
+        for cname, cell in cells.items():
+            scope = cell_scope(cname, scopes)
+            ctype = cell["type"]
+            if ctype == LUT:
+                direct[scope]["lut"] += 1
+            elif ctype == CARRY:
+                direct[scope]["carry"] += 1
+            elif ctype.startswith(DFF):
+                direct[scope]["ff"] += 1
+                d = cell["connections"].get("D", [])
+                bit = d[0] if d and isinstance(d[0], int) else None
+                drv = driver.get(bit) if bit is not None else None
+                if not (drv and drv[1]["type"] == LUT and fanout[bit] == 1):
+                    direct[scope]["unpack"] += 1
+            elif ctype.startswith("SB_RAM40_4K"):
+                direct[scope]["ebr"] += 1
+
+        rows: dict[str, Counter[str]] = {"<top>": Counter()}
+        for scope in scopes:
+            rows[scope] = Counter()
+        for owner, counts in direct.items():
+            rows["<top>"].update(counts)
+            if owner == "<top>":
+                continue
+            for scope in scopes:
+                if owner == scope or owner.startswith(scope + "."):
+                    rows[scope].update(counts)
+
+        print("\n  mapped resources by preserved scope (subtree):")
+        print("    scope                              LUT4  CARRY     FF  UNPACK  EBR  LC_FLOOR")
+        ordered = ["<top>"] + sorted(scopes, key=lambda s: (s.count("."), s))
+        for scope in ordered:
+            c = rows[scope]
+            print(f"    {scope:34s} {c['lut']:5d} {c['carry']:6d} "
+                  f"{c['ff']:6d} {c['unpack']:7d} {c['ebr']:4d} "
+                  f"{c['lut'] + c['unpack']:9d}")
 
     n_lut = sum(1 for c in cells.values() if c["type"] == LUT)
     n_car = sum(1 for c in cells.values() if c["type"] == CARRY)
