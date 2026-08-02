@@ -2004,6 +2004,1123 @@ def trunc_zero(value: int, divisor: int) -> int:
     return -quotient if value < 0 else quotient
 
 
+def signed(value: int, bits: int) -> int:
+    value &= (1 << bits) - 1
+    return value - (1 << bits) if value & (1 << (bits - 1)) else value
+
+
+def wave_value(phase: int, wave: int, alt: bool, secondary: bool) -> int:
+    """Scalar form of the separately exhaustive psg_wave_ctx oracle."""
+    phase &= 0xffff
+    if wave in (0, 7):
+        raw = 3 * phase - 49_152 if phase < 32_768 \
+            else 147_456 - 3 * phase
+        if wave == 0 and alt:
+            ramp = 65_535 - phase if phase >= 57_344 else phase
+            numerator = 3 * ramp - ((ramp + 2_047) >> 11)
+            tilt = (numerator if phase >= 57_344 else numerator // 7) - 12_286
+            raw = tilt + 3 * trunc_zero(raw, 4)
+        return trunc_zero(raw, 8 if secondary else 4)
+    if wave == 1:
+        boundary = 61_440 if alt else 57_344
+        divisor = 15 if alt else 7
+        ceil_shift = 10 if alt else 11
+        scale = 6 if alt else 3
+        ramp = 65_535 - phase if phase >= boundary else phase
+        numerator = scale * ramp - ((ramp + (1 << ceil_shift) - 1)
+                                    >> ceil_shift)
+        raw = (numerator if phase >= boundary else numerator // divisor) \
+            - 12_286
+        return trunc_zero(raw, 2) if secondary else raw
+    if wave == 2:
+        raw = trunc_zero(phase - 32_768, 4)
+        if alt:
+            raw = trunc_zero(raw + trunc_zero((phase // 2) - 32_768, 4), 2)
+        return trunc_zero(raw, 2) if secondary else raw
+    if wave in (3, 4):
+        threshold = ((0x9800 if alt else 0x8000) if wave == 3
+                     else (0xC800 if alt else 0xB000))
+        raw = -6_143 if phase < threshold else 6_143
+        return trunc_zero(raw, 2) if secondary else raw
+    if wave == 5:
+        if alt and secondary:
+            raw = -3_071 if phase < 32_768 else 3_071
+        elif phase < 16_384:
+            raw = phase - 8_192
+        elif phase < 32_768:
+            raw = 24_576 - phase
+        else:
+            magnitude = 2 * (phase - 32_768) if phase < 49_152 \
+                else 2 * (65_536 - phase)
+            raw = magnitude // 3 - 8_192
+        return trunc_zero(raw, 2) if secondary else raw
+    return 0
+
+
+def soft_add_value(a: int, b: int) -> int:
+    total = a + b
+    threshold = 24_576
+    if total >= threshold:
+        return threshold + (total - threshold) // 5
+    if total <= -threshold:
+        return -threshold - (-threshold - total) // 5
+    return total
+
+
+@dataclass
+class SampleRecord:
+    phase: int
+    nz_hold: int
+    old_q: int
+    phase2: int
+    clr_ack: int
+    old_gain: int
+    last_gain: int
+    nz_phase: int
+    old_mode: int
+    brown: int
+    lowpass: int
+    old_phase: int
+    blend_count: int
+    old_inc: int
+    old_rev: int
+    last_rev: int
+    last_wave: int
+    last_inc: int
+    old_alt: int
+    last_alt: int
+    last_mode: int
+    old_wave: int
+    noise_lowpass: int
+
+
+@dataclass(frozen=True)
+class SampleParams:
+    eff_inc: int
+    snd_id: int
+    wavetable: bool
+    wave: int
+    damp: int
+    reverb: int
+    detune: int
+    buzz: bool
+    noise: bool
+    amplitude: int
+    clr_tog: int
+
+
+@dataclass(frozen=True)
+class SampleInputs:
+    play: bool
+    hidden: bool
+    music_slot: bool
+    music_playing: bool
+    nz_tog: bool
+    nz_tick: bool
+    lfsr: int
+    lfsr2: int
+    ring_current: int
+    ring_old: int
+    aram_salt: int
+
+
+@dataclass(frozen=True)
+class SampleTrace:
+    initial_words: tuple[int, ...]
+    final_words: tuple[int, ...]
+    dq_live: int
+    dq_old: int
+    noise_old_step: int
+    noise_live_step: int
+    wave_contexts: tuple[tuple[int, int, bool, bool], ...]
+    wave_results: tuple[int, ...]
+    aram_requests: tuple[tuple[int, int, bool], ...]
+    aram_results: tuple[int, ...]
+    primary_interp: int
+    old_interp: int
+    live_gain_limb: int
+    old_gain_limb: int
+    current_arm: int
+    old_arm: int
+    ring_current: int
+    ring_old: int
+    blend_value: int
+    filtered_value: int
+    leaf: int
+    ring_write: int | None
+    next_lfsr: int
+    next_lfsr2: int
+
+
+def decode_sample_record(words: list[int] | tuple[int, ...]) -> SampleRecord:
+    assert len(words) == 14
+    return SampleRecord(
+        phase=words[0],
+        nz_hold=signed(words[1] >> 8, 8),
+        old_q=((words[7] & 0x1ff) << 8) | (words[1] & 0xff),
+        phase2=((words[3] & 1) << 16) | words[2],
+        clr_ack=(words[3] >> 15) & 1,
+        old_gain=((words[3] >> 10) & 0x1f) << 8 | (words[9] >> 8),
+        last_gain=((words[3] >> 5) & 0x1f) << 8 | (words[12] & 0xff),
+        nz_phase=(words[3] >> 1) & 0xf,
+        old_mode=(words[4] >> 13) & 3,
+        brown=signed(words[4], 13),
+        lowpass=signed(((words[4] >> 15) << 16) | words[5], 17),
+        old_phase=words[6],
+        blend_count=(words[7] >> 9) & 0x7f,
+        old_inc=((words[9] & 0x1f) << 9) | (words[8] >> 7),
+        old_rev=(words[10] >> 13) & 3,
+        last_rev=(words[10] >> 11) & 3,
+        last_wave=(words[10] >> 8) & 7,
+        last_inc=((words[10] & 0x1f) << 9) | (words[11] >> 7),
+        old_alt=bool((words[12] >> 14) & 1),
+        last_alt=bool((words[12] >> 13) & 1),
+        last_mode=(words[12] >> 11) & 3,
+        old_wave=(words[12] >> 8) & 7,
+        noise_lowpass=signed(words[13], 16),
+    )
+
+
+def encode_sample_record(record: SampleRecord) -> tuple[int, ...]:
+    words = [0] * 14
+    words[0] = record.phase & 0xffff
+    words[1] = ((record.nz_hold & 0xff) << 8) | (record.old_q & 0xff)
+    words[2] = record.phase2 & 0xffff
+    words[3] = ((record.clr_ack & 1) << 15) \
+        | (((record.old_gain >> 8) & 0x1f) << 10) \
+        | (((record.last_gain >> 8) & 0x1f) << 5) \
+        | ((record.nz_phase & 0xf) << 1) | ((record.phase2 >> 16) & 1)
+    words[4] = ((record.lowpass < 0) << 15) \
+        | ((record.old_mode & 3) << 13) | (record.brown & 0x1fff)
+    words[5] = record.lowpass & 0xffff
+    words[6] = record.old_phase & 0xffff
+    words[7] = ((record.blend_count & 0x7f) << 9) \
+        | ((record.old_q >> 8) & 0x1ff)
+    words[8] = (record.old_inc & 0x1ff) << 7
+    words[9] = ((record.old_gain & 0xff) << 8) \
+        | ((record.old_inc >> 9) & 0x1f)
+    words[10] = ((record.old_rev & 3) << 13) \
+        | ((record.last_rev & 3) << 11) \
+        | ((record.last_wave & 7) << 8) \
+        | ((record.last_inc >> 9) & 0x1f)
+    words[11] = (record.last_inc & 0x1ff) << 7
+    words[12] = (int(record.old_alt) << 14) \
+        | (int(record.last_alt) << 13) \
+        | ((record.last_mode & 3) << 11) \
+        | ((record.old_wave & 7) << 8) | (record.last_gain & 0xff)
+    words[13] = record.noise_lowpass & 0xffff
+    return tuple(words)
+
+
+def decode_sample_params(words: list[int] | tuple[int, ...]) -> SampleParams:
+    assert len(words) == 4
+    return SampleParams(
+        eff_inc=((words[1] & 0x1f) << 9) | (words[0] >> 7),
+        snd_id=(words[1] >> 12) & 7,
+        wavetable=bool((words[1] >> 11) & 1),
+        wave=(words[1] >> 8) & 7,
+        damp=(words[2] >> 12) & 3,
+        reverb=(words[2] >> 10) & 3,
+        detune=(words[2] >> 8) & 3,
+        buzz=bool((words[2] >> 7) & 1),
+        noise=bool((words[2] >> 6) & 1),
+        amplitude=words[3] & 0xfff,
+        clr_tog=(words[3] >> 13) & 1,
+    )
+
+
+def encode_sample_params(params: SampleParams) -> tuple[int, ...]:
+    return (
+        (params.eff_inc & 0x1ff) << 7,
+        ((params.snd_id & 7) << 12) | (int(params.wavetable) << 11)
+        | ((params.wave & 7) << 8) | ((params.eff_inc >> 9) & 0x1f),
+        ((params.damp & 3) << 12) | ((params.reverb & 3) << 10)
+        | ((params.detune & 3) << 8) | (int(params.buzz) << 7)
+        | (int(params.noise) << 6),
+        (params.clr_tog << 13) | (params.amplitude & 0xfff),
+    )
+
+
+def phase_view(raw: int, wave: int, mode: int, wavetable: bool) -> int:
+    raw &= 0xffff
+    if not wavetable and wave in (0, 7):
+        return raw
+    return ((raw << 1) & 0xffff) if mode == 2 else raw
+
+
+def dq_value(increment: int, wavetable: bool, wave: int, mode: int) -> int:
+    if wavetable:
+        coefficient = 256
+    elif wave == 0:
+        coefficient = (256, 193, 384)[mode]
+    elif wave == 7:
+        coefficient = (254, 250, 508)[mode]
+    else:
+        coefficient = 256 if mode == 0 else 255
+    return ((increment >> 1) * coefficient) >> 8
+
+
+def noise_draw(lfsr: int) -> int:
+    value = 0
+    for term in range(8):
+        source = 7 + term
+        value |= (((lfsr >> source) ^ (lfsr >> (source - 1))) & 1) \
+            << (7 - term)
+    return signed(value, 8)
+
+
+def advance_lfsr(value: int, tap: int) -> int:
+    return ((value << 1) & 0x7fff) | (((value >> 14) ^ (value >> tap)) & 1)
+
+
+def noise_kick(lfsr: int, lfsr2: int, dp: int, amplitude: int) -> int:
+    gain = ((lfsr >> 7) & 0xff) << 5 | (lfsr & 0x1f)
+    if 3 * gain > dp + 497:
+        return 0
+    inv = 1 ^ ((lfsr2 >> 12) & 1)
+    draw = signed((inv << 11) | (inv << 10) | ((lfsr2 >> 2) & 0x3ff), 12)
+    draw = draw - (draw >> 3) - (draw >> 6)
+    return draw * ((amplitude >> 8) & 7)
+
+
+def aram_value(snd_id: int, index: int, salt: int) -> int:
+    index &= 0x3f
+    raw = ((snd_id * 73 + index * 29 + salt * 17) ^ 0xa5) & 0xff
+    return signed(raw, 8)
+
+
+def wavetable_value(snd_id: int, phase: int, salt: int) \
+        -> tuple[int, tuple[tuple[int, int, bool], ...], tuple[int, ...]]:
+    index = (phase >> 10) & 0x3f
+    fraction = phase & 0x3ff
+    base = aram_value(snd_id, index, salt)
+    adjacent = aram_value(snd_id, index + 1, salt)
+    value = (base * 1024 + (adjacent - base) * fraction) // 8
+    requests = ((snd_id, index, False), (snd_id, index, True))
+    return value, requests, (base, adjacent)
+
+
+def gain_arm(value: int, gain: int, wave: int) -> tuple[int, int]:
+    limb = (abs(value) * gain) >> 10
+    if wave == 6:
+        magnitude = limb >> 1
+    else:
+        p341 = limb * 341
+        reciprocal = (((p341 & ((1 << 25) - 1)) << 9)
+                      + ((p341 + limb) >> 1)) & ((1 << 34) - 1)
+        magnitude = (reciprocal >> 19) & 0x1ffff
+    return (-magnitude if value < 0 else magnitude), limb
+
+
+def evaluate_sample_slot(record: SampleRecord, params: SampleParams,
+                         inputs: SampleInputs) -> SampleTrace:
+    """Direct legacy source/NBA oracle for one complete full-mode slot."""
+    initial_words = encode_sample_record(record)
+    state = SampleRecord(**record.__dict__)
+    run = inputs.play and params.amplitude != 0
+    boost = params.detune != 0 and not params.wavetable \
+        and not ((params.wave & 4) and (params.wave & 2))
+    gain_a = params.amplitude + (params.amplitude >> 2) \
+        if boost else params.amplitude
+    live_gain = gain_a + (gain_a >> 1)
+    restart = inputs.play and (
+        params.eff_inc != state.last_inc or live_gain != state.last_gain
+        or params.wave != state.last_wave or params.detune != state.last_mode
+        or params.reverb != state.last_rev or params.buzz != state.last_alt
+        or (params.amplitude != 0 and params.wave == 6
+            and not params.wavetable and not params.buzz and inputs.nz_tick))
+
+    old_inc_now = state.last_inc if restart else state.old_inc
+    old_wave_now = state.last_wave if restart else state.old_wave
+    old_mode_now = state.last_mode if restart else state.old_mode
+    old_alt_now = state.last_alt if restart else state.old_alt
+    old_gain_now = state.last_gain if restart else state.old_gain
+    old_rev_now = state.last_rev if restart else state.old_rev
+    dq_live = dq_value(params.eff_inc, params.wavetable, params.wave,
+                       params.detune)
+    dq_old = dq_value(old_inc_now, params.wavetable, old_wave_now,
+                      old_mode_now)
+    live_random = noise_draw(inputs.lfsr)
+    old_random = noise_draw(inputs.lfsr2)
+    noise_live_step = (((params.eff_inc >> 1) << 3) + 1_120) \
+        * live_random // 256
+    noise_old_step = (((old_inc_now >> 1) << 3) + 1_120) \
+        * old_random // 256
+    kick = noise_kick(inputs.lfsr, inputs.lfsr2, params.eff_inc >> 1,
+                      params.amplitude)
+    old_noise_on = old_wave_now == 6 and not old_alt_now
+    old_noise_active = run and old_noise_on
+
+    w0_phase = state.phase
+    if run and not params.wavetable:
+        state.phase = (state.phase + (params.eff_inc >> 1)) & 0xffff
+    if restart:
+        state.blend_count = 0
+        state.old_phase = record.phase
+        state.old_q = record.phase2
+        state.old_inc = record.last_inc
+        state.old_gain = record.last_gain
+        state.old_wave = record.last_wave
+        state.old_mode = record.last_mode
+        state.old_alt = record.last_alt
+        state.old_rev = record.last_rev
+        if params.amplitude == 0:
+            state.phase = 0
+            state.phase2 = 0
+    elif state.blend_count != 64:
+        state.blend_count += 1
+
+    clear = params.clr_tog != state.clr_ack
+    if run and (params.noise or (record.phase >> 12) != state.nz_phase):
+        state.nz_phase = record.phase >> 12
+        state.nz_hold = signed(inputs.lfsr, 8)
+    if clear:
+        state.clr_ack = params.clr_tog
+        state.lowpass = 0
+    if run or clear:
+        state.brown = 0 if clear else signed(
+            state.brown - (state.brown >> 5) + signed(inputs.lfsr, 8), 13)
+    noise_pre = state.noise_lowpass \
+        + (noise_live_step if inputs.nz_tog else 0) + kick
+    if (run and params.wave == 6) or clear:
+        state.noise_lowpass = 0 if clear else max(-6_143, min(6_143, noise_pre))
+        live_noise_out = 0 if clear else noise_pre
+    else:
+        live_noise_out = 0
+    if old_noise_active:
+        seed_base = record.noise_lowpass if (restart or inputs.nz_tick) \
+            else record.old_phase
+        state.old_phase = (signed(seed_base, 16) + kick) & 0xffff
+
+    w1_phase = phase_view(state.phase2, params.wave, params.detune,
+                          params.wavetable)
+    old_noise_pre = signed(state.old_phase, 16) \
+        + (noise_old_step if inputs.nz_tog else 0)
+    if old_noise_active:
+        state.old_phase = max(-6_143, min(6_143, old_noise_pre)) & 0xffff
+        old_noise_out = old_noise_pre
+    else:
+        old_noise_out = 0
+    if run and params.wavetable:
+        state.phase = (state.phase + (params.eff_inc >> 1)) & 0xffff
+
+    w2_phase = state.old_phase
+    w3_phase = phase_view(state.old_q, state.old_wave, state.old_mode, False)
+    contexts = (
+        (w0_phase, params.wave, params.buzz, False),
+        (w1_phase, params.wave, params.buzz, True),
+        (w2_phase, state.old_wave, state.old_alt, False),
+        (w3_phase, state.old_wave, state.old_alt, True),
+    )
+    wave_results = tuple(wave_value(*context) for context in contexts)
+    aram_requests: tuple[tuple[int, int, bool], ...] = ()
+    aram_results: tuple[int, ...] = ()
+    primary_interp = old_interp = 0
+    if params.wavetable and inputs.play:
+        primary_interp, primary_req, primary_bytes = wavetable_value(
+            params.snd_id, w0_phase, inputs.aram_salt)
+        old_interp, old_req, old_bytes = wavetable_value(
+            params.snd_id, w1_phase, inputs.aram_salt)
+        aram_requests = primary_req + old_req
+        aram_results = primary_bytes + old_bytes
+        z_new = primary_interp + trunc_zero(old_interp, 2)
+        z_old = 0
+    elif params.wavetable:
+        z_new = z_old = 0
+    else:
+        z_new = wave_results[0] + wave_results[1]
+        z_old = wave_results[2] + wave_results[3]
+
+    if params.wave == 6 and not params.wavetable:
+        if params.buzz and not params.noise:
+            z_new = state.brown << 3
+        else:
+            coarse = live_noise_out >> 6
+            z_new = coarse * (68 if params.eff_inc & 0x2000 else 80)
+    if old_noise_active:
+        coarse = old_noise_out >> 6
+        z_old = coarse * (68 if state.old_inc & 0x2000 else 80)
+
+    state.last_inc = params.eff_inc
+    if inputs.play or not (inputs.music_slot and inputs.music_playing):
+        state.last_gain = live_gain
+    state.last_wave = params.wave
+    state.last_mode = params.detune
+    state.last_alt = params.buzz
+    state.last_rev = params.reverb
+    if not params.wavetable and state.old_gain != 0 and not old_noise_active:
+        state.old_phase = (state.old_phase + (state.old_inc >> 1)) & 0xffff
+        state.old_q = (state.old_q + dq_old) & 0x1ffff
+    if run:
+        state.phase2 = (state.phase2 + dq_live) & 0x1ffff
+
+    current_arm, live_limb = gain_arm(z_new, live_gain, params.wave)
+    if params.wavetable:
+        old_arm = current_arm if state.old_gain != 0 else 0
+        old_limb = 0
+    else:
+        old_arm, old_limb = gain_arm(z_old, state.old_gain, state.old_wave)
+    combined_new = trunc_zero(2 * current_arm + inputs.ring_current, 2) \
+        if params.reverb != 0 else current_arm
+    combined_old = trunc_zero(2 * old_arm + inputs.ring_old, 2) \
+        if state.old_rev != 0 else old_arm
+    blend_value = combined_new if state.blend_count == 64 else trunc_zero(
+        combined_old * 64 + (combined_new - combined_old)
+        * state.blend_count, 64)
+    if params.damp == 0:
+        filtered = blend_value
+    else:
+        factor = 1 if params.damp == 1 else 3
+        divisor = 2 if params.damp == 1 else 4
+        filtered = trunc_zero(blend_value + factor * state.lowpass, divisor)
+        state.lowpass = signed(filtered, 17)
+    audible = inputs.play and not inputs.hidden
+    # The shipped fold boundary deliberately takes mx_filt[15:0] and restores
+    # its bit-15 sign; persistent dampen state separately retains bit 16.
+    leaf = signed(filtered, 16) if audible else 0
+    ring_write = (signed(filtered, 17) & 0xffff) if inputs.play else None
+    next_lfsr = advance_lfsr(inputs.lfsr, 13)
+    next_lfsr2 = advance_lfsr(inputs.lfsr2, 10)
+    return SampleTrace(
+        initial_words=initial_words, final_words=encode_sample_record(state),
+        dq_live=dq_live, dq_old=dq_old,
+        noise_old_step=noise_old_step, noise_live_step=noise_live_step,
+        wave_contexts=contexts, wave_results=wave_results,
+        aram_requests=aram_requests, aram_results=aram_results,
+        primary_interp=primary_interp, old_interp=old_interp,
+        live_gain_limb=live_limb, old_gain_limb=old_limb,
+        current_arm=current_arm, old_arm=old_arm,
+        ring_current=inputs.ring_current, ring_old=inputs.ring_old,
+        blend_value=blend_value, filtered_value=signed(filtered, 17),
+        leaf=leaf, ring_write=ring_write,
+        next_lfsr=next_lfsr, next_lfsr2=next_lfsr2)
+
+
+@dataclass
+class ServiceToken:
+    producer: str
+    consumer: str
+    ready_cycle: int
+    value: object
+
+
+SAMPLE_HOLD_TARGETS = (
+    "NZ_OLD_LOAD_PAR_3", "NZ_LIVE",
+    *(f"CAP_{name}" for name, _ in SAMPLE_CAP_SCHEDULE),
+    *(f"HOLD_{word}" for word in range(9)),
+    "FOLD_PRIME", "FOLD_A_LO", "FOLD_A_HI", "FOLD_B_LO",
+    "FOLD_START", "FOLD_RUN", "FOLD_WRITE_LO", "FOLD_WRITE_HI",
+    "FOLD_FINISH",
+)
+
+
+class SampleImageMachine:
+    """Execute the real owner-zero image and compose the proved services."""
+    def __init__(self, program: list[int], actions: Actions, memory: list[int],
+                 *, spar_bank: int, play_bits: int, music_playing: bool,
+                 reverb: bool, lfsr: int, lfsr2: int, nz_tog: bool,
+                 nz_tick: bool, aram_salt: int, hold_selector: int) -> None:
+        self.program = program
+        self.actions = actions
+        self.memory = memory
+        self.spar_bank = spar_bank
+        self.play_bits = play_bits
+        self.music_playing = music_playing
+        self.reverb = reverb
+        self.lfsr = lfsr
+        self.lfsr2 = lfsr2
+        self.nz_tog = nz_tog
+        self.nz_tick = nz_tick
+        self.aram_salt = aram_salt
+        self.hold_selector = hold_selector
+        self.pc = SAMPLE_START
+        self.slot = 0
+        self.state_q = 0
+        self.active_cycles = 0
+        self.wall_cycles = 0
+        self.semantic_reads = 0
+        self.semantic_writes = 0
+        self.physical_reads = 0
+        self.pending: tuple[int, int] | None = None
+        self.loaded_words: list[int] = []
+        self.params_words: list[int] = []
+        self.trace: SampleTrace | None = None
+        self.tokens: dict[str, ServiceToken] = {}
+        self.leaf = 0
+        self.hold_checks = 0
+        self.hold_labels: set[str] = set()
+        self.service_transactions = 0
+        self.ring_tags: list[int] = []
+        self.fold_a = 0
+        self.fold_b = 0
+        self.fold_value = 0
+        self.fold_tags: list[int] = []
+        self.dry16 = 0
+        self.dry_valid = 0
+
+    def address(self, slot: int, word: int) -> int:
+        return (slot << 6) | word
+
+    def freeze_fingerprint(self) -> tuple[object, ...]:
+        return (self.pc, self.slot, self.state_q, self.active_cycles,
+                self.semantic_reads, self.semantic_writes, self.physical_reads,
+                self.pending, tuple(self.loaded_words), tuple(self.params_words),
+                repr(self.trace), repr(self.tokens), self.leaf,
+                tuple(self.ring_tags), self.fold_a, self.fold_b,
+                self.fold_value, tuple(self.fold_tags), self.dry16,
+                self.dry_valid, self.lfsr, self.lfsr2)
+
+    def inject_hold(self, label: str) -> None:
+        target = SAMPLE_HOLD_TARGETS[self.hold_selector
+                                     % len(SAMPLE_HOLD_TARGETS)]
+        if self.hold_checks or label != target:
+            return
+        before = self.freeze_fingerprint()
+        self.wall_cycles += 3
+        assert self.freeze_fingerprint() == before, label
+        self.hold_checks += 1
+        self.hold_labels.add(label)
+
+    def issue(self, key: str, producer: str, consumer: str,
+              delay: int, value: object) -> None:
+        assert key not in self.tokens, (key, self.tokens)
+        self.tokens[key] = ServiceToken(producer, consumer,
+                                        self.active_cycles + delay, value)
+        self.service_transactions += 1
+
+    def take(self, key: str, consumer: str) -> object:
+        token = self.tokens.pop(key)
+        assert token.consumer == consumer, (key, token, consumer)
+        assert self.active_cycles >= token.ready_cycle, (key, token,
+                                                         self.active_cycles)
+        return token.value
+
+    def begin_trace(self) -> None:
+        assert len(self.loaded_words) == 14 and len(self.params_words) == 4
+        record = decode_sample_record(self.loaded_words)
+        params = decode_sample_params(self.params_words)
+        hidden = self.slot >= 4 and bool(self.play_bits & (1 << (self.slot - 4)))
+        ring_current = signed((self.slot * 0x1931 + self.aram_salt * 0x111)
+                              & 0xffff, 16) if self.reverb else 0
+        ring_old = signed((self.slot * 0x2b17 + self.aram_salt * 0x73)
+                          & 0xffff, 16) if self.reverb else 0
+        inputs = SampleInputs(
+            play=bool(self.play_bits & (1 << self.slot)), hidden=hidden,
+            music_slot=self.slot >= 4, music_playing=self.music_playing,
+            nz_tog=self.nz_tog, nz_tick=self.nz_tick,
+            lfsr=self.lfsr, lfsr2=self.lfsr2,
+            ring_current=ring_current, ring_old=ring_old,
+            aram_salt=self.aram_salt)
+        self.trace = evaluate_sample_slot(record, params, inputs)
+
+    def fold_step(self, tag: int) -> None:
+        assert tag == len(self.fold_tags) + 1, (self.fold_tags, tag)
+        self.fold_tags.append(tag)
+        if tag == 1:
+            self.fold_value = self.fold_a + self.fold_b
+        elif tag == 2:
+            total = self.fold_value
+            self.fold_value = (total - 24_576 if total >= 24_576
+                               else -24_576 - total if total <= -24_576
+                               else 0)
+        elif tag == 3:
+            self.fold_value = abs(self.fold_value)
+        elif tag == 4:
+            high, low = divmod(self.fold_value, 256)
+            self.fold_value = (high << 16) | low
+        elif tag == 5:
+            high, low = self.fold_value >> 16, self.fold_value & 0xffff
+            self.fold_value = (51 * high << 16) | (high + low)
+        elif tag == 6:
+            partial, address = self.fold_value >> 16, self.fold_value & 0xffff
+            self.fold_value = partial + address // 5
+        elif tag == 7:
+            total = self.fold_a + self.fold_b
+            self.fold_value = (24_576 + self.fold_value
+                               if total >= 24_576 else
+                               -24_576 - self.fold_value
+                               if total <= -24_576 else total)
+        else:
+            assert self.fold_value == soft_add_value(self.fold_a, self.fold_b)
+
+    def execute_action(self, name: str, insn: Instruction) -> None:
+        if name.startswith("LOAD_OSC_"):
+            assert self.pending is not None
+            self.loaded_words.append(self.state_q)
+            self.pending = None
+        elif name.startswith("LOAD_PAR_"):
+            assert self.pending is not None
+            self.params_words.append(self.state_q)
+            self.pending = None
+        elif name == "NZ_OLD_LOAD_PAR_3":
+            assert self.pending is not None
+            self.params_words.append(self.state_q)
+            self.pending = None
+            self.begin_trace()
+            assert self.trace is not None
+            self.issue("dq_live", name, "NZ_LIVE", 5, self.trace.dq_live)
+            self.issue("noise_old", name, "NZ_LIVE", 5,
+                       self.trace.noise_old_step)
+        elif name == "NZ_LIVE":
+            assert self.trace is not None
+            assert self.take("dq_live", name) == self.trace.dq_live
+            assert self.take("noise_old", name) == self.trace.noise_old_step
+            self.issue("noise_old_hold", name, "CAP_W1", 0,
+                       self.trace.noise_old_step)
+            self.issue("dq_live_hold", name, "CAP_W6", 0,
+                       self.trace.dq_live)
+            self.issue("dq_old", name, "CAP_W5", 5, self.trace.dq_old)
+            self.issue("noise_live", name, "CAP_W0", 5,
+                       self.trace.noise_live_step)
+        elif name == "CAP_W0":
+            assert self.trace is not None
+            assert self.state_q == self.trace.initial_words[0]
+            assert self.take("noise_live", name) == self.trace.noise_live_step
+            if not decode_sample_params(self.params_words).wavetable:
+                self.issue("wave_0", name, "CAP_W2", 2,
+                           self.trace.wave_results[0])
+            elif self.trace.aram_requests:
+                self.issue("aram_0", name, "CAP_W1", 1,
+                           self.trace.aram_results[0])
+        elif name == "CAP_W1":
+            assert self.trace is not None
+            assert self.state_q == self.trace.initial_words[2]
+            assert self.take("noise_old_hold", name) \
+                == self.trace.noise_old_step
+            if not decode_sample_params(self.params_words).wavetable:
+                self.issue("wave_1", name, "CAP_W3", 2,
+                           self.trace.wave_results[1])
+            elif self.trace.aram_requests:
+                assert self.take("aram_0", name) == self.trace.aram_results[0]
+                self.issue("aram_1", name, "CAP_W2", 1,
+                           self.trace.aram_results[1])
+        elif name == "CAP_W2":
+            assert self.trace is not None
+            assert self.state_q == self.trace.initial_words[6]
+            params = decode_sample_params(self.params_words)
+            if not params.wavetable:
+                assert self.take("wave_0", name) == self.trace.wave_results[0]
+                self.issue("wave_2", name, "CAP_W4", 2,
+                           self.trace.wave_results[2])
+            elif self.trace.aram_requests:
+                assert self.take("aram_1", name) == self.trace.aram_results[1]
+                self.issue("aram_2", name, "CAP_W3", 1,
+                           self.trace.aram_results[2])
+        elif name == "CAP_W3":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            if not params.wavetable:
+                assert self.take("wave_1", name) == self.trace.wave_results[1]
+                self.issue("wave_3", name, "CAP_W5", 2,
+                           self.trace.wave_results[3])
+            elif self.trace.aram_requests:
+                assert self.take("aram_2", name) == self.trace.aram_results[2]
+                self.issue("aram_3", name, "CAP_W4", 1,
+                           self.trace.aram_results[3])
+        elif name == "CAP_W4":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            if not params.wavetable:
+                assert self.take("wave_2", name) == self.trace.wave_results[2]
+                self.issue("mul_live", name, "CAP_W15", 5,
+                           self.trace.live_gain_limb)
+            elif self.trace.aram_requests:
+                assert self.take("aram_3", name) == self.trace.aram_results[3]
+                self.issue("mul_primary_interp", name, "CAP_W15", 5,
+                           self.trace.primary_interp)
+        elif name == "CAP_W5":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            assert self.take("dq_old", name) == self.trace.dq_old
+            if not params.wavetable:
+                assert self.take("wave_3", name) == self.trace.wave_results[3]
+        elif name == "CAP_W6":
+            assert self.trace is not None
+            assert self.take("dq_live_hold", name) == self.trace.dq_live
+        elif name == "CAP_W15":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            if params.wavetable and self.trace.aram_requests:
+                assert self.take("mul_primary_interp", name) \
+                    == self.trace.primary_interp
+                self.issue("mul_old_interp", name, "CAP_W26", 5,
+                           self.trace.old_interp)
+            elif not params.wavetable:
+                assert self.take("mul_live", name) == self.trace.live_gain_limb
+                self.issue("mul_live_recip", name, "CAP_W27", 6,
+                           self.trace.current_arm)
+        elif name == "CAP_W26":
+            assert self.trace is not None
+            if self.trace.aram_requests:
+                assert self.take("mul_old_interp", name) == self.trace.old_interp
+        elif name == "CAP_W27":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            if params.wavetable:
+                self.issue("mul_live", name, "CAP_W40", 5,
+                           self.trace.live_gain_limb)
+            else:
+                assert self.take("mul_live_recip", name) \
+                    == self.trace.current_arm
+                self.issue("mul_old", name, "CAP_W40", 5,
+                           self.trace.old_gain_limb)
+        elif name == "CAP_W40":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            if params.wavetable:
+                assert self.take("mul_live", name) == self.trace.live_gain_limb
+            else:
+                assert self.take("mul_old", name) == self.trace.old_gain_limb
+            self.issue("mul_arm_recip", name, "CAP_W51", 5,
+                       (self.trace.current_arm if params.wavetable
+                        else self.trace.old_arm))
+        elif name == "CAP_W51":
+            assert self.trace is not None
+            expected = (self.trace.current_arm
+                        if decode_sample_params(self.params_words).wavetable
+                        else self.trace.old_arm)
+            assert self.take("mul_arm_recip", name) == expected
+            assert self.ring_tags == ([1, 2, 3, 4] if self.reverb else [])
+        elif name == "CAP_W75":
+            assert self.trace is not None
+            record = decode_sample_record(self.trace.final_words)
+            if record.blend_count != 64:
+                self.issue("mul_blend", name, "CAP_W84", 4,
+                           self.trace.blend_value)
+        elif name == "CAP_W84":
+            assert self.trace is not None
+            if "mul_blend" in self.tokens:
+                assert self.take("mul_blend", name) == self.trace.blend_value
+            self.leaf = self.trace.leaf
+        elif name.startswith("STORE_"):
+            assert self.trace is not None
+            if name == "STORE_LEAF_LO":
+                value = self.leaf & 0xffff
+            elif name == "STORE_LEAF_HI":
+                value = (self.leaf >> 16) & 0xffff
+            else:
+                index = int(name.split("_")[1])
+                value = (self.trace.final_words[index]
+                         if index < 14 else
+                         self.trace.final_words[5 if index == 14 else 4])
+            self.memory[self.address(self.slot, insn.word)] = value
+            self.semantic_writes += 1
+        elif name == "FOLD_A_LO":
+            self.fold_a = self.state_q
+            self.pending = None
+        elif name == "FOLD_A_HI":
+            self.fold_a = signed(((self.state_q & 3) << 16) | self.fold_a, 18)
+            self.pending = None
+        elif name == "FOLD_B_LO":
+            self.fold_b = self.state_q
+            self.pending = None
+        elif name == "FOLD_START":
+            self.fold_b = signed(((self.state_q & 3) << 16) | self.fold_b, 18)
+            self.pending = None
+            self.fold_tags = []
+        elif name == "FOLD_WRITE_LO":
+            self.memory[self.address(self.slot, insn.word)] = \
+                self.fold_value & 0xffff
+            self.semantic_writes += 1
+        elif name == "FOLD_WRITE_HI":
+            self.memory[self.address(self.slot, insn.word)] = \
+                (self.fold_value >> 16) & 0xffff
+            self.semantic_writes += 1
+        elif name == "FOLD_FINISH":
+            self.dry16 = signed(self.memory[self.address(0, 48)], 16)
+            self.dry_valid += 1
+
+    def run(self) -> tuple[int, int, int, int, int]:
+        for _ in range(2_000):
+            insn = Instruction.decode(self.program[self.pc])
+            label = ""
+            action = self.actions.get("sample", insn.action) \
+                if insn.op in (Op.READ, Op.WRITE, Op.EXEC) else None
+            if action is not None:
+                label = action.name
+            elif insn.op == Op.EXEC and insn.action == COMMON_ACTION["HOLD"]:
+                label = f"HOLD_{insn.word}"
+            self.inject_hold(label)
+            self.active_cycles += 1
+            self.wall_cycles += 1
+            self.physical_reads += 1
+            if action is not None and action.consumes is not None:
+                assert self.pending == (self.slot, action.consumes), \
+                    (self.pc, action.name, self.pending)
+            if action is not None:
+                self.execute_action(action.name, insn)
+            if insn.op == Op.READ:
+                self.semantic_reads += 1
+                self.pending = (self.slot, insn.word)
+                next_pc = (self.pc + 1) & 0xff
+            elif insn.op in (Op.WRITE, Op.EXEC):
+                if insn.op == Op.EXEC and insn.action == COMMON_ACTION["HOLD"]:
+                    if 1 <= insn.word <= 4 and self.trace is not None:
+                        if self.reverb:
+                            self.ring_tags.append(insn.word)
+                            if insn.word == 1:
+                                self.issue("ring_current", "HOLD_1", "HOLD_2",
+                                           1, self.trace.ring_current)
+                            elif insn.word == 2:
+                                assert self.take("ring_current", "HOLD_2") \
+                                    == self.trace.ring_current
+                                self.issue("ring_old", "HOLD_2", "HOLD_3", 1,
+                                           self.trace.ring_old)
+                            elif insn.word == 3:
+                                assert self.take("ring_old", "HOLD_3") \
+                                    == self.trace.ring_old
+                            else:
+                                assert "ring_current" not in self.tokens \
+                                    and "ring_old" not in self.tokens
+                    elif 1 <= insn.word <= 8 and self.trace is None:
+                        self.fold_step(insn.word)
+                next_pc = (self.pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                self.slot = (self.slot + 1) & 7 if insn.slot_inc \
+                    else insn.slot_value
+                if insn.slot_inc:
+                    assert self.trace is not None and not self.tokens
+                    self.lfsr = self.trace.next_lfsr
+                    self.lfsr2 = self.trace.next_lfsr2
+                    self.loaded_words = []
+                    self.params_words = []
+                    self.trace = None
+                    self.ring_tags = []
+                next_pc = (self.pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                next_pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = self.slot == 0
+                next_pc = insn.target if take == bool(insn.sense) \
+                    else (self.pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                assert not self.tokens and self.pending is None
+                assert self.dry_valid == 1
+                break
+            else:
+                raise AssertionError(insn)
+            physical_word = insn.word
+            if (insn.op == Op.READ and 24 <= insn.word <= 27
+                    and self.spar_bank):
+                physical_word += 4
+            self.state_q = self.memory[self.address(self.slot, physical_word)] \
+                if insn.op in (Op.READ, Op.WRITE, Op.EXEC) else \
+                self.memory[self.address(self.slot, 0)]
+            self.pc = next_pc
+        else:
+            raise AssertionError("sample image did not terminate")
+        return (self.active_cycles, self.semantic_reads, self.semantic_writes,
+                self.service_transactions, self.hold_checks)
+
+
+def make_sample_case(case: int, spar_bank: int) \
+        -> tuple[list[int], int, bool, int, int, bool, bool, int]:
+    memory = [((case * 0x91 + n * 0x25) ^ 0x5a5a) & 0xffff
+              for n in range(512)]
+    play_bits = 0
+    music_playing = bool(case & 1)
+    for slot in range(8):
+        play = ((case + slot * 3) % 5) != 0
+        if play:
+            play_bits |= 1 << slot
+        wavetable = play and ((case + slot) % 4 == 0)
+        wave = (case + slot) & 7
+        amplitude = 0 if play and ((case + slot) % 7 == 0) \
+            else (0 if not play else ((case * 173 + slot * 419) & 0xfff) or 1)
+        detune = (case + 2 * slot) % 3
+        buzz = bool((case ^ slot) & 1)
+        noise = bool((case + slot) & 2)
+        damp = 0 if not play else (case + slot) % 3
+        reverb = (case + slot) % 3
+        eff_inc = (0x101 + case * 0x93 + slot * 0x257) & 0x3fff
+        gain_a = amplitude + (amplitude >> 2) \
+            if detune != 0 and not wavetable and not ((wave & 4) and (wave & 2)) \
+            else amplitude
+        gain = gain_a + (gain_a >> 1)
+        restart = play and bool((case + slot) & 1)
+        last_wave = ((wave + 3) & 7) if restart else wave
+        last_gain = (gain ^ 0x155) & 0x1fff if restart else gain
+        last_inc = (eff_inc ^ 0x321) & 0x3fff if restart else eff_inc
+        last_mode = ((detune + 1) % 3) if restart else detune
+        last_alt = not buzz if restart else buzz
+        last_rev = ((reverb + 1) % 3) if restart else reverb
+        old_noise = (case + slot * 2) % 9 == 0
+        record = SampleRecord(
+            phase=(0xf031 + case * 0x511 + slot * 0x1d3) & 0xffff,
+            nz_hold=signed(case * 17 + slot * 31, 8),
+            old_q=(0x1e123 + case * 0x229 + slot * 0x431) & 0x1ffff,
+            phase2=(0x10123 + case * 0x337 + slot * 0x119) & 0x1ffff,
+            clr_ack=(case + slot + 1) & 1,
+            old_gain=(0x311 + case * 0x51 + slot * 0x87) & 0x1fff,
+            last_gain=last_gain, nz_phase=(case + slot) & 0xf,
+            old_mode=(case + slot + 1) % 3,
+            brown=signed(0x177 + case * 0x29 + slot * 0x77, 13),
+            lowpass=signed(0x1a031 + case * 0x991 + slot * 0x533, 17),
+            old_phase=(0x8123 + case * 0x739 + slot * 0x2b1) & 0xffff,
+            blend_count=(0, 1, 63, 64)[(case + slot) & 3],
+            old_inc=(0x222 + case * 0x71 + slot * 0x183) & 0x3fff,
+            old_rev=(case + slot + 2) % 3, last_rev=last_rev,
+            last_wave=last_wave, last_inc=last_inc,
+            old_alt=False if old_noise else bool((case + slot + 1) & 1),
+            last_alt=last_alt, last_mode=last_mode,
+            old_wave=6 if old_noise else ((wave + 5) & 7),
+            noise_lowpass=signed(0x9234 + case * 0x155 + slot * 0x2d1, 16))
+        params = SampleParams(
+            eff_inc=eff_inc, snd_id=(7 - slot) & 7,
+            wavetable=wavetable, wave=wave, damp=damp, reverb=reverb,
+            detune=detune, buzz=buzz, noise=noise, amplitude=amplitude,
+            clr_tog=(case + slot) & 1)
+        base = slot << 6
+        memory[base + 10:base + 24] = encode_sample_record(record)
+        selected = 28 if spar_bank else 24
+        other = 24 if spar_bank else 28
+        memory[base + selected:base + selected + 4] = encode_sample_params(params)
+        poison = SampleParams(**{**params.__dict__,
+                                 "wave": params.wave ^ 7,
+                                 "amplitude": params.amplitude ^ 0xfff})
+        memory[base + other:base + other + 4] = encode_sample_params(poison)
+    lfsr = (0x2a5f ^ (case * 0x133)) & 0x7fff
+    lfsr2 = (0x5117 ^ (case * 0x287)) & 0x7fff
+    return (memory, play_bits, music_playing, lfsr, lfsr2,
+            bool(case & 2), bool(case & 4), case ^ 0x35)
+
+
+def direct_sample_image(memory: list[int], *, spar_bank: int, play_bits: int,
+                        music_playing: bool, reverb: bool, lfsr: int, lfsr2: int,
+                        nz_tog: bool, nz_tick: bool, aram_salt: int) \
+        -> tuple[list[int], int]:
+    out = list(memory)
+    leaves = []
+    for slot in range(8):
+        base = slot << 6
+        record = decode_sample_record(out[base + 10:base + 24])
+        pbase = base + (28 if spar_bank else 24)
+        params = decode_sample_params(out[pbase:pbase + 4])
+        inputs = SampleInputs(
+            play=bool(play_bits & (1 << slot)),
+            hidden=slot >= 4 and bool(play_bits & (1 << (slot - 4))),
+            music_slot=slot >= 4, music_playing=music_playing,
+            nz_tog=nz_tog, nz_tick=nz_tick, lfsr=lfsr, lfsr2=lfsr2,
+            ring_current=signed((slot * 0x1931 + aram_salt * 0x111)
+                                & 0xffff, 16) if reverb else 0,
+            ring_old=signed((slot * 0x2b17 + aram_salt * 0x73)
+                            & 0xffff, 16) if reverb else 0,
+            aram_salt=aram_salt)
+        trace = evaluate_sample_slot(record, params, inputs)
+        out[base + 10:base + 24] = trace.final_words
+        out[base + 15] = trace.final_words[5]
+        out[base + 14] = trace.final_words[4]
+        out[base + 48] = trace.leaf & 0xffff
+        out[base + 49] = (trace.leaf >> 16) & 0xffff
+        leaves.append(trace.leaf)
+        lfsr, lfsr2 = trace.next_lfsr, trace.next_lfsr2
+    for a_slot, b_slot, dst_slot in FOLD_NODES:
+        leaves[dst_slot] = soft_add_value(leaves[a_slot], leaves[b_slot])
+        base = dst_slot << 6
+        out[base + 48] = leaves[dst_slot] & 0xffff
+        out[base + 49] = (leaves[dst_slot] >> 16) & 0xffff
+    return out, signed(leaves[0], 16)
+
+
+def validate_sample_image_semantics(program: list[int], actions: Actions) -> str:
+    runs = slots = active = transactions = hold_checks = 0
+    held_labels: set[str] = set()
+    coverage: dict[str, set[object]] = {
+        "bank": set(), "reverb_build": set(), "wave": set(),
+        "wavetable": set(), "play": set(), "hidden": set(),
+        "amplitude_zero": set(), "restart": set(), "old_noise": set(),
+        "buzz": set(), "noise": set(), "detune": set(), "dampen": set(),
+        "blend_count": set(),
+    }
+    for spar_bank in (0, 1):
+        for reverb in (False, True):
+            for case in range(16):
+                (memory, play_bits, music_playing, lfsr, lfsr2,
+                 nz_tog, nz_tick, aram_salt) = make_sample_case(case, spar_bank)
+                coverage["bank"].add(spar_bank)
+                coverage["reverb_build"].add(reverb)
+                for slot in range(8):
+                    base = slot << 6
+                    record = decode_sample_record(memory[base + 10:base + 24])
+                    pbase = base + (28 if spar_bank else 24)
+                    params = decode_sample_params(memory[pbase:pbase + 4])
+                    play = bool(play_bits & (1 << slot))
+                    hidden = slot >= 4 and bool(play_bits & (1 << (slot - 4)))
+                    boost = params.detune != 0 and not params.wavetable \
+                        and not ((params.wave & 4) and (params.wave & 2))
+                    gain_a = params.amplitude + (params.amplitude >> 2) \
+                        if boost else params.amplitude
+                    gain = gain_a + (gain_a >> 1)
+                    restart = play and (
+                        params.eff_inc != record.last_inc
+                        or gain != record.last_gain
+                        or params.wave != record.last_wave
+                        or params.detune != record.last_mode
+                        or params.reverb != record.last_rev
+                        or params.buzz != record.last_alt
+                        or (params.amplitude != 0 and params.wave == 6
+                            and not params.wavetable and not params.buzz
+                            and nz_tick))
+                    old_wave = record.last_wave if restart else record.old_wave
+                    old_alt = record.last_alt if restart else record.old_alt
+                    coverage["wave"].add(params.wave)
+                    coverage["wavetable"].add(params.wavetable)
+                    coverage["play"].add(play)
+                    coverage["hidden"].add(hidden)
+                    coverage["amplitude_zero"].add(params.amplitude == 0)
+                    coverage["restart"].add(restart)
+                    coverage["old_noise"].add(old_wave == 6 and not old_alt)
+                    coverage["buzz"].add(params.buzz)
+                    coverage["noise"].add(params.noise)
+                    coverage["detune"].add(params.detune)
+                    coverage["dampen"].add(params.damp)
+                    coverage["blend_count"].add(record.blend_count)
+                expected, expected_dry = direct_sample_image(
+                    memory, spar_bank=spar_bank, play_bits=play_bits,
+                    music_playing=music_playing, reverb=reverb,
+                    lfsr=lfsr, lfsr2=lfsr2, nz_tog=nz_tog, nz_tick=nz_tick,
+                    aram_salt=aram_salt)
+                machine = SampleImageMachine(
+                    program, actions, list(memory), spar_bank=spar_bank,
+                    play_bits=play_bits, music_playing=music_playing,
+                    reverb=reverb, lfsr=lfsr, lfsr2=lfsr2,
+                    nz_tog=nz_tog, nz_tick=nz_tick, aram_salt=aram_salt,
+                    hold_selector=runs)
+                counts = machine.run()
+                assert counts[0:3] == (782, 172, 158), counts
+                if machine.memory != expected:
+                    mismatch = next(index for index, pair in
+                                    enumerate(zip(machine.memory, expected))
+                                    if pair[0] != pair[1])
+                    raise AssertionError(
+                        (case, spar_bank, reverb, mismatch,
+                         machine.memory[mismatch], expected[mismatch]))
+                assert machine.dry16 == expected_dry and machine.dry_valid == 1
+                runs += 1
+                slots += 8
+                active += counts[0]
+                transactions += counts[3]
+                hold_checks += counts[4]
+                held_labels.update(machine.hold_labels)
+    assert runs == 64 and slots == 512 and active == 50_048
+    assert transactions == 8_052
+    assert hold_checks == runs
+    assert held_labels == set(SAMPLE_HOLD_TARGETS)
+    assert coverage["bank"] == {0, 1}
+    assert coverage["reverb_build"] == {False, True}
+    assert coverage["wave"] == set(range(8))
+    for name in ("wavetable", "play", "hidden", "amplitude_zero", "restart",
+                 "old_noise", "buzz", "noise"):
+        assert coverage[name] == {False, True}, (name, coverage[name])
+    assert coverage["detune"] == {0, 1, 2}
+    assert coverage["dampen"] == {0, 1, 2}
+    assert coverage["blend_count"] == {0, 1, 63, 64}
+    return (f"{runs} production-image runs / {slots} slots / {active:,} active "
+            f"instructions; {transactions:,} service transactions; "
+            f"{hold_checks} external-hold freezes; persistent/scratch/fold/"
+            "dry commits exact")
+
+
 def validate_sample_arithmetic_contract() -> str:
     """Prove the bounded arithmetic identities used around retained services."""
     dq_cases = 0
@@ -2266,6 +3383,7 @@ def main() -> int:
     sample_pool = validate_sample_pool_contract()
     phase_substitution = validate_phase_substitution_contract()
     sample_arithmetic = validate_sample_arithmetic_contract()
+    sample_semantics = validate_sample_image_semantics(sample_program, actions)
     owner_inventory = remaining_owner_action_inventory(seq_nodes)
     condition_contract = validate_condition_contract(sample_program,
                                                      tick_program)
@@ -2322,6 +3440,7 @@ def main() -> int:
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)
+    print("sample image semantics: " + sample_semantics)
     print("fold word/tree contract: " + fold_contract)
     print("fold arithmetic contract: " + fold_arithmetic)
     print("remaining owner action inventory: " + owner_inventory)

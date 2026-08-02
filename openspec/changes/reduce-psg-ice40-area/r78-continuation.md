@@ -1506,6 +1506,25 @@ git history; do not repeat them without the recorded changed condition.
   and all 40,961 reachable `/5` excesses.  Accept this arithmetic foundation;
   production-image service transactions, semantic RTL and physical cost remain
   unproved.
+- **Production-image semantic-model result:** the exact 222-word owner-zero
+  image now executes through a synchronous 8x64x16 state model for **64
+  complete runs / 512 slots / 50,048 active instructions** across both
+  parameter banks and both ring elaborations.  **8,052** named DQ, noise,
+  wave/ARAM, multiply, retained-result and ring transactions prove producer,
+  readiness and consumer association; 64 injected freezes cover every one of
+  the 34 service/fold/HOLD action classes without aging active-service time.
+  Coverage assertions convict all eight waves, built-in/wavetable,
+  playing/hidden/inactive, zero/nonzero amplitude, restart/no-restart,
+  old-noise/buzz/noise, detune and dampen modes, transition counts 0/1/63/64
+  and optional ring state.  Every run preserves 172 semantic reads, 158
+  writes and all 782 active edges, matches an independent direct legacy
+  source/NBA oracle at every persistent word 10..23 and scratch word 48/49,
+  executes the literal seven-node tagged fold, and pulses one exact `dry_valid`
+  with matching `dry16`.  The existing controller/datapath/movement,
+  owner-one, owner-zero, production wave/ARAM, 2,097,152-context wave and ARAM
+  replay RTL gates remain clean.  Accept the complete **model composition**;
+  no new semantic RTL, physical result, generic schedule or render equivalence
+  is claimed yet.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
