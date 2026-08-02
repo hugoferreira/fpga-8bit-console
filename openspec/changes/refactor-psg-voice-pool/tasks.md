@@ -252,7 +252,7 @@ an exact serial implementation to save LC.
 
 - [ ] 13.1 `make test-psg` green
 - [ ] 13.2 `make test-nemo` green, all three games build and run
-- [ ] 13.3 `make psg-rows` on NEMO's SFX 8 no worse than before the change
+- [ ] 13.3 `make psg-analyze` on NEMO's SFX 8 no worse than before the change
 - [ ] 13.4 Play each game and confirm no sound effect can interrupt the music,
       by scrolling the NEMO level selector as fast as the input allows
       (**gate P5** - the symptom that started this)

@@ -184,6 +184,15 @@ int main(int argc, char** argv) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
+    // The runner consumes raw scancodes only. SDL enables desktop text input
+    // implicitly; on macOS that also enables the press-and-hold accent picker,
+    // which steals a held/repeated Z dash input from the game window.
+    SDL_StopTextInput();
+    if (SDL_IsTextInputActive()) {
+        fprintf(stderr, "SDL text input remained active\n");
+        SDL_Quit();
+        return 1;
+    }
     win = SDL_CreateWindow("Console (ESC to exit)",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         W * SCALE, H * SCALE, SDL_WINDOW_ALLOW_HIGHDPI);

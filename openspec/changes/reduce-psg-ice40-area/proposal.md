@@ -20,7 +20,7 @@ PICO-8 oracle.
 - Measure every stage against routed iCE40 area/timing and the complete PICO-8
   export oracle; reject transformations that save neither logic cells nor a
   binding block-RAM resource.
-- Treat the derived 28.125 MHz PSG clock and its minimum 1,275-clock sample
+- Treat the derived 18.75 MHz PSG clock and its minimum 850-clock sample
   interval as the current hardware deadline. Simulator wall time and Verilator
   lowering remain non-normative.
 

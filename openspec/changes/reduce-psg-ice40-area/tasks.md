@@ -107,8 +107,9 @@
       remaining LC gap
 - [x] 6.1 Pass oracle unit tests, the complete PICO-8 matrix and
       `rtl/psg_tb.sv` with deadline assertions
-- [ ] 6.2 Build and run Celeste headlessly and confirm active, non-constant
-      audio
+- [x] 6.2 Build and run Celeste headlessly and confirm active, non-constant
+      audio (`make shot GAME=celeste FRAMES=5` passes at the selected 18.75 MHz
+      clock: 3,668 samples, range -24,668..24,659, 1,073 distinct levels)
 - [ ] 6.3 Run seed-1 and multi-seed iCE40 synthesis, recording the final
       fingerprint, mapped cells, routed LC/BRAM and Fmax
 - [ ] 6.4 Confirm the final standalone result is no more than 5,500 LCs and 15
@@ -931,3 +932,1499 @@
       does NOT predict whether one pays - fanout entanglement decides that,
       and the prior is one win (R.37, -38) against one loss (R.18's smp_a /
       gz_s1_r, +24 despite -17 flops).
+- [x] R.40 REJECTED: retire `mx_filt` into `smp_b`. The derived live ranges are
+      disjoint by 22 phases: `smp_b` is live at 32..47 and the filtered result
+      at 69..72. This is the surviving `mx_filt` pairing named by R.39 after
+      R.39 itself extended `smp_a` through phase 69; it is not a retry of the
+      rejected `gz_s1_r` -> `smp_a` pairing. Baseline fingerprint
+      `9915c1bd1ccf`: 6,780 LUT4, 1,692 carries, 1,483 flops, 13 EBRs and
+      7,774 placed LCs (94 over capacity). Replace the dedicated 17-bit
+      register with a signed low-slice role on the existing 18-bit `smp_b`,
+      sign-extending the phase-69 write. It removed sixteen mapped flops but
+      added five LUT4s and reduced carries by five; placement moved 7,774 ->
+      **7,775 (+1)**, so the fanout/D-mux entanglement consumed the entire
+      retirement. Reverted before the render battery. Repeat only if a later
+      schedule or fanout change alters either register's live range or packing
+      cone.
+- [x] R.41 REJECTED: retire `mx_new` into `nz_old_out_r`. The derived live
+      ranges are disjoint with seven phases clear: `nz_old_out_r` is live at
+      30..40 and `mx_new` at 47..67. The 18-bit host can carry the complete
+      signed 17-bit result by sign-extending both existing writes. Baseline is
+      unchanged from R.40: fingerprint `9915c1bd1ccf`, 6,780 LUT4, 1,692
+      carries, 1,483 flops, 13 EBRs and 7,774 placed LCs. Accept only if the
+      structural/render gates pass and placement falls. It removed eleven
+      mapped flops but added 22 LUT4s and one carry; placement moved 7,774 ->
+      **7,791 (+17)**. The early noise-state fanout and late mix-result fanout
+      do not pack as one register. Reverted before the render battery. Repeat
+      only if a later schedule or fanout change alters either lifetime or
+      packing cone.
+- [x] R.42 REJECTED: merge `mx_filt` and `gz_s1_r`. Their derived live ranges
+      are disjoint with nine phases clear: the reciprocal/gain limb is live at
+      40..60 and the filtered result at 69..72. Unlike R.40/R.41, both roles
+      remain inside the gain/filter arithmetic family and neither host carries
+      waveform or persistent-noise fanout. Keep the existing 17-bit
+      `gz_s1_r` storage, expose its late role as signed, and replace the
+      phase-69 `mx_filt` write. Baseline: fingerprint `9915c1bd1ccf`, 6,780
+      LUT4, 1,692 carries, 1,483 flops, 13 EBRs and 7,774 placed LCs. Accept
+      only if the structural/render gates pass and placement falls. It removed
+      sixteen mapped flops but added 44 LUT4s and five carries; placement moved
+      7,774 -> **7,812 (+38)**. Reverted before the render battery. Together,
+      R.40/R.41/R.42 are three consecutive failures of the same lifetime-merge
+      mechanism, so close the remaining smaller pairings under the research
+      stop rule. Repeat only after a schedule or fanout change materially
+      changes the register cones.
+- [x] R.43 ACCEPTED: retire `psg_aram.last_addr`. A synthesis-port borrow raises
+      `seq_frozen`, which is part of `psg_seq.seq_hold`; the sequencer state and
+      therefore `seq_addr` stay unchanged throughout both the borrow and the
+      following `replay` cycle. The explicit 13-bit address copy is therefore
+      redundant: keep the replay hold but select `seq_addr` directly whenever
+      `syn_rd` is false. This is control-contract elimination, not another
+      lifetime merge, and design section 5b already identified `last_addr` as
+      unpackable remaining state without recording an experiment. Baseline:
+      fingerprint `9915c1bd1ccf`, 6,780 LUT4, 1,692 carries, 1,483 flops, 13
+      EBRs and 7,774 placed LCs. Accept only if the structural/render gates
+      pass and placement falls; repeat only if the borrow/freeze contract or
+      sequencer address generation changes. Fingerprint `509c0b4911a6`:
+      6,750 LUT4, 1,693 carries, 1,470 flops, 13 EBRs and 7,737 placed LCs,
+      **-37 placed cells** and -13 flops from the unchanged baseline. The
+      standalone target is now 57 cells over capacity. `make test-psg` passes
+      at 618/1,275 sample clocks and 2,443/7,654 tick clocks with zero late
+      flips; the noise-fidelity, 9/9 reference and structural gates pass; and
+      `tools/psg_oracle_bytecheck.py` is 59/59 byte-identical against the
+      latest accepted lifetime render set.
+- [x] R.44 REJECTED: migrate `trg_row[4]` and `trg_len[4]` from 44 unpackable
+      flops into one dedicated 256x8 EBR, spending one of the two blocks still
+      available under the 15-EBR ceiling. Row and length use separate byte
+      addresses so each CPU write is a complete single-port memory write;
+      four row-valid and four length-valid bits preserve consume-and-clear
+      without clearing the RAM. Synchronously read both values during `V_LD`,
+      staging row in dead `note_lo[4:0]` and length in dead `arp_p[5:0]`, then
+      consume the staged values at `T_FL`. A CPU write to the foreground slot
+      being loaded during `V_LD` or `K_ADV` bypasses into the staging register
+      to avoid read-during-write ambiguity. At `T_FL`, a coincident CPU write
+      wins validity for the next trigger, matching the old later textual
+      assignment. Baseline is R.43: fingerprint `509c0b4911a6`, 6,750 LUT4,
+      1,693 carries, 1,470 flops, 13 EBRs and 7,737 placed LCs. Accept only at
+      <=15 EBRs, lower placed LC, and all R.43 structural/render gates clean;
+      repeat only if trigger ownership, V_LD scheduling, or the spare-EBR
+      budget changes. Fingerprint `371994e67dbc`: the intended EBR inferred,
+      but the read/write addressing, validity and collision-bypass fabric
+      raised LUT4 6,750 -> **6,811 (+61)** while carries fell 1 and flops fell
+      only 18, to 1,452. EBRs rose 13 -> 14 and placement moved 7,737 ->
+      **7,748 (+11)**, failing the required placed-cell reduction. Reverted
+      before the render battery. Repeat only if the bytes can share an
+      existing address-selected store or a changed visibility contract removes
+      the asynchronous write/bypass fabric.
+- [x] R.45 ACCEPTED: migrate full-schedule `clr_ack[8]` into the existing
+      oscillator record. The acknowledgement is walker-owned, read and written
+      only for `pc_ch`, and oscillator word 3 has one spare high bit while its
+      scheduled load precedes `CAP_W0` and its scheduled store follows the
+      clear decision. Stream that bit through one `s_clr_ack` working flop and
+      keep the preview-only acknowledgement array behind `REALTIME_PREVIEW`,
+      where the phase-0 inactive-slot fast path still needs random access.
+      This is the address-selected-storage shape R.44 could not use: no new
+      EBR, no CPU write port, no collision validity or bypass fabric. Baseline
+      is R.43: fingerprint `509c0b4911a6`, 6,750 LUT4, 1,693 carries, 1,470
+      flops, 13 EBRs and 7,737 placed LCs; the census attributes eight
+      unpackable flops and 257 LUT4s to `clr_ack`. Accept only if placement
+      falls, EBR remains <=15, the preview/full structural deadlines pass,
+      and the 59-case render set remains byte-identical. Repeat only if the
+      oscillator record layout or preview fast-path ownership changes.
+      Fingerprint `23a3f6a47f82`: 6,717 LUT4 (-33), 1,692 carries (-1),
+      1,463 flops (-7), 13 EBRs and **7,698 placed LCs (-39)**. The target is
+      now only 18 cells over capacity. `make test-psg` passes the noise-fidelity
+      gate, 9/9 reference checks and all structural cases at unchanged
+      618/1,275 sample and 2,443/7,654 tick clocks with zero late flips;
+      `tools/psg_oracle_bytecheck.py` is 59/59 byte-identical. The preview
+      elaboration retains its array path and completes at 196/1,275 sample and
+      1,616/7,654 tick clocks with zero overruns, late flips or lost state
+      writes (its broad bench still reports the preview-specific dampen and
+      disabled-reverb feature checks, outside this structural gate).
+- [x] R.46 RETAINED, ROUTED CUMULATIVELY WITH R.49, TIMING OPEN: migrate the matching
+      full-schedule `clr_tog[8]` request
+      token into address-selected storage. Oscillator word 32 already streams
+      `w_row` through `V_LD`/`V_ST` and has eleven spare bits, so carry one
+      `w_clr_tog` there, toggle it at `T_FL`, and publish it in the existing
+      sounding word-3 bit. The full walker loads that bit before `CAP_W0` and
+      compares it with R.45's streamed acknowledgement. Keep the direct
+      `clr_tog` array only for `REALTIME_PREVIEW`; after elaboration the full
+      target should trim it because it has no consumer. This removes another
+      random-index sequencer array without a new port or EBR, but may delay a
+      clear from trigger service to atomic parameter publication, so the
+      59-case byte gate decides render equivalence. Baseline is R.45:
+      fingerprint `23a3f6a47f82`, 6,717 LUT4, 1,692 carries, 1,463 flops,
+      13 EBRs and 7,698 placed LCs. Accept only if the target fits at <=15 EBR,
+      full and preview structural gates pass, and renders remain 59/59 exact;
+      repeat only if trigger/publication ordering changes. Fingerprint
+      `29478ed500ad`: 6,687 LUT4 (-30), 1,691 carries (-1), 1,457 flops (-6),
+      13 EBRs and **7,669 placed LCs (-29)**, the first sub-capacity result in
+      this resumed loop with 11 cells spare. The publication-timing risk is
+      clean: `tools/psg_oracle_bytecheck.py` is 59/59 byte-identical. Routing
+      did not converge at this density: after more than eight minutes the
+      seed-1 router remained stuck with 8,761 arcs and no progress, so the run
+      was stopped. A second run at the actual 28.125 MHz constraint reproduced
+      the same 8,761-arc stall, excluding the default 50 MHz target as the
+      cause. R.49 adds enough headroom for the cumulative R.46 logic to route,
+      so the storage migration is retained; the cumulative timing result is
+      still below 28.125 MHz. Repeat only if trigger/publication ordering
+      changes.
+- [x] R.47 REJECTED: remove reset and consume-clear muxes from `trg_row[4]` and
+      `trg_len[4]` without moving their values. Keep the 44 value flops, add
+      four row-valid and four length-valid bits, set validity on each CPU field
+      write, select zero at `T_FL` when invalid, and clear only the eight valid
+      bits. The values are then unobservable before their first write and need
+      neither reset nor a T_FL zero assignment. A CPU write coincident with
+      `T_FL` still wins because its later validity assignment is retained.
+      This is not R.44's rejected dedicated-RAM mechanism: there is no EBR,
+      address port, synchronous read or bypass fabric. Baseline is the R.46
+      candidate: fingerprint `29478ed500ad`, 6,687 LUT4, 1,691 carries, 1,457
+      flops, 13 EBRs and 7,669 placed LCs. Accept the cumulative R.46/R.47
+      checkpoint only if seed-1 routes, full/preview structural gates pass and
+      renders remain 59/59 exact; repeat only if trigger-field reset or
+      consume semantics change. Fingerprint `734cec2e45da`: the eight validity
+      flops replaced the removed reset cells exactly, but selecting zero at
+      consume added 57 LUT4s; mapped totals were 6,744 LUT4, 1,691 carries,
+      1,465 flops and 13 EBRs. Placement regressed 7,669 -> **7,721 (+52)**.
+      Reverted before functional gates. The value arrays are cheaper with
+      their direct clear arms; do not retry validity masking without a storage
+      or interface change that removes the value mux too.
+- [x] R.48 REJECTED: factor the audio-RAM upload address into its natural
+      256-byte page and byte fields. The current 16-bit `wraddr - 16'h3100`
+      plus `<4608` validity check hides that the accepted interval is exactly
+      pages `$31..$42`: let `up_page = wraddr[15:8] - 8'h31`, accept
+      `up_page < 18`, and form the zero-based 13-bit EBR address as
+      `{up_page[4:0], wraddr[7:0]}`. This preserves every in-range address,
+      every out-of-range rejection and full 16-bit auto-increment behavior,
+      while replacing a 16-bit subtract/compare cone with an eight-bit page
+      cone and wiring. Baseline is the R.46 candidate: fingerprint
+      `29478ed500ad`, 6,687 LUT4, 1,691 carries, 1,457 flops, 13 EBRs and
+      7,669 placed LCs. Accept the cumulative checkpoint only if exhaustive
+      address equivalence passes, seed-1 routes, and the R.46 structural/render
+      gates remain clean. Exhaustive comparison over all 65,536 addresses
+      proved identical validity (4,608 accepted, 60,928 rejected) and indices
+      0..4,607. Fingerprint `a0ac54edfe27` maps 6,686 LUT4 (-1), 1,695 carries
+      (+4), 1,457 flops and 13 EBRs; placement regresses 7,669 -> **7,671
+      (+2)**. Seed-1 routing completes under both the default 50 MHz and actual
+      28.125 MHz targets, but reaches only **21.24 MHz**, below the required
+      28.125 MHz. The structural suite remains at 618/1,275 sample clocks and
+      2,443/7,654 tick clocks with zero late flips, and the frozen renders are
+      59/59 byte-identical. Reverted because it adds no headroom and does not
+      close timing. Repeat only if the upload interval or synthesis mapping
+      changes.
+- [x] R.49 ACCEPTED AREA/ROUTE, TIMING OPEN: retire the full-schedule `dry16`
+      handoff register. The
+      serialized fold already leaves its completed signed result in `fstk[0]`
+      throughout the following `dry_valid` commit cycle, so full mode can
+      drive the handoff directly from that persistent stack word while preview
+      keeps its dedicated result register. `psg.sv` still qualifies `pcm` with
+      the registered `dry_valid`, preserving the commit edge. This is not a
+      retry of the pre-fold final-mix removal: the address-selected fold stack
+      did not exist for that experiment, while the current census identifies
+      all 16 `dry16` flops as unpackable. Baseline is R.46: fingerprint
+      `29478ed500ad`, 6,687 LUT4, 1,691 carries, 1,457 flops, 13 EBRs and 7,669
+      placed LCs. Accept only if mapped flops and placement fall, seed-1 routes
+      at the actual 28.125 MHz constraint, and the structural/render gates
+      remain exact. Fingerprint `13975f7d1225` maps 6,687 LUT4, 1,689 carries
+      (-2), 1,441 flops (-16) and 13 EBRs; placement falls 7,669 -> **7,651
+      (-18)** and seed-1 routing completes with 29 cells spare. Routed Fmax
+      improves only to **21.48 MHz**, still below 28.125 MHz, so this is an
+      accepted area/route stage rather than timing closure. `make test-psg`
+      passes at unchanged 618/1,275 sample and 2,443/7,654 tick clocks with
+      zero late flips; the frozen renders are 59/59 byte-identical. Repeat only
+      if the fold destination or commit timing changes.
+- [x] R.50 ACCEPTED, ROUTED TIMING FIT: replace the pitched-noise kick
+      threshold's constant divide
+      with its exact scaled comparison. The R.49 route's critical path runs
+      from `s_eff_inc` through `nz_sum / 3`, the LFSR threshold compare and
+      kick/filter cone to `s_noise_lp`: 20.62 ns logic plus 25.93 ns routing,
+      for 21.48 MHz. For `g = {lfsr[14:7], lfsr[4:0]}`, rewrite
+      `g < floor((dp+500)/3)` as `3*g <= dp+497`. R.15 closed this form only
+      because its ~23-cell area improvement was inside the then-binding
+      mapping-noise floor; a completed route now identifies the divider as the
+      timing bottleneck, which is the new evidence permitting the retry.
+      Exhaustively prove all 8,192 x 8,192 `(dp,g)` pairs before editing.
+      Baseline is R.49: fingerprint `13975f7d1225`, 6,687 LUT4, 1,689 carries,
+      1,441 flops, 13 EBRs, 7,651 placed LCs and 21.48 MHz routed. Accept only
+      if seed-1 routed Fmax materially improves without an area regression and
+      all structural/render gates remain exact. Exhaustive NumPy comparison of
+      all **67,108,864** pairs proves the two predicates identical. Fingerprint
+      `164161d6ad9e` maps 6,682 LUT4 (-5), 1,681 carries (-8), 1,441 flops and
+      13 EBRs; placement falls 7,651 -> **7,607 (-44)**, leaving 73 cells
+      spare. Seed-1 routes at **34.93 MHz**, passing the actual 28.125 MHz
+      clock by 6.80 MHz and replacing the divider path with a new wave-to-sample
+      critical path. `make test-psg` passes at unchanged 618/1,275 sample and
+      2,443/7,654 tick clocks with zero late flips; the noise-fidelity gate and
+      9/9 reference tests pass; the preview elaboration builds; and the frozen
+      renders are 59/59 byte-identical. This is the first cumulative R.46+
+      checkpoint that both routes and meets the hardware clock. Repeat only if
+      the noise threshold or timing path changes.
+- [x] R.51 REJECTED: publish the secondary-oscillator increment as derived
+      sounding state instead of recomputing it in the sample-rate wave cone.
+      `psg_wave.dq17` is a pure function of the published increment, wave,
+      detune mode and wavetable flag; those inputs change only when the
+      sequencer publishes a sounding tuple, while the current 17-bit
+      add/shift/round network is live on every sample visit and also feeds the
+      old-voice context. Ablating only that network establishes a hard upper
+      bound against the R.50 baseline: fingerprint `164161d6ad9e`,
+      6,682 LUT4, 1,681 carries, 1,441 flops, 13 EBR, 7,607 placed LCs and
+      34.93 MHz routed. The ablation maps 6,511 LUT4 and 1,577 carries and
+      places at **7,408 LCs (-199)** with 13 EBR unchanged, so the cone is
+      large enough to continue. Merely narrowing the output 17 -> 14 bits was
+      rejected at mapping (6,725 LUT4 / 1,685 carries): synthesis already sees
+      the upper zeroes, while the port-width/name perturbation re-covered the
+      surrounding logic worse. The value itself is nevertheless proven to fit
+      14 bits: `tools/psg_dq_model.py` exhaustively checks all 524,288
+      `(wavetable,wave,mode,dp)` cases and the exact serialized x63/x6 identities,
+      with maximum 16,254.
+      Implement through a foundational state-store split: the logical 512x16
+      memory already costs two EBRs but uses almost nothing in words 32..63.
+      Spell it as low/high 256x16 banks and expose the high-bank port in
+      parallel with ordinary low-bank traffic. Compute the live value during
+      the tick microprogram, publish it atomically in high-bank words, and
+      snapshot old/last values there alongside the existing transition tuple.
+      This must retain two state EBRs and establishes reusable address-selected
+      storage for later array migrations. Acceptance requires fewer placed
+      LCs, at most 15 EBRs, the unchanged 618/1,275 sample and 2,443/7,654
+      tick deadlines, 59/59 byte-identical renders, and routed Fmax above
+      28.125 MHz.
+      The implementation inferred the intended two state EBRs and passed the
+      524,288-case arithmetic model, Verilator 5.050 application build, audio
+      analysis tests and complete structural PSG suite. The sample deadline
+      stayed 618/1,275; tick preparation grew four clocks to 2,447/7,654 with
+      zero late flips. But the sequencer arithmetic, auxiliary memory-port
+      selection and three 14-bit walker lifetimes cost more than the retired
+      combinational cone: 6,905 LUT4, 1,647 carries, 1,525 flops and 13 EBRs,
+      with placement regressing **7,607 -> 7,864 (+257)** and failing to fit.
+      Reverting only this implementation restores 6,682 LUT4, 1,681 carries,
+      1,441 flops, 13 EBRs, 7,607 placed LCs and 34.93 MHz routed; the explicit
+      Verilator phase-wrap cast and exhaustive `tools/psg_dq_model.py` proof
+      remain. The ablation is a bound, not a realizable saving through this
+      publication shape. Repeat only if the sounding-state publication,
+      transition ownership, or shared-service operand cost changes.
+- [x] R.52 REJECTED: halve the PSG clock. There are two plausible readings:
+      halve the routed-Fmax round number 35 MHz to 17.5 MHz, or change the
+      shipping 112.5/4 clock to 112.5/8 = 14.0625 MHz. The latter provides
+      only 637 clocks per sample, 19 beyond the fixed 618-clock synthesis
+      walk, and at most about 114 non-walk clocks across the six-sample tick
+      pre-run window. More decisively, rebuilding the provenance-bound model
+      with matching RTL and renderer clocks and byte-comparing the 59 frozen
+      cases gives only **1/59 identical at 17.5 MHz** and **0/59 at 14.0625
+      MHz**; `wave-0-triangle` is the first differing case at both rates.
+      Fmax is an upper implementation limit, not an invitation to change the
+      scheduled clock: the audio is pinned to the current 28.125 MHz timing
+      fixed point. Repeat only after sequencing is made clock-invariant and a
+      long pattern-chain gate proves that property.
+- [x] R.53 REJECTED: rewrite `psg_wave.dq17` in the natural 13-bit input / 14-bit
+      result domain while preserving its 17-bit module interface and sample
+      schedule. This is not R.51's failed 17 -> 14 port perturbation and does
+      not publish state. Factor the exact forms into shared narrow ceiling
+      terms: `dp-ceil(63*dp/256)`, `dp-ceil(6*dp/256)`,
+      `2*dp-ceil(dp/64)`, `dp-ceil(dp/128)` and
+      `dp-ceil(dp/256)`. Extend `tools/psg_dq_model.py` to prove the narrow
+      form over all 524,288 cases before editing RTL. Baseline is R.50:
+      6,682 LUT4, 1,681 carries, 1,441 flops, 13 EBRs, 7,607 placed LCs and
+      34.93 MHz routed. The exhaustive proof and warning-clean Verilator 5.050
+      build pass, but synthesis maps 6,730 LUT4 (**+48**), 1,676 carries
+      (-5), 1,441 flops and 13 EBRs; placement regresses **7,607 -> 7,652
+      (+45)**. Routed Fmax rises slightly to 35.10 MHz, which does not repay an
+      area regression. Reverted before the render battery. Together with
+      R.51's failed publication shape and the earlier output-width probe, this
+      closes the `dq17` mechanism under the research stop rule. The exhaustive
+      model remains as evidence. Repeat only if the wave/detune formula set or
+      mapper arithmetic lowering changes.
+- [x] R.54 ACCEPTED: make the 618-clock sample walk clock-invariant and select
+      the useful non-power-of-two PLL division. This is not R.52's blind clock
+      change: a direct credit sweep found `mix-four` differs for every budget
+      from 232 through 271 and becomes byte-identical at exactly 272. The full
+      schedule now grants exactly 272 non-walk sequencer advances per sample;
+      the common value uses an eight-bit counter seeded at 239 plus one phase
+      bit, while generic budgets retain the direct counter. `psg_aram` restores
+      `last_addr` because a frozen sequencer's current address names the next
+      byte, not the synchronous read already issued. The lower clock also
+      exposed a constants-ROM collision: a simultaneous `$22` fade lookup now
+      takes priority and the walker holds one phase while its displaced control
+      word is reissued. The retained `s_phase` update is explicitly cast to 16
+      bits, so the Verilator 5.050 WIDTHTRUNC failure is gone.
+
+      `/5` gives 22.5 MHz and at least 1,020 clocks/sample: 618 walk + 272
+      credit leaves 130 spare. `/6` gives only 850 and is 40 short; its
+      structural run aborts on the explicit insufficient-credit assertion.
+      The registered modulo divider runs on the PLL falling edge, so its PSG
+      rising edges cannot coincide with CPU/master rising edges and CPU/video
+      clocks do not change. This is not a synchronizer: the minimum edge
+      separation is half a 112.5 MHz period, about 4.44 ns, and must remain an
+      explicit timing/CDC constraint. No synchronizer was added with only seven
+      placed LCs spare.
+
+      Final source fingerprint `44f732e11f49`: 6,723 LUT4, 1,690 carries,
+      1,464 flops, 13 EBRs; seed-1 places 7,673/7,680 LCs and routes at
+      34.94 MHz, 12.44 MHz above the actual 22.5 MHz requirement despite the
+      report's generic 50 MHz failure. `make test-psg` passes at 618/1,020
+      sample clocks and 4,791/6,123 tick-preparation clocks, with 1,332 spare
+      and zero late flips; the frozen matrix is 59/59 byte-identical.
+      `make test-clocks` passes `/4`, `/5` and `/6` period, duty and phase.
+      `make shot GAME=celeste FRAMES=5` builds warning-clean and reports active
+      audio. The final 400,000-sample Celeste music-0 renders at 28.125 and
+      22.5 MHz are byte-identical with SHA-256
+      `970b0691a90202d2be83ef158be4c750adc4ec66b4528454c9a80abb581737d5`;
+      host render time falls 57.612 -> 46.830 s (18.7%, non-normative).
+      Repeat only if the walk length, sequencer latency, publication boundary,
+      or clock-domain contract changes; `/6` additionally needs an exact
+      five-phase-per-slot walk reduction to recover its missing 40 clocks.
+- [x] R.55 ACCEPTED: retire `psg_aram.last_addr` again under R.54's arbitrary
+      sequencer-credit freezes by preserving the synchronous EBR output rather
+      than repeatedly reading the previously issued address. This is not a
+      retry of R.43: R.43 relied on a synthesis borrow freezing `seq_addr`,
+      whereas R.54 proved that an ordinary credit freeze can hold a state whose
+      current address already names the next byte. The new mechanism holds
+      `seq_q` through ordinary `seq_hold` cycles using the inferred RAM read
+      clock-enable, preserves every `syn_rd` wavetable read, and after a
+      synthesis borrow reissues the held current `seq_addr` under the existing
+      replay contract. Baseline fingerprint `44f732e11f49`: 6,723 LUT4,
+      1,690 carries, 1,464 flops, 13 EBRs, 7,673/7,680 placed LCs and
+      34.94 MHz routed at the selected 22.5 MHz PSG clock. Scope:
+      `rtl/psg_aram.sv` and only the calling/test contracts required to infer
+      read enable. Reject immediately if synthesis demotes or changes the nine
+      audio EBRs; accept only with <=13 total EBRs, fewer real flops/LUTs and
+      placed LCs, a routed fit above 22.5 MHz, `make test-psg`, 59/59 oracle
+      byte identity, and a 400,000-sample cross-clock Celeste comparison if
+      the sequencer schedule changes. Fingerprint `83ebc6c79f11`: all nine
+      audio-RAM blocks infer `RCLKE=aram_rd`; the total remains 13 EBRs while
+      Yosys falls 6,723 -> **6,705 LUT4** and 1,464 -> **1,451 flops**, with
+      carries unchanged at 1,690. The census reports 905 packed and 546
+      unpackable flops; the `last_addr` family is gone. Seed-1 placement falls
+      7,673 -> **7,642/7,680 LCs**, leaving 38 spare. The default router
+      repeated a fixed 7,398-arc impasse at both 50 and 22.5 MHz; `router2`
+      completes normally on the same seed/netlist at **33.21 MHz**, passing
+      the selected 22.5 MHz clock by 10.71 MHz. `make test-psg` is unchanged
+      at 618/1,020 sample clocks and 4,791/6,123 tick clocks with 1,332 spare
+      and zero late flips; `tools/psg_oracle_bytecheck.py` is 59/59 identical.
+      The schedule and clock contract did not move, so R.54's 400,000-sample
+      cross-clock proof remains the applicable schedule gate. A forced
+      Verilator 5.050 application rebuild is warning-clean, including the
+      earlier explicit 16-bit `s_phase` cast. Repeat only if RAM read-enable
+      inference, the freeze/replay protocol, or the synchronous issue/consume
+      schedule changes.
+- [x] R.56 REJECTED: clock-enable the two-stage `psg_wave` pipeline and its
+      reciprocal EBR only across the scheduled four-context evaluation burst.
+      Each slot issues live-primary, live-secondary, old-primary and
+      old-secondary contexts on W0..W3; the first pipeline boundary therefore
+      needs clocks on those four phases and the second boundary/reciprocal read
+      on W1..W4. Today both boundaries and the EBR read every PSG clock even
+      though `z_eval` is consumed only on W2..W5. Export the two schedule
+      enables from `psg_walk`, use native FF clock-enables and the reciprocal
+      EBR's `RCLKE`, and leave combinational `dq17`/`q16` live. Baseline R.55
+      fingerprint `83ebc6c79f11`: 6,705 LUT4, 1,690 carries, 1,451 flops,
+      13 EBRs and 7,642 placed LCs; seed-1 `router2` routes at 33.21 MHz.
+      Scope: `rtl/psg_walk.sv`, `rtl/psg.sv`, and `rtl/psg_wave.sv`. Accept
+      only if the 618+272 schedule, `make test-psg`, 59/59 byte identity,
+      warning-clean application build, 13-EBR inference and routed 22.5 MHz
+      fit all survive without a placed-area regression; report host work only
+      from paired identical-render timing, and report clock-enable inference
+      rather than claiming unmeasured power. Fingerprint `41c2aac2ee92`: the
+      reciprocal EBR inferred the intended `RCLKE`, 78 ordinary FFs became
+      enabled FFs, and `make test-psg` remained exact at 618/1,020 sample and
+      4,791/6,123 tick clocks. The enable routing nevertheless raised Yosys
+      6,705 -> **6,729 LUT4s** while carries fell three and the 1,451 flops / 13
+      EBRs stayed unchanged. Seed-1 `router2` placement regressed 7,642 ->
+      **7,664 LCs (+22)**; Fmax improved 33.21 -> 36.07 MHz, which is not the
+      binding resource. The structural test runtime moved only 35.427 ->
+      35.320 s (~0.3%, noise), so there is no measured Verilator return to
+      justify the area cost and no power claim without hardware measurement.
+      Reverted before the full render battery. Repeat only if the wave-issue
+      schedule, pipeline latency, iCE40 enable packing, or a real power/work
+      measurement changes the trade.
+- [x] R.57 ACCEPTED: rewrite `psg_wave.dq17` by quotient/remainder decomposition,
+      not by R.53's direct natural-width spelling. New algebraic evidence
+      changes the closed mechanism: for triangle detune-1, split
+      `dp = 256*q + r` so `floor(193*dp/256) = 193*q +
+      floor(193*r/256)`; the coefficient then applies to five-bit `q`, while
+      the low-byte term is `r - ceil(63*r/256)` and has a two-bit residue
+      correction. For phaser detune-1, split `dp = 128*q + r` so
+      `ceil(6*dp/256) = 3*q + ceil(3*r/128)`, applying the product to six- and
+      seven-bit values. The `/64`, `/128`, and `/256` corrections similarly
+      become high quotient plus a low-nonzero bit. Extend
+      `tools/psg_dq_model.py` to prove every wavetable/wave/mode/input tuple
+      against the shipped expression before changing RTL. Baseline R.55:
+      fingerprint `83ebc6c79f11`, 6,705 LUT4, 1,690 carries, 1,451 flops,
+      13 EBRs, 7,642 placed LCs and 33.21 MHz with seed-1 `router2`. Accept
+      only with fewer mapped LUT/carry resources and placed LCs, unchanged
+      schedule, `make test-psg`, 59/59 byte identity, warning-clean application
+      build, <=13 EBRs and routed Fmax above 22.5 MHz. Repeat only if the
+      quotient/remainder proof, detune formulas, or mapper lowering changes.
+      `tools/psg_dq_model.py` proves the new form over all 524,288 tuples with
+      the unchanged 16,254 maximum. Fingerprint `0e5e9be9e713`: Yosys remains
+      at 6,705 LUT4s and 1,451 flops but falls **1,690 -> 1,663 carries** and
+      9,867 -> 9,819 total mapped submodules; 13 EBRs remain. Seed-1
+      `router2` placement falls 7,642 -> **7,619/7,680 LCs (-23)**, leaving
+      61 spare, and routes at **33.80 MHz**, 11.30 MHz above the selected
+      clock. `make test-psg` remains 618/1,020 sample clocks and 4,791/6,123
+      tick clocks with 1,332 spare and zero late flips; the frozen render set
+      is 59/59 byte-identical; and the forced Verilator 5.050 console build is
+      warning-clean. This new quotient/residue shape, not R.53's direct narrow
+      restatement, is the evidence that justifies reopening and accepting the
+      formerly closed `dq17` family.
+- [x] R.58 ACCEPTED: make the accepted `/6` clock feasible by shortening the
+      fixed full-schedule walk from 73 to 68 phases per slot, recovering
+      exactly 5 x 8 = 40 clocks per sample. `/6` supplies 850 clocks/sample;
+      the clock-invariant contract consumes 618 walk + 272 sequencer credits
+      today, so the reduced walk must consume 578 + 272 = 850 with no hidden
+      margin. This is a legitimate retry of R.31 because R.54 now fixes the
+      sequencer credit count: moving the walk no longer changes the amount of
+      sequencer progress granted per sample. Candidate reductions are to
+      launch blend at `CAP_W51`, consume the short product on its first
+      readable phase, combine blend output with the dampen/filter commit,
+      move `PSTOR` two phases earlier, and set `PLAST` 72 -> 67. Before
+      editing, prove every oscillator and late `s_lp` store sees finalized
+      state; a same-edge filter commit must consume a combinational blend
+      result rather than the nonblocking-assigned prior `smp_a`. Accept only
+      if `/6` passes the exact 578+272 structural contract, all arithmetic and
+      59/59 byte-identity gates, a warning-clean Verilator application build,
+      <=13 EBRs, no placed-area regression large enough to lose the fit, and
+      seed-1 routing above the selected 18.75 MHz clock. Reject and revert the
+      RTL if any store dependency, render, area, or timing gate fails.
+
+      Landed as a 68-phase visit. `PSTOR` moves 53 -> 51 and streams words
+      51..64; W84 consumes the blend on its first readable phase at 65 and
+      commits dampen/filter directly from the combinational blend result; the
+      two late state writes land at 66/67; and phase 67 also closes the slot
+      and launches the fold (`PFOLD=PLAST=67`). The earlier CAP_W51 blend-launch
+      shape was functionally exact after fixing its bypass but mapped at 6,840
+      LUT4 and failed placement at 7,768 LCs, so it was replaced by the retained
+      CAP_W75 launch. Repeat that early-launch shape only if the operand mux or
+      placement cone materially changes.
+
+      Final fingerprint `85d2e30c4873`: forced synthesis after the authoritative
+      `target_psg` clock edit maps **6,708 LUT4, 1,663 carries, 1,451 flops and
+      13 EBRs**. Seed-1 places **7,625/7,680 LCs**; ordinary router2 held one
+      overused wire, while router2's alternate weights complete at **31.30 MHz**
+      against 18.75 MHz. `make test-psg` passes at exactly **578/850** sample
+      clocks and **4,070/5,103** tick-preparation clocks with 1,033 spare, zero
+      late flips and no lost state writes. The multiplier model, 524,288-case
+      dq17 model, lifetime audit and `/4`/`/5`/`/6` clock bench pass. The frozen
+      matrix is 59/59 byte-identical at explicit `--clock 18750000`. A forced
+      Verilator 5.050 Celeste build is warning-clean, including the explicit
+      16-bit `s_phase` wrap that fixes WIDTHTRUNC; the five-frame smoke reports
+      3,668 samples, range -24,668..24,659 and 1,073 distinct levels. `make
+      psg-viz` is warning-clean and reports 68 hardware / 24 preview phases.
+      `/6` has no minimum-interval margin: any walk growth or sequencer-credit
+      change must re-open this clock decision.
+- [x] R.59 ACCEPTED: retire the effect program's `arp_r` and `pvol_r` holding
+      registers by moving the two existing inactive-bank increment writes to
+      the point where the final increment is available, and by reading the
+      previous-volume operand directly from its stable voice fields. This is
+      not R.3's rejected self-feedback-arm edit: R.3 retained `arp_r` and only
+      perturbed one input mux, whereas the current netlist attributes 208 LUT4s
+      to the complete `arp_r`-driven family and the direct-to-bank publication
+      machinery accepted in task 3.3 now provides an address-selected home for
+      the final value. Reuse `P_W0/P_W1` for the early writes, resume `K_FX`
+      at its prior micro-step, and enter `P_W2/P_W3` at the old publication
+      point; no sample-walk phase or fixed 272-credit contract may change.
+
+      Baseline R.58 fingerprint `85d2e30c4873`: 6,708 LUT4, 1,663 carries,
+      1,451 flops, 13 EBRs and 7,625/7,680 placed LCs; alternate-weight
+      router2 reaches 31.30 MHz at the selected 18.75 MHz clock. Scope:
+      `rtl/psg_seq.sv` plus the arithmetic/model or OpenSpec evidence needed
+      by the result. Accept only if mapped resources and seed-1 placed LCs
+      fall, EBR remains <=13, `make test-psg` keeps the exact 578/850 sample
+      contract and zero late flips, all 59 frozen renders remain byte-identical
+      at 18.75 MHz, and the forced Verilator 5.050 Celeste build remains
+      warning-clean. Reject and revert if early writes alter replay/collision
+      behavior, if a final increment is not stable across both writes, or if
+      area does not improve. Repeat only if effect ordering, publication-bank
+      ownership, or the `arp_r`/previous-volume operand cones materially
+      change.
+
+      The retained schedule writes P_W0/P_W1 after the increment becomes
+      final, then resumes K_FX at xs 3 after slide or xs 8 for every other
+      effect. K_FX xs 11 enters P_W2/P_W3 directly, so the same four inactive-
+      bank words are written and the pass uses the same number of sequencer
+      states. Slide holds its final synchronous table address across the two
+      writes; effects 6/7 similarly hold the arpeggiated pitch address. The
+      volume interpolation reads the previous volume directly from the stable
+      voice fields, removing the second holding register without changing its
+      arithmetic.
+
+      Fingerprint `81eb0cefc834`: Yosys maps **6,665 LUT4 (-43), 1,662
+      carries (-1), 1,435 flops (-16) and 13 EBRs**. Seed-1 placement falls
+      **7,625 -> 7,586/7,680 LCs (-39)**; the placed delta alone is inside the
+      mapper's +/-60 naming sensitivity, while the independent LUT/flop
+      reductions establish a real netlist saving. Router2 with alternate
+      weights completes at **34.42 MHz**, 15.67 MHz above the selected 18.75
+      MHz clock. `make test-psg` remains exactly 578/850 sample clocks and
+      4,070/5,103 tick-preparation clocks with 1,033 spare, zero late flips and
+      no lost state writes. `tools/psg_oracle_bytecheck.py --clock 18750000`
+      is 59/59 byte-identical, and a forced Verilator 5.050 console rebuild is
+      warning-clean. R.59 is retained as the first direct-to-bank retirement
+      of a complete effect working-register family; the remaining `vol_r`
+      arithmetic family still needs a separate address-selected or serial
+      accumulator hypothesis rather than another borrowed-register merge.
+- [x] R.60 ACCEPTED: narrow the shared multiplier's real magnitude/accumulator
+      boundary from 21 to 18 bits. This legitimately reopens R.11's width
+      mechanism: R.11's 21-bit proof used the old shift-scaled pitch increment
+      ceiling `0x1CE0 << 8`, while every current request supplies the unshifted
+      value and restores its fixed-point position only in the consumer slice.
+      The complete live-arm audit is: signed waveform and blend operands are
+      at most 18 bits (including -131072), the noise J operand is 17 bits,
+      slide fraction is 16, and every sequencer pitch/volume operand is <=13.
+      Keep the public 34-bit `m_res` bit positions unchanged by zero-extending
+      the narrower internal product; no request mode, iteration count, landing
+      offset, consume slice or schedule phase may move.
+
+      Baseline R.59 fingerprint `81eb0cefc834`: 6,665 LUT4, 1,662 carries,
+      1,435 flops, 13 EBRs, 7,586/7,680 placed LCs and 34.42 MHz routed at the
+      selected 18.75 MHz clock. Scope: `rtl/psg_mulsvc.sv`, the cycle-exact
+      `tools/psg_mul_model.py` width/overflow proof, and result evidence.
+      Accept only if the full model proves all modes, signs, corner operands
+      and named consume offsets; mapped resources and placed LCs fall; the
+      exact 578+272 `/6` contract, 59/59 byte identity and warning-clean
+      application build survive; and seed-1 routes above 18.75 MHz at <=13
+      EBRs. Reject and revert if any current arm exceeds the bound, a result
+      bit moves, or area fails to improve. Repeat only if request operand
+      ranges, fixed-point representation or multiplier landing changes.
+
+      Fingerprint `95095b93cabb`: the internal magnitude narrows 21 -> 18 bits,
+      its accumulator and radix-4 add path narrow with it, and the 34-bit
+      public result keeps the same bit positions by zero-extension. The
+      cycle-exact model proves every mode, sign, landing, overflow bound and
+      named consumer slice. Yosys maps **6,648 LUT4 (-17), 1,656 carries
+      (-6), 1,429 flops (-6) and 13 EBRs**. Seed-1 placement falls 7,586 ->
+      **7,566/7,680 LCs (-20)**; router2 completes at **33.87 MHz**, 15.12 MHz
+      above the selected 18.75 MHz clock. `make test-psg` remains exactly
+      578/850 sample clocks and 4,070/5,103 tick-preparation clocks with zero
+      late flips; all 59 frozen renders are byte-identical at 18.75 MHz; and
+      the forced Verilator 5.050 console build is warning-clean. Repeat only
+      if a request operand range, fixed-point representation or multiplier
+      landing changes.
+- [x] R.61 REJECTED: retire the effect program's remaining `vol_r` family by
+      consuming the already-persistent service results and publishing the
+      final volume directly. This is not another R.40-R.42 arbitrary walker
+      register merge: `psg_ff_census.py` attributes 144 LUT4s and 13
+      unpackable flops to the complete sequencer volume family, and the
+      proposed storage already exists in `d_res`, `m_res` and the stable voice
+      fields. The initial volume source is stable for the whole effect pass;
+      the effect divider result remains valid through xs 8; the instrument
+      divider result remains valid through xs 10 and P_W3; and the optional
+      music-gain product remains in `m_res` through P_W3. Select those values
+      at their consumers, remove all four `vol_r` writes, and let the existing
+      inactive-bank P_W3 store become the only final commit. No multiplier or
+      divider request, microstep, publication word, sample-walk phase or fixed
+      272-credit contract may move.
+
+      Baseline R.60 fingerprint `95095b93cabb`: 6,648 LUT4, 1,656 carries,
+      1,429 flops, 13 EBRs, 7,566/7,680 placed LCs and 33.87 MHz routed at the
+      selected 18.75 MHz clock. Scope: `rtl/psg_seq.sv` plus proof/evidence
+      required by the result. Accept only if mapped resources and placed LCs
+      fall, EBR remains <=13, `make test-psg` keeps the exact 578+272 `/6`
+      contract and zero late flips, all 59 frozen renders remain byte-identical
+      at 18.75 MHz, and a forced Verilator 5.050 console build remains
+      warning-clean. Reject and revert if any service result is overwritten
+      before its consumer, publication changes, or area fails to improve.
+      Repeat only if the effect microstep order, service-result persistence or
+      publication-bank contract changes.
+
+      The candidate removed all twelve mapped `vol_r` flops and consumed the
+      stable voice fields, `d_res` and `m_res` directly. It was functionally
+      exact: the forced Verilator 5.050 console build was warning-clean,
+      `make test-psg` stayed at 578/850 sample clocks and 4,070/5,103
+      tick-preparation clocks with 1,033 spare and zero late flips, and the
+      explicit 18.75 MHz byte gate was 59/59 identical. The storage removal
+      nevertheless widened the consumer selection cones. Candidate fingerprint
+      `f7b2e1e9705b` maps **6,674 LUT4 (+26), 1,655 carries (-1), 1,417 flops
+      (-12) and 13 EBRs**; seed-1 placement regresses **7,566 -> 7,590 LCs
+      (+24)** and routes at **30.79 MHz**. The area acceptance rule therefore
+      fails even though timing remains above 18.75 MHz. Reverted exactly to
+      R.60 fingerprint `95095b93cabb`. Do not retry direct service-result
+      consumption unless the effect order, service-result persistence or
+      publication cone changes enough to remove the added selection logic.
+- [x] R.62 REJECTED: compact the computed-wave stage boundary by registering
+      only the payload selected by the current shape. Today `z_lin_r` and
+      `tri4_r` both hold triangle-derived values even though triangle-alt uses
+      only `tri4_r`; `t_pre_r`, `t_h7_r`, `t_h15_r` and `org_h_r` similarly
+      hold four mutually exclusive forms before a downstream shape mux selects
+      one. Fold triangle-alt's pre-scaled value into `z_lin_r`, fold the four
+      divide inputs into one 15-bit `div_arg_r`, and derive registered
+      `tilt_hi` from the already-registered `{wsel_r2,walt_r2}`. This is not an
+      arbitrary lifetime merge: all values cross the same pipeline edge for
+      one context, the shape tag already selects the live interpretation, and
+      the downstream selection retires with the unused fields. No waveform
+      formula, reciprocal address, pipeline latency, sample phase or `/6`
+      credit may move.
+
+      Baseline R.60 fingerprint `95095b93cabb`: 6,648 LUT4, 1,656 carries,
+      1,429 flops, 13 EBRs and 7,566/7,680 placed LCs; the fresh seed-1 route
+      reaches 34.06 MHz at the selected 18.75 MHz clock. Scope:
+      `rtl/psg_wave.sv` plus result evidence. The source transformation should
+      retire 48 stage flops: 18 from `tri4_r`, 29 from the four-to-one divide
+      payload, and one redundant `tilt_hi_r`. Accept only if mapped flops and
+      LUTs plus placed LCs fall, EBR remains 13, `make test-psg` keeps the
+      exact 578+272 schedule and zero late flips, all 59 frozen renders remain
+      byte-identical at 18.75 MHz, and seed-1 routes above 18.75 MHz. Reject
+      and revert if shape selection adds back the register saving in LUTs or
+      changes any pipeline result. Repeat only if the wave-stage payloads,
+      shape exclusivity or pipeline boundary changes.
+
+      Candidate fingerprint `fb9c4d6512fe` is functionally exact: the
+      524,288-case dq17 proof passes, `make test-psg` remains 578/850 sample
+      clocks and 4,070/5,103 tick-preparation clocks with 1,033 spare and zero
+      late flips, and the explicit 18.75 MHz render set is 59/59 identical.
+      The source removes 48 stage fields, but mapping retires only 29 flops and
+      expands the shape-selection/fanout cones: **6,702 LUT4 (+54), 1,656
+      carries, 1,400 flops (-29) and 13 EBRs**. Seed-1 placement regresses
+      **7,566 -> 7,591 LCs (+25)** and routes at **33.13 MHz**. Reverted exactly
+      to R.60 fingerprint `95095b93cabb`. Together with R.61, this closes
+      selector-fed register retirement as a current mechanism: removing state
+      is not a win when a new wide input/fanout selector replaces the existing
+      parallel shape islands. Repeat only if the pipeline payloads or their
+      shape fanout materially change.
+- [x] R.63 REJECTED: time-share the multiplier accumulator adder with request-time
+      signed-to-magnitude conversion. The service currently implements an
+      18-bit `0-A` chain on the `m_a` load edge and a separate 21-bit
+      `m_acc+m_add` chain on busy edges; those operations are cycle-disjoint.
+      Select the existing accumulator-adder operands so its idle/load use is
+      `{A ^ sign}+sign`, then load `m_a` from that result. Keep the radix-4
+      digit add, product register, count, result alignment and public 34-bit
+      output unchanged. This is arithmetic-unit sharing, not selector-fed
+      lifetime retirement: one carry chain must physically disappear and no
+      new state is introduced.
+
+      Baseline R.60 fingerprint `95095b93cabb`: 6,648 LUT4, 1,656 carries,
+      1,429 flops, 13 EBRs and 7,566/7,680 placed LCs; seed-1 routes at
+      34.06 MHz in the fresh reproduction. Scope: `rtl/psg_mulsvc.sv` and the
+      cycle-exact multiplier model/evidence. Accept only if the model proves
+      all signs, modes, landings and named slices; mapped carries/LUTs and
+      placed LCs fall; the exact 578+272 schedule, 59/59 byte gate and 13 EBRs
+      remain unchanged; and seed-1 routes above 18.75 MHz. Reject and revert
+      if operand selection recreates the removed negate chain or worsens
+      placement. Repeat only if the multiplier load/step arithmetic or mapper
+      carry lowering changes.
+
+      The cycle-exact model passes every sign, mode, landing, overflow bound
+      and named result slice, but candidate fingerprint `5ee62b672b50` maps
+      **6,668 LUT4 (+20), 1,639 carries (-17), 1,429 flops and 13 EBRs**.
+      Selecting load-versus-step operands in front of the shared 21-bit chain
+      costs more LUT fabric than the removed negate carry chain saves; seed-1
+      placement regresses **7,566 -> 7,610 LCs (+44)** and routes at
+      **31.10 MHz**. Reverted exactly to `95095b93cabb` before the render
+      battery because the binding area gate already fails. A second placement
+      of the conversion on the radix-digit adder is the only materially
+      different sharing shape left; stop this mechanism if it repeats the
+      selector cost.
+- [x] R.64 REJECTED: time-share request-time signed-to-magnitude conversion with
+      the radix-digit `3A` adder instead of R.63's accumulator adder. The load
+      edge and radix steps are cycle-disjoint, and only digit 3 currently uses
+      this 20-bit adder; select its operands between `{A ^ sign} + sign` on a
+      real request load and `A + 2A` on a digit-3 step, then load `m_a` from
+      the shared result. Keep the accumulator chain, product register, count,
+      result alignment, public 34-bit output and schedule unchanged.
+
+      Baseline R.60 fingerprint `95095b93cabb`: 6,648 LUT4, 1,656 carries,
+      1,429 flops, 13 EBRs and 7,566/7,680 placed LCs; the fresh seed-1 route
+      reaches 34.06 MHz at the selected 18.75 MHz clock. Scope:
+      `rtl/psg_mulsvc.sv` and the cycle-exact multiplier model/evidence.
+      Accept only if the model proves all signs, modes, landings and named
+      slices and both mapped LUT/carry resources and placed LCs fall. Reject
+      and revert before long render gates if placement does not improve. If
+      this second adder-sharing variant again trades carries for LUTs or LCs,
+      close the arithmetic-sharing mechanism under the two-variant stop rule.
+      Repeat only if the radix-digit arithmetic or mapper carry lowering
+      changes.
+
+      The cycle-exact model passes every sign, mode, landing, overflow bound
+      and named result slice. Candidate fingerprint `536732e78c3d` maps
+      **6,681 LUT4 (+33), 1,640 carries (-16), 1,429 flops and 13 EBRs**.
+      The selected input cones also make more multiplier flops unpackable;
+      seed-1 placement regresses **7,566 -> 7,609 LCs (+43)** and routes at
+      **33.87 MHz**. Reverted exactly to R.60 fingerprint `95095b93cabb`
+      before the render battery because the binding area gate fails. R.63 and
+      R.64 both trade one removed carry chain for more LUT/placed fabric, so
+      current multiplier-adder sharing is closed under the two-variant stop
+      rule. Repeat only if the multiplier digit arithmetic, request boundary
+      or mapper carry lowering materially changes.
+- [x] R.65 REJECTED: narrow the remaining effect-volume value path from 12 to
+      11 bits. Every source is `volume * 256` for a three-bit volume, hence at
+      most `7 * 256 = 1,792 < 2^11`. Effects 1/4/5 respectively interpolate
+      between two such values or attenuate by `fcnt/sp` and `(sp-fcnt)/sp`;
+      instrument scaling is at most `7/7`; music gain is at most `256/256`.
+      Exhaustively prove all valid speed/count, instrument-volume and gain
+      combinations before editing. Then narrow `vol_direct`, `pvol_now`,
+      `vol_r`, `fxv_next`, `a_post` and their multiplier/result slices while
+      retaining the exact signed-difference width and publishing the same
+      12-bit zero-extended field.
+
+      This is a new invisible value bound, not R.61's rejected direct-result
+      consumption: the holding register, effect order, divider/multiplier
+      requests, publication word and schedule all remain. Baseline R.60
+      fingerprint `95095b93cabb`: 6,648 LUT4, 1,656 carries, 1,429 flops,
+      13 EBRs, 7,566 placed LCs and 34.06 MHz routed. Scope:
+      `rtl/psg_seq.sv` plus a durable exhaustive bound/equivalence gate if the
+      candidate survives synthesis. Accept only if mapped resources and
+      placed LCs fall, the exact 578+272 schedule and 59/59 byte gate survive,
+      and routing remains above 18.75 MHz. Reject and revert if any high bit
+      is reachable or the narrower spelling worsens area. Repeat only if the
+      volume/effect/instrument arithmetic or value representation changes.
+
+      The pre-edit exhaustive proof covers 6,315,840 valid effect cases plus
+      every instrument volume and all 256 music gains. Every initial, effect,
+      post-instrument and final value stays in `0..1,792` (`0x700`), bit 11 is
+      always zero, and the signed endpoint delta `-1,792..1,792` fits 12 bits.
+      Candidate fingerprint `a15823bc80b2` is therefore arithmetic-exact, but
+      maps **6,655 LUT4 (+7), 1,651 carries (-5), 1,428 flops (-1) and 13
+      EBRs**. Seed-1 placement regresses **7,566 -> 7,572 LCs (+6)**; routing
+      then stalls at 7,819 unresolved arcs and is terminated because both
+      mapped LUTs and binding placement already fail acceptance. Reverted
+      exactly to R.60 fingerprint `95095b93cabb` before functional/render
+      gates. The mapper already absorbs the provably zero high volume bit into
+      the surrounding selection/arithmetic; repeat only if that cone or the
+      value representation changes.
+
+- [x] R.66 REJECTED: retire the slide affine's 16-bit `sl_rlo` register into
+      dead `sl_uhi[15:0]`. `sl_rlo` is written from the synchronous constants
+      word at `K_SL5` and read only by `sl_u` during `K_SL6`; `sl_uhi` has no
+      value before its complete overwrite from `sl_u[29:12]` on the `K_SL6`
+      edge. Load `{2'b0,crom_q}` into `sl_uhi` at `K_SL5`, read its low word in
+      `sl_u`, then perform the existing full `sl_uhi` write at `K_SL6`.
+
+      This is not one of R.40-R.42's rejected cross-family walker merges: both
+      roles are adjacent stages of the same slide affine, the host already
+      feeds the only consumer, and no result/fanout selector is added. Baseline
+      R.60 fingerprint `95095b93cabb`: 6,648 LUT4, 1,656 carries, 1,429 flops,
+      13 EBRs, 7,566 placed LCs and 34.06 MHz routed. Scope:
+      `rtl/psg_seq.sv`. Accept only if mapped flops/LUTs and placed LCs fall,
+      the multiplier model and exact 578+272 schedule pass, all 59 renders are
+      byte-identical, and routing stays above 18.75 MHz. Reject and revert if
+      the host D mux/fanout consumes the register saving. Repeat only if the
+      slide microprogram or affine staging changes.
+
+- [x] R.67 REJECTED: spend the two EBRs still available under the 15-block
+      ceiling on the tilted-saw `/7` remainder, reversing only that part of
+      R.27's six-block condensation. The exact one-fold identity is
+      `x/7 = 73*(x>>9) + ((x>>9)+x[8:0])/7`; exhaustive evaluation over every
+      16-bit phase gives `t_pre <= 172,001` and a direct table index <=844, so
+      a 1,024x7 synchronous table costs exactly two EBRs. Keep `/3` and `/15`
+      in the existing condensed block, select the direct `/7` quotient on the
+      same pipeline edge, and remove `/7` from the second-fold address and
+      remainder terms. No waveform formula, pipeline latency or walk phase
+      may move.
+
+      This is a deliberate LC-for-EBR trade, not a retry of R.62's selected
+      payloads. R.27 measured the complete reverse direction at +75 LCs for
+      -6 EBRs; the current 13-EBR design has room to price the largest direct
+      reciprocal independently. Baseline R.60 fingerprint `95095b93cabb`:
+      6,648 LUT4, 1,656 carries, 1,429 flops, 13 EBRs, 7,566 placed LCs and
+      34.06 MHz routed. Scope: `rtl/psg_wave.sv` plus exact waveform gates.
+      Accept only at <=15 EBRs with fewer mapped LUT/carry resources and placed
+      LCs, unchanged dq17/model and 578+272 schedule, 59/59 byte identity, and
+      routing above 18.75 MHz. Reject and revert if the second port or quotient
+      selection costs more logic than the restored table saves. Repeat only if
+      the reciprocal partition or EBR ceiling changes.
+
+      The arithmetic proofs pass, and candidate fingerprint `b3408a401fff`
+      infers the intended 1,024x7 table, but maps **6,737 LUT4 (+89), 1,655
+      carries (-1), 1,429 flops and 15 EBRs**. Keeping the condensed `/3` and
+      `/15` port while adding a second registered table/output selector costs
+      substantially more than the `/7` second fold it removes. Seed-1
+      placement regresses **7,566 -> 7,652 LCs (+86)** and routes at 32.13
+      MHz. Reverted exactly to R.60 fingerprint `95095b93cabb` before the
+      structural/render battery. Partial reciprocal de-condensation is closed;
+      retry only as a whole partition replacement with independently measured
+      port removal, or if the EBR ceiling and downstream selection change.
+
+      Candidate fingerprint `034fb20afb4e` removes all 16 intended flops and
+      maps **6,665 LUT4 (+17), 1,650 carries (-6), 1,413 flops (-16) and 13
+      EBRs**. The census confirms unpackable flops fall 547 -> 531, but the
+      added `K_SL5` host write arm costs the saving back in LUT selection.
+      Seed-1 placement moves **7,566 -> 7,557 LCs (-9)** and routes at 34.29
+      MHz; that placed delta is inside the known +/-60 mapping-sensitivity
+      band and the deterministic LUT count regresses. Reverted exactly to
+      R.60 fingerprint `95095b93cabb` before the render battery. Even an
+      adjacent same-family register reuse must remove its surrounding logic,
+      not merely move a write mux; repeat only if the slide staging changes.
+
+- [x] R.68 REJECTED AT AREA GATE: migrate the complete
+      full-schedule `pph` decode into one dedicated 128x16 auxiliary control
+      EBR. This is the only retry permitted
+      by R.29: move the record-read code, record-write code, record-load
+      destination (four bits, with the sounding sub-index derived from the
+      current read code), store-data selection, both late writes, final close,
+      and the PNZ_OLD/PNZ_LIVE requests together so the shared comparator/
+      subtract fabric actually retires. Keep `REALTIME_PREVIEW` on its direct
+      `pph` expressions and prefetch the auxiliary word with `pph_nxt`, primed
+      to word zero while idle.
+
+      Baseline was freshly forced before editing: fingerprint
+      `95095b93cabb`, **6,648 LUT4, 1,656 carries, 1,429 flops, 13 EBRs,
+      7,566/7,680 placed LCs and 34.06 MHz routed** at the selected 18.75 MHz
+      clock. Scope: `tools/gen_psg_ctrl.py`, one generated auxiliary hex image,
+      `rtl/psg_walk.sv`, `rtl/psg.sv`, and only required evidence/docs.
+      Acceptance requires the intended total-domain decode retirement, <=15
+      EBRs, lower mapped LUT area and placed LCs, the exact 578+272 `/6`
+      schedule with zero late flips/lost writes, 59/59 byte identity at 18.75
+      MHz, a warning-clean application build, and routed Fmax above 18.75 MHz.
+      Gate mapped LUT/EBR and placement before long render tests.
+
+      R.68a fingerprint `293899b6ce84` inferred the intended single extra EBR
+      but maps **6,676 LUT4 (+28), 1,636 carries (-20), 1,429 flops and 14
+      EBRs**. Placement moves 7,566 -> **7,560 LCs (-6)**, inside the known
+      +/-60 mapping-sensitivity band, and routing completes at 31.93 MHz. The
+      deterministic LUT regression fails the first gate, so long render tests
+      are skipped.
+
+      R.68b was the one justified final encoding variant: R.29's absolute write
+      address mapped 41 LUTs smaller than its offset-address form. Encode
+      ordinary writes as absolute record offsets 10..23, reserve codes 1/2
+      for the two late writes, and decode store payload directly from those
+      absolute codes. This removes both the offset-to-address add and the full
+      schedule's store-index subtract. Candidate fingerprint `820b4e170776`
+      improves on R.68a but still maps **6,663 LUT4 (+15), 1,629 carries
+      (-27), 1,429 flops and 14 EBRs**. Placement reaches **7,538 LCs (-28)**
+      and 35.66 MHz, but the placed delta remains inside the +/-60 sensitivity
+      band; routing was stopped after two million iterations because the
+      deterministic LUT gate had already failed. Long render tests are again
+      skipped. Both materially different write encodings regress mapped LUT
+      area, so the complete auxiliary mechanism is rejected, reverted exactly
+      to R.60, and closed under the two-variant stop rule. Repeat only if the
+      schedule, record layout, encoding, or mapper changes materially.
+
+- [x] R.69 REJECTED AT AREA GATE: repack the existing shared
+      constants/control ROM word as a
+      phase-class union, migrating the same full decode domain as R.68 without
+      adding a second EBR or registered table output. The schedule classes are
+      disjoint: class 1 carries a five-bit read code plus four-bit load code;
+      class 2 carries the ten early one-hot actions plus PNZ_OLD/PNZ_LIVE; and
+      class 3 carries an absolute five-bit write code plus the four late
+      one-hot actions. The physical word remains 16 bits in the existing
+      constants EBR. Phase zero retains one direct oscillator read because the
+      shared port cannot prefetch word zero before `prun`; all other full-mode
+      read/load/write/action/late/final decode moves together.
+
+      This is materially different from both closed forms: R.29 peeled only
+      addresses into a new EBR, and R.68 migrated the full domain but paid a
+      second registered port. Baseline is the freshly restored and synthesized
+      R.60 fingerprint `95095b93cabb`: **6,648 LUT4, 1,656 carries, 1,429
+      flops, 13 EBRs, 7,566 placed LCs and 34.06 MHz routed**. Scope:
+      `tools/gen_psg_ctrl.py`, `rtl/psg_walk.sv`, the schedule visualizer if
+      required by its generated-word contract, and result evidence. Gate first
+      on unchanged 13 EBRs, lower mapped LUTs and lower placed LCs; only then
+      run the exact 578+272 schedule, 59-render and application gates.
+      R.69a fingerprint `9bbdf431ee0b` keeps 13 EBRs and maps **6,652 LUT4
+      (+4), 1,632 carries (-24) and 1,429 flops**. Placement falls 7,566 ->
+      **7,534 LCs (-32)** and routing reaches 33.88 MHz, but the placed delta
+      remains inside mapping sensitivity and mapped LUTs still regress, so the
+      first gate fails and long tests are skipped.
+
+      R.69b was the final encoding variant. Three one-hot class bits leave 13
+      payload bits, enough for the 12-bit early-action payload and both
+      nine-bit state payloads, and remove the binary-class equality
+      comparators. Candidate fingerprint `cd68339eaeb4` nevertheless maps
+      **6,698 LUT4 (+50), 1,636 carries (-20), 1,429 flops and 13 EBRs**.
+      Seed-1 placement regresses **7,566 -> 7,576 LCs (+10)** and routing
+      completes at **31.61 MHz**. Both required area gates fail, so long
+      functional/render tests are skipped and the source is reverted exactly
+      to R.60 fingerprint `95095b93cabb`. R.69a and R.69b close existing-word
+      phase overlays under the two-variant rule. Repeat only if the class
+      partition, phase-zero port ownership, schedule or mapper changes.
+
+- [x] R.70 ACCEPTED: retire the serial fold's complete `fx_r`/`f_over`
+      lifetime by replacing its corrected shift series with an exact
+      base-256 quotient split. For every reachable nonnegative excess
+      `x = 256*h + l`, `floor(x/5) = 51*h + floor((h+l)/5)` because
+      `256 = 51*5 + 1`. Exhaustive NumPy evaluation proves the identity for
+      all 40,961 reachable excesses and proves the reconstructed `soft_add`
+      over all 131,071 possible pair sums; `h <= 160`, `h+l <= 414` and the
+      quotient remains <=8,192.
+
+      Infer one 512x7 EBR for `floor(index/5)`, store the detected excess in
+      the selected fold-stack word, and use the existing 18-bit phase ALU to
+      form `3*h`, `51*h`, add the table quotient and restore the signed
+      threshold. This removes the 18-bit `fx_r`, `f_over` and the old
+      correction series; only the underflow sign remains. The worst underflow
+      fold shrinks from eleven microsteps to nine, so the exact 578+272 `/6`
+      schedule cannot grow. This is not R.19/R.20's lifetime reuse: those kept
+      the old series and therefore retained the original excess in `fx_r`;
+      R.70 changes the quotient representation so that lifetime disappears.
+
+      Baseline R.60 fingerprint `95095b93cabb`: 6,648 LUT4, 1,656 carries,
+      1,429 flops, 13 EBRs, 7,566 placed LCs and 34.06 MHz routed. Accept only
+      at <=15 EBRs with lower mapped LUT area and lower placed LCs, exact
+      exhaustive arithmetic, the unchanged 578+272 schedule with zero late
+      flips, 59/59 byte identity at 18.75 MHz, a warning-clean application
+      build and routed Fmax above 18.75 MHz. Reject if the new EBR port or
+      recombine selection costs back the retired fold cone. Repeat only if the
+      fold arithmetic, table budget, or phase-ALU contract changes.
+
+      Retained fingerprint `6e8aa593ff4f` infers the intended 512x7 quotient
+      table and maps **6,589 LUT4 (-59), 1,664 carries (+8), 1,410 flops
+      (-19) and 14 EBRs (+1)**. The flop census moves 547 -> **524
+      unpackable flops**. Seed-1 placement falls **7,566 -> 7,488/7,680 LCs
+      (-78)** and routing completes at **35.01 MHz**, 16.26 MHz above the
+      selected 18.75 MHz clock. R.70 therefore clears both deterministic
+      mapped and binding placed-area gates while remaining below the 15-EBR
+      ceiling.
+
+      The arithmetic proof is now durable as `make test-psg-fold`, integrated
+      into `make test-psg`: it exhaustively proves all **40,961** reachable
+      excesses, bounds `h <= 160`, `h+l <= 414`, the seven-bit table quotient
+      to 82 and the final quotient to 8,192, and reproduces the shipped
+      compressor for all **131,071** signed-int16 pair sums. `make test-psg`
+      passes the noise gate, all 32 audio-analysis tests and every structural
+      case. The observed longest synthesis path is 572/850 clocks; the fixed
+      contract remains exactly **578 walk + 272 sequencer = 850 clocks** at
+      `/6`. Tick preparation is 4,056/5,103 with 1,047 spare and zero late
+      flips.
+
+      `tools/psg_oracle_bytecheck.py --clock 18750000` is **59/59
+      byte-identical**. `make -B GAME=celeste build/obj_dir/console` is clean
+      under Verilator 5.050, including the explicit 16-bit `s_phase` wrap, and
+      `make shot GAME=celeste FRAMES=5` reports active non-constant audio:
+      3,668 samples, range -24,668..24,659 and 1,073 distinct levels. The
+      `/6` operating point still has no minimum-interval margin; any walk or
+      sequencer-credit growth must re-open the clock decision.
+
+- [x] R.71 REJECTED: stream the preceding secondary oscillator phase from the
+      existing state store instead of retaining the complete 17-bit
+      `old_q0` working register. The current record splits `old_q0` across
+      oscillator words 1 and 7, then loads all 17 bits at the visit start even
+      though only the old-secondary issue and one later increment consume it.
+      The census attributes 236 LUT4s to the family.
+
+      Move `old_q0[15:0]` to unused per-slot word 33 in the already-inferred
+      512x16 state memory, keep only `old_q0[16]` beside `bl_cnt`, and issue
+      the word-33 read at phase 31 so it is present for `CAP_W3` at phase 32.
+      Hold that address through the ordinary store window. A transition
+      restart writes the current secondary phase into word 33 at `CAP_W0`;
+      the existing old-context `dq17` add is evaluated again at the word-7
+      and word-33 store phases so the updated high and low pieces commit
+      without another holding register. The read port is otherwise idle in
+      this window and the write phases do not collide with the oscillator or
+      two late filter writes.
+
+      This is not R.51's rejected derived-increment publication: it preserves
+      the same old phase and update arithmetic, uses existing address-selected
+      storage with no new EBR or auxiliary port, and removes a working
+      lifetime rather than adding a published value. Baseline R.70 fingerprint
+      `6e8aa593ff4f`: 6,589 LUT4, 1,664 carries, 1,410 flops, 14 EBRs,
+      7,488 placed LCs and 35.01 MHz routed. Accept only if mapped LUT/flop
+      resources and placed LCs fall with 14 EBRs unchanged, the exact
+      578+272 `/6` schedule reports no lost state write or late flip, all 59
+      renders remain byte-identical at 18.75 MHz, the forced application build
+      is warning-clean and seed-1 routes above 18.75 MHz. Reject if the extra
+      address/write selection costs back the register family or any restart
+      observes the wrong pre-increment phase. Repeat only if the old-secondary
+      issue, state-port schedule or oscillator-record layout changes.
+
+      R.71a fingerprint `0dc564680a73` passes the exact gates: `make test-psg`
+      retains the 572/850-clock observed path and 4,056/5,103 tick preparation
+      with zero late flips, and the explicit 18.75 MHz render check is 59/59
+      byte-identical. It maps **6,577 LUT4 (-12), 1,676 carries (+12), 1,394
+      flops (-16) and 14 EBRs**, but the unpackable-flop count rises 524 -> 525
+      and seed-1 placement regresses **7,488 -> 7,493 LCs (+5)**. Routing
+      remains safe at 30.55 MHz. R.71a therefore fails the required placed-area
+      gate and is not retained in that form.
+
+      R.71b is the permitted second shape. The failed form selected word 33
+      with a new bounded `pph >= 31 && pph <= 65` read window. The sample walk
+      already owns the state port and freezes the sequencer for its complete
+      visit; after the oscillator and sounding words load, every remaining
+      full-schedule read cycle is idle. Hold word 33 from the end of those
+      loads through `PLAST` instead, making full-mode `state_sample_read`
+      simply `prun && !ctrl_stall` and removing both bounds of the new range
+      decoder. This is not a mapper-only retry: it directly removes the mux
+      mechanism that cost back R.71a's retired state. Accept under the same
+      R.70 gates; if placement still does not fall, close the state-store
+      streaming family until port ownership, schedule or mapper changes.
+
+      R.71b fingerprint `8b4650beca18` maps **6,558 LUT4 (-31), 1,665
+      carries (+1), 1,394 flops (-16) and 14 EBRs**; unpackable flops fall
+      524 -> 522 and packing falls **7,488 -> 7,452 LCs (-36)**. Both lint
+      flavours pass, `make test-psg` retains 572/850 clocks and zero late
+      flips, and the 18.75 MHz render gate remains 59/59 byte-identical.
+      The fixed-seed 50 MHz nextpnr run does not route, however: after ten
+      minutes the router remains stationary at 1,000 unresolved arcs and cost
+      6,661. An otherwise identical 18.75 MHz request reaches the same
+      placement checksum and routing deadlock, so this is congestion rather
+      than a timing-constraint failure. R.71b fails the mandatory routing gate.
+
+      R.71c is justified beyond the ordinary two-variant stop by that new
+      physical evidence. Keep R.71a's routed lower-bound ownership transition
+      at phase 31, but remove only its unnecessary phase-65 upper bound: once
+      word 33 takes the read port it remains selected through `PLAST`. This
+      tests the smallest decoder reduction between the routed-but-area-neutral
+      R.71a and area-clean-but-unroutable R.71b. It must pass every original
+      R.70 acceptance gate; no fourth address-window spelling is permitted
+      without a changed schedule, port contract or mapper.
+
+      R.71c fingerprint `603f5827f568` maps **6,596 LUT4 (+7), 1,671
+      carries (+7), 1,394 flops (-16) and 14 EBRs**. It fails the first mapped
+      LUT gate, so placement and long functional tests are skipped. The family
+      is closed after three mechanically distinct results: R.71a routes but
+      costs back placement; R.71b wins mapped and placed area but cannot route;
+      R.71c's single lower bound restores the mapped cost. The RTL is restored
+      to R.70 plus preview-only P.1 fingerprint `d6b3811ce178`, reproducing
+      **6,589 LUT4, 1,664 carries, 1,410 flops, 524 unpackable flops, 14 EBRs,
+      7,488 placed LCs and 35.01 MHz** exactly. Repeat only if the old-secondary
+      issue, state-port schedule, oscillator-record layout or mapper changes.
+
+- [x] P.1 ACCEPTED: restore the secondary/detune oscillator to the
+      `REALTIME_PREVIEW` mixer before resuming R.71. A fresh preview model at
+      28.125 MHz reproduces the user-visible Celeste soundtrack defect even
+      with 1,275 clocks/sample: music 0 reports **0% voiced pitch agreement**
+      against the hardware schedule for every individual channel mask 1, 2,
+      4 and 8 as well as masks 7 and 15. The visible failure is an octave
+      substitution (for example A#2 -> A#3 and F3 -> F4); over the combined
+      mask the preview is also roughly 2--3 dB too loud through the principal
+      music bands.
+
+      The live preview schedule issues `iss_sec` at `PWORK+1`, while the
+      two-stage computed-wave cone makes that secondary result available only
+      after `smp_b` has captured `z_eval` at `PWORK+2`. Thus `smp_a` and
+      `smp_b` both capture the main context. Move the preview secondary issue
+      and its phase advance to `PWORK`, leave the primary/secondary captures
+      at `PWORK+1`/`PWORK+2`, and disable the unused old-main/old-secondary
+      preview issues.
+
+      That correction alone is necessary but not sufficient: a fresh
+      two-second rerun improves each mask only from 0/12 to 1/12 agreeing
+      windows and the octave substitution remains. The resume audit localizes
+      a second preview drift to `6b28873`, which collapsed the stored primary
+      phase from 24 to 16 bits and the increment from 21 to 14 bits. The
+      hardware add was correspondingly changed to `einc[13:1]`, but the
+      preview arm retained its pre-collapse full-`einc` add. It therefore
+      advances the primary phase at twice the accepted hardware rate. Apply
+      the same high-phase increment in preview; this is a representation
+      repair, not an approximation change.
+
+      Retain only if fresh per-channel and combined Celeste
+      renders recover pitch/activity, the generous-clock and console-clock
+      preview gates pass, both lint flavours are warning-clean, `make test-psg`
+      passes, and the hardware schedule remains 59/59 byte-identical at
+      18.75 MHz. This item is preview correctness, not an area result; do not
+      synthesize or resume R.71 until it closes.
+
+      Retained as two preview-only representation/schedule repairs. The
+      primary phase now advances by `einc[13:1]`, matching the 16-bit phase
+      representation introduced by `6b28873`; the secondary context and its
+      phase advance issue at `PWORK`, before the unchanged `PWORK+1/+2`
+      captures, and unused old-context preview issues are disabled.
+
+      The durable gate no longer mistakes `$21` reservation masks for channel
+      selectors. It disables the other three bytes in private copies of every
+      music pattern, then checks pitch, RMS and active-sample occupancy for the
+      combined mix and each isolated channel. At both 28.125 MHz (1,275
+      clocks/sample) and the console's 3,506,580 Hz (159 clocks/sample), music
+      0 passes: combined 11/12 = 92%; channel 0 20/20 = 100%; channel 1 1/1 =
+      100%; channel 2 13/14 = 93%; channel 3 is inactive in both models.
+      Preview RMS is 88.3--92.8% of hardware on active channels and activity
+      occupancy is within one percentage point.
+
+      Both lint flavours are warning-clean, `make test-psg` passes at the
+      unchanged 572/850 worst synthesis path and 4,056/5,103 tick preparation,
+      and the 18.75 MHz hardware regression is 59/59 byte-identical. A forced
+      Celeste console build is warning-clean; the lowercase 300-frame run
+      reaches 90.39 fps and writes five seconds of active preview audio with
+      18,830 distinct levels and 14.2 effective bits. Strict OpenSpec
+      validation and `git diff --check` pass. R.71 may resume from R.70.
+
+- [x] R.72 REJECTED AT ISOLATED GATE: replace the radix-4 multiplier's explicit digit-3 `3A`
+      formation with an exact carried signed-digit recurrence. For each
+      two-bit unsigned digit plus one carry, values 0, 1 and 2 remain
+      `0`, `+A` and `+2A`; value 3 becomes `-A` with carry one into the next
+      radix-4 digit, and value 4 becomes zero with carry one. A final carry is
+      consumed as the extra high digit. This changes the mathematical
+      representation rather than retrying R.63/R.64's rejected attempt to
+      share request-time magnitude conversion with the accumulator adder.
+
+      First extend `tools/psg_mul_model.py` to prove the complete recoded
+      transaction against the shipped service for every live mode, short
+      request, sign and operand bound, including the final-carry and fixed
+      `m_res` alignment. Then synthesize the service in isolation against the
+      same registered harness used by R.33. Only implement integrated RTL if
+      the isolated form removes LUT/LC area without lowering Fmax below the
+      service baseline. Integrated baseline is restored R.70 plus P.1
+      fingerprint `d6b3811ce178`: 6,589 LUT4, 1,664 carries, 1,410 flops,
+      14 EBRs, 7,488 placed LCs and 35.01 MHz. Retain only with lower mapped
+      LUTs and placed LCs, unchanged 14 EBRs, the exact 578+272 `/6` schedule,
+      59/59 byte identity, warning-clean Celeste and routed Fmax above 18.75
+      MHz. Reject after two neutral/worse recurrence spellings unless a bound
+      or synthesis result identifies a materially different representation.
+
+      The exhaustive model proves the representation itself: complete
+      `m_res` equivalence for every legal B at nine A-domain boundaries and
+      both signs plus the broad A sweep at digit-pattern corners; the signed
+      accumulator spans -43,648..87,296 and the add/sub result
+      -174,720..349,440, fitting 18 and 20 bits respectively. Both full and
+      preview Verilator elaborations are warning-clean.
+
+      The same registered harness then rejects the physical form decisively.
+      Baseline is **157 LUT4, 55 carries, 119 flops, 232 LC and 119.15 MHz**.
+      The carried candidate is **215 LUT4 (+58), 73 carries (+18), 122 flops
+      (+3), 273 LC (+41) and 107.17 MHz (-11.98)**. The carry state, signed
+      digit decode/add-sub path and conditional 34-bit final correction cost
+      more than the retired `3A` producer. Evidence is retained under
+      `build/psg_mul_r72/{base,candidate,restored}.*`; the restored service
+      reproduces the baseline exactly. No integrated synthesis or render
+      battery is run because the explicit isolated prerequisite failed. The
+      RTL is restored to R.70 plus P.1. Repeat only if the final carry can be
+      absorbed without a public-result correction/state bit, or if the radix
+      service boundary or mapper lowering changes materially.
+
+- [x] R.73 REJECTED AT ISOLATED GATE: express each unsigned radix-4 digit as two gated partial
+      products instead of constructing a selected `m_add`. Digit bit zero
+      contributes `A`; digit bit one contributes `2A`; the step is therefore
+      `acc + (d[0] ? A : 0) + (d[1] ? 2A : 0)`. This keeps the shipped
+      unsigned recurrence, state, iteration count, fixed landing and public
+      result unchanged, while allowing the iCE40 mapper to absorb digit
+      selection into a three-operand/carry-save shape rather than placing the
+      dedicated `A+2A` producer ahead of the accumulator add.
+
+      This is not R.63/R.64 adder sharing: request-time magnitude conversion
+      does not enter the step datapath. It is not R.72 signed-digit recoding:
+      there is no carry state, negative digit or final correction. Baseline in
+      the registered harness is the exactly restored **157 LUT4, 55 carries,
+      119 flops, 232 LC and 119.15 MHz**. Prove the digit identity and run the
+      complete multiplier model, then synthesize/place/route the isolated
+      service. Reject before integration unless both LUT/LC area improve and
+      Fmax remains above the baseline requirement. If it survives, apply the
+      full R.70+P.1 integrated area, exact `/6`, 59-render, application and
+      routed-timing gates. Repeat only if mapper evidence identifies a
+      materially different compressor spelling.
+
+      The complete multiplier model and the explicit four-digit identity pass,
+      and both lint flavours are warning-clean. The candidate maps **158 LUT4
+      (+1), 36 carries (-19) and the same 119 flops**. It places in exactly
+      **232 LCs (no change)** and routes at **121.48 MHz (+2.33)**. Yosys did
+      infer the intended compressor resource mix, but the extra LUT cover
+      consumes every cell freed by the retired carries. Since neither LUT nor
+      LC area improves, the isolated prerequisite fails and no integrated
+      synthesis/render battery is run. Evidence is in `build/psg_mul_r73/`;
+      the RTL is restored to the 157-LUT/232-LC baseline. Repeat only if a
+      genuinely different compressor primitive or mapper lowering can reduce
+      the LUT cover rather than merely exchanging carries for LUTs.
+
+- [x] P.2 ACCEPTED: reproduce and repair foreground-SFX recovery in
+      `REALTIME_PREVIEW`. The accepted P.1 gate starts one music pattern and
+      never writes a foreground channel, so it cannot detect the reported
+      failure where repeated Celeste jump SFX progressively silence the
+      soundtrack. Reproduce through the actual console at 3,506,580 Hz with
+      repeated jump edges, `--psg-trace` and a console WAV; distinguish a
+      stuck foreground `playing`/trigger owner from oscillator or fold-state
+      corruption after the owner clears. Add a deterministic compact-schedule
+      takeover/retrigger/release regression before changing RTL. Retain only
+      if every music slot becomes audible again after the foreground SFX ends,
+      the repeated-jump console trace and audio recover, both P.1 clock gates
+      still pass, full/preview structural tests and lint pass, and the
+      18.75 MHz hardware schedule remains 59/59 byte-identical. This is
+      preview correctness and carries no area claim; area work stays paused
+      until P.2 closes.
+
+      Root cause: after a sample walk displaced a synchronous state-store
+      read, `state_replay` reissued the current word for one cycle but
+      PREVIEW's fold held `seq_hold` for two cycles longer. EA2 changed its
+      issue address while still held, replacing the stored `0x0020` speed
+      with word 1's `0x0000`; music SFX 11 advanced every tick and stopped at
+      row 31. The repair retains EA1--EA3, ES1--ES2, PC0--PC3 and V_LD consume
+      addresses for the complete `seq_hold`, not only `state_replay`.
+
+      `make test-psg-preview-recovery` now builds the 3,506,580 Hz PREVIEW
+      budget model and runs both a self-contained 16/32/16-speed mix and the
+      frozen real Celeste image. Both pass 64 SFX-1 retriggers with all three
+      music leaves audible/nonzero for 512 visits after release, advancing
+      phases, natural foreground stop, final clear acknowledgement, and zero
+      coalesced ticks, delayed publications or dropped samples. P.1 passes at
+      28.125 MHz and 3,506,580 Hz for the combined mix and every active
+      channel. Full/PREVIEW lint, `make test-psg`, `make test-clocks` and the
+      59/59 18.75 MHz bytecheck pass.
+
+      The rebuilt lowercase `game=celeste` console ran 1,800 scripted frames
+      with 25 real jump-SFX episodes. The last foreground episode ended at
+      frame 1,430; frames 1,500--1,800 retain music ownership with no
+      foreground activity. Its final six seconds measure -14.63 dBFS RMS and
+      -24,931..22,304, while the complete capture has 37,810 distinct levels
+      (15.2 effective bits). Evidence: `build/psg_p2/`. P.2 carries no area
+      claim; the next area hypothesis remains a separate experiment.
+
+- [x] R.74 ACCEPTED: multi-pump the shared multiplier from the 112.5 MHz PLL
+      while the rest of the hardware PSG remains on its accepted `/6`
+      18.75 MHz clock. This is a new service-boundary mechanism, not another
+      radix-4 compressor spelling: R.72/R.73 kept one clock and changed the
+      digit arithmetic, whereas R.74 spends the measured isolated timing
+      headroom on more service iterations per PSG period and may therefore
+      return to the smaller radix-2 recurrence.
+
+      Use the standard closed-loop multi-cycle-path CDC contract. The PSG
+      domain captures the complete request payload and toggles one request
+      bit; two `async_reg` stages deliver that toggle to the PLL domain. The
+      payload remains stable until the PLL domain finishes, holds the complete
+      result, and returns an acknowledge toggle through two synchronizer
+      stages. Consumers may observe the result only after the synchronized
+      acknowledge. No pulse crosses a domain, no combinational result is
+      sampled while changing, and no fabric-generated fast clock is added.
+      The clocks are physically related, but the handshake must remain correct
+      without relying on their phase relationship; timing constraints name
+      the 112.5 MHz and 18.75 MHz domains separately and cut only the protected
+      CDC paths.
+
+      Baseline after P.2 is freshly forced at RTL fingerprint
+      `568c1b5a5f4c`: **6,614 LUT4, 1,663 carries, 1,410 flops, 14 EBRs and
+      7,511/7,680 placed LCs**, with post-place Fmax 33.72 MHz for the PSG
+      domain. This is +25 LUT4, -1 carry and +23 placed LCs versus the restored
+      R.70 full-schedule checkpoint; the P.2 state-read hold repair is the
+      only intervening RTL mechanism. The dense seed-1 baseline route is still
+      unresolved when the experiment opens, so 7,511 placed LCs is the binding
+      initial comparison and routing status must be reported rather than
+      inferred from R.70's older 35.01 MHz route.
+
+      First build an isolated two-clock harness and prove every transaction
+      against the shipped radix-4 result for all live modes, signs and operand
+      bounds. Measure the complete CDC wrapper plus radix-4 core, then the same
+      wrapper plus an exact radix-2 core, at explicit 112.5/18.75 MHz
+      constraints. Integrated RTL is permitted only if one complete service
+      closes the fast clock and improves isolated LC area. Preserve exact
+      sequencer timing with a separate padded sequencer-busy contract while
+      exposing true result readiness to the walker; prove the true result is
+      always ready before the padded contract expires. Retain only if the
+      combined service and crossing logic reduce full-PSG mapped LUT/flop and
+      placed LC area, the fast domain routes above 112.5 MHz, the slow domain
+      routes above 18.75 MHz, the fixed 578+272 schedule and all request/consume
+      assertions pass, all 59 hardware renders remain byte-identical, P.1/P.2
+      PREVIEW gates remain clean, and Celeste builds warning-free. Repeat only
+      if the PLL frequency, clock ratio, handshake storage, multiplier
+      recurrence, or request/result lifetime changes materially.
+
+      The retained radix-2 service uses an explicit `MULTIPUMP` elaboration
+      contract: only the iCE40 `/6` top, standalone target and matching
+      benches enable it. Tang Nano, PREVIEW and historical 28.125 MHz oracle
+      models retain the original single-clock radix-4 service. Icarus proves
+      6,020 boundary/random transactions against the shipped service, with
+      true completion in at most four PSG clocks and padded sequencer busy
+      exact on every PSG edge. The complete isolated wrapper+radix-2 result is
+      124 LUT4, 38 carries, 146 flops and 219 LCs at 151.17 MHz, versus the
+      original service's 157/55/119/232 at 119.15 MHz. Evidence is under
+      `build/psg_mul_r74/`.
+
+      Integrated fingerprint `23897c2534cd` maps **6,571 LUT4, 1,646 carries,
+      1,436 flops and 14 EBRs**: -43 LUT4, -17 carries, +26 handshake flops,
+      and -17 combined LUT+flop cells versus the P.2 baseline. Seed-1 places
+      at **7,481/7,680 LCs (-30)**. router1 reproduces the dense baseline's
+      1,000-unresolved-arc plateau; router2 completes normally and routes at
+      **116.95 MHz fast / 31.62 MHz slow**, clearing 112.5/18.75 MHz. The
+      Makefile selects router2 for this target so `make synth-psg` reproduces
+      the completed route. `make test-psg` passes at 572/850 observed clocks
+      with the fixed 578+272 contract, the 18.75 MHz regression is 59/59
+      byte-identical, full/PREVIEW lint are clean, P.1 passes combined and all
+      active channels at both 1,275 and 159 clocks/sample, P.2 survives both
+      synthetic and frozen-Celeste retriggers, and lowercase
+      `make shot game=celeste FRAMES=5` builds/runs Celeste warning-free.
+
+- [x] R.75 ACCEPTED: recompact the full walker around R.74's acknowledged
+      result, without changing the sequencer's padded multiplier contract.
+      The 68-phase visit is still spaced for the single-clock radix-4 service:
+      W4/W15/W27/W40/W75 launch at pph 33/40/47/54/61 and their products are
+      consumed at 40/46/54/60/65. R.74 proves every normal request has crossed
+      back by the fourth PSG busy observation and the short request never
+      exceeds its shipped three-cycle padding; consumers therefore remain
+      handshake-safe at normal launch+5 and short launch+4.
+
+      Move W15/W26/W27/W40/W51/W75/W84 to pph
+      38/43/44/49/54/55/59, move the 14-word store window to 46..59 and close
+      the visit with late dampen writes at 60/61. This removes six phases per
+      slot, so the fixed walk must fall **578 -> 530 clocks** and the `/6`
+      interval gains 48 clocks after its unchanged 272 sequencer credits.
+      Baseline is accepted R.74 fingerprint `23897c2534cd`: 6,571 LUT4,
+      1,646 carries, 1,436 flops, 14 EBRs, 7,481 placed LCs and router2 Fmax
+      116.95/31.62 MHz fast/slow. Retain only if request/consume assertions and
+      `make test-psg` prove the 530+272 contract, all 59 renders remain
+      byte-identical, P.1/P.2 and lint remain clean, mapped/placed area does not
+      regress, and both routed clocks still close. Repeat only if the CDC
+      latency bound, PLL/PSG ratio, store window or result lifetime changes.
+
+      Retained result: the walk is **530 clocks**, so 530+272 leaves 48 clocks
+      at `/6`. All request/consume assertions, `make test-psg`, P.1/P.2,
+      full/PREVIEW lint and 59 byte-identical renders pass. Yosys maps 6,565
+      LUT4, 1,647 carries, 1,436 flops and 14 EBRs; seed-1 router2 places
+      7,479 LCs and routes at 150.53/33.61 MHz fast/PSG. This is -6 LUT4,
+      +1 carry, unchanged flops/EBRs and -2 LCs versus R.74.
+
+- [x] P.3 ACCEPTED: repair the detected SFX-transition clicks without weakening
+      `click-v1`. Baseline: four-second Celeste SFX-10 renders contain 15 full
+      and 12 PREVIEW events; the committed PICO-8 music-0 reference contains
+      zero. PREVIEW jumps directly at loud phaser row boundaries, while full
+      mode's corresponding jump is delayed by exactly one 183-sample effect
+      tick. Instrument `blend_restart`, `bl_cnt`, the old/live tuples and
+      `blend_y` before changing RTL; then add a deterministic SFX-10 click gate
+      and rerun P.1/P.2, 59 hardware renders, lint, structural timing and R.75
+      synthesis. Keep the click repair's correctness evidence and any area
+      delta separate from R.75. Repeat only if the transition trace or a
+      reference capture changes the restart hypothesis.
+
+      Full mode is repaired and its four-second SFX-10 render has zero
+      `click-v1` events. PREVIEW's five-bit signature plus 32-sample blend
+      reduces 12 events to two; a coarser signature regresses to 22 and is
+      rejected. Trace `build/psg_clicks/pv-fix1b-walk.csv` proves the two
+      survivors are gain-to-zero aliases: `s_eff_a` 112 -> 0 leaves the
+      five-bit signature unchanged while the emitted leaf snaps -490 -> 0.
+      The active experiment keeps the five-bit signature and adds only the
+      explicit zero edge when no transition is active and `s_lp != 0`.
+
+      The zero-edge experiment removes both survivors; the durable dual-mode
+      `make test-psg-clicks` target reports zero events for full and PREVIEW.
+      An exact-rate seven-second console capture with four accepted SFX-1 jump
+      retriggers has no jump event and keeps music active, but reports one new
+      event at frame 192's title/spawn transition. The active experiment keeps
+      the existing `clr_tog` token pending until PSTOR, includes its mismatch
+      in `preview_restart`, and acknowledges it only after starting the fade;
+      this covers a same-signature retrigger without widening stored state.
+
+      That removes the console event. P.1 then caught inactive fast-path slots
+      folding the preceding slot's new transition leaf: they skip directly
+      from phase 0 to PFOLD and never load their own `mx_filt`. The all-slot
+      trace proves every interpolated value stays within its endpoints, while
+      inactive slots emit a nonzero stale leaf. The active repair gates the
+      PREVIEW fold leaf with existing `mx_aud`, restoring required zero leaves
+      with no new state.
+
+      The corrected level then exposes seven smaller periodic events that the
+      duplicated RMS had masked. At the first, `s_eff_a` changes 1008 -> 896
+      and the leaf changes 6913 -> 6044, but the stored five-bit high signature
+      aliases both gains to seven. PREVIEW consumes `s_eff_a[10:4]`; storing
+      those exact seven audible bits removes the alias without more state.
+      The dual-mode SFX-10 gate returns to zero events at corrected PREVIEW RMS
+      2985.
+
+      P.1 passes combined and every active channel at both 1,275 and 159
+      clocks/sample. P.2 passes both 64-retrigger cases with no coalesced ticks,
+      delayed publications or dropped samples. Full/PREVIEW lint,
+      `make test-psg`, `make test-clocks`, and the 59/59 byte-identical hardware
+      matrix pass; the 530+272 schedule retains 48 `/6` clocks of margin. The
+      final exact-decimated seven-second Celeste console capture has zero
+      `click-v1` events across title/spawn and repeated jump SFX.
+
+      P.3 fingerprint `f819fe4cf85c` maps 6,571 LUT4s, 1,644 carries, 1,436
+      flops and 14 EBRs, places 7,483 LCs and routes at 137.76/30.22 MHz
+      fast/PSG. Its independent delta from R.75 is +6 LUT4, -3 carries,
+      unchanged flops/EBRs and +4 LCs.
+
+- [x] R.76 ACCEPTED: serialize the two per-visit secondary-increment (`dq17`)
+      evaluations in the phase-19..28 load-to-W0 window. The current
+      `psg_wave` spelling computes every wave/mode correction in parallel on
+      every clock even though a slot consumes only the live result at W6 and
+      the preceding-voice result at W5. Both 13-bit increments, wave ids and
+      detune modes are final by phase 18; the ten following PSG phases are
+      available while the multi-pumped multiplier independently performs its
+      two noise transactions. First replace only the correction network with
+      a same-input, non-constant wire in a disposable synthesis candidate to
+      price the realizable mapped/placed ceiling without collapsing its
+      consumers. Proceed only if that ceiling comfortably repays two 14-bit
+      result lifetimes plus one narrow add/sub accumulator and its control.
+      If it does, add an exhaustive cycle model, compute live and old results
+      through one physical 14-bit write site, and preserve W0..W84, the
+      530+272 `/6` schedule, P.1/P.2/P.3, 59/59 byte identity, warning-clean
+      builds, 14 EBRs and both routed clock constraints. This is not R.51's
+      rejected state-store publication or R.53's parallel natural-width
+      restatement: no value is published across ticks, and the parallel
+      mode arms must physically retire. Repeat only if the load window,
+      increment representation, detune formula set or wave/service boundary
+      changes.
+
+      A same-input non-constant ablation prices the complete parallel cone at
+      an optimistic -196 LUT4, -77 carries and -202 placed LCs against P.3;
+      evidence is `build/psg_r76/ablate.*`, and the source was restored before
+      candidate synthesis. The retained five-step radix-4 service starts the
+      live transaction at phase 19 and chains the preceding-voice transaction
+      on its phase-24 terminal edge. Transition restarts select the tuple W0
+      will snapshot, and PREVIEW keeps its existing combinational `dq17`.
+
+      `make test-psg-dq` proves all 524,288 formula tuples and 57,344 Icarus
+      transactions including chained requests. Candidate fingerprint
+      `de8a30582959` maps **6,513 LUT4, 1,592 carries, 1,521 flops and 14
+      EBRs**; versus P.3 that is -58 LUT4, -52 carries, +85 flops and unchanged
+      EBRs. Seed-1 router2 places **7,454 LCs (-29)** and routes at **141.30
+      MHz fast / 31.01 MHz PSG**, above both clock requirements.
+
+      The direct structural bench passes at 524/850 observed clocks while the
+      fixed schedule stays **530+272**, retaining 48 `/6` clocks of margin;
+      tick preparation is 4,008/5,103 with 1,095 spare and zero late flips.
+      The 18.75 MHz regression is 59/59 byte-identical. P.1 passes combined
+      and all active channels at both 1,275 and 159 clocks/sample; P.2 passes
+      both 64-retrigger cases; and `make test-psg-clicks` reports zero
+      `click-v1` events in full and PREVIEW SFX-10 renders. Full/PREVIEW lint,
+      `make test-clocks`, and a lowercase five-frame Celeste build/run pass.
+      The implementation is retained despite the ablation ceiling's larger
+      promise because it reduces mapped combinational resources and the
+      binding placed result while preserving every schedule and correctness
+      gate. Repeat only if the load window, increment representation, detune
+      formula set or wave/service boundary changes.
+
+- [x] R.77 ACCEPTED: remove the visit-local detune service's registered
+      `result`/`result_tag`/`done` handoff. On the terminal `count == 1` cycle,
+      `step_next[21:8]` and `active_tag` are already stable combinational
+      functions of registered service state; expose them with a combinational
+      terminal-valid condition and let the existing `dq_live_r`/`dq_old_r`
+      destination registers capture directly on that edge. Preserve the
+      five-step recurrence, terminal-cycle chained request, phases 19/24,
+      W0..W84 and the fixed 530+272 `/6` contract. Baseline is R.76 fingerprint
+      `de8a30582959`: 6,513 LUT4, 1,592 carries, 1,521 flops, 14 EBRs, 7,454
+      placed LCs and 141.30/31.01 MHz fast/PSG. Accept only if the exhaustive
+      formula/service models, structural schedule, 59 renders, P.1/P.2/P.3,
+      unchanged `click-v1`, both lint flavours, application build and routed
+      clocks pass with lower mapped flops/LUTs or placed LCs. This is not a
+      cross-family register merge: the destination roles do not change and a
+      complete redundant write boundary disappears. Repeat only if service
+      latency, destination lifetime, terminal recurrence or chaining changes.
+
+      Retained RTL fingerprint `e1097eb59c9b` maps **6,518 LUT4s, 1,592
+      carries, 1,505 flops and 14 EBRs**: +5 LUT4, unchanged carries, -16
+      flops and unchanged EBRs versus R.76. Seed-1 router2 places **7,449 LCs
+      (-5)** and routes at **125.87 MHz fast / 31.05 MHz PSG**, clearing both
+      clock requirements. The 524,288-formula and 57,344-transaction dq gate
+      passes, including terminal-cycle chaining and direct terminal capture.
+
+      A fresh structural bench reports 524/850 observed clocks while the
+      fixed contract stays **530+272**, leaving 48 `/6` clocks; tick
+      preparation is 4,008/5,103 with 1,095 spare and zero late flips. The
+      explicit 18.75 MHz byte gate is unchanged 59/59. P.1 passes combined
+      and every active channel at both 1,275 and 159 clocks/sample; P.2,
+      full/PREVIEW lint and the lowercase five-frame Celeste smoke pass.
+      `make test-psg-clicks` retains zero `click-v1` events in full and
+      PREVIEW. Repeat only if the service latency, destination lifetime,
+      terminal recurrence or request-chaining contract changes.
+
+- [x] R.78 ACCEPTED: remove the old detune result's duplicate walker lifetime.
+      The second five-step transaction terminates at phase 29 and no later
+      request changes the service recurrence before W5 at phase 34, so consume
+      its stable terminal result directly there. Keep only `dq_live_r`, which
+      is required because the chained old request overwrites the first result.
+      Remove the now-unnecessary service tag state and identify the live
+      capture from the fixed phase-24 chained-request edge. Preserve phases
+      19/24, every W action and the fixed 530+272 `/6` contract.
+
+      Baseline R.77 fingerprint `e1097eb59c9b`: 6,518 LUT4s, 1,592 carries,
+      1,505 flops, 14 EBRs, 7,449 placed LCs and 125.87/31.05 MHz fast/PSG.
+      Accept only with fewer mapped flops and placed LCs, exact dq models and
+      schedule, 59/59 byte identity, P.1/P.2, zero full/PREVIEW `click-v1`
+      events, clean lint, a lowercase Celeste smoke, and both routed clocks
+      above their constraints. Repeat only if a request enters phase 29..W5,
+      W5 moves, or the recurrence stops holding its terminal state.
+
+      Variant A read `step_next` directly at W5 and is rejected: 6,546 LUT4s,
+      1,490 flops and 7,459 placed LCs. The retained variant commits the final
+      unchained recurrence into existing register `p`, reads `p[21:8]` at W5,
+      and copies only the chained live result into `dq_live_r`. The service and
+      walker retire `active_tag`, `start_tag`, `result_tag` and `dq_old_r`.
+
+      Fingerprint `e12aae41e2ce` maps **6,536 LUT4s, 1,596 carries, 1,490
+      flops and 14 EBRs**: +18 LUT4s, +4 carries, -15 flops and unchanged EBRs
+      versus R.77. Seed-1 router2 places **7,437 LCs (-12)** and routes at
+      **144.80 MHz fast / 29.94 MHz PSG**, clearing both constraints.
+
+      `make test-psg-dq` passes 524,288 formula cases and 57,344 transactions,
+      including chaining and five idle retention phases. The structural bench
+      remains 524/850 observed clocks and the fixed **530+272** schedule keeps
+      48 `/6` clocks spare; tick preparation remains 4,008/5,103 with 1,095
+      spare and zero late flips. The 59-render byte gate is unchanged 59/59.
+      P.1 passes combined and every active channel at both 1,275 and 159
+      clocks/sample; P.2 passes both 64-retrigger cases. Full/PREVIEW lint,
+      `make test-psg-clicks` with zero events in both modes, `make test-clocks`,
+      and the lowercase five-frame Celeste smoke pass. Repeat only if a request
+      enters phase 29..W5, W5 moves, or the recurrence stops holding its
+      terminal state.

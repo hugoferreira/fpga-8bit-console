@@ -178,7 +178,7 @@ Nothing that exists is renamed or re-pointed:
 | `ppu-synth`, `ppu-timing`, `ppu-check`, `ppu-lint`, `ppu-probe` | **untouched** — compositor-only, still the right tool inside the PPU |
 | `cpu-fmax` | **untouched** — core-only, no arbiter |
 | `cpu-timing` | **untouched** — instruction cycle table |
-| `test-65x02`, `test-psg`, `psg-wav`, `psg-rows`, `psg-notes` | **untouched** |
+| `test-65x02`, `test-psg`, `psg-wav`, `psg-analyze` | **untouched** |
 | `timing` | **untouched** — whole chip via `top.sv`; still cannot place |
 | `synth-cpu/psg/ppu/soc`, `synth-all` | new |
 

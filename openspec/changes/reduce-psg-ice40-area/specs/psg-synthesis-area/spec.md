@@ -19,14 +19,14 @@ logic-cell/BRAM counts and routed clock frequency.
 
 The PSG SHALL complete all eight slot visits, waveform/filter/amplitude work
 and ordered pairwise mix reduction before every 22,050 Hz sample boundary at
-the current 28.125 MHz master-derived PSG clock. Tick/effect work SHALL publish
+the current 18.75 MHz master-derived PSG clock. Tick/effect work SHALL publish
 a complete parameter set before the sample that consumes that tick. A
 simulator's host runtime or lowering SHALL NOT impose an RTL clock budget.
 
 #### Scenario: Worst-case sample deadline
 
 - **WHEN** all eight slots exercise the longest supported synthesis path
-- **THEN** the sample job completes in fewer than the minimum 1,275 PSG clocks
+- **THEN** the sample job completes in fewer than the minimum 850 PSG clocks
   available before the next sample enable
 
 #### Scenario: Variable-duration tick evaluation

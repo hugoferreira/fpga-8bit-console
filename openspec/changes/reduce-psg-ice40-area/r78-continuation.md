@@ -3410,9 +3410,12 @@ git history; do not repeat them without the recorded changed condition.
   value audits pass 192,896 pairs / 43,459 service transactions.  The default
   algebraic model and complete H095 hardware forms pass.  The combined ARAM
   hold/replay bench passes and the diagnostic bench reads all 4,608 physical
-  audio-RAM bytes through `$42ff`.  This closes the source/proof overlap only:
-  it claims no post-diagnostic synthesis, area, timing or routing result, and
-  starts no B2 literal-slice work.  B2 remains the next permitted proof step.
+  audio-RAM bytes through `$42ff`.  Fresh canonical HX8K synthesis is 6,395
+  LUT4 / 1,321 carries / 1,460 FF / 506 unpackable / 14 EBR, floor 6,901 and
+  7,120 routed LCs at 140.92/32.41 MHz.  Relative to I001 this is the honest
+  diagnostic composition cost: +9 LUT4, -4 carries, +1 FF, +2 unpackable,
+  +11 floor cells and +4 routed LCs; both clocks remain closed.  This starts no
+  B2 literal-slice work.  B2 remains the next permitted proof step.
 - **C2-C-D1-C-B2 boundary:** only after B1 closes, attach literal
   pool definitions/uses and service issue/result/take roots to exact enabled
   occurrences with pre/post phase.  Repair fold assembly, STEP8, result-write

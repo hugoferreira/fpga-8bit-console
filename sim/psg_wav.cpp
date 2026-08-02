@@ -104,6 +104,7 @@ int main(int argc, char** argv) {
     double seconds = 10.0;
     long samples = -1;
     bool psg_trace = false;
+    bool print_final_dbg = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--audio") && i + 1 < argc)   audio = argv[++i];
         else if (!strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
@@ -115,6 +116,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--clk") && i + 1 < argc) CLK_HZ = atof(argv[++i]);
         else if (!strcmp(argv[i], "--wr-hold") && i + 1 < argc) wr_hold = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--psg-trace")) psg_trace = true;
+        else if (!strcmp(argv[i], "--print-final-dbg")) print_final_dbg = true;
     }
     if (!audio) { fprintf(stderr, "need --audio <4608-byte image>\n"); return 1; }
     capture_dec = (long)CLK_HZ - RATE;
@@ -206,6 +208,9 @@ int main(int argc, char** argv) {
             "wrote %s: %zu samples at %d Hz, range %d..%d "
             "(%.3f s host time; non-normative)\n",
             out, pcm.size(), RATE, lo, hi, elapsed);
+    if (print_final_dbg)
+        fprintf(stdout, "final-dbg=%016llx\n",
+                (unsigned long long)dut->dbg);
     delete dut;
     return 0;
 }

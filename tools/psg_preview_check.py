@@ -14,6 +14,13 @@ This compares the preview render against the HARDWARE render of the same cart.
 The hardware render is the trustworthy reference: it is byte-exact against PICO-8
 across all 59 oracle cases.
 
+`--all-channels` is the soundtrack gate. It checks the combined mix, then makes
+four private copies of the audio image with all but one music-pattern byte disabled.
+The PSG's `$21` mask is advisory reservation state and does not select channels;
+sweeping `--mask` therefore renders the same tune repeatedly and proves nothing
+about a dropped channel. Each active isolated channel gates pitch, RMS and active
+sample occupancy; a source-inactive channel must remain silent in preview.
+
 The assertion is PITCH AGREEMENT, not byte equality, and that is deliberate. The
 preview schedule is an approximation on purpose - it skips the old-state crossfade
 and folds fewer terms - so a byte gate would be false-red on every legitimate
@@ -31,26 +38,17 @@ Two clocks matter and must not be conflated:
 from __future__ import annotations
 
 import argparse
-import array
-import math
 import subprocess
 import sys
-import wave
 from pathlib import Path
+
+import audio_analysis
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 HARDWARE_CLK = 28_125_000
-RATE = 22050
-
-# Windows of 0.1 s. Long enough for autocorrelation to lock onto a bass note
-# (70 Hz needs ~315 samples), short enough that a note change is not smeared.
-WINDOW = 2205
-# Below this normalised autocorrelation peak the window is unvoiced/silent and is
-# not compared - percussion and gaps must not count as disagreement.
-VOICED = 0.30
-# A window counts as agreeing if the two pitches are within this many semitones.
-# One semitone: anything looser would pass a transposed melody.
-TOLERANCE = 1.0
+RATE = audio_analysis.RATE
+AUDIO_BYTES = 4608
 
 
 def render(binary: Path, audio: Path, out: Path, *, clk: int,
@@ -62,89 +60,81 @@ def render(binary: Path, audio: Path, out: Path, *, clk: int,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def load(path: Path) -> array.array:
-    with wave.open(str(path)) as handle:
-        pcm = array.array("h")
-        pcm.frombytes(handle.readframes(handle.getnframes()))
-    return pcm
+def isolate_music_channel(source: Path, out: Path, channel: int) -> Path:
+    """Disable the other three pattern bytes in every PICO-8 music row."""
+    image = bytearray(source.read_bytes())
+    if len(image) != AUDIO_BYTES:
+        raise ValueError(f"{source} is {len(image)} bytes, expected {AUDIO_BYTES}")
+    for pattern in range(64):
+        for other in range(4):
+            if other != channel:
+                image[pattern * 4 + other] |= 0x40
+    out.write_bytes(image)
+    return out
 
 
-def pitch(samples, lo_hz: float = 70.0, hi_hz: float = 1200.0):
-    """Autocorrelation pitch. Returns (hz, confidence); (0, 0) when unvoiced.
-
-    Autocorrelation rather than a spectral peak on purpose: the strongest FFT bin
-    is often a harmonic, which reports an octave error and would make a correct
-    render look broken.
-    """
-    n = len(samples)
-    if n == 0:
-        return 0.0, 0.0
-    mean = sum(samples) / n
-    centred = [v - mean for v in samples]
-    energy = sum(v * v for v in centred)
-    if energy < 1e6:                      # silence
-        return 0.0, 0.0
-    lo = max(1, int(RATE / hi_hz))
-    hi = min(int(RATE / lo_hz), n // 2)
-    best_lag, best = 0, 0.0
-    for lag in range(lo, hi):
-        acc = 0.0
-        for i in range(n - lag):
-            acc += centred[i] * centred[i + lag]
-        norm = acc / energy
-        if norm > best:
-            best_lag, best = lag, norm
-    return (RATE / best_lag if best_lag else 0.0), best
+def activity(samples, floor: int = 64) -> float:
+    """Share of samples above a deliberately low non-silence floor."""
+    if len(samples) == 0:
+        return 0.0
+    wide = np.asarray(samples, dtype=np.int32)
+    return float(np.count_nonzero(np.abs(wide) >= floor) / len(wide))
 
 
-def semitones(a: float, b: float) -> float:
-    if a <= 0 or b <= 0:
-        return math.inf
-    return abs(12.0 * math.log2(a / b))
+def check_render(*, args, image: Path, out: Path, hardware: Path,
+                 label: str, require_pitch: bool) -> bool:
+    slug = label.replace(" ", "-")
+    hw_wav = out / f"hardware-{slug}.wav"
+    pv_wav = out / f"preview-{slug}.wav"
+    render(hardware, image, hw_wav, clk=HARDWARE_CLK, music=args.music,
+           sfx=args.sfx, mask=args.mask, seconds=args.seconds)
+    render(args.preview, image, pv_wav, clk=args.preview_clk, music=args.music,
+           sfx=args.sfx, mask=args.mask, seconds=args.seconds)
 
-
-def note_name(hz: float) -> str:
-    if hz <= 0:
-        return "-"
-    midi = 69 + 12 * math.log2(hz / 440.0)
-    names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-    return "%s%d" % (names[int(round(midi)) % 12], int(round(midi)) // 12 - 1)
-
-
-def compare(reference, candidate, *, label: str, min_agreement: float,
-            verbose: bool) -> bool:
-    windows = min(len(reference), len(candidate)) // WINDOW
-    compared = agreed = 0
-    rows = []
-    for i in range(windows):
-        lo, hi = i * WINDOW, (i + 1) * WINDOW
-        ref_hz, ref_conf = pitch(reference[lo:hi])
-        cand_hz, cand_conf = pitch(candidate[lo:hi])
-        if ref_conf < VOICED:
-            rows.append((i, ref_hz, cand_hz, None))
-            continue
-        compared += 1
-        ok = semitones(ref_hz, cand_hz) <= TOLERANCE
-        agreed += ok
-        rows.append((i, ref_hz, cand_hz, ok))
-
-    if verbose:
-        print("    %-6s %-8s %-8s" % ("win", "hardware", label))
-        for i, ref_hz, cand_hz, ok in rows:
-            mark = "skip" if ok is None else ("ok" if ok else "MISMATCH")
-            print("    %-6d %-8s %-8s %s"
-                  % (i, note_name(ref_hz), note_name(cand_hz), mark))
-
-    if compared == 0:
-        print("    FAIL: no voiced windows in the hardware reference - "
-              "the reference render is silent, so nothing was actually compared")
+    hardware_audio = audio_analysis.load_wav(hw_wav)
+    preview_audio = audio_analysis.load_wav(pv_wav)
+    print(f"  {label}:")
+    if not np.any(hardware_audio):
+        if require_pitch:
+            print("    FAIL: the hardware render is silent - this is not a "
+                  "preview bug")
+            return False
+        if np.any(preview_audio):
+            print("    FAIL: hardware says this music channel is inactive, "
+                  "but preview emits audio")
+            return False
+        print("    SKIP: inactive in both hardware and preview")
+        return True
+    if not np.any(preview_audio):
+        print("    FAIL: hardware channel is active but preview is silent")
         return False
 
-    ratio = agreed / compared
-    print("    %s: %d/%d voiced windows agree within %.0f semitone (%.0f%%), "
-          "need %.0f%%" % (label, agreed, compared, TOLERANCE,
-                           100 * ratio, 100 * min_agreement))
-    return ratio >= min_agreement
+    clock_label = "preview @%d clk/sample" % (args.preview_clk // RATE)
+    pitch = audio_analysis.pitch_agreement(hardware_audio, preview_audio)
+    if pitch.compared:
+        pitch_ok = audio_analysis.report_pitch_agreement(
+            hardware_audio, preview_audio, label=clock_label,
+            min_agreement=args.min_agreement, verbose=args.verbose)
+    else:
+        print("    pitch: no stable voiced windows; checking level/activity")
+        pitch_ok = not require_pitch
+
+    hw_rms = audio_analysis.rms(hardware_audio)
+    pv_rms = audio_analysis.rms(preview_audio)
+    rms_ratio = pv_rms / hw_rms
+    hw_active = activity(hardware_audio)
+    pv_active = activity(preview_audio)
+    active_ratio = pv_active / hw_active if hw_active else 1.0
+    rms_ok = args.min_rms_ratio <= rms_ratio <= args.max_rms_ratio
+    active_ok = active_ratio >= args.min_active_ratio
+    print("    level: RMS %.0f -> %.0f (%.1f%%, need %.0f%%..%.0f%%); "
+          "activity %.1f%% -> %.1f%% (%.1f%%, need >=%.0f%%) %s"
+          % (hw_rms, pv_rms, 100 * rms_ratio,
+             100 * args.min_rms_ratio, 100 * args.max_rms_ratio,
+             100 * hw_active, 100 * pv_active, 100 * active_ratio,
+             100 * args.min_active_ratio,
+             "PASS" if rms_ok and active_ok else "FAIL"))
+    return pitch_ok and rms_ok and active_ok
 
 
 def main() -> int:
@@ -167,11 +157,26 @@ def main() -> int:
                         help="informational: what `make run` supplies")
     parser.add_argument("--music", type=int, default=0)
     parser.add_argument("--sfx", type=int)
-    parser.add_argument("--mask", type=int, default=7)
+    parser.add_argument("--mask", type=int, default=7,
+                        help="advisory reservation mask; it does not isolate "
+                             "music channels")
+    channels = parser.add_mutually_exclusive_group()
+    channels.add_argument("--solo-channel", type=int, choices=range(4),
+                          help="disable the other three pattern channels")
+    channels.add_argument("--all-channels", action="store_true",
+                          help="check the combined mix and each isolated "
+                               "pattern channel")
     parser.add_argument("--seconds", type=float, default=4.0)
     parser.add_argument("--min-agreement", type=float, default=0.85)
+    parser.add_argument("--min-rms-ratio", type=float, default=0.5)
+    parser.add_argument("--max-rms-ratio", type=float, default=2.0)
+    parser.add_argument("--min-active-ratio", type=float, default=0.5)
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
+
+    if args.sfx is not None and (args.solo_channel is not None
+                                 or args.all_channels):
+        parser.error("music-channel isolation cannot be used with --sfx")
 
     out = ROOT / "build/psg_preview_check"
     out.mkdir(parents=True, exist_ok=True)
@@ -197,29 +202,30 @@ def main() -> int:
         args.hardware = psg_oracle_render.build(
             HARDWARE_CLK, ROOT / "build/psg_oracle", 8)
 
-    what = ("sfx %d" % args.sfx) if args.sfx is not None else ("music %d" % args.music)
-    print("cart %s, %s, mask %d, %.1fs" % (args.cart.name, what, args.mask,
-                                           args.seconds))
+    what = (("sfx %d" % args.sfx) if args.sfx is not None
+            else ("music %d" % args.music))
+    print("cart %s, %s, reservation mask %d, %.1fs"
+          % (args.cart.name, what, args.mask, args.seconds))
 
-    hw_wav = out / "hardware.wav"
-    pv_wav = out / "preview.wav"
-    render(args.hardware, image, hw_wav, clk=HARDWARE_CLK, music=args.music,
-           sfx=args.sfx, mask=args.mask, seconds=args.seconds)
-    render(args.preview, image, pv_wav, clk=args.preview_clk, music=args.music,
-           sfx=args.sfx, mask=args.mask, seconds=args.seconds)
+    jobs = []
+    if args.solo_channel is not None:
+        isolated = isolate_music_channel(
+            image, out / f"audio-channel-{args.solo_channel}.bin",
+            args.solo_channel)
+        jobs.append((f"channel {args.solo_channel}", isolated, False))
+    else:
+        jobs.append(("combined", image, True))
+        if args.all_channels:
+            for channel in range(4):
+                isolated = isolate_music_channel(
+                    image, out / f"audio-channel-{channel}.bin", channel)
+                jobs.append((f"channel {channel}", isolated, False))
 
-    hardware, preview = load(hw_wav), load(pv_wav)
-    if not any(hardware):
-        print("    FAIL: the HARDWARE render is silent - that is not a preview bug")
-        return 1
-    if not any(preview):
-        print("    FAIL: the preview render is silent (walk never completes, or "
-              "dry16 is never written)")
-        return 1
-
-    label = "preview @%d clk/sample" % (args.preview_clk // RATE)
-    ok = compare(hardware, preview, label=label,
-                 min_agreement=args.min_agreement, verbose=args.verbose)
+    ok = True
+    for label, job_image, require_pitch in jobs:
+        ok = check_render(args=args, image=job_image, out=out,
+                          hardware=args.hardware, label=label,
+                          require_pitch=require_pitch) and ok
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
 

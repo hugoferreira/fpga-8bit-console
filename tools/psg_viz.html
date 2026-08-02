@@ -7,6 +7,7 @@
   --accent:#6ea8fe; --warn:#e0a33e;
   --load:#3d8f74; --cap:#4d7fd6; --mul:#b8683f; --wave:#8a6bc4;
   --aram:#3f8fa8; --ev:#7c8596; --busy:#c2554e;
+  --trace:#38a89d; --skip:#d27a62;
   --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
 }
 @media (prefers-color-scheme: light) {
@@ -96,9 +97,33 @@ table.lanes td { padding:0; }
 .tr .g { color:var(--dim); }
 .tr a { color:var(--accent); text-decoration:none; cursor:pointer; }
 .tr a:hover { text-decoration:underline; }
+/* ---- dependency graph ---- */
+.dep-axis { stroke:var(--line); stroke-width:1; }
+.dep-lane { font-size:10.5px; fill:var(--dim); text-transform:uppercase;
+            letter-spacing:.05em; }
+.dep-tick { font-family:var(--mono); font-size:9px; fill:var(--faint); }
+.dep-edge { fill:none; stroke:var(--faint); stroke-width:1; opacity:.35; }
+.dep-edge.product { stroke:var(--mul); opacity:.72; }
+.dep-edge.record { stroke:var(--load); opacity:.58; }
+.dep-edge.hot { stroke:var(--accent); stroke-width:2; opacity:1; }
+.dep-edge.dim { opacity:.04; }
+.dep-node { cursor:pointer; }
+.dep-node rect { fill:var(--panel2); stroke:var(--line); stroke-width:1; rx:3; }
+.dep-node text { fill:var(--fg); font-family:var(--mono); font-size:8px; }
+.dep-node.read rect { fill:var(--load); }
+.dep-node.multiply rect { fill:var(--mul); }
+.dep-node.consume rect { fill:var(--cap); }
+.dep-node.write rect { fill:var(--aram); }
+.dep-node.on rect { stroke:var(--accent); stroke-width:2; }
+.dep-node.dim { opacity:.18; }
 /* ---- findings ---- */
-#findings { padding:18px; display:grid; gap:16px;
-            grid-template-columns:repeat(auto-fill,minmax(430px,1fr)); }
+#findings { padding:18px; }
+.finding-group { margin:0 0 24px; }
+.finding-group h2 { margin:0 0 9px; font-size:12px; font-weight:600;
+                    color:var(--dim); text-transform:uppercase;
+                    letter-spacing:.08em; }
+.finding-grid { display:grid; gap:16px;
+                grid-template-columns:repeat(auto-fill,minmax(430px,1fr)); }
 .finding { background:var(--panel); border:1px solid var(--line);
            border-radius:8px; padding:15px 17px; }
 .finding h3 { font-size:13.5px; margin:0 0 3px; font-weight:600;
@@ -135,12 +160,14 @@ table.grid td.zero { color:var(--load); font-weight:700; }
 <div class="tabs">
   <div class="tab on" data-v="walk">Sample walk (per sample)</div>
   <div class="tab" data-v="fsm">Tick sequencer (per tick)</div>
+  <div class="tab" data-v="deps">Dependencies</div>
   <div class="tab" data-v="opt">Where the cycles go</div>
 </div>
 
 <section class="view on" id="v-walk">
   <div class="bar">
     <div class="seg" id="schedsel"></div>
+    <div class="seg" id="tracesel"></div>
     <div class="legend">
       <span><i class="sw" style="background:var(--load)"></i>record load</span>
       <span><i class="sw" style="background:var(--cap)"></i>capture step</span>
@@ -152,6 +179,9 @@ table.grid td.zero { color:var(--load); font-weight:700; }
         (all voice kinds)</span>
       <span><i class="sw" style="background:var(--busy);opacity:.42"></i>…only
         some voice kinds</span>
+      <span class="trace-legend"><i class="sw" style="background:var(--trace)"></i>observed clocks</span>
+      <span class="trace-legend"><i class="sw" style="background:var(--warn)"></i>stall repeats</span>
+      <span class="trace-legend"><i class="sw" style="background:var(--skip)"></i>jump-skipped</span>
     </div>
     <span class="sub" id="schednote"></span>
   </div>
@@ -163,7 +193,6 @@ table.grid td.zero { color:var(--load); font-weight:700; }
 
 <section class="view" id="v-fsm">
   <div class="bar">
-    <div class="seg" id="famsel"></div>
     <span class="sub" id="fsmnote"></span>
   </div>
   <div class="split">
@@ -172,12 +201,30 @@ table.grid td.zero { color:var(--load); font-weight:700; }
   </div>
 </section>
 
+<section class="view" id="v-deps">
+  <div class="bar">
+    <div class="seg" id="depschedsel"></div>
+    <div class="seg" id="depprofsel"></div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--load)"></i>read</span>
+      <span><i class="sw" style="background:var(--panel2)"></i>compute</span>
+      <span><i class="sw" style="background:var(--mul)"></i>multiply</span>
+      <span><i class="sw" style="background:var(--cap)"></i>consume</span>
+      <span><i class="sw" style="background:var(--aram)"></i>write</span>
+    </div>
+    <span class="sub" id="depnote"></span>
+  </div>
+  <div class="split">
+    <div class="scroll" id="depgraph"></div>
+    <div class="detail" id="depdet"></div>
+  </div>
+</section>
+
 <section class="view" id="v-opt">
   <div class="bar">
-    <span class="sub">Measurements taken off the schedules, each with the
-      condition that would have to hold for it to become a saving. No entry
-      claims one: whether a phase can be reclaimed depends on data hazards
-      this tool does not model.</span>
+    <span class="sub">Structural floors first, then occupied work,
+      profile-conditional gaps, dependency blockers, unattributed positions,
+      and the transformation each class requires.</span>
   </div>
   <div id="findings"></div>
 </section>
@@ -210,6 +257,11 @@ const LANES = [
   {k:'ev',    label:'other sites',  color:'var(--ev)'},
   {k:'svc',   label:'multiply service', color:'var(--busy)'},
 ];
+const TRACE_LANES = [
+  {k:'observed', label:'observed clocks', color:'var(--trace)'},
+  {k:'stalls', label:'stall repeats', color:'var(--warn)'},
+  {k:'skipped', label:'jump-skipped', color:'var(--skip)'},
+];
 /* The control word once carried six named flag bits (ISS_SEC, SYN_A, …).
  * One-hot made them aliases of the actions, so the bits went away and the
  * extractor now reports the SIGNALS each action drives, read out of the RTL.
@@ -220,7 +272,14 @@ const isAramFlag = f => /^syn_/i.test(f) || /^SYN_/.test(f);
 const phaseHasWork = p => !!(p.cap || p.mul || (p.flags||[]).length
   || (p.load||[]).length || (p.sched||[]).length || (p.events||[]).length);
 
-function laneHits(p, k) {
+let traceIndex = MODEL.traces.length ? 0 : -1;
+const activeTrace = () => traceIndex < 0 ? null : MODEL.traces[traceIndex];
+const traceStats = () => {
+  const trace = activeTrace();
+  return trace && trace.schedules ? trace.schedules[sched] : null;
+};
+
+function laneHits(p, k, stats) {
   switch (k) {
     case 'load': return p.load;
     case 'cap':  return p.cap ? [p.cap] : [];
@@ -229,6 +288,12 @@ function laneHits(p, k) {
     case 'aram': return (p.flags||[]).filter(isAramFlag);
     case 'ev':   return p.events;
     case 'svc':  return p.mul_busy || [];
+    case 'observed': return stats && stats.counts[p.pph]
+      ? [`${stats.counts[p.pph]} observed clocks`] : [];
+    case 'stalls': return stats && stats.stalls[p.pph]
+      ? [`${stats.stalls[p.pph]} repeated clocks`] : [];
+    case 'skipped': return stats && stats.skipped[p.pph]
+      ? [`skipped by ${stats.skipped[p.pph]} observed jumps`] : [];
   }
   return [];
 }
@@ -243,18 +308,30 @@ function svcFill(p) {
   return `background:var(--busy);opacity:${n>=total ? 1 : 0.42}`;
 }
 
+function traceFill(p, key, color, stats) {
+  if (!stats) return '';
+  const values = stats[key] || [], value = values[p.pph] || 0;
+  if (!value) return '';
+  const ceiling = key === 'counts' ? (stats.max_count || 1)
+    : Math.max(1, ...values);
+  const opacity = 0.3 + 0.7 * Math.sqrt(value / ceiling);
+  return `background:${color};opacity:${opacity.toFixed(2)}`;
+}
+
 const KLASS = {
   work:        {label:'scheduled work'},
   forced:      {label:'multiply busy — every profile'},
   cond:        {label:'multiply busy — some profiles'},
-  pipeline:    {label:'pipeline or completed-product hold'},
-  unexplained: {label:'not explained by the multiply service'},
+  pipeline:    {label:'otherwise idle — known dependency holder'},
+  unexplained: {label:'no action, service activity, or known holder'},
 };
 
 let sched = 'hw', selPh = null;
 
 function drawWalk() {
   const S = MODEL.walk.schedules[sched], P = S.params;
+  const stats = traceStats();
+  const lanes = stats ? LANES.concat(TRACE_LANES) : LANES;
   const marks = {};
   for (const [k,v] of Object.entries(P)) (marks[v] = marks[v]||[]).push(k);
 
@@ -264,11 +341,14 @@ function drawWalk() {
        + `data-p="${p.pph}">${p.pph%5===0||marks[p.pph]?p.pph:''}</td>`;
   h += '</tr>';
 
-  for (const L of LANES) {
+  for (const L of lanes) {
     h += `<tr><th class="lane">${L.label}</th>`;
     for (const p of S.phases) {
-      const hits = laneHits(p, L.k);
+      const hits = laneHits(p, L.k, stats);
       const fill = L.k==='svc' ? svcFill(p)
+                 : L.k==='observed' ? traceFill(p, 'counts', L.color, stats)
+                 : L.k==='stalls' ? traceFill(p, 'stalls', L.color, stats)
+                 : L.k==='skipped' ? traceFill(p, 'skipped', L.color, stats)
                  : hits.length ? `background:${L.color}` : '';
       const title = hits.length
         ? esc(`pph ${p.pph} — ` + hits.map(x =>
@@ -287,11 +367,17 @@ function drawWalk() {
   // An empty capture/multiply lane under the preview schedule is the truth,
   // not a gap in the extraction: the control store decodes only the hardware
   // schedule, and the preview one is plain `case (pph)` arms.
-  document.getElementById('schednote').textContent = sched === 'preview'
+  const staticNote = sched === 'preview'
     ? `${S.n} phases per slot · no control store — these steps are case arms, `
       + `which is why the capture and multiply lanes are empty`
     : `${S.n} phases per slot · capture and multiply lanes come from the `
       + `control store (tools/gen_psg_ctrl.py)`;
+  const traceNote = stats ? ` · ${activeTrace().name}: ${stats.active_clocks} `
+    + `active clocks, ${stats.jumps.reduce((n,j)=>n+j.count,0)} jumps, `
+    + `${stats.stalls.reduce((a,b)=>a+b,0)} repeated stall clocks` : '';
+  document.getElementById('schednote').textContent = staticNote + traceNote;
+  document.querySelectorAll('.trace-legend').forEach(el =>
+    el.style.display = stats ? '' : 'none');
   document.getElementById('lanes').innerHTML = h;
   document.querySelectorAll('#lanes [data-p]').forEach(e =>
     e.onclick = () => { selPh = +e.dataset.p; drawWalk(); });
@@ -303,8 +389,9 @@ function walkDetail() {
   const d = document.getElementById('wdet');
   if (selPh === null) {
     d.innerHTML = `<div class="doc">The ${sched==='hw'?'hardware':'preview'} `
-      + `schedule runs <b>${S.n}</b> micro-phases per slot, eight slots per `
-      + `sample. Landmarks: `
+      + `full path has <b>${S.n}</b> micro-phase positions per slot, `
+      + `${MODEL.walk.voice_count} slots per sample. Runtime jumps may skip `
+      + `positions and stalls may repeat one. Landmarks: `
       + Object.entries(S.params).map(([k,v]) => `${k}=${v}`).join(', ')
       + `.<br><br>Click any phase to see what the RTL does there.</div>`;
     return;
@@ -314,6 +401,14 @@ function walkDetail() {
     + `offset W${p.off>=0?'+':''}${p.off} from PWORK`
     + (p.word !== null ? ` · control word 0x${p.word.toString(16).padStart(4,'0')}` : '')
     + ` · ${esc((KLASS[p.klass]||{}).label || p.klass)}</div>`;
+
+  const stats = traceStats();
+  if (stats) {
+    h += `<div class="k">observed trace — ${esc(activeTrace().name)}</div>`
+      + `<div class="doc">${stats.counts[p.pph] || 0} active clocks; `
+      + `${stats.stalls[p.pph] || 0} repeated stall clocks; skipped by `
+      + `${stats.skipped[p.pph] || 0} forward jumps.</div>`;
+  }
 
   if (p.mul_launch && p.mul_launch.length) {
     h += `<div class="k">launches a product</div><div class="doc">`;
@@ -383,31 +478,193 @@ for (const [k,label] of [['hw','hardware (oracle + board)'],
     [...ss.children].forEach(c => c.classList.toggle('on', c===b)); drawWalk(); };
   ss.appendChild(b);
 }
+
+const ts = document.getElementById('tracesel');
+if (MODEL.traces.length) {
+  const choices = [{name:'static only', index:-1}].concat(
+    MODEL.traces.map((trace,index) => ({name:trace.name,index})));
+  for (const choice of choices) {
+    const b = document.createElement('button');
+    b.textContent = choice.name;
+    b.className = choice.index===traceIndex ? 'on' : '';
+    b.onclick = () => {
+      traceIndex = choice.index;
+      [...ts.children].forEach(c => c.classList.toggle('on', c===b));
+      drawWalk();
+    };
+    ts.appendChild(b);
+  }
+} else {
+  ts.style.display = 'none';
+  document.querySelectorAll('.trace-legend').forEach(el => el.style.display='none');
+}
 drawWalk();
+
+/* ------------------------------------------------------------------ */
+/* Explicit phase dependencies                                         */
+/* ------------------------------------------------------------------ */
+const DEP_Y = {read:54, compute:124, multiply:194, consume:264, write:334};
+let depSched = 'hw';
+let depProfile = MODEL.walk.profiles.length ? MODEL.walk.profiles[0].key : null;
+let selDep = null;
+
+function depVisible(item) {
+  return !depProfile || !(item.profiles||[]).length
+    || item.profiles.includes(depProfile);
+}
+
+function drawDependencies() {
+  const S = MODEL.walk.schedules[depSched], G = S.dependency_graph;
+  const width = Math.max(920, 112 + S.n * 24), height = 390;
+  const positions = {}, slots = {};
+  for (const node of G.nodes) {
+    const key = node.kind + ':' + node.phase;
+    const offset = slots[key] || 0;
+    slots[key] = offset + 1;
+    positions[node.id] = {x:88 + node.phase*24 + offset*5,
+                          y:DEP_Y[node.kind]};
+  }
+  let s = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" `
+        + `role="img" aria-label="Phase dependency graph for the ${depSched} schedule">`
+        + `<defs><marker id="dep-arrow" viewBox="0 0 10 10" refX="8" refY="5" `
+        + `markerWidth="5" markerHeight="5" orient="auto-start-reverse">`
+        + `<path d="M 0 0 L 10 5 L 0 10 z" fill="var(--faint)"></path>`
+        + `</marker></defs>`;
+  for (const [kind,y] of Object.entries(DEP_Y)) {
+    s += `<line class="dep-axis" x1="82" y1="${y+10}" x2="${width-12}" y2="${y+10}"></line>`
+      + `<text class="dep-lane" x="4" y="${y+13}">${kind}</text>`;
+  }
+  for (let p=0; p<S.n; p+=5)
+    s += `<text class="dep-tick" x="${88+p*24}" y="18" text-anchor="middle">${p}</text>`;
+
+  const byId = Object.fromEntries(G.nodes.map(node => [node.id,node]));
+  const related = edge => selDep && (edge.from===selDep || edge.to===selDep);
+  for (const edge of G.edges) {
+    if (!depVisible(edge)) continue;
+    const a = positions[edge.from], b = positions[edge.to];
+    if (!a || !b) continue;
+    const dx = Math.max(18, (b.x-a.x)/2);
+    const d = `M${a.x+9},${a.y+10} C${a.x+dx},${a.y+10} `
+            + `${b.x-dx},${b.y+10} ${b.x},${b.y+10}`;
+    const cls = 'dep-edge ' + edge.kind
+      + (selDep ? (related(edge) ? ' hot' : ' dim') : '');
+    s += `<path class="${cls}" d="${d}" marker-end="url(#dep-arrow)"></path>`;
+  }
+  for (const node of G.nodes) {
+    if (!depVisible(node)) continue;
+    const p = positions[node.id];
+    const connected = !selDep || node.id===selDep || G.edges.some(edge =>
+      depVisible(edge) && ((edge.from===selDep && edge.to===node.id)
+                       || (edge.to===selDep && edge.from===node.id)));
+    const cls = `dep-node ${node.kind}` + (node.id===selDep?' on':'')
+      + (connected?'':' dim');
+    s += `<g class="${cls}" data-dn="${esc(node.id)}">`
+      + `<rect x="${p.x}" y="${p.y}" width="18" height="20"></rect>`
+      + `<text x="${p.x+9}" y="${p.y+13}" text-anchor="middle">${node.phase}</text></g>`;
+  }
+  s += '</svg>';
+  document.getElementById('depgraph').innerHTML = s;
+  document.querySelectorAll('#depgraph .dep-node').forEach(node =>
+    node.onclick = () => { selDep = node.dataset.dn; drawDependencies(); });
+  const profile = MODEL.walk.profiles.find(item => item.key===depProfile);
+  document.getElementById('depnote').textContent =
+    `${G.nodes.filter(depVisible).length} nodes, ${G.edges.filter(depVisible).length} edges`
+    + (profile ? ` · ${profile.label}` : '');
+  dependencyDetail(byId);
+}
+
+function dependencyDetail(byId) {
+  const d = document.getElementById('depdet');
+  const G = MODEL.walk.schedules[depSched].dependency_graph;
+  if (!selDep || !byId[selDep]) {
+    d.innerHTML = `<div class="doc">Rows are lifecycle stages; horizontal position `
+      + `is the source-derived phase. Assignment edges connect the last phase `
+      + `that defines a signal to a later phase that uses it. Product edges use `
+      + `the multiplier latency contract, and record edges span each streamed `
+      + `word from read to write-back.<br><br>Click a node to isolate its dependencies.</div>`;
+    return;
+  }
+  const node = byId[selDep];
+  const incoming = G.edges.filter(edge => depVisible(edge) && edge.to===node.id);
+  const outgoing = G.edges.filter(edge => depVisible(edge) && edge.from===node.id);
+  let h = `<h2>${esc(node.label)}</h2><div class="where">${node.kind} · pph ${node.phase}</div>`;
+  if (node.detail) h += `<div class="doc">${esc(node.detail)}</div>`;
+  if (node.defs.length) h += `<div class="k">defines</div><div class="doc">${node.defs.map(esc).join(', ')}</div>`;
+  if (node.uses.length) h += `<div class="k">uses</div><div class="doc">${node.uses.map(esc).join(', ')}</div>`;
+  const renderEdges = (title, edges, endpoint) => {
+    h += `<div class="k">${title} (${edges.length})</div>`;
+    h += edges.length ? edges.map(edge => {
+      const other = byId[edge[endpoint]];
+      return `<div class="tr"><a data-depgo="${esc(other.id)}">${esc(other.label)}</a>`
+        + `<div class="g">${esc(edge.kind)} · ${esc(edge.labels.join(', '))}</div></div>`;
+    }).join('') : `<div class="empty">none</div>`;
+  };
+  renderEdges('in', incoming, 'from');
+  renderEdges('out', outgoing, 'to');
+  d.innerHTML = h;
+  d.querySelectorAll('[data-depgo]').forEach(link => link.onclick = () => {
+    selDep = link.dataset.depgo; drawDependencies();
+  });
+}
+
+const dss = document.getElementById('depschedsel');
+for (const [key,label] of [['hw','hardware'],['preview','preview']]) {
+  const button = document.createElement('button');
+  button.textContent = label;
+  button.className = key===depSched ? 'on' : '';
+  button.onclick = () => {
+    depSched = key; selDep = null;
+    [...dss.children].forEach(child => child.classList.toggle('on',child===button));
+    document.getElementById('depprofsel').style.display =
+      depSched==='preview' ? 'none' : '';
+    drawDependencies();
+  };
+  dss.appendChild(button);
+}
+const dps = document.getElementById('depprofsel');
+MODEL.walk.profiles.forEach((profile,index) => {
+  const button = document.createElement('button');
+  button.textContent = `profile ${index+1}`;
+  button.title = profile.label;
+  button.className = profile.key===depProfile ? 'on' : '';
+  button.onclick = () => {
+    depProfile = profile.key; selDep = null;
+    [...dps.children].forEach(child => child.classList.toggle('on',child===button));
+    drawDependencies();
+  };
+  dps.appendChild(button);
+});
+drawDependencies();
 
 /* ------------------------------------------------------------------ */
 /* Tick sequencer FSM                                                  */
 /* ------------------------------------------------------------------ */
 const L = MODEL.seq.layout, byName = {};
 MODEL.seq.states.forEach(n => byName[n.name] = n);
-let selSt = null, famFilter = null;
+let selSt = null;
 
 /* Three kinds of edge, because they mean three different things.
  *
- * Within a column the states form a microprogram's straight run, so those
+ * Within a graph-derived cluster the states form an unconditional component,
+ * so those
  * edges are drawn as a spine down the column. Rightward edges hand off to
- * another microprogram. Leftward edges are the returns - to V_LD for the next
- * slot, to V_ST, back to S_IDLE - and they get their own routing lanes under
- * the graph so the returns stay legible instead of crossing the columns.
+ * another microprogram. Leftward edges are returns. A return to the
+ * neighbouring column fits in the gap between those columns; only a return
+ * which has to cross another column needs a lane under the graph. The
+ * distinction is geometric rather than state-name based, so a new
+ * microprogram or transition lays itself out.
  */
 let backLane = new Map();
+const edgeKey = t => t.from + '>' + t.to;
 
 function assignBackLanes(T) {
   backLane = new Map();
   let i = 0;
   for (const t of T) {
     const a = byName[t.from], b = byName[t.to];
-    if (a && b && b.col < a.col) backLane.set(t.from + '>' + t.to + t.line, i++);
+    const key = edgeKey(t);
+    if (a && b && b.col + 1 < a.col && !backLane.has(key))
+      backLane.set(key, i++);
   }
   return i;
 }
@@ -435,16 +692,28 @@ function edgePath(a, b, key) {
     return `M${x},${a.y+midY} C${x+bow},${a.y+midY} ${x+bow},${b.y+midY} `
          + `${x},${b.y+midY}`;
   }
-  // Leftward: out the left face, along a private lane, up into the right face.
-  const lane = L.height - L.lane_band + 10 + (backLane.get(key) || 0) * 6;
   const x1 = a.x, y1 = a.y + midY, x2 = b.x + L.node_w, y2 = b.y + midY;
+  // Neighbouring columns have an empty corridor between their node faces.
+  // Keeping a local return in that corridor avoids a long dive through the
+  // global return band. Parallel guarded transitions share this same path.
+  if (a.col === b.col + 1) {
+    const xmid = (x1 + x2) / 2;
+    return `M${x1},${y1} C${xmid},${y1} ${xmid},${y2} ${x2},${y2}`;
+  }
+  // A longer return would cross intervening columns, so route it underneath.
+  // Transitions with the same endpoints share a lane: their distinct guards
+  // remain visible in the detail pane without drawing duplicate wires.
+  const lane = L.height - L.lane_band + 10 + (backLane.get(key) || 0) * 6;
   return `M${x1},${y1} C${x1-30},${y1} ${x1-30},${lane} ${x1-46},${lane} `
        + `L${x2+46},${lane} C${x2+30},${lane} ${x2+30},${y2} ${x2},${y2}`;
 }
 
 function drawFsm() {
   const T = MODEL.seq.transitions;
-  const nback = assignBackLanes(T);
+  // Guards remain separate transitions in the detail pane, while the graph
+  // needs only one physical wire for each pair of endpoints.
+  const routes = [...new Map(T.map(t => [edgeKey(t), t])).values()];
+  const nback = assignBackLanes(routes);
   L.lane_band = nback * 6 + 26;
   L.height = L.node_rows_bottom + L.lane_band;
   let s = `<svg width="${L.width}" height="${L.height}" `
@@ -453,10 +722,10 @@ function drawFsm() {
     s += `<text class="colhead" x="${c.x}" y="20">${esc(c.label)}</text>`;
 
   const hot = t => selSt && (t.from===selSt || t.to===selSt);
-  for (const t of T) {
+  for (const t of routes) {
     const a = byName[t.from], b = byName[t.to];
     if (!a || !b) continue;
-    const d = edgePath(a, b, t.from + '>' + t.to + t.line);
+    const d = edgePath(a, b, edgeKey(t));
     if (!d) continue;
     const cls = selSt ? (hot(t) ? 'edge hot' : 'edge dim') : 'edge';
     s += `<path class="${cls}" d="${d}"></path>`;
@@ -487,15 +756,16 @@ function fsmDetail() {
   const d = document.getElementById('fdet');
   if (!selSt) {
     d.innerHTML = `<div class="doc">Every tick, the sequencer makes one pass `
-      + `over the eight playback slots: <code>V_LD</code> streams a slot's `
+      + `over the ${MODEL.walk.voice_count} playback slots: <code>V_LD</code> streams a slot's `
       + `record into working registers, the microprograms work on that copy, `
       + `and <code>V_ST</code> writes it back.<br><br>`
-      + `Columns are microprograms. Click a state to isolate its edges.</div>`;
+      + `Columns are connected components of unconditional transitions; `
+      + `guarded hand-offs cross columns. Click a state to isolate its edges.</div>`;
     return;
   }
   const n = byName[selSt], T = MODEL.seq.transitions;
   const outs = T.filter(t => t.from===selSt), ins = T.filter(t => t.to===selSt);
-  let h = `<h2>${esc(n.name)}</h2><div class="where">${esc(n.family_label)}`
+  let h = `<h2>${esc(n.name)}</h2><div class="where">${esc(n.cluster_label)}`
         + (n.line ? ` · rtl/psg_seq.sv:${n.line}` : '') + `</div>`;
   if (n.doc) h += `<div class="doc">${esc(n.doc)}</div>`;
 
@@ -527,17 +797,25 @@ function fsmDetail() {
 }
 
 document.getElementById('fsmnote').textContent =
-  `${MODEL.seq.extracted_count} transitions, guards recovered from the RTL`;
+  `${MODEL.seq.extracted_count} transitions · ${MODEL.seq.clusters.length} `
+  + `topology-derived clusters · guards recovered from the RTL`;
 drawFsm();
 
 /* ------------------------------------------------------------------ */
 /* Where the cycles go                                                 */
 /* ------------------------------------------------------------------ */
 const AREA = {walk:'sample walk', seq:'tick sequencer', both:'both'};
+const BUCKETS = ['structural floor', 'currently occupied',
+  'conditionally avoidable', 'blocked by dependency',
+  'genuinely unattributed', 'transformation required'];
 
 function drawFindings() {
   let h = '';
-  for (const f of MODEL.findings) {
+  for (const bucket of BUCKETS) {
+    const findings = MODEL.findings.filter(f => f.bucket===bucket);
+    if (!findings.length) continue;
+    h += `<section class="finding-group"><h2>${esc(bucket)}</h2><div class="finding-grid">`;
+    for (const f of findings) {
     h += `<article class="finding"><h3>${esc(f.title)}</h3>`
        + `<div class="where">${esc(AREA[f.area]||f.area)}</div>`
        + `<table class="meas">`;
@@ -545,7 +823,7 @@ function drawFindings() {
       h += `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`;
     h += `</table>`;
     if (f.table) {
-      h += `<div class="k">measured per request</div>`
+      h += `<div class="k">${esc(f.table.label||'measured detail')}</div>`
          + `<div class="tblwrap"><table class="grid"><tr>`
          + f.table.cols.map(c => `<th>${esc(c)}</th>`).join('') + `</tr>`;
       for (const r of f.table.rows)
@@ -563,6 +841,8 @@ function drawFindings() {
       h += `</div>`;
     }
     h += `</article>`;
+    }
+    h += `</div></section>`;
   }
   const el = document.getElementById('findings');
   el.innerHTML = h;

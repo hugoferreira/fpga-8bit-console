@@ -274,6 +274,10 @@ $(PSG_WAV): $(PSG_RTL) sim/psg_wav.cpp
 # the console's 159 clocks per sample". Those are different questions and
 # conflating them wasted a bisect.
 PSG_PV_CLK ?= 28125000
+# Gate the combined tune and each real pattern channel. Register $21's MASK is
+# reservation metadata and cannot isolate channels; the checker disables the
+# other three pattern bytes in a private audio-image copy instead.
+PSG_PV_ARGS ?= --all-channels
 # Object dir carries the clock: a correctness run (28.125 MHz) and a fit run
 # (3,506,580, what the console supplies) must coexist without rebuilding.
 PSG_WAV_PV  = build/obj_psg_pv_$(PSG_PV_CLK)/psg_wav
@@ -347,6 +351,54 @@ test-psg-preview: $(PSG_WAV_PV)
 	python3 tools/psg_preview_check.py --cart $(CART) \
 	  --preview $(PSG_WAV_PV) --preview-clk $(PSG_PV_CLK) $(PSG_PV_ARGS)
 
+# Exercise the compact PREVIEW schedule's foreground-SFX takeover/retrigger/
+# release contract at the console clock. The synthetic image keeps the gate
+# self-contained; the frozen Celeste image covers the exact reported mix.
+PSG_RECOVERY_CLK ?= 3506580
+PSG_RECOVERY_AUDIO ?= build/p8ref/celeste-audio.hex
+PSG_BUDGET_PV = build/obj_psg_budget_pv_$(PSG_RECOVERY_CLK)/Vpsg_budget_tb
+
+$(PSG_BUDGET_PV): rtl/psg_budget_tb.sv $(PSG_RTL) rtl/dsigma.sv
+	verilator --binary --timing -j 4 -Irtl \
+	  -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-PINMISSING \
+	  rtl/psg_budget_tb.sv rtl/psg.sv rtl/dsigma.sv \
+	  --top-module psg_budget_tb -GCLKHZ_P=$(PSG_RECOVERY_CLK) -GPREVIEW_P=1 \
+	  --Mdir build/obj_psg_budget_pv_$(PSG_RECOVERY_CLK)
+
+test-psg-preview-recovery: $(PSG_BUDGET_PV)
+	@test -f "$(PSG_RECOVERY_AUDIO)" || { \
+	  echo "missing Celeste audio image: $(PSG_RECOVERY_AUDIO)"; \
+	  echo "override with PSG_RECOVERY_AUDIO=<readmemh-audio.hex>"; exit 2; }
+	$(PSG_BUDGET_PV) +recovery
+	$(PSG_BUDGET_PV) +recovery +recovery_audio="$(abspath $(PSG_RECOVERY_AUDIO))"
+
+# Deterministic regression for the transition artifact reported on Celeste's
+# jump SFX. Exercise the selected /6 hardware schedule and the console-clock
+# PREVIEW schedule separately, then require the unchanged click-v1 detector to
+# find no isolated discontinuities in either four-second render.
+PSG_CLICK_AUDIO ?= build/p8ref/celeste-audio.bin
+PSG_CLICK_SFX ?= 10
+PSG_CLICK_SAMPLES ?= 88200
+PSG_CLICK_HW_CLK ?= 18750000
+PSG_CLICK_PREVIEW_CLK ?= 3506580
+PSG_CLICK_DIR ?= build/psg_clicks/regression
+
+test-psg-clicks:
+	@test -f "$(PSG_CLICK_AUDIO)" || { \
+	  echo "missing Celeste audio image: $(PSG_CLICK_AUDIO)"; exit 2; }
+	@mkdir -p "$(PSG_CLICK_DIR)"
+	python3 tools/psg_oracle_render.py --audio "$(PSG_CLICK_AUDIO)" \
+	  --sfx $(PSG_CLICK_SFX) --mask 15 --samples $(PSG_CLICK_SAMPLES) \
+	  --clock $(PSG_CLICK_HW_CLK) --out "$(PSG_CLICK_DIR)/hardware.wav"
+	$(MAKE) PSG_PV_CLK=$(PSG_CLICK_PREVIEW_CLK) \
+	  build/obj_psg_pv_$(PSG_CLICK_PREVIEW_CLK)/psg_wav
+	build/obj_psg_pv_$(PSG_CLICK_PREVIEW_CLK)/psg_wav \
+	  --audio "$(PSG_CLICK_AUDIO)" --sfx $(PSG_CLICK_SFX) --mask 15 \
+	  --samples $(PSG_CLICK_SAMPLES) --clk $(PSG_CLICK_PREVIEW_CLK) \
+	  --out "$(PSG_CLICK_DIR)/preview.wav"
+	python3 tools/audio_analysis.py wav inspect "$(PSG_CLICK_DIR)/hardware.wav"
+	python3 tools/audio_analysis.py wav inspect "$(PSG_CLICK_DIR)/preview.wav"
+
 psg-wav: $(PSG_WAV)
 	@test -n "$(CART)" || { echo "usage: make psg-wav CART=<cart.p8.png> [MUSIC=n|SFX=n]"; exit 1; }
 	@mkdir -p build
@@ -370,10 +422,12 @@ psg-analyze: $(PSG_WAV)
 # is read out of the RTL and the control-store generator, so the picture tracks
 # the source instead of becoming a stale drawing.
 #   make psg-viz && open build/psg_viz.html
+#   make psg-viz PSG_VIZ_FLAGS='--trace build/walk.jsonl'
 PSG_VIZ_OUT ?= build/psg_viz.html
+PSG_VIZ_FLAGS ?=
 psg-viz: tools/psg_viz.py tools/psg_viz.html rtl/psg_walk.sv rtl/psg_seq.sv \
-         tools/gen_psg_ctrl.py
-	python3 tools/psg_viz.py --out $(PSG_VIZ_OUT)
+         tools/gen_psg_ctrl.py tools/psg_mul_model.py rtl/psg_mulsvc.sv
+	python3 tools/psg_viz.py --out $(PSG_VIZ_OUT) $(PSG_VIZ_FLAGS)
 
 # Prove a multiply mode/width change before the RTL moves. A narrower mode only
 # makes a product ready earlier; fixed control-store phases still elapse until
@@ -419,7 +473,8 @@ test-psg-pico8:
 psg-lifetimes: tools/psg_lifetimes.py rtl/psg_walk.sv tools/gen_psg_ctrl.py
 	python3 tools/psg_lifetimes.py
 
-.PHONY: test-psg-celeste-tracks psg-analyze psg-viz test-psg-mul test-psg-pico8 psg-lifetimes
+.PHONY: test-psg-celeste-tracks test-psg-preview-recovery test-psg-clicks psg-analyze \
+	psg-viz test-psg-mul test-psg-fold test-psg-dq test-psg-pico8 psg-lifetimes
 
 # ------------------------------------------------------------------------------
 # Simulation / testbenches
@@ -441,8 +496,9 @@ debug: bin/sim_debug_${SIM_TOP}
 # The PSG's own regression suite. It had stopped building under iverilog (two
 # declaration-after-use / cast issues Verilator tolerates), so it had not run
 # since the datapath refold. Kept as a target so that cannot happen quietly.
-test-psg: test-psg-fidelity
+test-psg: test-psg-fidelity test-psg-fold test-psg-dq
 	python3 tools/test_audio_analysis.py
+	python3 tools/test_psg_viz.py
 	verilator --binary --timing -Irtl -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
 	  -Wno-PINMISSING -o psg_tb_bin rtl/psg_tb.sv rtl/psg.sv rtl/dsigma.sv \
 	  --Mdir build/obj_psgtb
@@ -1108,6 +1164,53 @@ boards:
 	@echo "  See docs/boards.md for the toolchain and the pin map."
 
 .PHONY: boards tangnano20k tangnano20k-synth tangnano20k-prog tangnano20k-flash
+
+# Standalone Tang Nano 20K audio image. This proves the board-specific pieces
+# without needing an LCD: the Celeste audio image is staged through the 64 Mbit
+# SiP SDRAM, verified byte-for-byte, uploaded to the PSG, and music 0 is sent
+# to the onboard MAX98357A speaker amplifier.
+GOWIN_PSG_TOP = rtl/top_tangnano20k_psg.sv
+GOWIN_PSG_CST = rtl/tangnano20k_psg.cst
+GOWIN_PSG_DIR = build/gowin_psg
+GOWIN_PSG_FS  = bin/tangnano20k-psg.fs
+
+$(GOWIN_PSG_DIR)/celeste-audio.hex: src/celeste/audio.inlay.asm
+	@mkdir -p $(GOWIN_PSG_DIR)
+	@awk '/^[[:space:]]*#d8 / { for (i = 2; i <= NF; i++) \
+	  print tolower(substr($$i, 2, 2)) }' $< > $@
+	@test "$$(wc -l < $@ | tr -d ' ')" = 4608 || { \
+	  echo "error: expected 4608 Celeste audio bytes in $@"; exit 1; }
+
+$(GOWIN_PSG_DIR)/top.json: $(GOWIN_PSG_TOP) $(GOWIN_SRC) \
+                           $(GOWIN_PSG_DIR)/celeste-audio.hex
+	@mkdir -p $(GOWIN_PSG_DIR)
+	yosys -p "read_verilog -Irtl -sv $(GOWIN_PSG_TOP); \
+	          synth_gowin -top top_psg -json $@; \
+	          delete t:\$$print; write_json $@" \
+	  > $(GOWIN_PSG_DIR)/synth.log 2>&1
+
+$(GOWIN_PSG_DIR)/top_pnr.json: $(GOWIN_PSG_DIR)/top.json $(GOWIN_PSG_CST)
+	$(NEXTPNR_GOWIN) --json $< --write $@ \
+	    --device $(GOWIN_DEVICE) --vopt family=$(GOWIN_FAMILY) \
+	    --vopt cst=$(GOWIN_PSG_CST) --seed $(GOWIN_SEED) \
+	    > $(GOWIN_PSG_DIR)/pnr.log 2>&1
+	@grep -E '(LUT4|ALU|DFF|BSRAM|MULT18X18|rPLL|IOB): +[0-9]+/' \
+	  $(GOWIN_PSG_DIR)/pnr.log | sed 's/^Info:/ /' || true
+	@grep 'Max frequency for clock' $(GOWIN_PSG_DIR)/pnr.log | tail -8 || true
+
+$(GOWIN_PSG_FS): $(GOWIN_PSG_DIR)/top_pnr.json
+	@mkdir -p bin
+	$(GOWIN_PACK) -d $(GOWIN_DIE) -o $@ $<
+
+tangnano20k-psg: $(GOWIN_PSG_FS)
+
+tangnano20k-psg-prog: $(GOWIN_PSG_FS)
+	$(OFL) -b $(OFL_BOARD) $<
+
+tangnano20k-psg-flash: $(GOWIN_PSG_FS)
+	$(OFL) -b $(OFL_BOARD) -f $<
+
+.PHONY: tangnano20k-psg tangnano20k-psg-prog tangnano20k-psg-flash
 
 # ------------------------------------------------------------------------------
 # Inlay Assembly frontend and maintained Celeste port

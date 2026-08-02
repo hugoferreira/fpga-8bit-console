@@ -38,6 +38,21 @@ correct audio at ~80 fps instead of correct audio at 46 fps.
 > cites as a gate read as HEALTHY throughout the corruption (15.3 bits, 40k
 > levels) and cannot be used to tell correct audio from garbage.
 
+> **Resolved (2026-08-01).** The later "missing channels" report combined two
+> preview-only drifts. Phase compaction in `6b28873` changed the hardware's
+> 16-bit phase-view increment to `einc[13:1]` but left preview adding all of
+> `einc`, so every stable note played one octave high. Separately, the secondary
+> computed-wave context was still issued one phase after its two-stage result
+> could meet the existing capture. Preview now uses the high-phase increment,
+> issues/advances the secondary at `PWORK`, and disables unused old-context
+> issues. Celeste music 0 passes at both 1,275 and 159 clocks/sample.
+>
+> The gate now isolates real music channels by setting the disabled bit in the
+> other three pattern bytes, then checks pitch, RMS and activity. Sweeping
+> register `$21` never isolated anything: it is advisory reservation state.
+> A 300-frame lowercase `make run game=celeste` headless run reaches 90.39 fps
+> and writes five seconds of active audio with 18,830 distinct levels.
+
 Prior work: `c8a2007` (the preview gate), `6f9429b` (five preview bugs, hardware
 bit-identical), `64dbc0a` (the clock-split stopgap and the numbers behind it).
 
@@ -112,9 +127,9 @@ behind `if (REALTIME_PREVIEW)`, then *prove* equivalence:
 python3 tools/psg_oracle_bytecheck.py          # see "tooling debt" below
 #    must print: byte-identical 59/59
 
-# 2. the preview plays the right tune (correctness, generous clock)
+# 2. the preview plays the right tune on every active pattern channel
 make test-psg-preview CART=~/Stuff/carts/celeste-15133.p8.png
-#    must stay >= ~95% window agreement
+#    combined and each active channel must pass pitch, RMS and activity
 
 # 3. does it FIT yet - the actual objective
 make -s build/obj_psg_pv_3506580/psg_wav PSG_PV_CLK=3506580
@@ -178,6 +193,9 @@ inferring 708 from the clock sweep. Add two counters worth having: dropped sampl
 - **Deleting a register is not the same as deleting its memory traffic.** `old_q0` is
   an output port to `psg_wave`; dropping its load leaves it undriven and breaks the
   zero-warning gate.
+- **`--mask` does not isolate music channels.** `$21` only records advisory
+  foreground reservation state. Use `psg_preview_check.py --all-channels`, which
+  disables the other pattern bytes in a private audio-image copy.
 
 ## Tooling debt worth clearing first
 
@@ -194,17 +212,15 @@ inferring 708 from the clock sweep. Add two counters worth having: dropped sampl
   render-and-byte-compare against the frozen `build/psg_oracle/adopt-exact/rtl` set,
   which needs no PICO-8. Promote it to `tools/psg_oracle_bytecheck.py`.
 
-## Still open
+## Resolved secondary/detune capture defect
 
-**Bug 5: the secondary/detune voice never reaches the mixer on the computed-wave
-path.** Preview captures `smp_a`/`smp_b` at `PWORK+1`/`+2`, both the MAIN context,
-while `iss_sec` fires at `PWORK+1` and `psg_wave`'s 2-stage cone makes its result
-valid at `PWORK+3`. The wavetable path is correctly timed (aram is issue→+1, the cone
-is issue→+2), so **moving the captures would desynchronise it** — move `iss_sec` to
-`PWORK` and the `s_phase2` advance with it instead, which aligns both at +1/+2. Tie
-`iss_om`/`iss_os` to 0 for preview; nothing reads `z_eval` at `PWORK+3/+4` there.
-This is the one change whose preview diff is *intended* to be non-zero, so do it once
-the phase layout has stopped moving.
+**Bug 5 is closed.** Preview captured `smp_a`/`smp_b` at `PWORK+1`/`+2`, both
+from the MAIN context, while `iss_sec` fired at `PWORK+1` and the two-stage
+computed-wave result arrived too late. The wavetable path was already aligned,
+so the retained repair moves `iss_sec` and the `s_phase2` advance to `PWORK`,
+leaves both captures in place, and ties unused `iss_om`/`iss_os` low in preview.
+The independent phase-compaction octave bug described above had to be repaired
+at the same time before the audible result became correct.
 
 ## If the sequencer route stalls
 
