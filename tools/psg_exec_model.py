@@ -24,9 +24,9 @@ cited as whole-PSG behavioral, render, schedule or area equivalence.
 
 from __future__ import annotations
 
+import argparse
 import re
 import runpy
-import sys
 from dataclasses import dataclass, replace
 from enum import IntEnum
 from pathlib import Path
@@ -6219,7 +6219,75 @@ def validate_public_priority(seq: str) -> str:
     return "public priority: " + " < ".join(layers)
 
 
+def serialize_program(words: list[int]) -> str:
+    """Return the controller's complete plain-hex memory image."""
+    assert len(words) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
+    assert all(0 <= word <= 0xffff for word in words)
+    return "".join(f"{word:04x}\n" for word in words)
+
+
+def write_candidate_image(path: Path, accepted: list[int],
+                          sample_candidate: list[int],
+                          tick_program: list[int]) -> str:
+    """Materialize the bounded D2F candidate without touching production."""
+    output = path.resolve()
+    assert output != IMAGE.resolve(), \
+        "candidate output must not replace rtl/psg_exec.hex"
+    if output.exists():
+        assert not output.samefile(IMAGE), \
+            "candidate output must not hard-link rtl/psg_exec.hex"
+    assert len(accepted) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
+    assert len(sample_candidate) == PROGRAM_BANK_WORDS
+    assert len(tick_program) == PROGRAM_BANK_WORDS
+
+    candidate = list(sample_candidate) + list(tick_program)
+    lower_changes = [index for index in range(PROGRAM_BANK_WORDS)
+                     if candidate[index] != accepted[index]]
+    upper_changes = [index for index in range(PROGRAM_BANK_WORDS,
+                                               len(candidate))
+                     if candidate[index] != accepted[index]]
+    assert len(lower_changes) == 44
+    assert not upper_changes
+    assert sum(word != 0 for word in candidate[:PROGRAM_BANK_WORDS]) == 222
+
+    production_before = IMAGE.read_bytes()
+    image = serialize_program(candidate)
+    # A second serializer invocation pins stable same-input formatting.  The
+    # gate runs the complete generator twice to prove whole-run determinism.
+    image_again = serialize_program(
+        list(sample_candidate) + list(tick_program))
+    assert image_again == image
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(image)
+    readback = output.read_text()
+    assert readback == image
+    lines = readback.splitlines()
+    assert len(lines) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
+    assert all(re.fullmatch(r"[0-9a-f]{4}", line) for line in lines)
+    assert [int(line, 16) for line in lines] == candidate
+    assert IMAGE.read_bytes() == production_before
+    return (f"{output}: 512 words, 44 owner-zero differences, "
+            "0 owner-one differences, 222 owner-zero nonzero words")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="build and validate the R.84 executor control contract")
+    parser.add_argument(
+        "--write", action="store_true",
+        help="regenerate the accepted production image")
+    parser.add_argument(
+        "--candidate-out", type=Path,
+        help="write the complete bounded D2F candidate to this separate path")
+    args = parser.parse_args()
+    if args.write and args.candidate_out:
+        parser.error("--write and --candidate-out are mutually exclusive")
+    return args
+
+
 def main() -> int:
+    args = parse_args()
     seq, walk, _ = legacy_contract()
     states = sequencer_states(seq)
     successors = state_successors(seq, states)
@@ -6365,8 +6433,8 @@ def main() -> int:
     print("condition contract: " + condition_contract)
     print(public_priority)
     print("externally visible commits: " + ",".join(commits))
-    image = "".join(f"{word:04x}\n" for word in program)
-    if "--write" in sys.argv[1:]:
+    image = serialize_program(program)
+    if args.write:
         IMAGE.write_text(image)
         print(f"wrote {IMAGE.relative_to(ROOT)}")
     else:
@@ -6374,6 +6442,10 @@ def main() -> int:
         assert IMAGE.read_text() == image, \
             f"{IMAGE}: stale; regenerate with --write"
         print(f"image: {IMAGE.relative_to(ROOT)} byte-identical")
+    if args.candidate_out:
+        print("candidate image: " + write_candidate_image(
+            args.candidate_out, program, sample_b3b2a_candidate,
+            tick_program))
     print("warning: owner-zero actions and remaining owner-one actions are "
           "manifests, not semantic RTL; whole-PSG schedule/render/area "
           "equivalence remain atomic integration gates")

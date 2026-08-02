@@ -2641,6 +2641,54 @@ git history; do not repeat them without the recorded changed condition.
   Reject if materialization mutates `rtl/psg_exec.hex`, emits a partial/patch
   image, needs a production loader change, or if any changed PC is unreachable
   or cannot hold/resume from its real candidate IR.
+- **C2-B result and decision:** accepted as the complete candidate-image and
+  real-controller topology foundation.  `--candidate-out` emits exactly 512
+  lower-case four-digit hex words: the latest 256-word D2F candidate plus the
+  byte-identical accepted owner-one bank.  Its SHA-256 is
+  `6f5713e22197d8c03bffeac070b3d9b9b2b2f7b20df98dbff4566d778b5e9177`;
+  it has 44 owner-zero differences, zero owner-one differences and 222
+  nonzero owner-zero words.  Two complete generator runs and their logs are
+  byte-identical.  Readback reconstructs all 512 words exactly, and the
+  accepted image remains SHA-256
+  `59b6f86e1917c069762c2c67c3cfc33d3d1a7652c518e99f9f8437e019d4ebcf`.
+  Literal, relative, symlink and existing hard-link aliases of the production
+  image are rejected before any output write; an independent audit found the
+  hard-link gap in the first implementation and accepted the corrected gate.
+- **C2-B controller proof:** the bench derives its changed-PC mask only by
+  comparing the two complete images, then replaces `u_ctl.ucode` at time 1,
+  verifies all 512 words at time 2 and clocks first at time 5.  The real
+  non-`TEST_PROGRAM` controller fetches all **782** instructions and every IR
+  equals the candidate word.  The exact operation histogram is
+  **172/158/8/29/8/0/1/406**; DONE terminates and pulses once.  All 44 changed
+  PCs execute in every one of eight slots.  The first real visit to each
+  changed PC receives a three-cycle hold, for 44 independent freezes with
+  stable active/owner/slot/PC/IR/state-q, no state transaction and no control-
+  EBR advance.  All 782 enabled state reads are checked against the pre-edge
+  physical address and old memory word.  Two bench runs are byte-identical,
+  and independent review found no PC/action list, semantic sidecar or weak
+  origin/hold check.
+- **C2-B gates and boundary:** the complete 19,728,640-case/131,087-
+  transaction model, deterministic artifact repetition, production
+  controller, direct wave-core, ARAM-hold, production wave/ARAM and candidate
+  benches, isolated executor plus generic full/PREVIEW lint, `make test-psg`
+  (fidelity PASS, 93 analysis tests, complete structural suite at 524/850 and
+  4008/5103 with zero late flips), strict OpenSpec, pycompile, diff and
+  production-image/RTL immutability pass.  Synthetic write data remains
+  intentional.  This does not prove fixed write destinations, CAP_W51's
+  active-bank 26/30 remap, A/B/N/O+H-C value transitions, wave/ARAM/DQ/
+  multiplier causality, persistent commits, fold/public behavior, generic
+  integration or a physical reduction.  No synthesis is claimed; the
+  accepted whole-PSG baseline remains 7,504 routed LCs.
+- **Next permitted C2-C:** execute candidate values, not another topology or
+  Python mirror.  A bench-only semantic adapter must consume the real
+  candidate PC/IR/state-q stream, implement the manifest's fixed write
+  destinations including the action-qualified CAP_W51 word26-to-26/30 bank
+  remap, and join existing RTL wave/ARAM/DQ/multiplier issue/take strobes under
+  the same enabled-edge and external-hold rule.  It must compare only final
+  persistent/fold/dry results against the accepted production-image oracle;
+  no Trace record, semantic sidecar, partial PC graft or generic RTL edit is
+  permitted.  Stop before atomic integration or physical claims unless every
+  candidate PC, service transaction and final commit is mechanically joined.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
