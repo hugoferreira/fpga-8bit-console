@@ -116,6 +116,19 @@ def sec_div() -> None:
     report("div3.organ_shares", ok,
            "organ magnitudes [0, 65536) fit the same unit, exhaustively")
 
+    # Outside the alternate-secondary bypass, the completed linear organ
+    # sample carries the only later-needed top phase bit in bits 15^14.
+    # The bypass excludes that predicate from the final selection entirely.
+    organ_hi_ok = True
+    for phase in range(1 << 16):
+        org_lin = (phase - 8192 if not (phase & 0x4000)
+                   else 24576 - phase)
+        bits = org_lin & ((1 << 18) - 1)
+        organ_hi_ok &= bool(phase & 0x8000) == bool(
+            ((bits >> 15) ^ (bits >> 14)) & 1)
+    report("div3.organ_high_from_linear", organ_hi_ok,
+           "z_lin[15]^z_lin[14] equals phase[15] on all 65,536 organ phases")
+
     # tilt 57344 = 7*8192 and skew0: (24572*x)//57344 == ((24572*x)>>13)//7
     n7 = max((24572 * 57343) >> 13, 12_544)
     s7 = find_reciprocal(7, n7 + 1024)

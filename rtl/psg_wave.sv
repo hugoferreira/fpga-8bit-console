@@ -152,7 +152,7 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   logic [14:0] t_pre_r;
   logic [9:0]  t_h7_r;
   logic [10:0] t_h15_r;
-  logic        tilt_hi_r, tilt_tail_r, org_hi_r;
+  logic        tilt_hi_r, tilt_tail_r;
   logic [7:0]  org_h_r;
   logic signed [17:0] tri4_r;
   logic [2:0]  wsel_r2;
@@ -164,7 +164,6 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
     t_h15_r <= t_h15;
     tilt_hi_r <= tilt_hi;
     tilt_tail_r <= tilt_tail;
-    org_hi_r <= wx_r[15];
     org_h_r <= org_h;
     tri4_r <= tri4;
     wsel_r2 <= wsel_r;
@@ -201,7 +200,8 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
     case (wsel_r2)
       3'd0:    z_prim = walt_r2 ? tri_alt_v : z_lin_r;
       3'd1:    z_prim = div_out;
-      3'd5:    z_prim = (org_hi_r && !(walt_r2 && wsec_r2))
+      3'd5:    z_prim = ((z_lin_r[15] ^ z_lin_r[14])
+                         && !(walt_r2 && wsec_r2))
                           ? div_out : z_lin_r;
       default: z_prim = z_lin_r;
     endcase
