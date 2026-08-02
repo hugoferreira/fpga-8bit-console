@@ -152,7 +152,7 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   logic [14:0] t_pre_r;
   logic [9:0]  t_h7_r;
   logic [10:0] t_h15_r;
-  logic        tilt_hi_r, tilt_tail_r;
+  logic        tilt_tail_r;
   logic [7:0]  org_h_r;
   logic signed [17:0] tri4_r;
   logic [2:0]  wsel_r2;
@@ -162,7 +162,6 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
     t_pre_r <= t_pre[14:0];
     t_h7_r  <= t_h7;
     t_h15_r <= t_h15;
-    tilt_hi_r <= tilt_hi;
     tilt_tail_r <= tilt_tail;
     org_h_r <= org_h;
     tri4_r <= tri4;
@@ -171,15 +170,16 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
     walt_r2 <= walt_r;
   end
 
+  wire tilt_hi2 = (wsel_r2 == 3'd1) && walt_r2;
   wire org_ctx = (wsel_r2 == 3'd5);
   wire [10:0] rc_h = org_ctx ? {3'b0, org_h_r}
-                   : tilt_hi_r ? t_h15_r : {1'b0, t_h7_r};
+                   : tilt_hi2 ? t_h15_r : {1'b0, t_h7_r};
 
   wire [5:0] rc_q = org_ctx ? recip_q[14:9]
-                  : tilt_hi_r ? {2'b0, recip_q[3:0]} : {1'b0, recip_q[8:4]};
-  wire rc_e6 = !tilt_hi_r || org_ctx;
-  wire rc_e4 = tilt_hi_r || org_ctx;
-  wire rc_e3 = !tilt_hi_r && !org_ctx;
+                  : tilt_hi2 ? {2'b0, recip_q[3:0]} : {1'b0, recip_q[8:4]};
+  wire rc_e6 = !tilt_hi2 || org_ctx;
+  wire rc_e4 = tilt_hi2 || org_ctx;
+  wire rc_e3 = !tilt_hi2 && !org_ctx;
   wire rc_e2 = org_ctx;
   // Shared shift/add recombination for the /3, /7, and /15 identities.
   wire [16:0] rc = (rc_e6 ? {rc_h, 6'b0} : 17'd0)

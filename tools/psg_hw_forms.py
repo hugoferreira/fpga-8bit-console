@@ -129,6 +129,23 @@ def sec_div() -> None:
     report("div3.organ_high_from_linear", organ_hi_ok,
            "z_lin[15]^z_lin[14] equals phase[15] on all 65,536 organ phases")
 
+    # tilt_hi, wsel and walt cross the same pipeline edge.  The later mode bit
+    # is therefore already encoded by the registered selector/control pair;
+    # keeping a third register for the predicate is redundant state.
+    def capture_predicate(wsel: int, walt: bool) -> bool:
+        return wsel == 1 and walt
+
+    def capture_controls(wsel: int, walt: bool) -> tuple[int, bool]:
+        return wsel, walt
+
+    tilt_mode_ok = all(
+        capture_predicate(wsel, walt)
+        == (capture_controls(wsel, walt)[0] == 1
+            and capture_controls(wsel, walt)[1])
+        for wsel in range(8) for walt in (False, True))
+    report("div.tilt_mode_from_controls", tilt_mode_ok,
+           "same-edge registered controls reconstruct all 16 predicate states")
+
     # tilt 57344 = 7*8192 and skew0: (24572*x)//57344 == ((24572*x)>>13)//7
     n7 = max((24572 * 57343) >> 13, 12_544)
     s7 = find_reciprocal(7, n7 + 1024)
