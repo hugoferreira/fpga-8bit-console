@@ -1198,15 +1198,18 @@ git history; do not repeat them without the recorded changed condition.
   prefetch above before any RTL was written.  The 86-bit direction is therefore
   superseded, not implemented: holding four contexts would duplicate
   information already carried by the synchronous state output.
-- **Information bound:** retain exactly three groups of sixteen bits.  Actions
-  0x02/0x08 assemble old-q[15:0] from oscillator words 11 and 17.  Fixed LOAD
-  projections capture only the live controls `{snd_id, wt, wave, det, buzz}`
-  and old controls `{wave, mode, alternate}`, sixteen bits total, from words
-  14/22/25/26.  One reusable 16-bit phase hold carries the current phase from
-  W0 to its adjacent ARAM request, then the current q16 view from W1 to its
-  adjacent request.  The adapter therefore owns exactly **48 flops**.  It does
-  not capture current phase, phase2, old phase, either increment, last-context
-  restart fields or `dq17`; restart/noise/detune updates remain H-D.
+- **Information bound:** actions 0x02/0x08 assemble the sixteen-bit old-q from
+  oscillator words 11 and 17.  Fixed LOAD projections capture only the live
+  controls `{snd_id, wt, wave, det, buzz}` and old controls
+  `{wave, mode, alternate}`, another sixteen bits, from words 14/22/25/26.
+  The current and secondary ARAM adjacent requests retain only their six-bit
+  phase index: the low ten phase bits can affect neither address, and q16 is
+  transformed before its index is captured.  The exact adapter bound is thus
+  **38 flops**.  The first RTL lint made this algebra visible by reporting
+  `phase_hold[9:0]` unused; no synthesis result or committed RTL used the
+  earlier 48-bit estimate.  The adapter does not capture current phase,
+  phase2, old phase, either increment, last-context restart fields or `dq17`;
+  restart/noise/detune updates remain H-D.
 - **Addressed issue stream:** while owner zero is active, common-HOLD actions
   override the physical read address to word 10, so the final pre-W0 HOLD
   primes current phase without adding a semantic READ.  W0 overrides the next
@@ -1232,7 +1235,7 @@ git history; do not repeat them without the recorded changed condition.
   no variable role index or result mux.  The reciprocal EBR and both following
   registered stages remain the same service rather than being copied.
 - **Hold contract:** stored common-HOLD instructions are elapsed service clocks
-  and continue to execute.  An external executor hold instead freezes the 48
+  and continue to execute.  An external executor hold instead freezes the 38
   adapter bits, all waveform context/reciprocal/second-stage registers, ARAM
   `seq_q` and the synthesis-borrow replay bit together with PC/IR/slot and
   `state_q`.  Gating request strobes alone is invalid: the current waveform
@@ -1266,7 +1269,7 @@ git history; do not repeat them without the recorded changed condition.
   retained cores and (B) the same wrapper with retained services against an
   identically wrapped no-adapter baseline.  Row A must retain exactly 23
   executor carries, two executor EBRs and 34 controller/datapath flops plus the
-  exact 48 adapter flops.  Reject any adapter arithmetic, memory, result state
+  exact 38 adapter flops.  Reject any adapter arithmetic, memory, result state
   or scratch traffic, any floor above **810 cells**, placement above **834
   LCs**, or routed timing below 28.125 MHz.  That ceiling leaves 2,621 floor
   cells of the corrected 3,431-cell 6k replacement budget for H-D/H-E.
@@ -1277,7 +1280,7 @@ git history; do not repeat them without the recorded changed condition.
   sample, render or whole-PSG area equivalence may be claimed.
 - **Repeat only if:** the owner-zero LOAD order, physical read-enable contract,
   W0--W5 cadence, persistent field layout, waveform latency, ARAM replay or
-  restart ownership changes.  Do not replace the 48-bit bound with captured
+  restart ownership changes.  Do not replace the 38-bit bound with captured
   phase arrays, a scratch context queue, variable role selector or second wave
   implementation.
 
@@ -1338,7 +1341,7 @@ git history; do not repeat them without the recorded changed condition.
       one synchronous state-memory transaction harness before adding service
       semantics or touching generic PSG composition.
 - [ ] R.84H-C: stream phase words through existing physical state reads and
-      retain exactly 48 wave/ARAM context bits; prove the unchanged production
+      retain exactly 38 wave/ARAM context bits; prove the unchanged production
       image's W0--W5 cadence and hold recovery without adding semantic state
       transactions, result storage or generic composition.
 
