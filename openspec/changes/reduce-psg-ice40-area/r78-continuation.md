@@ -2831,6 +2831,24 @@ git history; do not repeat them without the recorded changed condition.
   claim persistent/fold/dry equivalence.  Commit that address/control boundary
   separately before any value equations; reject if it requires a second
   action schedule, a result register or a generic walker edit.
+- **C2-C-B active hypothesis:** starting from clean accepted source-contract
+  commit `3e7f37e`, generate one 128-entry action-indexed control map directly
+  beside `psg_exec_binding_v1`.  Each eight-bit entry may carry only a fixed-
+  commit-valid bit, the six-bit fixed destination and one CAP_W51 active-bank
+  read flag; it carries no write data, operand, sampled value, phase or PC.
+  A new bench-only adapter shall index that map with the real candidate
+  controller action, qualify it with active, owner, hold and op, and expose
+  only commit-valid/destination plus CAP_W51's OP_EXEC word-26-to-active-26/30
+  read override.  Execute the complete 512-word candidate controller with
+  both parameter banks, all eight slots and a held edge at every one of the
+  eighteen fixed commit actions plus CAP_W51.  Require every observed binding
+  to equal the generated JSON manifest, every unbound action to remain inert,
+  and controller PC/IR/state-q/termination counts to remain unchanged.  Scope
+  is `tools/psg_exec_model.py`, one new isolated RTL testbench, this ledger and
+  generated `build/` evidence only.  Do not edit `psg_execmove.sv`, accepted
+  image, production/generic PSG or Tang files.  Reject if the decoder needs a
+  PC table, semantic write data, a working-record/result register, an extra
+  state transaction, or cannot suppress and resume every output under hold.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
