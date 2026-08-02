@@ -1090,6 +1090,53 @@ git history; do not repeat them without the recorded changed condition.
   48/49 and no hidden record mirror.  Price the fixed decoder before adding
   wave, ARAM, multiplier, detune or fold arithmetic semantics.
 
+### R.84H-B - Prove the owner-zero state transaction boundary
+
+- **Hypothesis:** H-A's literal program already carries every fixed slot/word
+  address; the only owner-zero address logic needed before service semantics
+  is selecting active sounding words 24..27 or 28..31 from `spar_bank`.
+  Execute the production image against one real synchronous 8x64x16 memory,
+  observe each returned word on its following consume action and inject
+  synthetic semantic write data only through the controller's existing
+  single `state_wd_i` boundary.  This should prove the complete memory
+  transaction graph without copying the oscillator record into another
+  register or scratch file and without selecting any service result.
+- **Scope:** `rtl/psg_execmove.sv`, a new owner-zero production-image
+  synchronous transaction test, the isolated executor target only if its
+  fixed decoder connection changes, `tools/psg_exec_model.py` only for
+  machine-checkable transaction metadata, and this ledger.  The 512-word
+  image, generic `psg.sv`, `psg_walk`, `psg_seq`, sample-service semantics,
+  fold arithmetic and public-state arbitration remain unchanged.
+- **Grounded transaction count:** one complete bank run is the accepted 782
+  clocks and issues exactly **172 reads / 158 writes**: 144 persistent reads
+  across eight slots plus 28 literal fold reads; 128 persistent oscillator
+  writes, sixteen leaf writes to words 48/49 and fourteen fold-result writes.
+  Each slot writes words 10..23, then deliberately writes 15 and 14 again,
+  then writes leaf low/high 48/49.  The seven fold nodes read four word pairs
+  and write two words each at their literal source/destination slots.
+- **Required proof:** run the full owner-zero image for both `spar_bank`
+  polarities from distinct data in every slot and word.  Check the exact
+  issue address, one-cycle returned `state_q`, consuming action, write slot,
+  write word and injected data for all transactions; distinguish every slot;
+  prove active parameter reads select 24..27 or 28..31; prove both occurrences
+  and final overwrite order of words 14/15; prove leaf and intermediate word
+  48/49 traffic follows H-A's seven-node tree; and prove hold freezes the
+  program and causes no memory transaction.  The generated image must remain
+  byte-identical.
+- **Physical gate:** the retained decoder adds no sequential state, carry,
+  EBR, general register index, action-selected data source or variable
+  arithmetic.  Against H-A's 530 LUT4 / 23 carry / 34 flop / 26 unpackable /
+  two-EBR / 556-floor / 561-placed baseline, reject if total carries, flops or
+  EBRs grow, if the floor exceeds **580 cells**, if seed-1 placement exceeds
+  **585 LCs**, or if routed timing falls below 28.125 MHz.  Passing proves an
+  address/data transaction boundary only; it is not sample semantics,
+  schedule equivalence or a generic-PSG area result.
+- **Repeat only if:** the per-slot state layout, active-bank convention,
+  synchronous read latency, H-A literal fold graph or controller write-data
+  boundary changes.  Do not satisfy this row with a second record image,
+  owner-zero working-register bundle, action-selected service mux or inferred
+  transaction trace that does not execute the production image.
+
 ### Active task queue
 
 - [x] Prove exact waveform formulae, cycle state, widths and `/4` schedule.
