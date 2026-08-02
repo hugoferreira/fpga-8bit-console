@@ -411,6 +411,22 @@ def sec_tzpow() -> None:
                f"{len(pts):,d} points incl. every multiple of {step} with "
                f"neighbours to +/-{span:,d}")
 
+    wave_ok = True
+    for bits in range(1 << 18):
+        value = bits - (1 << 18) if bits & (1 << 17) else bits
+        for tri_core in (False, True):
+            for secondary in (False, True):
+                current_k = ((3 if secondary else 2) if tri_core
+                             else (1 if secondary else 0))
+                selected_k = ((3 if secondary else 2) if tri_core
+                              else int(secondary))
+                wave_ok &= ((value + ((1 << current_k) - 1
+                                      if value < 0 else 0)) >> current_k
+                            == (value + ((1 << selected_k) - 1
+                                         if value < 0 else 0)) >> selected_k)
+    report("tzpow.wave_selected_shift", wave_ok,
+           "one selected k preserves all 1,048,576 signed18/context tuples")
+
 
 # --- blend: the crossfade with one multiply ---------------------------------
 

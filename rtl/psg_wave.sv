@@ -208,9 +208,9 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   end
 
   wire tri_core = (wsel_r2 == 3'd0) || (wsel_r2 == 3'd7);
-  assign z_eval =
-      tri_core ? (wsec_r2 ? tzs(z_prim, 2'd3) : tzs(z_prim, 2'd2))
-               : (wsec_r2 ? tzs(z_prim, 2'd1) : z_prim);
+  wire [1:0] z_shift = tri_core ? (wsec_r2 ? 2'd3 : 2'd2)
+                                : {1'b0, wsec_r2};
+  assign z_eval = tzs(z_prim, z_shift);
 
   // Per-wave secondary-oscillator increments. All expressions implement the
   // integer forms directly, including their ceiling-biased corrections.
