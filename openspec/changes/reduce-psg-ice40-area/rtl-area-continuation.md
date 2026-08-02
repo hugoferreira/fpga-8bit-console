@@ -23,28 +23,29 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: none; H001--H003 and H005 accepted.
-- Next hypothesis ID: H007.
+- Active hypothesis: none; H001--H003, H005, and H007 accepted.
+- Next hypothesis ID: H008.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
-  `build/experiments/h005/` synthesis, placement, click, recovery, and smoke
-  artifacts.
-- Latest decision: H005 accepted. Its nine-carry mapped reduction is
-  deterministic; the four-LC placed improvement is positive but below the
-  known roughly 60-LC placement-sensitivity band and is not claimed as robust.
+  `build/experiments/h005/` and `build/experiments/h007/` synthesis,
+  placement, click, recovery, and smoke artifacts.
+- Latest decision: H007 accepted. Its 46-LUT4, 13-carry, and two-flop mapped
+  reductions are deterministic; the 57-LC placed improvement is positive but
+  remains just inside the known roughly 60-LC placement-sensitivity band and
+  is not claimed as robust.
 - Latest rejected variant: H005's `< 3` page suffix maps smaller but fails the
   routed 112.5-MHz fast-clock constraint at 109.12 MHz. H004 remains the last
   rejected production hypothesis family; H006 is rejected before production
   because its direct step-count bits map larger than the current ternary.
-- Best accepted result: 6,568 LUT4s, 1,566 carries, 1,478 flops, 14 EBRs;
-  seed-1 7,449/7,680 LCs; 137.65 MHz fast and 31.16 MHz PSG.
+- Best accepted result: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs;
+  seed-1 7,392/7,680 LCs; 134.70 MHz fast and 30.95 MHz PSG.
 - Last updated: 2026-08-02.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H007 resume audit and record one new,
+- Next permitted experiment: perform the H008 resume audit and record one new,
   bounded, source-exact generic-RTL hypothesis before editing RTL.
-- Required verification for any accepted H007: focused algebraic or exhaustive
+- Required verification for any accepted H008: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -64,6 +65,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H004 | rejected | Do not narrow the square/pulse threshold comparator: Yosys already removes the aligned low bits. |
 | H005 | accepted | Keep the five-bit page subtract and explicit upload-page decode; the durable result is nine fewer carries with no placed regression. |
 | H006 | rejected | Keep the existing multiplier step-count ternary: it already maps to one LUT, while direct result-bit logic needs two. |
+| H007 | accepted | Keep the CLK_HZ-derived signed width; it deterministically removes 46 LUT4s, 13 carries, and two flops. |
 
 ## Hypothesis H001
 
@@ -296,6 +298,57 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - **Repeat only if:** request modes, step counts, mapper lowering, or the
   surrounding registered load contract changes materially.
 
+## Hypothesis H007
+
+- **ID:** H007.
+- **Hypothesis:** `psg_timing.divd` always lies between
+  `-(CLK_HZ-22050)` and 22,049, so `$clog2(CLK_HZ)+1` signed bits preserve the
+  complete recurrence. The iCE40 target needs 26 bits at 18.75 MHz rather than
+  the fixed 28, which should retire two accumulator flops and carry positions
+  while making the parameter contract explicit.
+- **Scope:** `rtl/psg_timing.sv`, a permanent range/recurrence proof over every
+  configured PSG clock, focused timing tests, whole-PSG iCE40 mapping, the
+  complete H005 acceptance battery if the mapped result improves, and this
+  ledger. No sequencer, walker, waveform, interface, EBR, R.84, or tolerance
+  change.
+- **Baseline:** accepted H005 production commit `5a5a0db` plus docs-only H006
+  `be8d984`: 6,568 LUT4s, 1,566 carries, 1,478 flops, 14 EBRs; seed-1 7,449
+  LCs; 137.65 MHz fast and 31.16 MHz PSG.
+- **Change:** derive the signed accumulator width as `$clog2(CLK_HZ)+1`,
+  type both recurrence constants to that width, and address the sign bit by
+  `DIV_W-1`. Add a permanent proof over every configured PSG clock.
+- **Result:** the complete `tools/psg_hw_forms.py` passes. Its exact interval
+  proof gives widths 23 at 3,506,580 Hz, 26 at 18.75/22.5/28.125 MHz, and 28
+  at 112.5 MHz, and the recurrence remains inside its signed range. Full and
+  PREVIEW lint passed. `make test-psg` passed the fidelity gate, 93 analysis
+  tests, and the complete structural suite at 524/850 sample clocks and
+  4,008/5,103 tick clocks with zero late flips. The 59-case 18.75-MHz
+  regression was byte-exact. `/4`, `/5`, and `/6` budget runs passed at
+  572/1,275 and 5,757/7,654, 572/1,020 and 4,737/6,123, and 524/850 and
+  4,008/5,103 sample/tick clocks, with zero lost writes, overruns, or late
+  flips. `make test-clocks` passed. All eight canonical PREVIEW checks at
+  1,275 and 159 clocks/sample passed at 36/38 voiced windows, rounded 95%,
+  for masks 7/1/2/4. Synthetic and reconstructed-Celeste recovery probes
+  passed with no coalesced, delayed, or dropped samples. Exact hardware and
+  PREVIEW SFX-10 renders were active and `click-v1` found zero clicks. A
+  five-frame Celeste smoke again had 2,179/3,668 off-centre samples, range
+  -22,013..9,151, and 1,068 distinct levels. Strict OpenSpec validation and
+  `git diff --check` passed.
+- **Physical result:** canonical seed-1 mapping changed 6,568 LUT4 / 1,566
+  carry / 1,478 FF / 14 EBR / 7,449 placed LCs to 6,522 LUT4 / 1,553 carry /
+  1,476 FF / 14 EBR / 7,392 placed LCs. Routed clocks changed from 137.65 and
+  31.16 MHz to 134.70 and 30.95 MHz; both remain above their 112.50 and
+  18.75-MHz constraints. The 46-LUT4, 13-carry, and two-flop reductions are
+  deterministic; the 57-LC improvement remains just inside placement
+  sensitivity and is not overclaimed.
+- **Decision:** accepted. It makes the parameter-dependent range contract
+  explicit, improves three deterministic mapped resources, reduces seed-1
+  placement, preserves every fidelity gate, retains 14 EBRs, and keeps both
+  routed clocks above constraint.
+- **Repeat only if:** a rejected width derivation may be retried only after
+  supported clock parameters, sample rate, recurrence representation, or
+  mapper registered-width inference changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -320,15 +373,18 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h005/celeste-audio.{hex,bin}` | reconstructed from `src/celeste/audio.inlay.asm` | 4,608-byte recovery-probe audio image. |
 | `build/experiments/h005/clicks/{hardware,preview}.wav` | exact SFX-10 renders at 22,050 Hz | `click-v1` zero-click evidence. |
 | `build/experiments/h005/celeste-smoke.ppm` | five-frame headless Celeste run | Boot and active/nonconstant audio smoke. |
+| `build/experiments/h007/candidate.{synth,pnr}.log` | `PATH=/opt/homebrew/bin:$PATH make synth-psg` with H007 | Accepted mapping, seed-1 placement, and final routed timing. |
+| `build/experiments/h007/clicks/{hardware,preview}.wav` | exact SFX-10 renders at 22,050 Hz | `click-v1` zero-click evidence. |
+| `build/experiments/h007/celeste-smoke.ppm` | five-frame headless Celeste run | Boot and active/nonconstant audio smoke. |
 
 ## Handoff
 
-- Next allowed experiment: H007 only after its hypothesis row and baseline are
+- Next allowed experiment: H008 only after its hypothesis row and baseline are
   recorded; it must be a new generic-RTL mechanism outside R.84 ownership.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
-- Verification still missing: none for accepted H001--H003 or H005. H004 was
-  rejected before production RTL; H005's timing-failing spelling remains
-  rejected. H006 was rejected before production RTL.
+- Verification still missing: none for accepted H001--H003, H005, or H007.
+  H004 and H006 were rejected before production RTL; H005's timing-failing
+  spelling remains rejected.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.

@@ -21,6 +21,7 @@ Sections:
   dq    - the seven per-wave dq constants as add/ceil forms
   amp   - G, the detune boost and vibrato as pure shift-adds
   aram  - page-local audio-upload address and range decode
+  timing - parameter-derived fractional sample-accumulator width
   bound - exact worst-case interval propagation through the whole
           pipeline (comb feedback to its fixpoint), and the int16 verdict
           for the mix bus (buffer SIZES live in tools/psg_buffers.py)
@@ -681,10 +682,49 @@ def sec_aram() -> None:
            "{page-17, byte} == address-$3100 for every valid upload")
 
 
+def sec_timing() -> None:
+    print("timing: parameter-derived fractional sample-accumulator width")
+    sample_hz = 22_050
+    clocks = (3_506_580, 18_750_000, 22_500_000,
+              28_125_000, 112_500_000)
+    widths = []
+    invariant_ok = True
+    recurrence_ok = True
+
+    for clk_hz in clocks:
+        width = (clk_hz - 1).bit_length() + 1
+        widths.append(f"{clk_hz}:{width}")
+        signed_lo = -(1 << (width - 1))
+        signed_hi = (1 << (width - 1)) - 1
+        down = clk_hz - sample_hz
+
+        # divd is always in [-down, sample_hz-1]. Both recurrence arms map
+        # that interval back into itself, so checking the four endpoints is
+        # an exact interval proof rather than a sampled trajectory.
+        invariant_ok &= signed_lo <= -down
+        invariant_ok &= sample_hz - 1 <= signed_hi
+        invariant_ok &= -down <= -down + sample_hz <= sample_hz - 1
+        invariant_ok &= -down <= -1 + sample_hz <= sample_hz - 1
+        invariant_ok &= -down <= 0 - down <= sample_hz - 1
+        invariant_ok &= -down <= sample_hz - 1 - down <= sample_hz - 1
+
+        divd = -down
+        for _ in range(20_000):
+            sample = divd >= 0
+            divd = divd - down if sample else divd + sample_hz
+            recurrence_ok &= -down <= divd < sample_hz
+            recurrence_ok &= signed_lo <= divd <= signed_hi
+
+    report("timing.divd_width", invariant_ok,
+           "configured CLK_HZ:DIV_W = " + ", ".join(widths))
+    report("timing.divd_recurrence", recurrence_ok,
+           "exact invariant endpoints plus 20,000 clocks per configuration")
+
+
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
             "svc": sec_svc, "tzpow": sec_tzpow, "blend": sec_blend,
             "dq": sec_dq, "amp": sec_amp, "aram": sec_aram,
-            "bound": sec_bound,
+            "timing": sec_timing, "bound": sec_bound,
             "csd": sec_csd, "rom": sec_rom}
 
 
