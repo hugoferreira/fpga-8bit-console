@@ -1538,6 +1538,19 @@ git history; do not repeat them without the recorded changed condition.
   semantic model pass.  Accept this two-file service-freeze prerequisite only;
   the 70-bit adapter, multiplier freeze, semantic RTL and physical cost remain
   unproved.
+- **Multi-pumped hold-control RTL foundation:** `psg_mulmp_core` now freezes
+  the slow request payload/toggle, acknowledge synchronizer and sequencer pad
+  together with the fast request synchronizer, radix recurrence and return
+  toggle.  The source-compatible `psg_mulmp` wrapper ties freeze inactive, so
+  the generic caller and its named consume-gap contract remain unchanged.  The
+  retained 6,020-transaction radix-2/radix-4 comparison passes, as do all ten
+  related-clock offsets.  A new gate freezes every radix-2 recurrence count
+  8..1 and the completed-result acknowledge crossing for eighteen fast clocks;
+  all payload, synchronizer, recurrence, toggle, result and busy state remains
+  bit-stable and each transaction resumes to the exact positioned product.
+  Full and PREVIEW generic lint and isolated iCE40 mapping pass.  Accept this
+  two-file multiplier-freeze prerequisite only; semantic sample RTL and
+  physical H-D rows remain unproved.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

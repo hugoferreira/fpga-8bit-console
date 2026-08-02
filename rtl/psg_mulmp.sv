@@ -11,10 +11,11 @@
 `ifndef PSG_MULMP_SV
 `define PSG_MULMP_SV
 
-module psg_mulmp #(parameter int RADIX_BITS = 1) (
+module psg_mulmp_core #(parameter int RADIX_BITS = 1) (
     input  bit                 clk,
     input  bit                 fastclk,
     input  bit                 reset,
+    input  logic               freeze,
 
     input  logic               mul_start,
     input  logic signed [24:0] mul_start_a,
@@ -64,7 +65,7 @@ module psg_mulmp #(parameter int RADIX_BITS = 1) (
       ack_meta <= 1'b0;
       ack_sync <= 1'b0;
       seq_pad  <= 3'd0;
-    end else begin
+    end else if (!freeze) begin
       ack_meta <= ack_tgl;
       ack_sync <= ack_meta;
 
@@ -140,7 +141,7 @@ module psg_mulmp #(parameter int RADIX_BITS = 1) (
       req_sync <= 1'b0;
       ack_tgl  <= 1'b0;
       m_cnt    <= 4'd0;
-    end else begin
+    end else if (!freeze) begin
       req_meta <= req_tgl;
       req_sync <= req_meta;
 
@@ -161,13 +162,42 @@ module psg_mulmp #(parameter int RADIX_BITS = 1) (
 
 `ifndef SYNTHESIS
   always @(posedge clk) begin
-    if (!reset && mul_start && m_busy)
+    if (!reset && !freeze && mul_start && m_busy)
       $fatal(1, "psg_mulmp: request while a transaction is outstanding");
-    if (!reset && seq_pad == 0 && m_busy)
+    if (!reset && !freeze && seq_pad == 0 && m_busy)
       $fatal(1, "psg_mulmp: true result missed the padded sequencer deadline");
   end
 `endif
 
+endmodule
+
+// The legacy PSG has no executor-wide external hold.  Keep its interface and
+// named consume-gap constants stable while H-D instantiates the freeze-aware
+// core so both related clock domains stop on one transaction boundary.
+module psg_mulmp #(parameter int RADIX_BITS = 1) (
+    input  bit                 clk,
+    input  bit                 fastclk,
+    input  bit                 reset,
+
+    input  logic               mul_start,
+    input  logic signed [24:0] mul_start_a,
+    input  logic [11:0]        mul_start_b,
+    input  logic [1:0]         mul_start_mode,
+    input  logic               mul_start_short,
+
+    output logic [33:0]        m_res,
+    output logic               m_busy,
+    output logic               m_seq_busy
+);
+  localparam int NORMAL_CONSUME_GAP = 5;
+  localparam int SHORT_CONSUME_GAP  = 4;
+
+  psg_mulmp_core #(.RADIX_BITS(RADIX_BITS)) u_core(
+    .clk(clk), .fastclk(fastclk), .reset(reset), .freeze(1'b0),
+    .mul_start(mul_start), .mul_start_a(mul_start_a),
+    .mul_start_b(mul_start_b), .mul_start_mode(mul_start_mode),
+    .mul_start_short(mul_start_short), .m_res(m_res), .m_busy(m_busy),
+    .m_seq_busy(m_seq_busy));
 endmodule
 
 `endif

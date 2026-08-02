@@ -18,10 +18,12 @@ module psg_mulmp_tb;
   logic [11:0]        b = 0;
   logic [1:0]         mode = 0;
   logic               short_req = 0;
+  logic               freeze = 0;
 
-  wire [33:0] ref_res, r2_res, r4_res;
-  wire ref_busy, r2_busy, r4_busy;
+  wire [33:0] ref_res, r2_res, r4_res, hold_res;
+  wire ref_busy, r2_busy, r4_busy, hold_busy;
   wire r2_seq_busy, r4_seq_busy;
+  wire hold_seq_busy;
 
   psg_mulsvc ref_dut(
       .clk(clk), .reset(reset),
@@ -40,6 +42,12 @@ module psg_mulmp_tb;
       .mul_start(start), .mul_start_a(a), .mul_start_b(b),
       .mul_start_mode(mode), .mul_start_short(short_req),
       .m_res(r4_res), .m_busy(r4_busy), .m_seq_busy(r4_seq_busy));
+
+  psg_mulmp_core #(.RADIX_BITS(1)) hold_dut(
+      .clk(clk), .fastclk(fastclk), .reset(reset), .freeze(freeze),
+      .mul_start(start), .mul_start_a(a), .mul_start_b(b),
+      .mul_start_mode(mode), .mul_start_short(short_req),
+      .m_res(hold_res), .m_busy(hold_busy), .m_seq_busy(hold_seq_busy));
 
   int errors = 0;
   int cases = 0;
@@ -109,7 +117,94 @@ module psg_mulmp_tb;
                av, bv, mv, sv, r4_res, ref_res);
         errors++;
       end
+      if (hold_res !== ref_res) begin
+        $error("enabled-core mismatch A=%0d B=%0d mode=%0d short=%0b got=%h ref=%h",
+               av, bv, mv, sv, hold_res, ref_res);
+        errors++;
+      end
       cases++;
+    end
+  endtask
+
+  task automatic check_frozen_state;
+    logic [17:0] saved_req_a;
+    logic [12:0] saved_req_b;
+    logic [3:0] saved_req_steps;
+    logic saved_req_tgl, saved_ack_tgl;
+    logic saved_ack_meta, saved_ack_sync, saved_req_meta, saved_req_sync;
+    logic [2:0] saved_seq_pad;
+    logic [33:0] saved_m_p;
+    logic [3:0] saved_m_cnt;
+    logic saved_busy, saved_seq_busy;
+    begin
+      saved_req_a = hold_dut.req_a;
+      saved_req_b = hold_dut.req_b;
+      saved_req_steps = hold_dut.req_steps;
+      saved_req_tgl = hold_dut.req_tgl;
+      saved_ack_tgl = hold_dut.ack_tgl;
+      saved_ack_meta = hold_dut.ack_meta;
+      saved_ack_sync = hold_dut.ack_sync;
+      saved_req_meta = hold_dut.req_meta;
+      saved_req_sync = hold_dut.req_sync;
+      saved_seq_pad = hold_dut.seq_pad;
+      saved_m_p = hold_dut.m_p;
+      saved_m_cnt = hold_dut.m_cnt;
+      saved_busy = hold_busy;
+      saved_seq_busy = hold_seq_busy;
+      repeat (18) begin
+        @(posedge fastclk);
+        #1;
+        if (hold_dut.req_a !== saved_req_a
+            || hold_dut.req_b !== saved_req_b
+            || hold_dut.req_steps !== saved_req_steps
+            || hold_dut.req_tgl !== saved_req_tgl
+            || hold_dut.ack_tgl !== saved_ack_tgl
+            || hold_dut.ack_meta !== saved_ack_meta
+            || hold_dut.ack_sync !== saved_ack_sync
+            || hold_dut.req_meta !== saved_req_meta
+            || hold_dut.req_sync !== saved_req_sync
+            || hold_dut.seq_pad !== saved_seq_pad
+            || hold_dut.m_p !== saved_m_p || hold_dut.m_cnt !== saved_m_cnt
+            || hold_busy !== saved_busy || hold_seq_busy !== saved_seq_busy)
+          $fatal(1, "multi-pumped transaction aged during freeze");
+      end
+    end
+  endtask
+
+  task automatic run_freeze_case(input int target_count,
+                                 input logic freeze_ack_crossing);
+    logic signed [17:0] av;
+    logic [11:0] bv;
+    logic [33:0] expected;
+    begin
+      av = -18'sd123457;
+      bv = 12'd253;
+      expected = 34'((18'(-av) * bv) << 4);
+      @(negedge clk);
+      a = {{7{av[17]}}, av};
+      b = bv;
+      mode = 2'd0;
+      short_req = 1'b0;
+      start = 1'b1;
+      @(negedge clk);
+      start = 1'b0;
+      if (freeze_ack_crossing)
+        wait (hold_dut.m_cnt == 0
+              && hold_dut.ack_tgl != hold_dut.ack_sync);
+      else
+        wait (hold_dut.m_cnt == 4'(target_count));
+      @(negedge fastclk);
+      #1;
+      freeze = 1'b1;
+      check_frozen_state();
+      @(negedge fastclk);
+      #1;
+      freeze = 1'b0;
+      wait (!hold_busy);
+      @(negedge clk);
+      if (hold_res !== expected)
+        $fatal(1, "held multiplier result mismatch count=%0d ack=%0b got=%h expected=%h",
+               target_count, freeze_ack_crossing, hold_res, expected);
     end
   endtask
 
@@ -150,6 +245,10 @@ module psg_mulmp_tb;
       av = 18'($urandom);
       run_case(av, legal_b(mv, sv, $urandom), mv, sv);
     end
+
+    for (int target = 8; target > 0; target--)
+      run_freeze_case(target, 1'b0);
+    run_freeze_case(0, 1'b1);
 
     if (errors == 0)
       $display("psg_mulmp: PASS %0d transactions, true busy max r2=%0d short=%0d r4=%0d PSG clocks",
