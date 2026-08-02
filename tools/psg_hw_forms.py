@@ -806,6 +806,25 @@ def sec_noise() -> None:
            f"signed16 sign equals 3*g <= dp+497 for all 67,108,864 pairs; "
            f"delta range [{delta_lo}, {delta_hi}]")
 
+    # g[12] implies 3*g >= 12288 > max(dp+497)=8688.  Reject that half of
+    # the domain directly; the remaining signed delta fits in 15 bits.
+    g_lo = g & 0xfff
+    g_lo3 = 3 * g_lo
+    kick15_ok = True
+    delta15_lo = 1 << 30
+    delta15_hi = -(1 << 30)
+    for dp in range(1 << 13):
+        delta15 = dp + 497 - g_lo3
+        signed15 = ((delta15 + (1 << 14)) & 0x7fff) - (1 << 14)
+        candidate = (g < (1 << 12)) & (signed15 >= 0)
+        kick15_ok &= np.array_equal(candidate, g3 <= dp + 497)
+        delta15_lo = min(delta15_lo, int(delta15.min()))
+        delta15_hi = max(delta15_hi, int(delta15.max()))
+    report("noise.kick_highbit_delta15", kick15_ok,
+           f"g[12] reject plus signed15 sign equals the predicate for all "
+           f"67,108,864 pairs; low-half delta range "
+           f"[{delta15_lo}, {delta15_hi}]")
+
 
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
             "svc": sec_svc, "tzpow": sec_tzpow, "blend": sec_blend,
