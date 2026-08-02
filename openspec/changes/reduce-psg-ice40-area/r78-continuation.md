@@ -2276,6 +2276,37 @@ git history; do not repeat them without the recorded changed condition.
   the same arithmetic behind different names, if ring/dampen/fold state is
   absent, or if any root exceeds the already-proved frame capacity/lifetime.
   Only a complete manifest may drive the atomic no-oracle executor rewrite.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-A result and decision:** accepted only as a
+  bounded executable injection inventory, not as B1's physical manifest.  It
+  mechanically discovers the existing 24 `issue()` launch sites and six
+  direct trace uses, requires one of 30 typed rows for each, and reduces only
+  exact retained duplicates to 27 value groups.  Every row names a source
+  equation, production birth/last-use edge, coarse service/frame/state owner
+  and final consumer; no producer may name Trace or an oracle.  The audit
+  corrected two previously hidden physical facts: interpolation services hold
+  a nineteen-bit magnitude while signed base/sign remain in the frame, and
+  W75--W84 retains a 23-bit blend product rather than a seventeen-bit filtered
+  sample.  PC2E is the explicit blend-count birth.  The full model and image
+  immutability gate pass; accepted image and all RTL remain untouched.
+- **B1-A exclusion:** owner strings are classifications, not literal slice
+  tuples.  The inventory does not sweep bit collisions or per-edge capacity.
+  `leaf_commit` still compresses audible, sample_f, q26/q30 damp, prior
+  lowpass, filtered result, lp_final and word14/15 into prose.  Ring write and
+  persistent ring position are absent; the LFSR roots omit W0's retained byte
+  through the word11 merge; `record_commit` hides eighteen timed merges; and
+  fold membership does not bind word48/49 through A/B/N slices to dry16.  An
+  independent audit rejects any broader B1 claim for exactly these reasons.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B next permitted hypothesis:** expand the 27
+  values plus the omitted persistent transitions into literal
+  `{container,lsb,width}` pieces at every birth/replacement/death edge.  Split
+  all eighteen record merges and the complete W75--word15 late chain; add
+  playing-only ring write, ring-position advance, W0 LFSR-byte retention and
+  every fold word48/49/dry transfer.  Reuse A1/D2F-C-A slice names only after
+  mechanically matching their producer and guard, then sweep ownership and
+  capacity at every production edge for built-in, wavetable, silent, stopped,
+  reverb and dampen classes.  Reject before executor code if any path exceeds
+  A18+B18+N17+O17 plus H-C, if a service-resident bit is double-counted as
+  frame state, or if a prose bundle hides independently timed values.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

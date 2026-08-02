@@ -4131,6 +4131,200 @@ def validate_sample_d2fca_manifest(candidate: list[int],
             "FOLD_FINISH/dry publication")
 
 
+def validate_sample_b1_atomic_root_manifest(candidate: list[int],
+                                            actions: Actions) -> str:
+    """Inventory every internal SampleTrace replacement root before typing."""
+    source_text = Path(__file__).read_text()
+    machine = source_text[source_text.index("\nclass SampleImageMachine:"):
+                          source_text.index("\ndef make_sample_case(")]
+    issue_keys = re.findall(r'self\.issue\(\s*"([^"]+)"', machine)
+    expected_issue_keys = (
+        "dq_live", "noise_old", "noise_old_hold", "dq_live_hold",
+        "dq_old", "noise_live", "wave_0", "aram_0", "wave_1",
+        "aram_1", "wave_2", "aram_2", "wave_3", "aram_3",
+        "mul_live", "mul_primary_interp", "mul_old_interp",
+        "mul_live_recip", "mul_live", "mul_old", "mul_arm_recip",
+        "mul_blend", "ring_current", "ring_old",
+    )
+    assert len(issue_keys) == len(expected_issue_keys) == 24
+    assert sorted(issue_keys) == sorted(expected_issue_keys)
+    for spelling in (
+            "expected = (self.trace.current_arm",
+            "record = decode_sample_record(self.trace.final_words)",
+            "self.leaf = self.trace.leaf",
+            "value = (self.trace.final_words[index]",
+            "self.lfsr = self.trace.next_lfsr",
+            "self.lfsr2 = self.trace.next_lfsr2"):
+        assert spelling in machine
+
+    events = (
+        "LOAD", "NZ_OLD", "NZ_LIVE", "W0", "W1", "W2", "W3",
+        "W4", "W5", "W6", "W15", "W26", "W27", "PC2E", "W40", "W51",
+        "RING1", "RING2", "RING3", "W75", "W84", "STORES", "SLOT",
+        "FOLD", "DONE",
+    )
+    event = {name: index for index, name in enumerate(events)}
+
+    @dataclass(frozen=True)
+    class Root:
+        name: str
+        trace_key: str
+        group: str
+        width: int
+        producer: str
+        born: str
+        dead: str
+        owner: str
+        consumer: str
+
+    def root(name: str, trace_key: str, group: str, width: int,
+             producer: str, born: str, dead: str, owner: str,
+             consumer: str) -> Root:
+        return Root(name, trace_key, group, width, producer, born, dead,
+                    owner, consumer)
+
+    roots = (
+        root("dq_live_issue", "dq_live", "dq_live", 17,
+             "dqsvc(eff_inc,wavetable,wave,detune)", "LOAD", "NZ_LIVE",
+             "service:dq", "NZ_LIVE fanout"),
+        root("noise_old_issue", "noise_old", "noise_old_step", 17,
+             "mul(nz_j(selected_old_inc),noise_draw(lfsr2))",
+             "NZ_OLD", "NZ_LIVE", "service:mul", "NZ_LIVE capture"),
+        root("noise_old_hold", "noise_old_hold", "noise_old_step", 17,
+             "retained noise_old_step", "NZ_LIVE", "W1", "frame:O17",
+             "old-noise pre-sum"),
+        root("dq_live_hold", "dq_live_hold", "dq_live", 17,
+             "retained dq_live", "NZ_LIVE", "W6", "frame:N17",
+             "final_phase2"),
+        root("dq_old_issue", "dq_old", "dq_old", 17,
+             "dqsvc(selected_old_inc,wavetable,old_wave,old_mode)",
+             "NZ_LIVE", "W5", "service:dq", "final_old_q"),
+        root("noise_live_issue", "noise_live", "noise_live_step", 17,
+             "mul(nz_j(eff_inc),noise_draw(lfsr))", "NZ_LIVE", "W0",
+             "service:mul", "noise lowpass update"),
+        root("wave_0_issue", "wave_0", "built_wave_0", 18,
+             "wave(current_phase,live_context,primary)", "W0", "W2",
+             "service:wave", "current pair"),
+        root("aram_0_issue", "aram_0", "aram_base_0", 8,
+             "aram[rec_base(snd_id)+current_index]", "W0", "W1",
+             "service:aram_seq_q", "primary_base A17:10"),
+        root("wave_1_issue", "wave_1", "built_wave_1", 18,
+             "wave(phase2,live_context,secondary)", "W1", "W3",
+             "service:wave", "current pair"),
+        root("aram_1_issue", "aram_1", "aram_adjacent_1", 8,
+             "aram[rec_base(snd_id)+current_index+1]", "W1", "W2",
+             "service:aram_seq_q", "primary delta"),
+        root("wave_2_issue", "wave_2", "built_wave_2", 18,
+             "wave(old_phase,old_context,primary)", "W2", "W4",
+             "service:wave", "old pair"),
+        root("aram_2_issue", "aram_2", "aram_base_2", 8,
+             "aram[rec_base(snd_id)+old_index]", "W2", "W3",
+             "service:aram_seq_q", "secondary_base B17:10"),
+        root("wave_3_issue", "wave_3", "built_wave_3", 18,
+             "wave(old_q,old_context,secondary)", "W3", "W5",
+             "service:wave", "old pair"),
+        root("aram_3_issue", "aram_3", "aram_adjacent_3", 8,
+             "aram[rec_base(snd_id)+old_index+1]", "W3", "W4",
+             "service:aram_seq_q", "secondary_adjacent A7:0"),
+        root("mul_live_w4", "mul_live", "built_live_gain_limb", 17,
+             "mul(abs(current_source),live_gain)", "W4", "W15",
+             "service:mul", "frame:N17 or current reciprocal"),
+        root("mul_primary_interp", "mul_primary_interp",
+             "primary_interp", 19,
+             "mul(abs(primary_delta),primary_fraction); base/sign in frame",
+             "W4", "W15", "service:mul+frame:A15", "wavetable sum"),
+        root("mul_old_interp", "mul_old_interp", "old_interp", 19,
+             "mul(abs(old_delta),old_fraction); base/sign in frame", "W15",
+             "W26", "service:mul+frame:O15", "wavetable sum"),
+        root("mul_live_recip", "mul_live_recip", "current_arm", 17,
+             "reciprocal_or_wave6(live_gain_limb,current_sign)",
+             "W15", "W27", "service:mul+frame:N17", "blend current"),
+        root("mul_live_w27", "mul_live", "wave_live_gain_limb", 17,
+             "mul(abs(primary_interp+old_interp/2),live_gain)",
+             "W27", "W40", "service:mul+frame:N17", "current reciprocal"),
+        root("mul_old_w27", "mul_old", "old_gain_limb", 17,
+             "mul(abs(old_source),selected_old_gain)", "W27", "W40",
+             "service:mul+frame:O17", "old reciprocal"),
+        root("mul_arm_recip", "mul_arm_recip", "arm_result", 17,
+             "reciprocal_or_wave6(selected_limb,selected_sign)",
+             "W40", "W51", "service:mul+frame:N17/O17", "blend arms"),
+        root("mul_blend", "mul_blend", "blend_product", 23,
+             "mul(abs(current_arm-old_arm),blend_count)",
+             "W75", "W84", "service:mul", "signed blend reconstruction"),
+        root("ring_current", "ring_current", "ring_current", 16,
+             "ring[current_slot,current_tap]", "RING1", "RING2",
+             "service:ring", "current comb"),
+        root("ring_old", "ring_old", "ring_old", 16,
+             "ring[current_slot,old_tap]", "RING2", "RING3",
+             "service:ring", "old comb"),
+        root("expected_arm", "direct:expected_arm", "arm_result", 17,
+             "retained current_arm or old_arm", "W51", "W51",
+             "frame:N17/O17", "remove circular assertion"),
+        root("blend_control", "direct:blend_control", "blend_count", 7,
+             "typed q17 blend_count", "PC2E", "W75", "frame:C7",
+             "blend launch or bypass"),
+        root("leaf_commit", "direct:leaf", "filtered_leaf", 17,
+             "audible ? dampen(blend(arms,rings,count),q14,q15,q26/30) : 0",
+             "W84", "STORES",
+             "frame:A17", "state words 48/49"),
+        root("record_commit", "direct:final_words", "record_commits", 16,
+             "typed fixed-edge phase/noise/gain/filter merge", "W0", "STORES",
+             "state:words10..23", "18 fixed writes"),
+        root("lfsr_next", "direct:next_lfsr", "lfsr_next", 15,
+             "{lfsr[13:0],lfsr[14]^lfsr[13]}", "W0", "SLOT",
+             "persistent:lfsr", "next slot"),
+        root("lfsr2_next", "direct:next_lfsr2", "lfsr2_next", 15,
+             "{lfsr2[13:0],lfsr2[14]^lfsr2[10]}", "W0", "SLOT",
+             "persistent:lfsr2", "next slot"),
+    )
+    assert len(roots) == 30
+    assert len({item.name for item in roots}) == 30
+    assert [item.trace_key for item in roots[:24]] == list(expected_issue_keys)
+    assert {item.trace_key for item in roots[24:]} == {
+        "direct:expected_arm", "direct:blend_control", "direct:leaf",
+        "direct:final_words", "direct:next_lfsr", "direct:next_lfsr2",
+    }
+    owner_prefixes = ("service:", "frame:", "state:", "persistent:")
+    for item in roots:
+        assert 0 < item.width <= (34 if item.owner.startswith("service:")
+                                  else 19)
+        assert item.born in event and item.dead in event
+        assert event[item.born] <= event[item.dead], item
+        assert item.owner.startswith(owner_prefixes), item
+        assert item.producer and item.consumer
+        assert "trace" not in item.producer.lower()
+        assert "oracle" not in item.producer.lower()
+
+    groups: dict[str, list[Root]] = {}
+    for item in roots:
+        groups.setdefault(item.group, []).append(item)
+    assert len(groups) == 27
+    assert {item.name for item in groups["dq_live"]} \
+        == {"dq_live_issue", "dq_live_hold"}
+    assert {item.name for item in groups["noise_old_step"]} \
+        == {"noise_old_issue", "noise_old_hold"}
+    assert {item.name for item in groups["arm_result"]} \
+        == {"mul_arm_recip", "expected_arm"}
+    assert all(len(items) == 1 for name, items in groups.items()
+               if name not in {"dq_live", "noise_old_step", "arm_result"})
+
+    # Bind the direct record root to the already-proved fixed-write image and
+    # require the fold/public skeleton to remain literal production topology.
+    action_names = {action.name
+                    for action in actions.by_owner["sample"].values()}
+    assert {f"STORE_{index}_{10 + index}" for index in range(14)} \
+        <= action_names
+    assert {"STORE_14_15", "STORE_15_14", "STORE_LEAF_LO",
+            "STORE_LEAF_HI", "FOLD_FINISH"} <= action_names
+    assert sum(word != 0 for word in candidate) == 222
+    return ("H-D2F-C-B3-B2-A2-A1-B1-A atomic-root inventory: 30 trace/direct "
+            f"replacement roots grouped into {len(groups)} exact values; "
+            "24 issue sites and six direct uses bound to production edges, "
+            "coarse service/frame/state owners and final consumers; no "
+            "Trace/oracle producer; literal slices, collision/capacity and "
+            "executor/value equivalence remain unproved")
+
+
 def reachable_to_idle(nodes: list[Node]) -> None:
     graph = {node.name: set(node.successors) for node in nodes}
     assert "S_IDLE" in graph
@@ -6084,6 +6278,8 @@ def main() -> int:
         sample_b3b2a_candidate, actions)
     sample_d2fca_manifest = validate_sample_d2fca_manifest(
         sample_b3b2a_candidate, actions)
+    sample_b1_roots = validate_sample_b1_atomic_root_manifest(
+        sample_b3b2a_candidate, actions)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -6158,6 +6354,7 @@ def main() -> int:
     print("sample B3-B2-A2-A1 services: " + sample_b3b2a2a1)
     print("sample D2F-B packing: " + sample_d2fb_packing)
     print("sample D2F-C-A manifest: " + sample_d2fca_manifest)
+    print("sample B1-A atomic inventory: " + sample_b1_roots)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)
