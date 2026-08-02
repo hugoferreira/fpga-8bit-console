@@ -6,15 +6,31 @@ git history; do not repeat them without the recorded changed condition.
 
 ## Current accepted checkpoint
 
-- **R.81B / `2cae31b4a425`**: the detune recurrence carries its one-bit
-  live/old context in the otherwise constant `p[26]`, removing the 13-bit
-  operand hold without a phase-decode cone.
-- Seed-1 HX8K router2: 7,421/7,680 LCs, 14/32 EBRs, 128.12 MHz fast and
-  29.90 MHz PSG against 112.5/18.75 MHz requirements.
-- Yosys: 6,520 LUT4s, 1,592 carries and 1,478 flops.
-- Exact gates: 530 walker + 272 sequencer clocks in the 850-clock `/6`
-  interval; 59/59 hardware renders byte-identical; P.1/P.2 and `click-v1`
-  clean; full/PREVIEW lint, clocks and Celeste smoke pass.
+- **Generic full PSG:** R.81B / `ca18727` plus the required walker-address
+  width correction `e099e52`.  Scratch commit `5d172ab` applies that exact
+  one-file correction after the isolated executor work.  R.81B's detune
+  recurrence still carries its one-bit live/old context in the otherwise
+  constant `p[26]`; the address correction prevents `pc_ch[2]` being lost by
+  a wide concatenation operand.
+- Fresh clean-scratch seed-1 HX8K router2 after the correction: **7,504/7,680
+  LCs**, 14/32 EBRs, 145.99 MHz fast and 30.21 MHz PSG against
+  112.5/18.75 MHz requirements.  Yosys maps **6,598 LUT4s, 1,597 carries and
+  1,478 flops** at RTL fingerprint `343f28025ab0`.  The pre-correction R.81B
+  7,421-LC number is historical and is no longer the integration baseline.
+- Fresh preserved-scope accounting attributes 2,557 LUT4s / 564 flops /
+  150 unpackable flops / one EBR to `u_walk`, and 1,972 / 535 / 256 / one
+  EBR to `u_seq`.  Their joint floor is **4,935 cells**; the full netlist floor
+  is 7,130 and actual placement adds 374 cells, so the corrected fixed base
+  outside both controllers is 2,569 placed cells.
+- **Isolated shared executor:** accepted R.84G-F / `9cd5ab3` maps 530 LUT4s,
+  23 carries, 34 flops, 26 unpackable flops and exactly two EBRs, for a
+  556-cell floor and 561 placed LCs at 64.01 MHz.  It proves the normalized
+  advance family only; it is not composed into the generic PSG.
+- Exact generic gates at the last full checkpoint remain 530 walker + 272
+  sequencer clocks in the 850-clock `/6` interval; 59/59 hardware renders
+  byte-identical; P.1/P.2 and `click-v1` clean; full/PREVIEW lint, clocks and
+  Celeste smoke pass.  The address correction separately passed the generic
+  structural test and Tang's 3,600,000-cycle mapped-slot comparison.
 
 ## Do not repeat
 
@@ -870,9 +886,138 @@ git history; do not repeat them without the recorded changed condition.
   then switch the full-mode walker and sequencer only at one atomic composition
   boundary.  Before any generic RTL edit, enumerate every still-placeholder
   sample/tick/flow action, persistent-state owner, service handshake and output
-  commit against the 2,668-floor 6k budget.  Do not partially replace a
+  commit against the corrected 2,875-floor 6k budget.  Do not partially replace a
   pph/sst consumer, add a register-fed request bundle, or treat G-F's isolated
   transaction proof as render equivalence.
+
+### R.84H - Rebuild both controllers as one memory-native service graph
+
+- **ID / decision:** R.84H is active after a docs-only resume audit.  No new
+  semantic RTL is authorized until the action, ownership, service and budget
+  facts below are executable in the model.  The one-file `e099e52` address
+  correction was first reconciled into scratch as `5d172ab`, because an atomic
+  replacement proved against the old aliased walker addresses would have the
+  wrong generic behavior.
+- **Hypothesis:** the remaining area is not removed by implementing the old
+  `pph` and `sst` action cases behind a new PC.  Rebuild their dependency graph
+  around the state store: persistent words are read at their actual use,
+  owner-specific projections terminate in fixed addressed writes, and the
+  existing wave, multiply, divide, detune, ARAM and fold services capture only
+  their own fixed request state.  Explicit microinstructions represent fixed
+  latency and ready waits.  One owner adapter preserves the legacy
+  nonblocking-assignment priority for global/public state.  When every action
+  is covered, switch both full-mode controllers together; PREVIEW keeps the
+  accepted legacy pair.  This is the whole-substrate/address-selected changed
+  condition left open by R.83 and R.84G-B, not a macro decoder or register-fed
+  request bundle.
+- **Corrected physical baseline:** the fresh `343f28025ab0` generic target is
+  6,598 LUT4s / 1,597 carries / 1,478 flops / 532 unpackable / 14 EBRs, with a
+  7,130-cell floor and 7,504 routed LCs.  `u_walk + u_seq` own a 4,935-cell
+  floor.  Holding the measured 374-cell packing/routing excess fixed gives
+  `predicted placed = 2,569 + replacement_floor`.  The replacement limits are
+  therefore 4,431 for 7k, 3,431 for 6k, 2,931 for the 5.5k OpenSpec ceiling
+  and 2,431 for 5k.  G-F's 556-cell floor leaves **3,875 / 2,875 / 2,375 /
+  1,875 cells** for the remaining 7k / 6k / 5.5k / 5k behavior respectively.
+  These replace the pre-`e099e52` 4,224/3,224/2,724/2,224 limits.
+- **Owner-zero inventory:** all **57 sample actions are semantic
+  placeholders**.  They are 18 record/parameter read actions, two noise
+  service starts plus fourteen CAP actions, fourteen ordinary oscillator
+  stores plus two late dampen stores and one leaf store, and six fold actions.
+  The 62-word image proves only PC/address occupancy and a Python clock count.
+  Its `Action.wait` credits are not encoded in the program or controller.
+- **Owner-one inventory:** G-F's 117-word advance manifest is exact, but
+  **56 action sites remain wholly placeholder** and P_W0..P_W3 have only their
+  inactive-bank addresses lowered, not publication data.  Eight V_LD, five
+  V_ST and K_ROT/PC0..PC3 provide eighteen proved memory transactions, but
+  V_LD does not populate the legacy `w_*` flops and V_ST4's completion,
+  audible-row update, slot advance and bank arbitration remain legacy.  The
+  generator still reports 78 visibly unlowered non-advance nodes.
+- **No partial handoff:** G-F makes normalized scratch and persistent words
+  authoritative; current K_NL/I_NL/ES/P_W logic reads old working flops.
+  Therefore an advance-only switch is behaviorally invalid even though its
+  isolated memory transactions pass.  The minimum owner-one boundary is the
+  complete `S_IDLE -> V_LD -> trigger/advance/effect/publication -> V_ST ->
+  W_MUS -> S_IDLE` graph, including CPU, tick/sample-boundary and fade
+  arbitration.  The minimum generic boundary switches owner zero and owner one
+  together so both old control EBRs actually retire.
+- **Owner-zero state contract:** per-slot words 10..23 are the persistent
+  oscillator tuple, active words 24..27 are sounding inputs, and scratch is
+  owner-overlaid.  Do not mirror the whole record into another working file by
+  default: re-read persistent words at their use, and place only values whose
+  cross-service lifetime requires storage into fixed scratch addresses.
+  Sample-global state is lfsr/lfsr2, noise alternation and bank-edge state,
+  optional reverb ring position/history and `dry16/dry_valid`.  Service-owned
+  state remains inside `psg_wave`, `psg_dqsvc`, multiplier, divider, ARAM,
+  fdiv5 and ring-read pipelines and is not re-expanded into action arithmetic.
+- **Owner-one state contract:** scratch 34..45 is the accepted normalized
+  advance workspace and 48..54 is the raw V_LD stream.  Remaining trigger,
+  note, effect, slide, publication and music-flow actions must consume those
+  addressed values or add a fixed addressed lifetime.  They may not recreate
+  `w_row`, `w_ins_row`, previous-value, effect, slide or publication register
+  files behind an action mux.
+- **Service contract:** fixed waits become explicit owner-bank instructions;
+  true variable waits branch on owner-qualified ready facts without replaying
+  an issue action.  The 194 spare owner-zero words are the first resource to
+  spend.  `psg_wave` remains the measured irreducible fixed-latency waveform
+  service with its reciprocal EBR and pipeline registers; ARAM's adjacent
+  issue/consume cadence remains exact.  Multiplier, divider and detune starts
+  occur once and retire only on their real ready/done contract.  R.84G-F's
+  common accumulator is still the only generic arithmetic chain.
+- **Three model defects to close before semantic RTL:** owner-zero condition 0
+  currently means slot wrap and condition 1 means fold-more, but the common
+  datapath exposes Z/N at those indices; assign owner-qualified external
+  conditions instead.  The provisional fold reads slot-zero word 48 twice and
+  has no seven-leaf/stack address schedule.  Its arithmetic is signed 18-bit,
+  wider than the 16-bit common accumulator; derive a multiword program or
+  explicitly price retention of the existing fold service.  Finally, the
+  652/1,003 sample clock report must be regenerated from executable
+  instructions, not Python-only wait metadata.
+- **Global/public ownership:** the single adapter must preserve the exact
+  ordering `service response < tick/sample boundaries < action effects <
+  pre_tick queue/fade < CPU writes < fade_len/mask tail`.  This covers the
+  observed same-edge winners: T_NL over a pending response clear, pre_tick over
+  S_IDLE's tick clear, CPU trigger over T_FL, CPU music stop over ML_L3,
+  VOICE_STOP over the tick-boundary pending-stop clear, and V_ST completion
+  after boundary bank logic.  Do not implement these as competing always_ff
+  writers.
+- **Observable commit inventory:** state writes, ARAM and service requests,
+  `dry_valid`, `spar_bank`, `bank_ready`, `playing`, `trig_req`, `sfx_id`,
+  `aud_row`, `mus_playing`, `mus_pat`, `mus_mask`, `fade_len`, `clr_tog` and
+  final `pcm` publication each need one named owner and a transaction proof.
+- **EBR accounting:** G-D's two program blocks are only a free exchange when
+  atomic composition retires both legacy control blocks.  The walker fdiv5
+  block and sequencer constants block are semantic dependencies, not control
+  blocks that may be counted twice.  Recount named EBR owners at composition;
+  reject any claim above 15 total or any unexplained retained legacy block.
+- **Bounded lowering order:** H-A derives the authoritative addressed-state
+  and service-dependency manifests for both owners, including real condition
+  indices, explicit waits, fold addresses and global priority.  H-B proves
+  owner-zero persistent read/write transactions without a working-register
+  mirror.  H-C lowers the fixed-latency `psg_wave`/ARAM cadence.  H-D lowers
+  noise/detune/multiply/divide/ring and the complete signed fold.  H-E lowers
+  remaining owner-one trigger/note/effect/slide/publication/music flow and the
+  single public-state arbiter.  Only then may H-F perform one atomic full-mode
+  composition and retire both legacy controllers.
+- **Per-stage gates:** write the row before implementation; run executable
+  image/capacity, formula and synchronous transaction proofs; controller,
+  datapath and affected-service tests; full/PREVIEW lint; strict OpenSpec; and
+  isolated HX8K mapped/floor/placed/routed timing.  Commit an accepted result
+  or a reverted-source rejection before the next family.  H-F additionally
+  requires the full structural test, exact sample/tick schedule, all 59 frozen
+  renders, P.1/P.2, `/4`--`/6` clocks, `click-v1`, five-entry Celeste fidelity
+  and smoke, whole-PSG seed-1/multi-seed area, routing and both-clock timing.
+- **Stop rule:** reject a family before generic integration if it introduces a
+  general source/destination index, a flat request/result bundle, arithmetic
+  outside the common/service chain, non-addressed working state, an
+  unaccounted EBR, or cannot prove one owner for every overlapping public
+  write.  Stop the 6k path if the complete replacement floor exceeds 3,431;
+  continue toward 5.5k/5k only while it remains below 2,931/2,431 or a measured
+  later retirement has a concrete bound that closes the gap.
+- **Repeat only if:** persistent word layout, service latency/ownership,
+  external NBA priority, program capacity, the `e099e52` address behavior or
+  measured subtree ownership changes.  Do not retry R.83's scalar service,
+  R.84F's parallel macros, G-B's selected field arithmetic, G-C's one-bank
+  program or a partial pph/sst consumer migration.
 
 ### Active task queue
 
@@ -919,6 +1064,14 @@ git history; do not repeat them without the recorded changed condition.
 - [x] R.84G-F: implement the fixed normalization/merge actions, dynamic
       parameter-bank addresses and arbitrated stop/cpz effects; prove the
       complete synchronous advance transaction before generic integration.
+- [x] R.84H resume audit: reconcile `e099e52`, re-baseline the corrected
+      generic target, enumerate all remaining actions/owners/services/commits,
+      and record the executable-control, fold-address, condition-index and EBR
+      blockers before semantic RTL.
+- [ ] R.84H-A: derive and prove the complete addressed-state/service-dependency
+      manifests, owner-qualified conditions, explicit wait states, fold
+      schedule and one global-public priority function before adding another
+      action decoder.
 
 ## Handoff rule
 
