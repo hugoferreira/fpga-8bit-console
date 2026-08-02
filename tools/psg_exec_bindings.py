@@ -15,6 +15,7 @@ import copy
 import hashlib
 import json
 import re
+import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -22,7 +23,8 @@ from typing import Any, Callable, Iterable
 
 Json = dict[str, Any]
 
-IMAGE = Path(__file__).resolve().parents[1] / "rtl/psg_exec.hex"
+ROOT = Path(__file__).resolve().parents[1]
+IMAGE = ROOT / "rtl/psg_exec.hex"
 POOL_CONTAINERS = {"A": 18, "B": 18, "N": 17, "O": 17,
                    "Q": 16, "T": 6, "C": 7, "I": 6, "D": 3}
 D1_PACKING_LAYOUT_SHA256 = \
@@ -43,6 +45,53 @@ D1_CONTROLLER_SHA256 = \
     "f86698f67769c1d53bc976ad4868df004755ddb46cd218cab7b9d27d8b5439b4"
 D1_REQUIREMENTS_SHA256 = \
     "5a7b9809b74b0e9094c864597de89c42e7f269ca1169aefd88f803999792c92e"
+H095_RTL_REVISION = \
+    "3d7a2e2ea1ed6a59cf868570755210e8b9ef81e8"
+H095_SOURCE_SHA256 = {
+    "rtl/psg_aram.sv":
+        "a1f8c668aacd5c946d8497c42d3f718906efcab1e00c964be0d26be5a126549e",
+    "rtl/psg_common.svh":
+        "da29f84e538c07c4e74ae82be45c0d297fcc23223cae6bbf81d30058623886b6",
+    "rtl/psg_dqsvc.sv":
+        "06d26dd2760b6a450bdcad8a7e01c72a14a3436de6b41e5e3b695cb1f6ffe95b",
+    "rtl/psg_mulmp.sv":
+        "8df7c9f737d6b414d0342fa25a622e176514fb4d26f238bc6e31b2bde9cf0876",
+    "rtl/psg_seq.sv":
+        "6b2e688ff523559b221e440911b591c25a8399ba0fa7dcab57d969c2aeda2564",
+    "rtl/psg_timing.sv":
+        "838f5ce103dc3056fbe96444f183acb812749e78fa9b3444a5a1e8c8a0f11bfc",
+    "rtl/psg_walk.sv":
+        "33554a88b3ff68d12a8b592a82e0d69927a7266e87ff90304f09c492d40443a8",
+    "rtl/psg_wave.sv":
+        "687dbeb6949d46a1ccc2d59a7430e3c5af71eb28bb43938f4cee5d1b5ae75406",
+    "rtl/target_psg.sv":
+        "16bd4aaac4f8b2a4a20a0735d69c213a623de9b777291101898f0b5a18f9cc7f",
+    "tools/psg_hw_forms.py":
+        "3eb0f3f15fad04b42ec2bec1037513ebc24cb94cc14b9392d3fa1d4e321284d1",
+}
+I001_RTL_REVISION = \
+    "6c9eebe1bf78591a748208fb9763bf9d9abf4ac6"
+COMBINED_SOURCE_SHA256 = {
+    **H095_SOURCE_SHA256,
+    "rtl/psg_aram.sv":
+        "497cee26589b6a264b2fb86a227a0ba9d2bb2ddff6b8727481c22188c89478a7",
+    "rtl/psg_dqsvc.sv":
+        "93f9c973343ee49bdb0eeae1f5dfdc33898531e634c015720e09edcdee8c1a17",
+    "rtl/psg_mulmp.sv":
+        "501212cc205d43bbcc0e2026dec3b210dfa04cf4afa79da8c6f2c2d54a4650b3",
+    "rtl/psg_wave.sv":
+        "d92f77de6207940167550424b2223a88a8ef2bb71f68e49ff0229078c69d8220",
+    "rtl/psg_exec.hex": D1_PRODUCTION_IMAGE_SHA256,
+    "rtl/psg_execmove.sv":
+        "3bf543a849a77a652ef043b7be2ca2dd798ad4c0bb3fd630c2d3547b6beae133",
+}
+MODEL_LIVE_SOURCES = (
+    "rtl/psg_common.svh", "rtl/psg_seq.sv", "rtl/psg_walk.sv",
+)
+R84_COMBINED_OVERRIDES = (
+    "rtl/psg_aram.sv", "rtl/psg_dqsvc.sv", "rtl/psg_mulmp.sv",
+    "rtl/psg_wave.sv", "rtl/psg_exec.hex", "rtl/psg_execmove.sv",
+)
 
 # A typed state-q read is a legal D1 source only when it arrives from outside
 # the unproved owner-zero write graph at the exact consuming edge.  Presently
@@ -88,6 +137,106 @@ def load_json(path: Path) -> Json:
     value = json.loads(path.read_text())
     require(isinstance(value, dict), f"{path}: expected one JSON object")
     return value
+
+
+def git_blob(revision: str, relative: str) -> bytes:
+    return subprocess.run(
+        ("git", "show", f"{revision}:{relative}"), cwd=ROOT,
+        check=True, stdout=subprocess.PIPE).stdout
+
+
+def validate_h095_r84_source_contract(contract: Json,
+                                       recompute: bool = True) -> None:
+    expected_fields = {
+        "schema", "h095_revision", "i001_revision",
+        "h095_generic_source_sha256", "combined_source_sha256",
+        "model_live_sources", "r84_combined_overrides", "counts", "boundary",
+    }
+    require(set(contract) == expected_fields,
+            "H095/R.84 source-contract fields changed")
+    require(contract["schema"] == "psg_exec_h095_r84_source_contract_v2",
+            "H095/R.84 source-contract schema")
+    require(contract["h095_revision"] == H095_RTL_REVISION,
+            "H095 source-contract revision")
+    require(contract["i001_revision"] == I001_RTL_REVISION,
+            "I001 source-contract revision")
+    require(contract["h095_generic_source_sha256"] == H095_SOURCE_SHA256,
+            "H095 generic source hashes")
+    require(contract["combined_source_sha256"] == COMBINED_SOURCE_SHA256,
+            "I001 combined source hashes")
+    require(contract["model_live_sources"] == list(MODEL_LIVE_SOURCES),
+            "H095/I001 model-live source boundary")
+    require(contract["r84_combined_overrides"]
+            == list(R84_COMBINED_OVERRIDES),
+            "R.84 combined override boundary")
+    expected_counts = {
+        "expanded_pc_nodes": 85,
+        "legacy_states": 63,
+        "normalized_formula_cases": 19_728_640,
+        "normalized_transactions": 131_087,
+    }
+    require(contract["counts"] == expected_counts
+            and all(type(value) is int
+                    for value in contract["counts"].values()),
+            "H095/R.84 source-contract counts")
+    require(contract["boundary"] == [
+        "model live sources are byte-identical in H095 and I001",
+        "R.84 runtime and proof overrides are bound to I001",
+        "source certificate relies on the separately accepted I001 gates",
+    ], "H095/R.84 source-contract boundary")
+    if not recompute:
+        return
+    h095_observed = {
+        relative: hashlib.sha256(
+            git_blob(H095_RTL_REVISION, relative)).hexdigest()
+        for relative in H095_SOURCE_SHA256
+    }
+    require(h095_observed == H095_SOURCE_SHA256,
+            "H095 git-object source drift")
+    i001_observed = {
+        relative: hashlib.sha256(
+            git_blob(I001_RTL_REVISION, relative)).hexdigest()
+        for relative in COMBINED_SOURCE_SHA256
+    }
+    require(i001_observed == COMBINED_SOURCE_SHA256,
+            "I001 git-object source drift")
+    worktree_observed = {
+        relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+        for relative in COMBINED_SOURCE_SHA256
+    }
+    require(worktree_observed == COMBINED_SOURCE_SHA256,
+            "I001 combined worktree drift")
+    require(all(h095_observed[relative] == i001_observed[relative]
+                for relative in MODEL_LIVE_SOURCES),
+            "model live sources differ between H095 and I001")
+
+
+def check_h095_r84_source_contract(path: Path) -> int:
+    contract = load_json(path)
+    validate_h095_r84_source_contract(contract)
+    mutations: list[Json] = []
+    mutation = copy.deepcopy(contract)
+    mutation["i001_revision"] = "0" * 40
+    mutations.append(mutation)
+    mutation = copy.deepcopy(contract)
+    mutation["h095_generic_source_sha256"]["rtl/psg_walk.sv"] = "0" * 64
+    mutations.append(mutation)
+    mutation = copy.deepcopy(contract)
+    mutation["combined_source_sha256"]["rtl/psg_mulmp.sv"] = "0" * 64
+    mutations.append(mutation)
+    mutation = copy.deepcopy(contract)
+    mutation["unknown"] = 1
+    mutations.append(mutation)
+    mutation = copy.deepcopy(contract)
+    mutation["counts"]["legacy_states"] = True
+    mutations.append(mutation)
+    for index, changed in enumerate(mutations):
+        try:
+            validate_h095_r84_source_contract(changed, recompute=False)
+        except AssertionError:
+            continue
+        raise AssertionError(f"H095 source mutation {index} survived")
+    return len(mutations)
 
 
 def load_jsonl(path: Path) -> list[Json]:
@@ -1895,6 +2044,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--d1-controller-edges", type=Path)
     parser.add_argument("--d1-event-dictionary", type=Path)
     parser.add_argument("--candidate", type=Path)
+    parser.add_argument("--rtl-source-contract", type=Path)
     return parser.parse_args()
 
 
@@ -1920,6 +2070,10 @@ def main() -> int:
     result.update(check_multiplier(mul))
     result.update(check_dq(dq))
     result.update(check_execwave(execwave))
+    if args.rtl_source_contract is not None:
+        result["rtl_source_mutations"] = check_h095_r84_source_contract(
+            args.rtl_source_contract)
+        result["rtl_source_files"] = len(COMBINED_SOURCE_SHA256)
     if args.d1_controller_edges is not None:
         controller = load_json(args.d1_controller_edges)
         candidate = load_d1_candidate(args.candidate)

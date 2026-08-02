@@ -212,11 +212,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   6,890-cell deterministic floor and 7,116 seed-1 routed LCs at 143.64 MHz
   fast / 30.95 MHz PSG.  Relative to direct H095, the required R.84 runtime
   substrate costs 44 LUT4s, four carries, 44 floor cells and 50 routed LCs;
-  no area reduction is claimed for the composition itself.
+  no area reduction is claimed for the composition itself.  Accepted model
+  parent `0db0484` is also merged and rebound to I001: independent upgraded
+  source certificates are byte-identical at `bcadbae4...`, all other model and
+  event artifacts remain byte-identical, both binding/value audits pass, and
+  the default model, complete forms, Python and strict OpenSpec gates pass.
 - **Decision:** accepted.  This is the verified H095 + R.84 integration point;
-  H096 and R.84 B2 remain blocked until the accepted H095 source-model commit
-  `0db0484` is merged, rebound to this combined source certificate, revalidated,
-  and the resulting integration is safely fast-forwarded to `main`.
+  H096 and R.84 B2 remain blocked only until the resulting integration is
+  safely fast-forwarded to `main`.
 - **Repeat only if:** retry a rejected merge resolution only after identifying
   a concrete changed source/proof contract or an independently accepted newer
   direct/R.84 checkpoint.

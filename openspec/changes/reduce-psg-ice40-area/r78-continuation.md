@@ -3340,6 +3340,60 @@ git history; do not repeat them without the recorded changed condition.
   update, primitive equation or fixed-write data and proves no pool SSA,
   adapter, RTL, image, integration, synthesis, timing, routing, render or area
   property.
+- **C2-C-D1-C-B1-H095 hypothesis and scope:** rebind the accepted algebraic
+  model to canonical generic H095 `3d7a2e2` without importing or editing its
+  RTL.  Read the exact `psg_seq.sv`, `psg_walk.sv` and `psg_common.svh` git
+  blobs as the model's live generic cones, while retaining the accepted local
+  H-C freeze-enabled ARAM/multiplier and executor artifacts.  Emit a separate
+  source-boundary certificate covering all ten H095 generic RTL/proof blobs
+  and five local R.84 prerequisites; do not change the B1 event schema or
+  claim a combined RTL image.  Scope is only `tools/psg_exec_model.py`,
+  `tools/psg_exec_bindings.py`, generated `build/` evidence and this ledger.
+  Baseline is accepted B1 `7cc639a` / event SHA-256 `5b178017...`; retry only
+  if the canonical generic revision or an accepted local prerequisite changes.
+- **C2-C-D1-C-B1-H095 result and decision:** accepted as an algebraic
+  source-rebase certificate only.  Independent A/B model generations bind
+  full H095 `3d7a2e2ea1ed6a59cf868570755210e8b9ef81e8`, ten exact generic
+  source/proof hashes and five exact local R.84 prerequisite hashes in schema
+  `psg_exec_h095_source_contract_v1`; both certificates are byte-identical at
+  SHA-256 `12db76a1...`.  The model explicitly recognizes H075's XOR/carry-in
+  wavetable sign fold and the accepted prefix noise clamp/kick spelling, while
+  the complete H095 hardware forms prove post-shift signed remainder,
+  selected wavetable sign, timing update, selected pitch clamp and trigger
+  length saturation on their full stated domains.  The H095-bound model keeps
+  **63** legacy states, **85** expanded PC nodes, **19,728,640** normalized
+  formula cases and **131,087** normalized transactions.  Its independently
+  generated B1 event dictionaries remain byte-identical to pre-H095 B1 at
+  SHA-256 `5b178017...`: 60 root endpoints, 22 transaction completions, 156
+  lifetime endpoints and 85 fold events.  Two independent binding audits pass
+  152,893 legacy rows, all controller/event mutations plus five new source
+  mutations, and reproduce source inventory `95619e61...`; two value audits
+  pass 192,896 value pairs and 43,459 service transactions.  The default local
+  model still passes, Python compilation and strict OpenSpec validation pass,
+  and `make test-psg` remains at 524/850 sample clocks with fixed 530+272
+  credits and 48 spare, 4,008/5,103 tick clocks and zero late flips.
+  Production/candidate images and every generic RTL file remain untouched.
+  This does **not** regenerate H095 live instrumentation traces and proves no
+  combined RTL, adapter, integration, synthesis, timing, routing, render or
+  area property; those remain atomic integration gates.
+- **C2-C-D1-C-B1-H095-I001 integration:** accepted model/source composition
+  after the separately accepted H095 + R.84 RTL merge I001 `6c9eebe`.  The
+  upgraded `psg_exec_h095_r84_source_contract_v2` binds canonical H095
+  `3d7a2e2`, I001, ten canonical generic hashes, twelve combined source/proof
+  hashes, the three byte-identical model-live sources and the six explicit
+  R.84 runtime/proof overrides.  Independent A/B certificates are
+  byte-identical at SHA-256 `bcadbae4...`; five source mutations are convicted.
+  Candidate `6f5713e2...`, manifest `438d85a0...`, control `a9233d6d...`,
+  requirements `5a7b9809...`, controller `f86698f6...`, event dictionary
+  `5b178017...` and source inventory `95619e61...` remain byte-identical to
+  I001.  Both binding audits pass 152,893 rows and both value audits pass
+  192,896 pairs / 43,459 service transactions.  The default combined model,
+  complete hardware forms, Python compilation and strict OpenSpec validation
+  pass.  This source certificate relies on I001's separately recorded complete
+  RTL, cadence, render, recovery, click, Celeste, synthesis and timing gates;
+  it does not reinterpret the isolated `0db0484` result as having proved them.
+  B2 remains the next proof step, but must not start until this combined merge
+  is safely fast-forwarded to `main`.
 - **C2-C-D1-C-B2 boundary:** only after B1 closes, attach literal
   pool definitions/uses and service issue/result/take roots to exact enabled
   occurrences with pre/post phase.  Repair fold assembly, STEP8, result-write
