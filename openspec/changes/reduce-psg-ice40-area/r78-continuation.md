@@ -1975,6 +1975,29 @@ git history; do not repeat them without the recorded changed condition.
   the harness as well as the executor.  Reject before image or RTL if any
   predecessor or suffix value is copied from the expected trace, or if a hold
   changes packed state, service state, write provenance or publication.
+- **R.84H-D2F-C-B3 resume audit:** D2F-B does not yet expose a frame that B3
+  can mechanically unpack.  Its local `row()` checker assigns sequential
+  offsets independently for each snapshot, fills fields with synthetic hash
+  values, round-trips that one row and returns only name/used/capacity.  There
+  is no W2-to-W3 bit identity, producer equation or retained service-token
+  state.  `TF`, `X`, `WF` and `MF` are virtual capacity names rather than
+  physical H-C slices, while `phase2_next`, `post_w1_flags`, `old_bias`, the
+  fourteen-bit restart `old_phase` and `old_noise_sample` are not bound to
+  source equations.  Treating those dictionaries as B3 input would merely
+  move B2's expected-value seeding earlier.  B1 remains a path-sensitive
+  capacity/phase-view foundation, not an executable bridge.
+- **R.84H-D2F-C-B3-A active hypothesis:** introduce a typed physical-state IR
+  whose only containers are A18/B18/N17/O17/Q16/T6/C7/I6/D3.  Each field must
+  declare literal slices, an exact producer expression, birth/last-use edge
+  and don't-care guard; each transition must name typed q provenance, public
+  inputs, service-token takes/issues, equations, fixed writes and its complete
+  destination row.  Replace TF with the freed T2 bit after recoding the old
+  tuple, and replace X/WF/MF with the five freed C bits while preserving C6
+  `snd_wt` and C3 `live_is_wave6`.  Symbolically execute CAP_W3 through W6 and
+  reject undefined leaves, hidden path tags, nonphysical slices, multiple bit
+  ownership, a token without an issue edge or any expected/trace dependency.
+  Only after this manifest closes may B3 evaluate values or reconnect the
+  already-rejected late suffix; accepted image and RTL remain immutable.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
