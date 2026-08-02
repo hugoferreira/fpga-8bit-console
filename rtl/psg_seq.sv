@@ -311,11 +311,8 @@ module psg_seq (input  bit   clk,
     pclamp = v[7] ? 6'd0 : v[6] ? 6'd63 : v[5:0];
   endfunction
 
-  wire signed [7:0] pc_raw = $signed({2'b0, w_cur_pitch})
-                           + $signed({2'b0, w_ins_pitch}) - 8'sd24;
   wire signed [7:0] pp_raw = $signed({2'b0, w_prev_pitch})
                            + $signed({2'b0, w_ins_prev_pitch}) - 8'sd24;
-  wire [5:0] e_pitch = ins_use ? pclamp(pc_raw) : w_cur_pitch;
   wire [5:0] e_prevp = ins_use ? pclamp(pp_raw) : w_prev_pitch;
 
   logic [7:0]  pinc_addr;
@@ -331,22 +328,28 @@ module psg_seq (input  bit   clk,
 
   // Effect intermediates persist across shared multiply/divide requests.
   wire [12:0] pinc_q = crom_q[12:0];
-  wire signed [7:0] arp_raw =
-      e_insfx ? ($signed({2'b0, w_cur_pitch}) + $signed({2'b0, arp_p}) - 8'sd24)
-    : ins_use ? ($signed({2'b0, arp_p}) + $signed({2'b0, w_ins_pitch}) - 8'sd24)
-              :  $signed({2'b0, arp_p});
-  wire [5:0] e_arp = pclamp(arp_raw);
+  // Slide setup and pitch-ROM address generation never consume the ordinary
+  // and arpeggiated pitches together. Select their operands before the shared
+  // add-and-clamp cone; K_SL0/K_SL1 naturally select the ordinary pitch.
+  wire use_arp_pitch = (sst == K_PF0)
+      || ((sst == K_FX || sst == P_W0 || sst == P_W1)
+          && e_fx[2] && e_fx[1]);
+  wire [5:0] pitch_a = use_arp_pitch ? arp_p : w_cur_pitch;
+  wire [5:0] pitch_b = (use_arp_pitch && e_insfx)
+                         ? w_cur_pitch : w_ins_pitch;
+  wire signed [7:0] pitch_raw = $signed({2'b0, pitch_a})
+                              + $signed({2'b0, pitch_b}) - 8'sd24;
+  wire [5:0] e_pitch = ins_use ? pclamp(pitch_raw) : pitch_a;
 
   always_comb begin
     case (sst)
 
-      K_PF0:   pinc_addr = {2'b0, e_arp};
+      K_PF0:   pinc_addr = {2'b0, e_pitch};
 
       // Effects 6/7 publish the arpeggiated pitch-table result. Keep that
       // synchronous lookup selected until the two inactive-bank increment
       // words have been written; every other ordinary effect uses e_pitch.
-      K_FX:    pinc_addr = (e_fx == 3'd6 || e_fx == 3'd7)
-                              ? {2'b0, e_arp} : {2'b0, e_pitch};
+      K_FX:    pinc_addr = {2'b0, e_pitch};
 
       K_SL2:   pinc_addr = 8'd64 + {2'b0, sl_chr[3:0], 2'd0};
       K_SL3:   pinc_addr = 8'd64 + {2'b0, sl_chr[3:0], 2'd1};
@@ -358,8 +361,7 @@ module psg_seq (input  bit   clk,
       P_W0,
       P_W1:    pinc_addr = (e_fx == 3'd1)
                               ? 8'd36 + {2'b0, sl_chr}
-                              : (e_fx == 3'd6 || e_fx == 3'd7)
-                                  ? {2'b0, e_arp} : {2'b0, e_pitch};
+                              : {2'b0, e_pitch};
       default: pinc_addr = {2'b0, e_pitch};
     endcase
     if (fade_issue)

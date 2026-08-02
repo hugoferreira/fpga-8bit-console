@@ -863,6 +863,40 @@ def sec_pitch() -> None:
     report("pitch.live_sum_width", live_ok and (lo, hi) == (-24, 102),
            f"all 4,096 operand pairs stay in [{lo}, {hi}] and signed8 clamp exactly")
 
+    # The current and arpeggiated sums feed schedule-exclusive consumers.  In
+    # the arpeggio states, select arp as operand A and either the current or
+    # instrument pitch as B; everywhere else select the ordinary current plus
+    # instrument pair.  e_insfx is contained in ins_use by construction.
+    cur, ins, arp = np.indices((64, 64, 64), dtype=np.int16)
+    selected_ok = True
+    selected_count = 0
+    for ins_use in (False, True):
+        for insfx_sel in (False, True):
+            e_insfx = ins_use and insfx_sel
+            old_pitch = (np.clip(cur + ins - 24, 0, 63)
+                         if ins_use else cur)
+            arp_raw = (cur + arp - 24 if e_insfx else
+                       arp + ins - 24 if ins_use else arp)
+            old_arp = np.clip(arp_raw, 0, 63)
+            for use_arp in (False, True):
+                old = old_arp if use_arp else old_pitch
+                operand_a = arp if use_arp else cur
+                operand_b = cur if use_arp and e_insfx else ins
+                new = (np.clip(operand_a + operand_b - 24, 0, 63)
+                       if ins_use else operand_a)
+                selected_ok &= np.array_equal(old, new)
+                selected_count += old.size
+    report("pitch.selected_add_clamp", selected_ok,
+           f"one selected cone preserves {selected_count:,} current/arpeggio tuples")
+
+    schedule_ok = all(
+        (state == 14 or (state in (15, 34, 35) and effect in (6, 7)))
+        == (state == 14 or (state in (15, 34, 35)
+                            and (effect & 0b110) == 0b110))
+        for state in range(64) for effect in range(8))
+    report("pitch.selected_schedule", schedule_ok,
+           "K_PF0 and effect-6/7 K_FX/P_W0/P_W1 select arpeggio in all 512 states")
+
 
 def sec_noise() -> None:
     print("noise: signed-prefix saturation at the exact +/-6143 bounds")
