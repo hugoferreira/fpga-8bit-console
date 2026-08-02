@@ -24,7 +24,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H018.
+- Next hypothesis ID: H019.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
@@ -35,7 +35,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   reductions are deterministic; the 57-LC placed improvement is positive but
   remains just inside the known roughly 60-LC placement-sensitivity band and
   is not claimed as robust.
-- Latest rejected variant: H017's full context sharing maps locally much
+- Latest rejected variant: H018's exact 25-bit half-sum trades one local carry
+  for one LUT, but whole-PSG mapping adds 31 LUT4s, nine carries, and 38 LCs.
+  H017's full context sharing maps locally much
   smaller but globally adds 16 LUT4s and 36 placed LCs; scale-only sharing
   still adds 11 LUT4s and 22 placed LCs. Both save six mapped carries. H016 proves a nine-bit restoring subtract is exact
   and locally trades one carry for one LUT, but whole-PSG mapping adds 60
@@ -62,10 +64,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H018 resume audit and record one new,
-  bounded, source-exact generic-RTL hypothesis outside the closed gain-context,
-  divider, detune, delayed-tick, multiplier, and R.84 families.
-- Required verification for any accepted H018: focused algebraic or exhaustive
+- Next permitted experiment: perform the H019 resume audit and record one new,
+  bounded, source-exact generic-RTL hypothesis outside the closed reciprocal-
+  half-sum, gain-context, divider, detune, delayed-tick, multiplier, and R.84
+  families.
+- Required verification for any accepted H019: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -96,6 +99,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H015 | rejected | Keep the explicit subtract qualifier: the unconditional form is exact but maps identically in the registered full-detune cone. |
 | H016 | rejected | Keep the ten-bit restoring subtract: the nine-bit form is exact and locally -1 carry/+1 LUT, but globally adds 60 LUT4s, eight carries, and 67 LCs. |
 | H017 | rejected | Keep separate new/old gain cones: full and scale-only sharing save carries locally/globally but both add LUT4s and placed LCs in the whole PSG. |
+| H018 | rejected | Keep the 26-bit add-then-shift: the exact 25-bit half-sum saves one carry locally but globally adds 31 LUT4s, nine carries, and 38 LCs. |
 
 ## Hypothesis H001
 
@@ -719,6 +723,37 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   after the W27/W51 schedule, gain reconstruction, sign ownership, mapper
   destination covering, or old/new lifetime changes materially.
 
+## Hypothesis H018
+
+- **ID:** H018.
+- **Hypothesis:** `gz_171` currently forms the 26-bit sum `341*x + x` and then
+  discards bit zero. The exact identity `floor((A+B)/2) = (A>>1) + (B>>1) +
+  (A0 & B0)` can compute the same sibling with a 25-bit adder and one carry-in,
+  potentially retiring one live carry position without changing truncation.
+- **Scope:** `rtl/psg_walk.sv`, exhaustive live-limb proof in
+  `tools/psg_hw_forms.py`, isolated registered-use synthesis, whole-PSG
+  mapping, and the complete H007 acceptance battery if mapping improves. No
+  multiplier request/result, schedule, state, interface, EBR, R.84, or
+  tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H017 through
+  `cf9e8d3`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1 7,392
+  LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Change:** replace the 26-bit `A+B` followed by `[25:1]` with the 25-bit
+  sum `(A>>1) + (B>>1) + (A0 & B0)`; add an exhaustive proof over all 131,072
+  live 17-bit limbs.
+- **Result:** the exact proof passes. Isolated registered-use synthesis moves
+  from 25 LUT4 / 25 carry / 25 flop to 26 LUT4 / 24 carry / 25 flop. Canonical
+  whole-PSG synthesis instead moves to 6,553 LUT4 / 1,562 carry / 1,476 FF /
+  14 EBR and 7,430 seed-1 LCs, or +31 LUT4/+9 carry/+38 LCs versus H007.
+  Routed clocks pass at 121.82 MHz fast / 29.55 MHz PSG, but both mapped and
+  placed area gates fail. Production RTL and the conditional permanent proof
+  are reverted byte-for-byte; the full fidelity battery is correctly skipped.
+- **Decision:** rejected after whole-PSG synthesis. The smaller isolated carry
+  chain worsens flattened covering and loses substantial fast-clock margin.
+- **Repeat only if:** a rejected shifted-half-sum form may be retried only
+  after the reciprocal identity, limb width, mapper carry lowering, or gain
+  consumer changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -759,12 +794,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h017/isolated-candidate-v2.log` | registered gain-consumer synthesis | Scale-only attribution form; locally smaller. |
 | `build/experiments/h017/candidate-v1.{synth,pnr}.log` | canonical synthesis with full context sharing | Mapped and placed area regress; rejected. |
 | `build/experiments/h017/candidate-v2.{synth,pnr}.log` | canonical synthesis with scale-only sharing | Smaller regression, but placement still exceeds H007; rejected. |
+| `build/experiments/h018/isolated-{baseline,candidate}.log` | registered reciprocal half-sum synthesis | Exact 25-bit form trades one carry for one LUT locally. |
+| `build/experiments/h018/candidate.{synth,pnr}.log` | canonical synthesis with the shifted half-sum | Whole-PSG mapped and placed area regress; rejected. |
 
 ## Handoff
 
-- Next allowed experiment: H018 only after its resume audit and hypothesis row
+- Next allowed experiment: H019 only after its resume audit and hypothesis row
   are recorded; it must use a new generic-RTL mechanism outside the closed
-  gain-context and R.84 families.
+  half-sum/gain-context and R.84 families.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -785,5 +822,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   production/proof patches are reverted and no behavior gate remains.
   H017's two context-sharing variants are exact but globally worse; all
   production/proof patches are reverted and the family closes.
+  H018's shifted half-sum is exact but globally worse; its production/proof
+  patches are reverted and no behavior gate remains.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
