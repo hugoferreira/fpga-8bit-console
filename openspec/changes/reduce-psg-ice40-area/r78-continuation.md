@@ -1181,6 +1181,90 @@ git history; do not repeat them without the recorded changed condition.
   open noise/detune/multiply/divide/fold semantics or generic composition in
   the same iteration.
 
+### R.84H-C - Stream fixed-latency wave and ARAM service transactions
+
+- **Hypothesis:** H-A's existing LOAD stream already presents every bit the
+  retained waveform and wavetable services need before the literal W0--W5
+  cadence.  Capture only that named service context, then drive the existing
+  four fixed waveform roles and four adjacent ARAM reads directly from the
+  production action stream.  This should preserve the 512-word image, 782
+  owner-zero clocks and 172-read/158-write state trace without a scratch
+  mirror, general context index, result queue or new arithmetic.
+- **Information bound:** four arbitrary back-to-back wave requests are loaded
+  long before W0 and cannot be re-read between W0 and W3.  Exact full-mode
+  behavior therefore requires at least four 16-bit phase views: current phase,
+  current phase2 low word, old phase and old-q low word.  The only additional
+  retained controls are `snd_id`/wavetable/current wave/detune/buzz (ten bits)
+  and old wave/mode/alternate (six bits), for an exact **80-bit minimum**.
+  Retain last wave/mode/alternate as another six named bits so CAP_W0 can later
+  apply the exact restart substitution without widening the program.  The
+  resulting **86-bit holder** is service-owned request state, not the
+  288-bit oscillator/parameter record or `psg_wave`'s irrelevant detune
+  inputs.  H-C must not capture either increment or use `dq17`; the full-mode
+  detune service remains H-D.
+- **Fixed LOAD projections:** actions 0x01/0x03/0x07 capture words 10/12/16
+  as current phase/current phase2/old phase.  Actions 0x02 and 0x08 assemble
+  old-q[15:0] from word 11[7:0] and word 17[7:0].  Action 0x05 captures old
+  mode; 0x0b captures last wave; 0x0d captures old and last wave controls;
+  and 0x11/0x12 capture active sounding id/wavetable/wave/detune/buzz.  These
+  are fixed action-to-field assignments with no address or destination index
+  and no extra state-memory transaction.
+- **Exact cadence:** W0--W3 issue current primary, current secondary, old
+  primary and old secondary contexts into `psg_wave`; W2--W5 consume those
+  results exactly two active action edges later.  The physical request at each
+  issue is the existing 21-bit `{phase, wave, alternate, secondary}` first
+  pipeline stage.  When wavetable and `play_bits[slot]` are both true, W0--W3
+  issue ARAM reads and W1--W4 consume them one active edge later: current
+  point, current adjacent point, secondary point and secondary adjacent point.
+  The address is `256 + 68*snd_id + phase[15:10]`, with six-bit `+1` wrap.
+  Exactness is defined by the phase visible at each named issue edge; it may
+  not be simplified to one retained p/q pair because later CAP_W0/W1 semantic
+  hooks can update current or old context.
+- **Hold contract:** explicit common-HOLD instructions are elapsed service
+  clocks and continue to execute.  An external executor hold instead freezes
+  all 86 request bits, the waveform context/reciprocal/second pipeline stages,
+  ARAM `seq_q` and the synthesis-borrow replay bit together with PC/IR/slot and
+  `state_q`.  Gating request strobes alone is invalid: `psg_wave` currently
+  clocks all three stages unconditionally, and `psg_aram` currently advances
+  replay while the owner is held, allowing a held W1 to lose W0's byte.
+- **Scope:** the isolated executor-to-wave cadence adapter, one common sample
+  step enable on the retained waveform pipeline, a synthesis-borrow hold on
+  ARAM, a production-image synchronous service harness, isolated target and
+  this ledger.  The accepted owner-one decoder, generated image and model may
+  change only for assertions/freshness checks.  Generic `psg.sv` composition,
+  state-memory CE integration, noise/detune/multiply/divide/fold semantics,
+  sample result storage and public-state ownership remain unchanged.
+- **Required proof:** keep both 256-word banks byte-identical, owner zero at
+  222/256 words and 782/1,003 clocks, and the exact 172/158 state transaction
+  trace.  Execute all eight slots from the production image; cover every
+  built-in wave/control role, wavetable playing/not-playing, signed ARAM bytes,
+  adjacent-index wrap, W0--W5 issue/consume tags and replay restoration.
+  Inject one to three external hold clocks at every W0--W5 boundary and prove
+  the complete service trace resumes identically.  Re-run the exhaustive
+  waveform model, H-B owner-zero transport, G-F owner-one transactions,
+  controller/datapath/movement tests, full/PREVIEW lint and strict OpenSpec.
+- **Physical gate:** H-B's address-state executor is 528 LUT4 / 23 carries /
+  34 flops / 26 unpackable / two EBRs / 554-floor / 559-placed.  The corrected
+  generic `u_wave` is a retained fixed-base service at 711 LUT4 / 290 carries /
+  97 flops / 47 unpackable / one EBR / 758-floor; `u_aram` is likewise a
+  retained nine-EBR service and is excluded from executor replacement cost.
+  Report both executor-only and executor-plus-wave wrappers.  The adapter may
+  add no carry, EBR, arithmetic expression, result register or scratch write;
+  reject if executor floor exceeds **810 cells**, seed-1 placement exceeds
+  **834 LCs**, or routed timing falls below 28.125 MHz.  That ceiling leaves
+  2,621 floor cells of the corrected 3,431-cell 6k replacement budget for
+  H-D/H-E.
+- **Claim boundary:** passing H-C proves fixed LOAD projections, service
+  context, issue/consume latency and hold/replay correctness only.  CAP_W0
+  restart and CAP_W0/W1 phase-update hooks may be exercised with supplied
+  values, but their predicates and noise/detune production remain H-D.  No
+  generic sample, render or whole-PSG area equivalence may be claimed.
+- **Repeat only if:** the owner-zero LOAD order, W0--W5 cadence, persistent
+  field layout, waveform pipeline latency, ARAM borrow/replay contract or
+  restart ownership changes.  Do not replace the 86-bit bound with a full
+  record copy, scratch context array, variable role selector or second wave
+  implementation.
+
 ### Active task queue
 
 - [x] Prove exact waveform formulae, cycle state, widths and `/4` schedule.
@@ -1237,6 +1321,10 @@ git history; do not repeat them without the recorded changed condition.
 - [x] R.84H-B: prove all owner-zero persistent/scratch reads and writes through
       one synchronous state-memory transaction harness before adding service
       semantics or touching generic PSG composition.
+- [ ] R.84H-C: retain only the information-theoretic 86-bit wave/ARAM request
+      context, then prove the unchanged production image's W0--W5 service
+      cadence and external-hold recovery without adding state-memory traffic,
+      result storage or generic composition.
 
 ## Handoff rule
 
