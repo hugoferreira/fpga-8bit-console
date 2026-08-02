@@ -1743,6 +1743,150 @@ def validate_sample_relocated_value_gap(candidate: list[int]) -> str:
             "q20 at PC 2f and q15 at PC 39 have no fixed consumer")
 
 
+def validate_sample_relocated_stream_correction(
+        program: list[int], d2a: list[int], actions: Actions) \
+        -> tuple[str, list[int]]:
+    """Build and prove the bounded D2C correction to the rejected D2A stream."""
+    candidate = list(d2a)
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(candidate[pc])
+
+    def set_insn(pc: int, insn: Instruction) -> None:
+        candidate[pc] = insn.encode()
+
+    def set_word(pc: int, word: int) -> None:
+        insn = decoded(pc)
+        assert insn.op in (Op.READ, Op.WRITE, Op.EXEC)
+        set_insn(pc, Instruction(insn.op, action=insn.action, word=word))
+
+    # Spend the two already-counted duplicate tail writes as typed q edges.
+    # PC 1b commits updated brown/selected old mode while q14 is present; the
+    # final post-W84 STORE_4_14 still replaces its filter-sign bit.  PC 39
+    # performs a harmless same-word filter-low write while making q15 visible
+    # to a unique action; STORE_5_15 still commits the final filtered value.
+    set_insn(0x4b, Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"]))
+    set_insn(0x1b, Instruction(
+        Op.WRITE, action=action_by_name["STORE_15_14"], word=13))
+    set_insn(0x4a, Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"]))
+    set_insn(0x39, Instruction(
+        Op.WRITE, action=action_by_name["STORE_14_15"], word=0))
+
+    # Read the stored updated brown on the uniquely named W4 edge.  Move the
+    # selected-old-reverb prime to the final pre-W40 wait so CAP_W40 consumes
+    # q20 directly, with no previous-word tag or anonymous-HOLD capture.
+    set_word(0x20, 14)  # CAP_W3 primes updated word14 for CAP_W4.
+    set_word(0x2e, 0)
+    set_word(0x30, 20)  # Final pre-W40 HOLD primes word20 for CAP_W40.
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    sites = (
+        SampleCommitSite(0x14, "STORE_10_20", 20, 20, "restart select"),
+        SampleCommitSite(0x15, "STORE_11_21", 21, 21, "restart select"),
+        SampleCommitSite(0x16, "STORE_12_22", 22, 22, "restart select"),
+        SampleCommitSite(0x17, "STORE_8_18", 18, 18, "restart select"),
+        SampleCommitSite(0x19, "STORE_9_19", 19, 19, "restart select"),
+        SampleCommitSite(0x1b, "STORE_15_14", 14, 14, "brown update"),
+        SampleCommitSite(0x1d, "CAP_W0", 23, 10, "W0"),
+        SampleCommitSite(0x1e, "CAP_W1", 10, 12, "W1"),
+        SampleCommitSite(0x27, "STORE_1_11", 11, 11, "W5"),
+        SampleCommitSite(0x28, "STORE_6_16", 16, 16, "W5"),
+        SampleCommitSite(0x29, "STORE_7_17", 17, 17, "W5"),
+        SampleCommitSite(0x2a, "STORE_3_13", 13, 13, "W6"),
+        SampleCommitSite(0x2d, "STORE_2_12", 12, 12, "W6"),
+        SampleCommitSite(0x39, "STORE_14_15", 15, 15, "filter-low capture"),
+        SampleCommitSite(0x3c, "STORE_4_14", 14, 14, "W84"),
+        SampleCommitSite(0x3d, "STORE_5_15", 15, 15, "W84"),
+    )
+    fixed_destination = {
+        action_by_name[f"STORE_{index}_{10 + index}"]: 10 + index
+        for index in range(1, 13)
+    }
+    fixed_destination.update({
+        action_by_name["CAP_W0"]: 23,
+        action_by_name["CAP_W1"]: 10,
+        action_by_name["STORE_14_15"]: 15,
+        action_by_name["STORE_15_14"]: 14,
+    })
+    seen: list[tuple[int, int, int | None]] = []
+    for pc in range(SAMPLE_START, 0x4e):
+        insn = decoded(pc)
+        if insn.op == Op.WRITE and insn.action in fixed_destination:
+            seen.append((pc, fixed_destination[insn.action], q_word(pc)))
+    assert [pc for pc, _, _ in seen] == [site.pc for site in sites]
+    assert [dst for _, dst, _ in seen] == [site.destination for site in sites]
+    assert [source for _, _, source in seen] == \
+        [site.q_source for site in sites]
+    assert len({decoded(site.pc).action for site in sites}) == 16
+    assert q_word(0x21) == 14  # Updated brown reaches CAP_W4.
+    assert q_word(0x31) == 20  # Selected old reverb reaches CAP_W40.
+    assert decoded(0x4a) == Instruction(
+        Op.EXEC, action=COMMON_ACTION["HOLD"])
+    assert decoded(0x4b) == Instruction(
+        Op.EXEC, action=COMMON_ACTION["HOLD"])
+    d2b_payload = {
+        "dq_live": 14,
+        "old_noise_step": 17,
+        "phase_delta": 13,
+        "live_amplitude": 12,
+        "noise_lowpass": 16,
+        "updated_brown": 13,
+    }
+    assert sum(d2b_payload.values()) == 85
+    # The typed q14 transaction stores the only 13-bit resident whose next
+    # use is after W0.  It is fetched back as q14 at CAP_W4, reducing the
+    # pre-W0 payload below the strongest 79-bit pool/H-C overlay.
+    corrected_payload = sum(d2b_payload.values()) \
+        - d2b_payload["updated_brown"]
+    assert corrected_payload == 72 and corrected_payload <= 79
+
+    def counts(image: list[int]) -> tuple[int, ...]:
+        pc, slot = SAMPLE_START, 0
+        result = [0] * 8
+        for _ in range(2_000):
+            insn = Instruction.decode(image[pc])
+            result[int(insn.op)] += 1
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = slot == 0
+                pc = insn.target if take == bool(insn.sense) \
+                    else (pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                break
+            else:
+                raise AssertionError(insn)
+        else:
+            raise AssertionError("D2C sample candidate did not finish")
+        return tuple(result)
+
+    base_counts = counts(program)
+    assert counts(candidate) == base_counts
+    assert sum(base_counts) == 782
+    assert base_counts[int(Op.READ)] == 172
+    assert base_counts[int(Op.WRITE)] == 158
+    assert sum(word != 0 for word in candidate) == 222
+    changed = sum(a != b for a, b in zip(program, candidate))
+    return (f"H-D2C candidate: typed q14/q15 and CAP_W40 q20; pre-W0 "
+            f"payload 85 -> {corrected_payload} bits; {changed} image words "
+            "change; 16 fixed writes and 222/782/172/158 invariants; "
+            "accepted image untouched", candidate)
+
+
 def reachable_to_idle(nodes: list[Node]) -> None:
     graph = {node.name: set(node.successors) for node in nodes}
     assert "S_IDLE" in graph
@@ -3673,6 +3817,9 @@ def main() -> int:
     sample_relocated, sample_candidate = validate_sample_relocated_commit_manifest(
         sample_program, actions, sample_labels)
     sample_value_gap = validate_sample_relocated_value_gap(sample_candidate)
+    sample_stream, sample_stream_candidate = \
+        validate_sample_relocated_stream_correction(
+            sample_program, sample_candidate, actions)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -3737,6 +3884,7 @@ def main() -> int:
     print("sample fixed-tail manifest: " + sample_tail_gap)
     print("sample relocated-commit manifest: " + sample_relocated)
     print("sample relocated-value gate: " + sample_value_gap)
+    print("sample corrected-stream manifest: " + sample_stream)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)

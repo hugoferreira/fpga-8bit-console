@@ -1682,6 +1682,19 @@ git history; do not repeat them without the recorded changed condition.
   retain the post-W84 word15 final rewrite.  Move the word20 prime to the last
   pre-W40 wait so unique CAP_W40 consumes q20.  Re-run the numbered q-source,
   operation-count and allocation proof before retrying the no-mirror machine.
+- **R.84H-D2C stream-correction foundation:** a second alternate candidate
+  spends exactly those existing writes.  PC `0x1b` now executes the fixed
+  word14-repeat action while q14 is present, then CAP_W3 primes stored word14
+  so CAP_W4 consumes the updated brown value.  PC `0x39` executes the fixed
+  word15-repeat action while q15 is present; the final word14/15 actions after
+  W84 remain unchanged.  The word20 prime moves from PC `0x2e` to the final
+  pre-W40 wait at PC `0x30`, so CAP_W40 consumes q20 directly.  The worst
+  pre-W0 payload falls from 85 to **72 bits**, inside the strongest 79-bit
+  pool/H-C overlay.  The candidate differs from the accepted owner-zero image
+  in 42 words and retains 222 used words, 782 active clocks, 172 reads, 158
+  writes and sixteen fixed write actions.  This is still an address/lifetime
+  foundation only: the accepted image and RTL are untouched, and the complete
+  no-mirror value executor remains the next gate.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
