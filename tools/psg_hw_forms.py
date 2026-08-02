@@ -441,6 +441,18 @@ def sec_tzpow() -> None:
                f"{len(pts):,d} points incl. every multiple of {step} with "
                f"neighbours to +/-{span:,d}")
 
+    postshift_ok = True
+    for bits in range(1 << 18):
+        value = bits - (1 << 18) if bits & (1 << 17) else bits
+        for k in range(4):
+            mask = (1 << k) - 1
+            biased = (value + (mask if value < 0 else 0)) >> k
+            postshift = (value >> k) + int(value < 0 and bool(bits & mask))
+            postshift_ok &= postshift == biased
+    report("tzpow.postshift_remainder", postshift_ok,
+           "arithmetic shift + negative nonzero-remainder correction, "
+           "all 1,048,576 signed18/k combinations")
+
     wave_ok = True
     for bits in range(1 << 18):
         value = bits - (1 << 18) if bits & (1 << 17) else bits

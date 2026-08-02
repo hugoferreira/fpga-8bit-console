@@ -27,7 +27,18 @@ endfunction
 // Signed division by 2^k truncated toward zero.
 function automatic logic signed [17:0] tzs(
     input logic signed [17:0] v, input logic [1:0] k);
-  tzs = (v + (v[17] ? $signed((18'sd1 <<< k) - 18'sd1) : 18'sd0)) >>> k;
+  logic signed [17:0] q;
+  logic rem_nz;
+  begin
+    q = v >>> k;
+    case (k)
+      2'd0: rem_nz = 1'b0;
+      2'd1: rem_nz = v[0];
+      2'd2: rem_nz = |v[1:0];
+      default: rem_nz = |v[2:0];
+    endcase
+    tzs = q + $signed({17'b0, v[17] && rem_nz});
+  end
 endfunction
 
 // Per-slot state-memory map:
