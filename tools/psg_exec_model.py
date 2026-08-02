@@ -2262,6 +2262,530 @@ def build_sample_w5_q16_candidate(program: list[int], d2d: list[int],
             "accepted image untouched", candidate)
 
 
+def validate_sample_b3b2a_slice_map(program: list[int], d2fa: list[int],
+                                    actions: Actions) \
+        -> tuple[str, list[int]]:
+    """Bind the active wavetable/old-noise repair to literal physical bits.
+
+    This is deliberately narrower than a service executor.  It proves the
+    corrected q stream and the complete W1/W2/W3/PRE_W15/W15 ownership map,
+    including both interpolation base/sign lifetimes.  ARAM hold, stopped
+    wavetable service state and composed multiplier freeze remain later gates.
+    """
+    candidate = list(d2fa)
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+
+    def decoded(image: list[int], pc: int) -> Instruction:
+        return Instruction.decode(image[pc])
+
+    def q_word(image: list[int], pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(image, prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    cap_w2 = decoded(candidate, 0x1f)
+    assert cap_w2 == Instruction(
+        Op.EXEC, action=action_by_name["CAP_W2"], word=18)
+    candidate[0x1f] = Instruction(
+        cap_w2.op, action=cap_w2.action, word=19).encode()
+    assert [q_word(candidate, pc) for pc in range(0x1d, 0x23)] \
+        == [10, 12, 16, 19, 14, 16]
+    assert [pc for pc, (before, after) in enumerate(zip(d2fa, candidate))
+            if before != after] == [0x1f]
+    changed = sum(before != after
+                  for before, after in zip(program, candidate))
+    assert changed == 44
+    assert sum(word != 0 for word in candidate) == 222
+
+    def counts(image: list[int]) -> tuple[int, ...]:
+        pc, slot = SAMPLE_START, 0
+        result = [0] * 8
+        for _ in range(2_000):
+            insn = decoded(image, pc)
+            result[int(insn.op)] += 1
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = slot == 0
+                pc = insn.target if take == bool(insn.sense) \
+                    else (pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                break
+            else:
+                raise AssertionError(insn)
+        else:
+            raise AssertionError("B3-B2-A candidate did not terminate")
+        return tuple(result)
+
+    base_counts = counts(program)
+    assert counts(candidate) == base_counts
+    assert (sum(base_counts), base_counts[int(Op.READ)],
+            base_counts[int(Op.WRITE)]) == (782, 172, 158)
+
+    # Source facts that force the two explicit interpolation sideband tokens.
+    # W2's adjacent byte is the pre-edge seq_q; wt_p1 cannot be consumed until
+    # the following edge.  The magnitude-only service retains neither sign nor
+    # the signed base used by wt_z.
+    walk = WALK.read_text()
+    mulmp = (ROOT / "rtl" / "psg_mulmp.sv").read_text()
+    for spelling in (
+            "smp_a <= 18'($signed(seq_q));",
+            "wt_p1 <= $signed(seq_q);",
+            "smp_b <= 18'($signed(seq_q));",
+            "wt_q1 <= $signed(seq_q);",
+            "mxs_new <= wt_pd[8];",
+            "mxs_new <= wt_qd[8];"):
+        assert spelling in walk
+    assert "callers retain the sign" in mulmp
+    assert "wt_sum = $signed({wt_base[9:0], 10'b0}) + wt_prod" in walk
+    assert "if (play_bits[pc_ch] && s_eff_a != 0) begin" in walk
+    assert "wt_pf <= s_phase[9:0];" in walk
+    assert "wt_qf <= q16[9:0];" in walk
+    assert "(blend_restart || nz_tick_r) ? 16'(s_noise_lp) : s_old_phase" \
+        in walk
+    assert "(nz_old_pre > 18'sd6143)" in walk
+    assert "wire [12:0] g_live = g_a + {1'b0, g_a[12:1]};" in walk
+
+    capacities = {"A": 18, "B": 18, "N": 17, "O": 17,
+                  "Q": 16, "T": 6, "C": 7, "I": 6, "D": 3}
+    assert sum(capacities.values()) == 108
+
+    @dataclass(frozen=True)
+    class Field:
+        name: str
+        width: int
+        pieces: tuple[tuple[str, int, int], ...]
+        source: str
+
+    def field(name: str, width: int,
+              pieces: tuple[tuple[str, int, int], ...],
+              source: str) -> Field:
+        assert sum(part for _, _, part in pieces) == width
+        assert source
+        return Field(name, width, pieces, source)
+
+    controls_w1 = (
+        field("amplitude", 12, (("Q", 0, 12),), "typed amplitude"),
+        field("restart", 1, (("Q", 12, 1),), "restart predicate"),
+        field("clear", 1, (("Q", 13, 1),), "clear toggle"),
+        field("nz_phase", 4, (("Q", 14, 2), ("T", 0, 2)),
+              "noise phase"),
+        field("refresh", 1, (("T", 2, 1),), "refresh predicate"),
+    )
+    fixed_w1 = (
+        field("snd_wt", 1, (("C", 6, 1),), "live wavetable context"),
+        field("live_is_wave6", 1, (("C", 3, 1),),
+              "live wave-six predicate"),
+        field("secondary_index", 6, (("I", 0, 6),),
+              "H-C phase index"),
+        field("snd_id", 3, (("D", 0, 3),), "H-C sounding id"),
+    )
+    w1 = (
+        field("primary_fraction", 10, (("A", 0, 10),),
+              "W0 phase fraction"),
+        field("primary_base", 8, (("A", 10, 8),),
+              "CAP_W1 ARAM base"),
+        field("secondary_fraction", 10, (("B", 0, 10),),
+              "old phase fraction"),
+        field("seed_union", 16,
+              (("B", 10, 8), ("T", 3, 3), ("C", 0, 1),
+               ("C", 4, 2), ("C", 1, 2)),
+              "exclusive wrapped seed or signed kick"),
+        field("original_phase2", 17, (("N", 0, 17),), "typed q12"),
+        field("old_noise_step", 17, (("O", 0, 17),),
+              "old-noise multiplier result"),
+        *controls_w1, *fixed_w1,
+    )
+    w2 = (
+        field("primary_base", 8, (("A", 10, 8),),
+              "retained CAP_W1 base"),
+        field("primary_delta_sign", 1, (("A", 9, 1),),
+              "sign(pre-edge seq_q - primary base)"),
+        field("secondary_fraction", 10, (("B", 0, 10),),
+              "old phase fraction"),
+        field("original_phase2", 17, (("N", 0, 17),), "typed q12"),
+        field("final_old_phase", 14, (("O", 0, 14),),
+              "clamp14(wrapped seed plus old-noise step)"),
+        *controls_w1, *fixed_w1,
+    )
+    w3 = (
+        field("primary_base", 8, (("A", 10, 8),),
+              "retained CAP_W1 base"),
+        field("primary_delta_sign", 1, (("A", 9, 1),),
+              "retained W2 delta sign"),
+        field("secondary_fraction", 10, (("B", 0, 10),),
+              "old phase fraction"),
+        field("secondary_base", 8, (("B", 10, 8),),
+              "CAP_W3 ARAM base"),
+        field("original_phase2", 17, (("N", 0, 17),), "typed q12"),
+        field("final_old_phase", 14, (("O", 0, 14),),
+              "retained clamp14 result"),
+        *controls_w1,
+        field("snd_wt", 1, (("C", 6, 1),), "live wavetable context"),
+        field("live_is_wave6", 1, (("C", 3, 1),),
+              "live wave-six predicate"),
+    )
+    pre_w15 = (
+        field("secondary_adjacent", 8, (("A", 0, 8),),
+              "CAP_W4 ARAM adjacent"),
+        field("live_gain", 13,
+              (("A", 8, 7), ("A", 17, 1), ("C", 0, 5)),
+              "amplitude-to-gain transform"),
+        field("snd_wt", 1, (("A", 15, 1),), "relocated live context"),
+        field("live_is_wave6", 1, (("A", 16, 1),),
+              "relocated wave-six predicate"),
+        field("secondary_fraction", 10, (("B", 0, 10),),
+              "retained old fraction"),
+        field("secondary_base", 8, (("B", 10, 8),),
+              "retained CAP_W3 base"),
+        field("final_phase2", 17, (("N", 0, 17),), "W6 DQ update"),
+        field("final_old_q", 17, (("O", 0, 17),),
+              "restart original phase2 or don't-care old q"),
+        field("final_old_phase", 14, (("Q", 0, 14),),
+              "relocated clamp14 result"),
+        field("primary_base", 8,
+              (("Q", 14, 2), ("T", 4, 2), ("I", 3, 3),
+               ("D", 0, 1)), "W4 relocation of CAP_W1 base"),
+        field("primary_delta_sign", 1, (("D", 1, 1),),
+              "W4 relocation of W2 sign"),
+        field("restart", 1, (("T", 0, 1),), "restart predicate"),
+        field("clear", 1, (("T", 1, 1),), "clear toggle"),
+        field("last_gain_we", 1, (("T", 2, 1),),
+              "play/music predicate"),
+        field("old_q_replace", 1, (("T", 3, 1),),
+              "restart or old-DQ update"),
+        field("nz_phase", 4, (("C", 5, 2), ("I", 0, 2)),
+              "relocated noise phase"),
+        field("refresh", 1, (("I", 2, 1),), "relocated refresh"),
+    )
+    post_w15 = (
+        field("primary_interp", 15, (("A", 0, 15),),
+              "base plus signed primary multiplier result"),
+        field("snd_wt", 1, (("A", 15, 1),), "live context"),
+        field("live_is_wave6", 1, (("A", 16, 1),),
+              "wave-six predicate"),
+        field("live_gain", 13, (("B", 0, 13),), "W15 relocation"),
+        field("nz_phase", 4, (("B", 13, 4),), "W15 relocation"),
+        field("refresh", 1, (("B", 17, 1),), "W15 relocation"),
+        field("final_phase2", 17, (("N", 0, 17),), "retained W6 result"),
+        field("final_old_q", 17, (("O", 0, 17),), "retained old q"),
+        field("final_old_phase", 14, (("Q", 0, 14),),
+              "retained clamp14 result"),
+        field("secondary_base", 8,
+              (("C", 0, 7), ("T", 4, 1)),
+              "retained CAP_W3 base"),
+        field("secondary_delta_sign", 1, (("T", 5, 1),),
+              "sign(CAP_W4 adjacent - secondary base)"),
+        field("restart", 1, (("T", 0, 1),), "restart predicate"),
+        field("clear", 1, (("T", 1, 1),), "clear toggle"),
+        field("last_gain_we", 1, (("T", 2, 1),),
+              "play/music predicate"),
+        field("old_q_replace", 1, (("T", 3, 1),),
+              "restart or old-DQ update"),
+    )
+    post_pc27 = tuple(item for item in post_w15
+                      if item.name != "refresh")
+    post_pc28 = tuple(item for item in post_pc27
+                      if item.name != "final_old_phase")
+    post_pc29 = tuple(item for item in post_pc28
+                      if item.name not in {"final_old_q", "old_q_replace"})
+    post_pc2a = tuple(item for item in post_pc29
+                      if item.name not in {"nz_phase", "restart",
+                                           "last_gain_we"}) + (
+        field("selected_old_gain_hi", 5, (("Q", 0, 5),),
+              "typed q13 at PC2A"),
+    )
+    post_w26 = tuple(item for item in post_pc2a
+                     if item.name not in {"secondary_base",
+                                          "secondary_delta_sign",
+                                          "selected_old_gain_hi"}) + (
+        field("old_interp", 15, (("O", 0, 15),),
+              "base plus signed secondary multiplier result"),
+        field("old_gain_nonzero", 1, (("Q", 0, 1),),
+              "typed q13 high plus q19 low"),
+    )
+
+    snapshots = (("W1", w1, 108), ("W2", w2, 80), ("W3", w3, 79),
+                 ("PRE_W15", pre_w15, 107),
+                 ("POST_W15", post_w15, 96),
+                 ("POST_PC27", post_pc27, 95),
+                 ("POST_PC28", post_pc28, 81),
+                 ("POST_PC29", post_pc29, 63),
+                 ("POST_PC2A", post_pc2a, 62),
+                 ("POST_W26", post_w26, 64))
+    snapshot_fields: dict[str, tuple[Field, ...]] = {}
+    physical_used: dict[str, int] = {}
+    for snapshot_name, fields, expected_used in snapshots:
+        owned: set[tuple[str, int]] = set()
+        names: set[str] = set()
+        for item in fields:
+            assert item.name not in names, (snapshot_name, item.name)
+            names.add(item.name)
+            for container, lsb, width in item.pieces:
+                assert container in capacities
+                assert 0 <= lsb and lsb + width <= capacities[container]
+                for bit in range(lsb, lsb + width):
+                    key = (container, bit)
+                    assert key not in owned, (snapshot_name, key, item.name)
+                    owned.add(key)
+        assert len(owned) == expected_used, \
+            (snapshot_name, len(owned), expected_used)
+        snapshot_fields[snapshot_name] = fields
+        physical_used[snapshot_name] = len(owned)
+    overlay_used = (physical_used["W1"] - 11,
+                    physical_used["W2"] - 11,
+                    physical_used["W3"] - 2)
+    assert overlay_used == (97, 69, 77)
+
+    def pack(snapshot_name: str, values: dict[str, int]) \
+            -> tuple[dict[str, int], dict[str, int]]:
+        fields = snapshot_fields[snapshot_name]
+        assert set(values) == {item.name for item in fields}, \
+            (snapshot_name, set(values) ^ {item.name for item in fields})
+        packed = {container: 0 for container in capacities}
+        for item in fields:
+            field_lsb = 0
+            for container, lsb, width in item.pieces:
+                mask = (1 << width) - 1
+                assert 0 <= values[item.name] < (1 << item.width)
+                packed[container] |= \
+                    ((values[item.name] >> field_lsb) & mask) << lsb
+                field_lsb += width
+        recovered: dict[str, int] = {}
+        for item in fields:
+            value = 0
+            field_lsb = 0
+            for container, lsb, width in item.pieces:
+                mask = (1 << width) - 1
+                value |= ((packed[container] >> lsb) & mask) << field_lsb
+                field_lsb += width
+            recovered[item.name] = value
+        assert recovered == values, (snapshot_name, recovered, values)
+        return packed, recovered
+
+    def source(case: int, name: str, width: int) -> int:
+        return ((case * 0x5a17 + sum(ord(ch) for ch in name) * 0x9e37
+                 + width * 0x45) & ((1 << width) - 1))
+
+    def carry(prior: dict[str, int], *names: str) -> dict[str, int]:
+        return {name: prior[name] for name in names}
+
+    # Execute every replacement from the decoded previous physical frame.
+    # New values enter only at the named q/input/service edge.  In particular,
+    # no later frame is independently filled from a synthetic field table.
+    for case in range(256):
+        nz_tick = bool(case & 1)
+        restart = bool(case & 2)
+        restart_or_nz_tick = restart or nz_tick
+        wrapped_seed = source(case, "wrapped_seed", 16)
+        kick14 = source(case, "kick14", 14)
+        kick16 = kick14 | (0xc000 if kick14 & 0x2000 else 0)
+        seed_union = wrapped_seed if restart_or_nz_tick else kick16
+        w1_values = {
+            "primary_fraction": source(case, "primary_fraction", 10),
+            "primary_base": source(case, "primary_base", 8),
+            "secondary_fraction": source(case, "secondary_fraction", 10),
+            "seed_union": seed_union,
+            "original_phase2": source(case, "original_phase2", 17),
+            "old_noise_step": source(case, "old_noise_step", 17),
+            "amplitude": source(case, "amplitude", 12) or 1,
+            "restart": int(restart),
+            "clear": int(bool(case & 4)),
+            "nz_phase": source(case, "nz_phase", 4),
+            "refresh": int(bool(case & 8)),
+            "snd_wt": 1,
+            "live_is_wave6": int((case & 7) == 6),
+            "secondary_index": source(case, "secondary_index", 6),
+            "snd_id": source(case, "snd_id", 3),
+        }
+        _, w1_decoded = pack("W1", w1_values)
+
+        # CAP_W2 consumes q16 and the arriving ARAM byte.  The adjacent byte
+        # is explicitly pre-edge input, never the just-assigned wt_p1 value.
+        primary_adjacent = source(case, "primary_adjacent", 8)
+        primary_delta = signed(primary_adjacent, 8) \
+            - signed(w1_decoded["primary_base"], 8)
+        q16_old_phase = source(case, "q16_old_phase", 16)
+        selected_seed = w1_decoded["seed_union"] \
+            if restart_or_nz_tick else \
+            (q16_old_phase + signed(w1_decoded["seed_union"], 16)) & 0xffff
+        pre_sum = signed(selected_seed, 16) \
+            + signed(w1_decoded["old_noise_step"], 17)
+        final_old_phase = max(-6_143, min(6_143, pre_sum))
+        w2_values = carry(
+            w1_decoded, "primary_base", "secondary_fraction",
+            "original_phase2", "amplitude", "restart", "clear",
+            "nz_phase", "refresh", "snd_wt", "live_is_wave6",
+            "secondary_index", "snd_id")
+        w2_values.update({
+            "primary_delta_sign": int(primary_delta < 0),
+            "final_old_phase": final_old_phase & 0x3fff,
+        })
+        _, w2_decoded = pack("W2", w2_values)
+        primary_token = {
+            "kind": "primary_interp",
+            "magnitude": abs(primary_delta)
+                         * w1_decoded["primary_fraction"],
+            "base": w2_decoded["primary_base"],
+            "sign": w2_decoded["primary_delta_sign"],
+        }
+
+        # CAP_W3 consumes the next returned base, after which the phase index
+        # and sounding id are dead.  All retained values come from W2 bits.
+        w3_values = carry(
+            w2_decoded, "primary_base", "primary_delta_sign",
+            "secondary_fraction", "original_phase2", "final_old_phase",
+            "amplitude", "restart", "clear", "nz_phase", "refresh",
+            "snd_wt", "live_is_wave6")
+        w3_values["secondary_base"] = source(case, "secondary_base", 8)
+        _, w3_decoded = pack("W3", w3_values)
+
+        # W4 supplies secondary adjacent and relocates primary base/sign.  W6
+        # copies old N into O on restart before updating N; without restart O
+        # is don't-care because old_q_replace stays clear.
+        secondary_adjacent = source(case, "secondary_adjacent", 8)
+        dq_visit = source(case, "dq_visit", 17)
+        final_phase2 = (w3_decoded["original_phase2"] + dq_visit) & 0x1ffff
+        old_q_replace = w3_decoded["restart"]
+        final_old_q = w3_decoded["original_phase2"] \
+            if old_q_replace else 0
+        pre_values = carry(
+            w3_decoded, "primary_base", "primary_delta_sign",
+            "secondary_fraction", "secondary_base", "final_old_phase",
+            "restart", "clear", "nz_phase", "refresh", "snd_wt",
+            "live_is_wave6")
+        pre_values.update({
+            "secondary_adjacent": secondary_adjacent,
+            "live_gain": (w3_decoded["amplitude"]
+                          + (w3_decoded["amplitude"] >> 1)) & 0x1fff,
+            "final_phase2": final_phase2,
+            "final_old_q": final_old_q,
+            "last_gain_we": int(bool(case & 16)),
+            "old_q_replace": old_q_replace,
+        })
+        pre_packed, pre_decoded = pack("PRE_W15", pre_values)
+
+        # CAP_W15 consumes the ready primary token and atomically launches the
+        # secondary one.  Its base/sign are then read back unchanged at W26.
+        assert primary_token["kind"] == "primary_interp"
+        assert primary_token["base"] == pre_decoded["primary_base"]
+        assert primary_token["sign"] == pre_decoded["primary_delta_sign"]
+        primary_product = int(primary_token["magnitude"])
+        if primary_token["sign"]:
+            primary_product = -primary_product
+        primary_interp = ((signed(pre_decoded["primary_base"], 8) << 10)
+                          + primary_product) >> 3
+        assert -(1 << 14) <= primary_interp < (1 << 14)
+        secondary_delta = signed(pre_decoded["secondary_adjacent"], 8) \
+            - signed(pre_decoded["secondary_base"], 8)
+        secondary_token = {
+            "kind": "secondary_interp",
+            "magnitude": abs(secondary_delta)
+                         * pre_decoded["secondary_fraction"],
+            "base": pre_decoded["secondary_base"],
+            "sign": int(secondary_delta < 0),
+        }
+        post_values = carry(
+            pre_decoded, "snd_wt", "live_is_wave6", "live_gain",
+            "final_phase2", "final_old_q", "final_old_phase",
+            "secondary_base", "restart", "clear", "last_gain_we",
+            "old_q_replace", "nz_phase", "refresh")
+        post_values.update({
+            "primary_interp": primary_interp & 0x7fff,
+            "secondary_delta_sign": int(secondary_delta < 0),
+        })
+        _, post_decoded = pack("POST_W15", post_values)
+        held_base = post_decoded["secondary_base"]
+        held_sign = post_decoded["secondary_delta_sign"]
+
+        # Execute each intervening fixed edge.  The two sideband fields are
+        # decoded from and re-packed into every successor frame; they are not
+        # reintroduced from locals at W26.
+        pc27_values = {name: value for name, value in post_decoded.items()
+                       if name != "refresh"}
+        _, pc27_decoded = pack("POST_PC27", pc27_values)
+        pc28_values = {name: value for name, value in pc27_decoded.items()
+                       if name != "final_old_phase"}
+        _, pc28_decoded = pack("POST_PC28", pc28_values)
+        pc29_values = {name: value for name, value in pc28_decoded.items()
+                       if name not in {"final_old_q", "old_q_replace"}}
+        _, pc29_decoded = pack("POST_PC29", pc29_values)
+        pc2a_values = {
+            name: value for name, value in pc29_decoded.items()
+            if name not in {"nz_phase", "restart", "last_gain_we"}
+        }
+        pc2a_values["selected_old_gain_hi"] = \
+            source(case, "selected_old_gain_hi", 5)
+        _, pc2a_decoded = pack("POST_PC2A", pc2a_values)
+        for decoded_frame in (post_decoded, pc27_decoded, pc28_decoded,
+                              pc29_decoded, pc2a_decoded):
+            assert decoded_frame["secondary_base"] == held_base
+            assert decoded_frame["secondary_delta_sign"] == held_sign
+
+        assert held_base == pre_decoded["secondary_base"]
+        assert held_sign == int(secondary_delta < 0)
+        assert secondary_token["base"] == held_base
+        assert secondary_token["sign"] == held_sign
+        secondary_product = int(secondary_token["magnitude"])
+        if secondary_token["sign"]:
+            secondary_product = -secondary_product
+        secondary_interp = ((signed(held_base, 8) << 10)
+                            + secondary_product) >> 3
+        assert -(1 << 14) <= secondary_interp < (1 << 14)
+        old_gain_nonzero = int(
+            (pc2a_decoded["selected_old_gain_hi"] << 8)
+            | source(case, "selected_old_gain_low", 8) != 0)
+        w26_values = {
+            name: value for name, value in pc2a_decoded.items()
+            if name not in {"secondary_base", "secondary_delta_sign",
+                            "selected_old_gain_hi"}
+        }
+        w26_values.update({
+            "old_interp": secondary_interp & 0x7fff,
+            "old_gain_nonzero": old_gain_nonzero,
+        })
+        _, w26_decoded = pack("POST_W26", w26_values)
+        assert w26_decoded["old_interp"] == (secondary_interp & 0x7fff)
+
+    # W2 consumes the arriving byte combinationally.  The signed base and sign
+    # are the only primary-interpolation payload retained through W15.  The
+    # secondary request repeats the same contract from W15 through W26.
+    for base in range(-128, 128):
+        for adjacent in (-128, -1, 0, 1, 127):
+            delta = adjacent - base
+            sign_bit = int(delta < 0)
+            assert sign_bit == int((-delta if sign_bit else delta) != delta)
+            assert -255 <= delta <= 255
+    assert dict(SAMPLE_CAP_SCHEDULE)["W15"] \
+        - dict(SAMPLE_CAP_SCHEDULE)["W2"] == 7
+    assert dict(SAMPLE_CAP_SCHEDULE)["W26"] \
+        - dict(SAMPLE_CAP_SCHEDULE)["W15"] == 5
+
+    return ("H-D2F-C-B3-B2-A1 active play&&amplitude!=0 wavetable/"
+            "selected-old-noise path map: "
+            "q W0..W5="
+            "10/12/16/19/14/16; physical W1/W2/W3/PRE_W15/POST_W15/W26 "
+            f"{physical_used['W1']}/{physical_used['W2']}/"
+            f"{physical_used['W3']}/{physical_used['PRE_W15']}/"
+            f"{physical_used['POST_W15']}/{physical_used['POST_W26']} "
+            "of 108 (overlay "
+            f"{overlay_used[0]}/{overlay_used[1]}/{overlay_used[2]}); "
+            "primary base/sign "
+            "W2->W15 and secondary base/sign W15->W26 literal and "
+            f"overlap-free; {changed} image words and 222/782/172/158 "
+            "unchanged; stopped/hold/service execution and accepted image/RTL "
+            "untouched", candidate)
+
+
 def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
         -> str:
     """Prove the tight D2F-B physical rows after the q16 prefetch.
@@ -2744,6 +3268,12 @@ def validate_sample_d2fca_manifest(candidate: list[int],
         field("old_fraction_base", 18, (("B", 0, 18),),
               "PRE_W15", "W15", "unpacked D2F-B W3 state",
               "CAP_W15 old interpolation launch"),
+        field("old_base", 8, (("C", 0, 7), ("T", 4, 1)),
+              "W15", "W26", "CAP_W15 retained signed base byte",
+              "CAP_W26 interpolated sum"),
+        field("old_delta_sign", 1, (("T", 5, 1),),
+              "W15", "W26", "CAP_W15 old delta sign",
+              "CAP_W26 signed multiplier result"),
         field("live_gain", 13, (("B", 0, 13),), "W15", "W27",
               "CAP_W15 relocation from pre_live_gain", "live-gain launch"),
         field("pre_final_nz_phase", 4,
@@ -2852,11 +3382,12 @@ def validate_sample_d2fca_manifest(candidate: list[int],
         return w15, peak
 
     built_w15, built_peak = validate_fields("built-in", built, 89, 106)
-    wave_w15, wave_peak = validate_fields("wavetable", wavetable, 100, 89)
+    wave_w15, wave_peak = validate_fields("wavetable", wavetable, 100, 98)
     assert {item.name for item in built if item.born == "W15"} \
         == {"live_gain_limb"}
     assert {item.name for item in wavetable if item.born == "W15"} \
-        == {"primary_interp", "live_gain", "final_nz_phase", "refresh"}
+        == {"primary_interp", "old_base", "old_delta_sign", "live_gain",
+            "final_nz_phase", "refresh"}
     assert next(item for item in wavetable
                 if item.name == "primary_interp").source.startswith("CAP_W15")
     assert all("relocation" in item.source
@@ -4897,10 +5428,13 @@ def main() -> int:
     sample_w5_q16, sample_w5_q16_candidate = \
         build_sample_w5_q16_candidate(
             sample_program, sample_blend_candidate, actions)
+    sample_b3b2a, sample_b3b2a_candidate = \
+        validate_sample_b3b2a_slice_map(
+            sample_program, sample_w5_q16_candidate, actions)
     sample_d2fb_packing = validate_sample_d2fb_packing(
-        sample_w5_q16_candidate, actions)
+        sample_b3b2a_candidate, actions)
     sample_d2fca_manifest = validate_sample_d2fca_manifest(
-        sample_w5_q16_candidate, actions)
+        sample_b3b2a_candidate, actions)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -4971,6 +5505,7 @@ def main() -> int:
     print("sample context-overlay gate: " + sample_overlay)
     print("sample physical-allocation gate: " + sample_physical_gap)
     print("sample W5-q16 candidate: " + sample_w5_q16)
+    print("sample B3-B2-A1 slice map: " + sample_b3b2a)
     print("sample D2F-B packing: " + sample_d2fb_packing)
     print("sample D2F-C-A manifest: " + sample_d2fca_manifest)
     print("sample transient pool: " + sample_pool)

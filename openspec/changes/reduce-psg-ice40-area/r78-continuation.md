@@ -2108,6 +2108,36 @@ git history; do not repeat them without the recorded changed condition.
   consumed on its birth edge, a held service token is normalized, any
   multiplier transaction advances under external hold, or the repaired
   PRE_W15 row exceeds 108 physical bits.
+- **R.84H-D2F-C-B3-B2-A1 active-path result:** accepted as a bounded physical
+  transition foundation, not as B3-B2-A completion.  The model changes only
+  candidate PC1f CAP_W2 word18 to word19, preserving q W0--W5 as
+  10/12/16/19/14/16, 44 changed words and 222/782/172/158 topology.  For the
+  active `play && amplitude != 0` wavetable/selected-old-noise path, every
+  successor frame is decoded from and repacked from its predecessor: W1/W2/W3/
+  PRE_W15/post-W15/W26 occupy 108/80/79/107/96/64 of 108 physical bits, with
+  overlay 97/69/77.  The executed transitions select wrapped seed versus
+  q16+sign-extended kick under exact `restart || nz_tick`, clamp at +/-6143,
+  derive wavetable gain from retained amplitude, consume pre-edge adjacent
+  bytes into named multiplier tokens, preserve W6 old-N-to-O ordering and
+  carry primary then secondary base/sign through their real consumers.  The
+  generic C-A manifest is corrected independently: an old interpolation
+  launched at W15 also retains base8+sign1 until W26, so its post-W15 row is
+  98/108 rather than 89/108.  Two independent audits accept this exact scope;
+  stopped paths, ARAM request identity/timing, service readiness, external
+  hold/freeze, late semantic execution, image and RTL remain unproved.
+- **R.84H-D2F-C-B3-B2-A2 next permitted hypothesis:** compose one persistent
+  source-derived service transducer around A1.  Its only cross-edge state is
+  ARAM `seq_q`/replay/pending request identity, the literal packed frame, and
+  multiplier kind/operands/result/busy/ready age.  Execute played and stopped
+  wavetable slots: W1 captures the returned or held base, W2 consumes pre-edge
+  `seq_q` directly and launches primary interpolation, W15 consumes it and
+  atomically launches secondary interpolation, and W26 consumes that result.
+  Inject holds before/inside/after both transactions and prove controller,
+  frame, ARAM sidebands/output and slow+fast multiplier state are unchanged.
+  Stopped slots issue no ARAM request and must reuse the held byte rather than
+  zero-normalize it.  Reject before an eight-slot executor, image or RTL if a
+  token lacks an issue edge, ages while held, is consumed before ready, or any
+  expected/direct-oracle value seeds internal state.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
