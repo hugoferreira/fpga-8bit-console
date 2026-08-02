@@ -27,6 +27,11 @@ git history; do not repeat them without the recorded changed condition.
   559 placed LCs at 68.24 MHz.  It proves G-F's normalized advance family plus
   the complete owner-zero address/data transaction boundary; it implements no
   sample service semantics and is not composed into the generic PSG.
+- **Scratch sample frontier:** accepted C2-C-B / `fe92b79` adds the generated
+  128-byte action/address map and isolated real-controller read/write override
+  proof.  It covers eighteen fixed writes plus CAP_W51 in both banks and all
+  slots, but deliberately carries synthetic write data and earns no generic
+  integration, synthesis or area credit.
 - Exact generic gates at the last full checkpoint remain 530 walker + 272
   sequencer clocks in the 850-clock `/6` interval; 59/59 hardware renders
   byte-identical; P.1/P.2 and `click-v1` clean; full/PREVIEW lint, clocks and
@@ -2891,6 +2896,43 @@ git history; do not repeat them without the recorded changed condition.
   RTL/image immutability pass.  This earns no candidate value, service-result,
   persistent/fold/dry, generic integration, synthesis or area claim; the
   accepted whole-PSG baseline remains **7,504 routed LCs**.
+- **Next permitted C2-C-C:** replace the missing semantic expected-value source
+  with one complete value-bearing trace from the existing live RTL, not with
+  equations in Python or a partial candidate executor.  Candidate PC `0x13`
+  consumes parameter `q27`, selects restart/old context and launches live DQ
+  plus old-noise multiply work before PCs `0x14..0x1b` commit the first six
+  record values.  C2-C-B proves those destinations but supplies no legal value
+  oracle: `SampleImageMachine` still imports `SampleTrace.final_words`, while
+  the accepted metadata manifest intentionally contains no values.  Do not
+  implement candidate write data until every root and commit can be compared
+  to an observed legacy/primitive producer and consumer.
+- **C2-C-C active hypothesis:** extend the proof-only target trace with a
+  deterministic `psg_legacy_value_v1` stream carrying actual pre/post-NBA
+  values at all 30 C2-C-A roots, their 27 value-group producer/consumer joins
+  and all eighteen fixed-write source events.  Values must come directly from
+  state-q/state-write, wave/ARAM, DQ, radix-2 multi-pumped multiplier, ring,
+  fold, leaf/LFSR and dry-publication RTL signals.  A new checker may pair,
+  tag and compare observed rows, but may not evaluate a waveform, arithmetic
+  formula, record transition, `SampleTrace` or `evaluate_sample_slot`.
+  Compose the existing C1 and C2-A pre/post traces where they already expose
+  the authoritative primitive value; do not duplicate them with bench labels.
+  The output is a live value oracle for the future adapter, not an executor.
+- **C2-C-C scope and gates:** start from clean accepted C2-C-B `fe92b79` and
+  work only in proof instrumentation/checking, the metadata generator if a
+  typed trace key is missing, and this ledger.  Accepted image, executor
+  production modules, generic PSG, main and Tang remain immutable.  Require
+  both parameter banks, all eight slots, built-in/wavetable, noise/brown,
+  restart/no-restart, clear, audible/hidden/stopped, reverb and blend guards;
+  every root and fixed write must have an observed producer, consumer, width,
+  guard and value identity.  Held edges must preserve every carried value and
+  emit no issue/take/commit.  Require byte-identical repeated traces, the full
+  C2-C-A structural join, C2-C-B address bench, C1/C2-A trace gates, full/
+  PREVIEW lint, `make test-psg`, strict OpenSpec and production immutability.
+  Reject if any expected value is reconstructed in Python, sampled from the
+  direct oracle, inferred from a PC/action label without a live strobe, or if
+  one of the 30 roots/eighteen commits remains prose-only.  No adapter,
+  persistent/fold/dry equivalence, generic integration, synthesis or area
+  claim is permitted in this iteration.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
