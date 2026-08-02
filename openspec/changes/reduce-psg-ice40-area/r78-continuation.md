@@ -2040,6 +2040,30 @@ git history; do not repeat them without the recorded changed condition.
   repaired row exceeds 108 physical bits, source extraction leaves an opaque
   producer, any service state is per-slot reset, or CAP_W51--W75 does not carry
   the selected 26/30 value through a held cycle.
+- **R.84H-D2F-C-B3-B1 result and decision:** rejected and reverted before any
+  image or RTL.  The proposed 12/16/18 to 16/18/19 next-read shift has correct
+  scalar bounds but not a complete transition.  First, q18 at W2 removes q16
+  exactly when the ordinary built-in path issues its selected-old-phase wave
+  context; the exact 108/108 W2 row contains no replacement old phase.
+  Second, built-in old-noise cannot contain `old_noise_sample18` at W2 because
+  its x68/x80 selector q19[4] arrives only at W3: B18 must hold the signed18
+  pre-sum until an atomic W3 replacement.  Third, q16 plus old-noise step still
+  omits W0's kick across the mandatory signed16 wrap; no B1 row or service
+  token retains that independent value.  The measured bounds remain useful:
+  step -33,324..33,063, W1 pre-clamp -66,092..65,830 signed18, sample
+  -82,640..82,240 signed18 and final phase signed14.  All experimental model
+  code is removed; accepted image, RTL and prior B1 model are unchanged.
+- **R.84H-D2F-C-B3-B2 next permitted hypothesis:** retain q16 through both W1
+  and W2, and move only the CAP_W2 next-read to word19 so W3 receives selected
+  old-inc bit13.  Add an explicit W0-to-W1 kick lifetime after the W0 edge
+  frees its consumed noise-lowpass/phase inputs; prove that slice in every
+  built-in and wavetable old-noise row.  At W1 replace seed+kick with the exact
+  signed18 pre-sum; at W3 atomically replace built-in B18 pre-sum with the
+  x68/x80 sample while separately retaining the clamped phase, and discard the
+  pre-sum on wavetable paths after deriving signed14 phase.  Ordinary W2 must
+  still issue selected old phase from q16.  Reject before any eight-slot
+  executor, suffix, image or RTL if kick spills, q16 is lost, the W3
+  replacement exceeds 108 bits or any value appears before its typed q edge.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
