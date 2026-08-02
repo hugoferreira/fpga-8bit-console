@@ -2582,6 +2582,38 @@ git history; do not repeat them without the recorded changed condition.
   needs a bench-case label, expected-value oracle, hand-authored PC/action map
   or an unobserved production valid/tag.  Repeat only if the accepted image,
   synchronous state-port contract or real wave/ARAM issue boundary changes.
+- **C2-A result and decision:** accepted as a bounded structural
+  production-image transaction proof.  The optional trace emits **8,808**
+  valid `psg_edge_v1` JSON rows forming **4,404** exact pre/post-NBA pairs;
+  two complete runs are byte-identical.  Each of thirteen cases observes all
+  42 PCs `0x13..0x3c` in all eight slots, for 4,368 state-q origin checks tied
+  to real `state_re/state_ra` events and the controller's loaded image word.
+  The strobe-derived wave pipeline joins **224 issues to 224 takes** and binds
+  phase plus wave controls through the real first stage before the shared-CE
+  tag advances; the ARAM chain joins **96 requests to 96 takes**, including
+  24 final replay reads of sequencer address `0x055`.  Thirty-six traced held
+  pre-edges suppress both state ports and every service strobe while preserving
+  controller, state-q, proof-token, wave, ARAM byte and replay state.
+- **C2-A audit corrections and gates:** the first trace attempt was invalid
+  JSON because reset-time unknowns were emitted as bare values; capture is now
+  restricted to the initialized candidate-PC window and the legitimately
+  unknown early waveform result is quoted.  Independent review then rejected
+  hand-authored `take_action=issue_action+latency` checks and an unbound phase
+  token; both action equations were removed, and the phase/control token is
+  now checked against `u_wave.wx_r/wsel_r/wsec_r/walt_r` on real `wave_ce`
+  before both pipelines shift.  Two independent final audits accept a queue
+  reconstruction using only actual issue/take/CE strobes.  The production
+  wave/ARAM bench passes at 782/172/158 per case and reports joins
+  4,368/224/96; direct wave-core and ARAM-hold benches pass; the complete
+  19,728,640-case/131,087-transaction model and byte-identical image pass;
+  executor plus generic full/PREVIEW lint, `make test-psg` including fidelity,
+  93 audio-analysis tests and the complete PSG RTL test, strict OpenSpec and
+  diff checks pass.  `make test-psg` required the existing Homebrew Python
+  because OSS-CAD's bundled Python lacks NumPy.  No production RTL or image
+  changed.  Therefore this proves accepted H-C image PC/state/wave/ARAM
+  lineage only: synthetic write data, the 44-word D2F candidate, C1
+  multiplier/DQ causality, ring, semantic commits, fold/public, integration
+  and physical results remain outside the claim.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

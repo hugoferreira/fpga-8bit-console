@@ -62,6 +62,36 @@ module psg_execwave_tb;
   logic [12:0] aram_pending_addr;
   logic [6:0] hold_action;
   logic hold_injected;
+  bit edge_trace, trace_active;
+  integer trace_case, trace_edge, trace_pre_rows, trace_post_rows;
+  logic [41:0] candidate_pc_seen;
+  integer state_origin_checks, wave_tag_checks, aram_tag_checks;
+  integer total_state_origin_checks, total_wave_tag_checks;
+  integer total_aram_tag_checks;
+
+  // Proof-only state is driven exclusively by real RTL events.  It provides
+  // provenance in the trace but is not a production valid/tag interface.
+  logic q_origin_valid;
+  logic [8:0] q_origin_addr;
+  logic [7:0] q_origin_pc;
+  logic [15:0] q_origin_ir, q_origin_data;
+  logic q_origin_owner;
+  logic [2:0] q_origin_slot;
+
+  logic wave_tag1_valid, wave_tag2_valid;
+  logic [2:0] wave_tag1_slot, wave_tag2_slot;
+  logic [7:0] wave_tag1_pc, wave_tag2_pc;
+  logic [6:0] wave_tag1_action, wave_tag2_action;
+  logic [15:0] wave_tag1_phase, wave_tag2_phase;
+  logic [2:0] wave_tag1_sel, wave_tag2_sel;
+  logic wave_tag1_alt, wave_tag2_alt;
+  logic wave_tag1_secondary, wave_tag2_secondary;
+
+  logic aram_tag_valid;
+  logic [2:0] aram_tag_slot;
+  logic [7:0] aram_tag_pc;
+  logic [6:0] aram_tag_action;
+  logic [12:0] aram_tag_addr;
   wire [37:0] adapter_context =
       {u_cadence.old_q, u_cadence.u_core.phase_index_hold,
        u_cadence.u_core.snd_id, u_cadence.u_core.snd_wt,
@@ -77,6 +107,39 @@ module psg_execwave_tb;
     HOLD_ACTION = 7'h70;
 
   always #5 clk = ~clk;
+
+  // bench_case/edge are diagnostic coordinates only.  Causality comes from
+  // the emitted RTL strobes and the explicitly labelled proof_* provenance.
+  task automatic emit_edge_trace(input string phase_name);
+    begin
+      $display("PSGTRACE {\"schema\":\"psg_edge_v1\",\"svc\":\"execwave\",\"domain\":\"clk\",\"phase\":\"%s\",\"edge\":%0d,\"bench_case\":%0d,\"time\":%0t,\"reset\":%0b,\"start\":%0b,\"active\":%0b,\"done\":%0b,\"hold\":%0b,\"owner\":%0b,\"slot\":%0d,\"pc\":\"%0h\",\"ir\":\"%0h\",\"op\":%0d,\"action\":\"%0h\",\"state_word\":%0d,\"launch\":%0b,\"advance\":%0b,\"ucode_ce\":%0b,\"next_pc\":\"%0h\",\"branch_take\":%0b,\"state_re\":%0b,\"state_ra\":%0d,\"state_q\":\"%0h\",\"state_we\":%0b,\"state_wa\":%0d,\"state_wd\":\"%0h\",\"proof_q_valid\":%0b,\"proof_q_addr\":%0d,\"proof_q_pc\":\"%0h\",\"proof_q_ir\":\"%0h\",\"proof_q_owner\":%0b,\"proof_q_slot\":%0d,\"proof_q_data\":\"%0h\",\"wave_ce\":%0b,\"wave_issue\":%0b,\"wave_take\":%0b,\"wave_phase\":\"%0h\",\"wave_sel\":%0d,\"wave_alt\":%0b,\"wave_secondary\":%0b,\"wave_z\":\"%0d\",\"proof_wave_v1\":%0b,\"proof_wave_v2\":%0b,\"proof_wave_pc2\":\"%0h\",\"proof_wave_action2\":\"%0h\",\"proof_wave_slot2\":%0d,\"proof_wave_phase2\":\"%0h\",\"proof_wave_sel2\":%0d,\"proof_wave_alt2\":%0b,\"proof_wave_secondary2\":%0b,\"aram_req\":%0b,\"aram_id\":%0d,\"aram_index\":%0d,\"aram_adjacent\":%0b,\"syn_addr\":%0d,\"aram_take\":%0b,\"aram_rd\":%0b,\"aram_addr\":%0d,\"aram_replay\":%0b,\"seq_frozen\":%0b,\"seq_q\":\"%0h\",\"proof_aram_valid\":%0b,\"proof_aram_pc\":\"%0h\",\"proof_aram_action\":\"%0h\",\"proof_aram_slot\":%0d,\"proof_aram_addr\":%0d}",
+               phase_name, trace_edge, trace_case, $time, reset, start,
+               active, done, hold, owner, slot, pc, ir, op, action,
+               state_word, u_ctl.launch, u_ctl.advance, u_ctl.ucode_ce,
+               u_ctl.next_pc, u_ctl.branch_take, state_re, state_ra, state_q,
+               state_we, state_wa, state_wd, q_origin_valid, q_origin_addr,
+               q_origin_pc, q_origin_ir, q_origin_owner, q_origin_slot,
+               q_origin_data, wave_ce, wave_issue, wave_take, wave_phase,
+               wave_sel, wave_alt, wave_secondary, $signed(z_eval),
+               wave_tag1_valid, wave_tag2_valid, wave_tag2_pc,
+               wave_tag2_action, wave_tag2_slot, wave_tag2_phase,
+               wave_tag2_sel, wave_tag2_alt, wave_tag2_secondary, aram_req,
+               aram_id, aram_index, aram_adjacent, syn_addr, aram_take,
+               u_aram.aram_rd, u_aram.aram_addr, u_aram.replay, seq_frozen,
+               seq_q, aram_tag_valid, aram_tag_pc, aram_tag_action,
+               aram_tag_slot, aram_tag_addr);
+    end
+  endtask
+
+  always @(posedge clk) if (edge_trace && trace_active && active && !owner
+                            && pc >= 8'h13 && pc <= 8'h3c) begin
+    emit_edge_trace("pre");
+    trace_pre_rows = trace_pre_rows + 1;
+    #1;
+    emit_edge_trace("post");
+    trace_post_rows = trace_post_rows + 1;
+    trace_edge = trace_edge + 1;
+  end
 
   function automatic logic [15:0] synthetic_wd(
       input logic [2:0] fn_slot,
@@ -200,6 +263,131 @@ module psg_execwave_tb;
       state_q <= mem[state_ra];
     if (state_we)
       mem[state_wa] <= state_wd;
+  end
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      candidate_pc_seen <= '0;
+      state_origin_checks <= 0;
+      wave_tag_checks <= 0;
+      aram_tag_checks <= 0;
+      q_origin_valid <= 1'b0;
+      q_origin_addr <= '0;
+      q_origin_pc <= '0;
+      q_origin_ir <= '0;
+      q_origin_owner <= 1'b0;
+      q_origin_slot <= '0;
+      q_origin_data <= '0;
+      wave_tag1_valid <= 1'b0;
+      wave_tag2_valid <= 1'b0;
+      wave_tag1_slot <= '0;
+      wave_tag2_slot <= '0;
+      wave_tag1_pc <= '0;
+      wave_tag2_pc <= '0;
+      wave_tag1_action <= '0;
+      wave_tag2_action <= '0;
+      wave_tag1_phase <= '0;
+      wave_tag2_phase <= '0;
+      wave_tag1_sel <= '0;
+      wave_tag2_sel <= '0;
+      wave_tag1_alt <= 1'b0;
+      wave_tag2_alt <= 1'b0;
+      wave_tag1_secondary <= 1'b0;
+      wave_tag2_secondary <= 1'b0;
+      aram_tag_valid <= 1'b0;
+      aram_tag_slot <= '0;
+      aram_tag_pc <= '0;
+      aram_tag_action <= '0;
+      aram_tag_addr <= '0;
+    end else begin
+      // This is a range/IR identity check, not a hand-authored PC/action map.
+      if (active && !hold && !owner && pc >= 8'h13 && pc <= 8'h3c) begin
+        candidate_pc_seen[pc - 8'h13] <= 1'b1;
+        if (ir !== u_ctl.ucode[{owner, pc}])
+          $fatal(1, "candidate PC/IR mismatch pc=%h ir=%h image=%h", pc, ir,
+                 u_ctl.ucode[{owner, pc}]);
+        if (!q_origin_valid || state_q !== q_origin_data)
+          $fatal(1,
+                 "candidate state-q lost read origin pc=%h q=%h origin=%h/%h",
+                 pc, state_q, q_origin_addr, q_origin_data);
+        state_origin_checks <= state_origin_checks + 1;
+      end
+
+      if (wave_take) begin
+        if (!wave_tag2_valid || wave_tag2_slot != slot)
+          $fatal(1,
+                 "wave take lost issue provenance pc/action=%h/%h tag=%b/%h/%h",
+                 pc, action, wave_tag2_valid, wave_tag2_pc,
+                 wave_tag2_action);
+        if (u_wave.wsel_r2 !== wave_tag2_sel
+            || u_wave.wsec_r2 !== wave_tag2_secondary
+            || u_wave.walt_r2 !== wave_tag2_alt)
+          $fatal(1, "wave RTL pipeline/tag mismatch at pc=%h action=%h", pc,
+                 action);
+        wave_tag_checks <= wave_tag_checks + 1;
+      end
+
+      if (aram_take) begin
+        if (!aram_tag_valid || aram_tag_slot != slot)
+          $fatal(1,
+                 "ARAM take lost request provenance pc/action=%h/%h tag=%b/%h/%h",
+                 pc, action, aram_tag_valid, aram_tag_pc, aram_tag_action);
+        if (seq_q !== u_aram.aram[aram_tag_addr])
+          $fatal(1, "ARAM RTL result/origin mismatch pc=%h addr=%h", pc,
+                 aram_tag_addr);
+        aram_tag_checks <= aram_tag_checks + 1;
+      end
+      if (aram_req && (!u_aram.aram_rd || u_aram.aram_addr != syn_addr))
+        $fatal(1, "ARAM request did not drive physical read pc=%h", pc);
+
+      if (state_re) begin
+        q_origin_valid <= 1'b1;
+        q_origin_addr <= state_ra;
+        q_origin_pc <= pc;
+        q_origin_ir <= ir;
+        q_origin_owner <= owner;
+        q_origin_slot <= slot;
+        q_origin_data <= mem[state_ra];
+      end
+
+      if (wave_ce) begin
+        if (wave_tag1_valid
+            && (u_wave.wx_r !== wave_tag1_phase
+                || u_wave.wsel_r !== wave_tag1_sel
+                || u_wave.wsec_r !== wave_tag1_secondary
+                || u_wave.walt_r !== wave_tag1_alt))
+          $fatal(1, "wave first-stage/tag mismatch at pc=%h action=%h", pc,
+                 action);
+        wave_tag2_valid <= wave_tag1_valid;
+        wave_tag2_slot <= wave_tag1_slot;
+        wave_tag2_pc <= wave_tag1_pc;
+        wave_tag2_action <= wave_tag1_action;
+        wave_tag2_phase <= wave_tag1_phase;
+        wave_tag2_sel <= wave_tag1_sel;
+        wave_tag2_alt <= wave_tag1_alt;
+        wave_tag2_secondary <= wave_tag1_secondary;
+        wave_tag1_valid <= wave_issue;
+        if (wave_issue) begin
+          wave_tag1_slot <= slot;
+          wave_tag1_pc <= pc;
+          wave_tag1_action <= action;
+          wave_tag1_phase <= wave_phase;
+          wave_tag1_sel <= wave_sel;
+          wave_tag1_alt <= wave_alt;
+          wave_tag1_secondary <= wave_secondary;
+        end
+      end
+
+      if (aram_req) begin
+        aram_tag_valid <= 1'b1;
+        aram_tag_slot <= slot;
+        aram_tag_pc <= pc;
+        aram_tag_action <= action;
+        aram_tag_addr <= syn_addr;
+      end else if (aram_take) begin
+        aram_tag_valid <= 1'b0;
+      end
+    end
   end
 
   task automatic check_context;
@@ -408,6 +596,8 @@ module psg_execwave_tb;
     logic [7:0] saved_seq_q;
     logic saved_replay;
     begin
+      trace_case = trace_case + 1;
+      trace_active = 1'b0;
       reset = 1'b1;
       start = 1'b0;
       start_owner = 1'b0;
@@ -434,6 +624,7 @@ module psg_execwave_tb;
       start = 1'b1;
       step();
       start = 1'b0;
+      trace_active = edge_trace;
 
       cycles = 0;
       while (!done && cycles < 900) begin
@@ -479,6 +670,22 @@ module psg_execwave_tb;
           || op_count[4] != 8 || op_count[5] != 0
           || op_count[6] != 1 || op_count[7] != 406)
         $fatal(1, "production instruction histogram changed");
+      if (candidate_pc_seen !== {42{1'b1}})
+        $fatal(1, "candidate PC coverage incomplete mask=%h",
+               candidate_pc_seen);
+      if (state_origin_checks < 42)
+        $fatal(1, "candidate state-q origin coverage too small: %0d",
+               state_origin_checks);
+      if (wave_tag_checks != wave_takes)
+        $fatal(1, "wave issue/take proof mismatch tags/takes=%0d/%0d",
+               wave_tag_checks, wave_takes);
+      if (aram_tag_checks != aram_takes)
+        $fatal(1, "ARAM request/take proof mismatch tags/takes=%0d/%0d",
+               aram_tag_checks, aram_takes);
+      total_state_origin_checks = total_state_origin_checks
+                                  + state_origin_checks;
+      total_wave_tag_checks = total_wave_tag_checks + wave_tag_checks;
+      total_aram_tag_checks = total_aram_tag_checks + aram_tag_checks;
       if (use_wavetable) begin
         if (wave_issues != 0 || wave_takes != 0
             || aram_issues != 16 || aram_takes != 16)
@@ -487,14 +694,25 @@ module psg_execwave_tb;
       end else if (wave_issues != 32 || wave_takes != 32
                    || aram_issues != 0 || aram_takes != 0) begin
         $fatal(1, "built-in counts wave=%0d/%0d aram=%0d/%0d",
-               wave_issues, wave_takes, aram_issues, aram_takes);
+                 wave_issues, wave_takes, aram_issues, aram_takes);
       end
+      trace_active = 1'b0;
     end
   endtask
 
   initial begin
     clk = 1'b0;
     reset = 1'b1;
+    edge_trace = 1'b0;
+    trace_active = 1'b0;
+    trace_case = 0;
+    trace_edge = 0;
+    trace_pre_rows = 0;
+    trace_post_rows = 0;
+    total_state_origin_checks = 0;
+    total_wave_tag_checks = 0;
+    total_aram_tag_checks = 0;
+    edge_trace = $test$plusargs("PSG_EDGE_TRACE");
     run_case(1'b0, 1'b0, 1'b0, 7'h7f);
     run_case(1'b0, 1'b0, 1'b1, CAP_W0);
     run_case(1'b0, 1'b1, 1'b0, CAP_W1);
@@ -508,7 +726,12 @@ module psg_execwave_tb;
     run_case(1'b1, 1'b1, 1'b0, CAP_W3);
     run_case(1'b1, 1'b0, 1'b1, CAP_W4);
     run_case(1'b1, 1'b1, 1'b0, CAP_W5);
-    $display("psg_execwave_tb: PASS (production image, 8 slots, W0-W5 holds)");
+    if (edge_trace && trace_pre_rows != trace_post_rows)
+      $fatal(1, "trace pre/post rows differ: %0d/%0d", trace_pre_rows,
+             trace_post_rows);
+    $display("psg_execwave_tb: PASS (production image, 8 slots, W0-W5 holds, q/wave/ARAM joins %0d/%0d/%0d)",
+             total_state_origin_checks, total_wave_tag_checks,
+             total_aram_tag_checks);
     $finish;
   end
 endmodule
