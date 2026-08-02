@@ -3023,6 +3023,31 @@ git history; do not repeat them without the recorded changed condition.
   C2-C-C stream without semantic arithmetic or final legacy values as inputs.
   Only that manifest may drive one isolated RTL implementation.  Do not create
   a second Python semantic executor, per-write result mux or generic handoff.
+- **C2-C-D1 active hypothesis:** one action-keyed literal-slice transition
+  manifest can turn the existing capacity snapshots into an executable pool
+  contract without adding semantic equations.  Its physical containers are
+  exactly A18/B18/N17/O17 plus retained Q16/T6/C7/I6/D3.  Every enabled-edge
+  assignment must name the controller action, exact destination slice, prior
+  value/death rule and one typed source observation that is either the
+  preceding synchronous `state_q` word or a transaction-bound service take.
+  Concatenation, slicing, sign extension and bit-preserving relocation are
+  transport; any add, clamp, select or filter result must instead arrive from
+  a named live service result.  The manifest must be complete across load,
+  NZ, W0--W84, record commits, leaf commits and fold before RTL begins.
+- **C2-C-D1 scope and reject gates:** first audit the C2-C-C stream for every
+  source bit required by the D2F-B/D2F-C-A rows and add proof-only raw-signal
+  observations only where a real legacy producer already exists.  Reject a
+  row if its source is prose, a final legacy write value, a Python expression
+  or an untagged service result.  Then prove unique slice ownership, exact
+  overwrite/death, no read-before-write, all path guards, both banks/eight
+  slots, and complete reconstruction of the eighteen oracle outputs at the
+  comparison boundary.  Held edges must freeze the entire manifest state and
+  emit no source take or commit.  Require deterministic repeated manifests and
+  traces, mutations for slice alias/source loss/late birth/guard loss/hold
+  drift, C2-C-C/C2-C-B/C1/C2-A gates, full/PREVIEW/executor lint,
+  `make test-psg`, strict OpenSpec and production immutability.  No adapter
+  RTL, candidate image, generic integration, synthesis or area credit is
+  permitted until this manifest closes without a legacy final-value input.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
