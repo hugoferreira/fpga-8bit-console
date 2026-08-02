@@ -24,7 +24,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H016.
+- Next hypothesis ID: H017.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
@@ -35,7 +35,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   reductions are deterministic; the 57-LC placed improvement is positive but
   remains just inside the known roughly 60-LC placement-sensitivity band and
   is not claimed as robust.
-- Latest rejected variant: H015 proves the final detune subtract qualifier is
+- Latest rejected variant: H016 proves a nine-bit restoring subtract is exact
+  and locally trades one carry for one LUT, but whole-PSG mapping adds 60
+  LUT4s, eight carries, and 67 placed LCs. H015 proves the final detune subtract qualifier is
   algebraically redundant, but both registered cones map identically at 188
   LUT4s, 73 carries, and 14 flops. H014 proves all detune corrections fit eight bits,
   but the complete registered detune cone maps identically at 189 LUT4s, 73
@@ -58,10 +60,10 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H016 resume audit and record one new,
-  bounded, source-exact generic-RTL hypothesis outside the closed detune,
-  width, delayed-tick, multiplier, and R.84 families.
-- Required verification for any accepted H016: focused algebraic or exhaustive
+- Next permitted experiment: perform the H017 resume audit and record one new,
+  bounded, source-exact generic-RTL hypothesis outside the closed divider,
+  detune, delayed-tick, multiplier, and R.84 families.
+- Required verification for any accepted H017: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -90,6 +92,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H013 | rejected | Keep the 34-bit internal service form: the proved 29-bit recurrence removes two flops but adds 24 LUT4s, three carries, and 26 placed LCs. |
 | H014 | rejected | Keep the nine-bit source contract: all values fit eight bits, but Yosys already prunes the unreachable position and both forms map identically. |
 | H015 | rejected | Keep the explicit subtract qualifier: the unconditional form is exact but maps identically in the registered full-detune cone. |
+| H016 | rejected | Keep the ten-bit restoring subtract: the nine-bit form is exact and locally -1 carry/+1 LUT, but globally adds 60 LUT4s, eight carries, and 67 LCs. |
 
 ## Hypothesis H001
 
@@ -635,6 +638,44 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   only after the detune branch structure, correction defaults, mapper
   arithmetic/mux folding, or downstream consumer changes materially.
 
+## Hypothesis H016
+
+- **ID:** H016.
+- **Hypothesis:** the restoring divider maintains `0 <= remainder < divisor`.
+  After shifting one dividend bit, `rsh < 2*divisor`; a successful subtraction
+  is therefore below 256, while a failed nine-bit subtraction wraps with bit 8
+  set. The current ten-bit `d_sub` and bit-9 borrow test can narrow to nine bits
+  and bit 8 without changing any reachable step, potentially removing one
+  carry/LUT position from the only registered divider service.
+- **Scope:** `rtl/psg_divsvc.sv`, exhaustive reachable-step proof in
+  `tools/psg_hw_forms.py`, isolated full-service iCE40 synthesis, whole-PSG
+  mapping, and the complete H007 acceptance battery if mapping improves. No
+  division latency, quotient/remainder value, schedule, interface, EBR, R.84,
+  or tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H015 through
+  `c0afe6a`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1 7,392
+  LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Changed condition versus closed width experiments:** H013 changed stored
+  multiplier recurrence widths and mapped worse; H014 exposed a combinational
+  range already removed by Yosys. H016 instead changes the live borrow encoding
+  using a sequential restoring invariant that synthesis cannot infer locally.
+- **Change:** narrow `d_sub` from ten to nine bits and move the borrow test from
+  bit 9 to bit 8. Add an exhaustive proof over all 65,280 reachable divisor,
+  remainder, and incoming-dividend-bit transitions.
+- **Result:** the proof establishes the restoring invariant and exact fit/next-
+  remainder equivalence. Isolated full-service synthesis moves from 51 LUT4 /
+  12 carry / 45 flop to 52 LUT4 / 11 carry / 45 flop. Canonical whole-PSG
+  synthesis then regresses from 6,522 LUT4 / 1,553 carry / 1,476 FF / 14 EBR /
+  7,392 LCs to 6,582 LUT4 / 1,561 carry / 1,476 FF / 14 EBR / 7,459 LCs.
+  Routed clocks pass at 150.53 MHz fast and 32.42 MHz PSG, but both mapped and
+  placed area gates fail. Production RTL and the conditional permanent proof
+  are reverted byte-for-byte; the full fidelity battery is correctly skipped.
+- **Decision:** rejected after whole-PSG synthesis. The reachable-state width
+  proof is sound, but the altered borrow covering is globally much worse.
+- **Repeat only if:** a rejected nine-bit divider subtract may be retried only
+  after the restoring recurrence, divisor width/domain, mapper subtract
+  lowering, or downstream quotient/remainder contract changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -669,12 +710,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h013/candidate-v2.{synth,pnr}.log` | canonical synthesis with only the multipumped service narrowed | Mapping-identical attribution variant; rejected. |
 | `build/experiments/h014/isolated-{baseline,candidate}.log` | registered full-detune `synth_ice40` comparison | Both forms map identically; production patch rejected. |
 | `build/experiments/h015/isolated-{baseline,candidate}.log` | registered full-detune `synth_ice40` comparison | Unconditional subtract maps identically; production patch rejected. |
+| `build/experiments/h016/isolated-{baseline,candidate}.log` | full registered divider `synth_ice40` comparison | Exact nine-bit form trades one carry for one LUT locally. |
+| `build/experiments/h016/candidate.{synth,pnr}.log` | canonical synthesis with the nine-bit restoring subtract | Whole-PSG mapped and placed area regress; rejected. |
 
 ## Handoff
 
-- Next allowed experiment: H016 only after its resume audit and hypothesis row
+- Next allowed experiment: H017 only after its resume audit and hypothesis row
   are recorded; it must use a new generic-RTL mechanism outside the closed
-  detune-output and R.84 families.
+  divider and R.84 families.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -691,5 +734,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   patches are reverted and no behavior or physical gate remains.
   H015's output qualifier is exact but mapping-identical; its production/proof
   patches are reverted and no behavior or physical gate remains.
+  H016's nine-bit restoring subtract is exact but globally worse; its
+  production/proof patches are reverted and no behavior gate remains.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
