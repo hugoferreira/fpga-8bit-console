@@ -25,6 +25,7 @@ Sections:
   timing - parameter-derived fractional sample-accumulator width
   pitch - signed pitch-sum bounds and prefix saturation
   noise - signed-prefix saturation at the exact +/-6143 audio bounds
+  seq   - exact prefix forms for sequencer register inputs
   bound - exact worst-case interval propagation through the whole
           pipeline (comb feedback to its fixpoint), and the int16 verdict
           for the mix bus (buffer SIZES live in tools/psg_buffers.py)
@@ -956,12 +957,25 @@ def sec_noise() -> None:
            f"[{delta15_lo}, {delta15_hi}]")
 
 
+def sec_seq() -> None:
+    print("seq: exact prefix forms for sequencer register inputs")
+
+    length_ok = True
+    for value in range(1 << 8):
+        reference = min(value, 32)
+        over = bool((value & 0xc0) or ((value & 0x20) and (value & 0x1f)))
+        candidate = 32 if over else value & 0x3f
+        length_ok &= candidate == reference
+    report("seq.trigger_length_prefix", length_ok,
+           "high prefix equals saturate(byte, 32) for all 256 input values")
+
+
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
             "svc": sec_svc, "tzpow": sec_tzpow, "blend": sec_blend,
             "wtsign": sec_wtsign,
             "dq": sec_dq, "amp": sec_amp, "aram": sec_aram,
             "timing": sec_timing, "pitch": sec_pitch, "noise": sec_noise,
-            "bound": sec_bound,
+            "seq": sec_seq, "bound": sec_bound,
             "csd": sec_csd, "rom": sec_rom}
 
 

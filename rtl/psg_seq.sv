@@ -320,6 +320,7 @@ module psg_seq (input  bit   clk,
 
   assign ctrl_q = crom_q;
   wire         fade_issue = cs && rw && addr == 8'h22;
+  wire         trg_len_over = (|di[7:6]) || (di[5] && (|di[4:0]));
   logic        crom_replay;
   logic        ctrl_displaced;
 
@@ -1255,7 +1256,7 @@ module psg_seq (input  bit   clk,
             end
           2'd1: trg_row[addr[1:0]] <= di[4:0];
           2'd2:
-            trg_len[addr[1:0]] <= (di > 8'd32) ? 6'd32 : di[5:0];
+            trg_len[addr[1:0]] <= trg_len_over ? 6'd32 : di[5:0];
           default: ;
         endcase
       end
