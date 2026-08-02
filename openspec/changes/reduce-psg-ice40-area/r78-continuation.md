@@ -2429,6 +2429,49 @@ git history; do not repeat them without the recorded changed condition.
   `tools/psg_exec_model.py`.  Keep the accepted image and all RTL untouched;
   stop again before record commits, fold/public equivalence, executor image,
   synthesis or generic integration.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1-A result and decision:** rejected and
+  reverted after two independent source audits; no model, image or RTL lands.
+  The experimental model passed its own 32 persistent slot runs, 438 service
+  transactions, 1,344 hold/row checks, 5,856 ring-address cases and both
+  REVERB builds, but those counters are not an execution proof.  It executed
+  the radix-4 recurrence although production `psg.sv` instantiates
+  `psg_mulmp` with `RADIX_BITS=1`; encoded damp/reverb in parameter bits 1:0
+  and 3:2 instead of the production state-q bits 13:12 and 11:10; and formed
+  ARAM origins as `64*snd_id+index` instead of the physical
+  `256+68*snd_id+index` layout and three-bit sound ID.  The stopped-wavetable
+  case injected four addressed bytes without four requests, while the clear
+  case pre-zeroed word14/15 instead of carrying W0's enabled lowpass update.
+- **B1-B1-A proof defects:** `SlotContext` remained a hidden semantic sidecar
+  for phases, gains, fractions, path flags and origins.  Generic 108-bit
+  dataclass pack/unpack proved only identity, not per-PC literal ownership or
+  collision freedom.  Disabled CE aliased the prestate without evaluating a
+  disabled successor; wrong-tag checks observed labels without attempting a
+  rejected take; DQ takes cleared metadata without applying the old-q/phase2
+  equations; noise results were discarded; ring validity was set but never
+  required at W75; and aggregate service issue/take equality allowed
+  cross-service cancellation.  The two audits also found no playing
+  wavetable/zero-amplitude class, no old-gain-zero arm, and an extra old-DQ
+  result register inconsistent with the claimed recurrence-retained boundary.
+- **B1-B1-A retained narrow evidence:** literal candidate PC/action gaps,
+  PC34 current-ring issue -> PC35 current capture plus old issue -> PC36 old
+  capture NBA order, action-qualified PC36 word26 -> physical 26/30 followed
+  by PC37 consumption, isolated W75/W84 signed arithmetic, count-64 rejection
+  of a nonzero stale product, raw-play versus audible gating, the
+  `730 -> 731 -> 0` two-sample RP example and all 5,856 pure ring-address
+  algebra cases remain useful foundations.  They do not prove service
+  execution, frame ownership, persistent record updates or suffix behavior.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1-B next permitted hypothesis:** start with
+  the physical transition schema, not another executor.  Mechanically derive
+  each PC's exact state-word slices, A18/B18/N17/O17+H-C ownership, producer,
+  enabled-successor equation and last use from the candidate image and live
+  radix-2 RTL.  Bind parameter word26/30 bits 13:10, the physical
+  `256+68*snd_id+index` ARAM address and retained/replayed stopped-wavetable
+  `seq_q`; include playing-zero-amplitude and old-gain-zero classes.  Require
+  per-service issue/take balance, an actually evaluated disabled successor,
+  attempted wrong-kind/origin takes, DQ old-q/phase2 commits and ring valid
+  consumption.  Reject before whole executor code unless every production
+  edge has a literal overlap-free row and no semantic value comes from a
+  context/oracle sidecar.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
