@@ -1551,6 +1551,26 @@ git history; do not repeat them without the recorded changed condition.
   Full and PREVIEW generic lint and isolated iCE40 mapping pass.  Accept this
   two-file multiplier-freeze prerequisite only; semantic sample RTL and
   physical H-D rows remain unproved.
+- **Explicit wave-context RTL foundation:** `psg_execwave_core` now accepts
+  the exact explicit W1/W2/W3 phase values that H-D must form after its
+  restart/noise/phase NBA sequence, while the source-compatible
+  `psg_execwave` wrapper retains H-C's old-q lifetime and action-derived
+  word-10/12/16 primes.  The core still owns only the fixed controls and one
+  six-bit ARAM index; it adds no result register, scratch traffic, arithmetic
+  service or generic caller edit.  A direct test covers all 24 built-in
+  wave/mode contexts, explicit W0--W3 substitutions including 17-bit
+  wrap/truncation, wavetable primary/adjacent indices, inactive suppression,
+  external hold/resume and owner isolation.  The unchanged production-image
+  test still passes both service families, all eight slots and W0--W5 holds;
+  the 2,097,152-context waveform proof, ARAM replay, controller, 327,680-pair
+  datapath, movement, both owner-zero banks, eleven owner-one paths and the
+  complete semantic model remain clean.  Full/PREVIEW and executor lint plus
+  strict OpenSpec pass.  The H-C row-A map is physically neutral at **578
+  LUT4s / 23 carries / 72 flops / 60 unpackable / two EBRs / 638-cell floor**
+  versus 582/23/72/60/two/642 before; the four-LUT decrease is an abc9 cover
+  reshuffle, not an H-D area credit.  Accept this three-file explicit-context
+  prerequisite only; the 70-bit semantic adapter, production-image RTL and
+  routed H-D rows remain unproved.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
