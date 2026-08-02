@@ -1723,15 +1723,17 @@ def validate_sample_relocated_value_gap(candidate: list[int]) -> str:
         "updated_brown": 13,
         "phase2_msb": 1,
         "old_nz_phase": 4,
+        "restart": 1,
+        "clear": 1,
     }
-    assert sum(payload.values()) == 90
+    assert sum(payload.values()) == 92
     # A/B/N/O provide 70.  On a built-in path only H-C's ARAM phase index
     # (6) and snd_id (3) are dead; all live/old wave controls and old_q remain
     # required by W0--W5.  The strongest possible overlay is still short.
     available = 70 + 6 + 3
     assert sum(payload.values()) > available
     shortfall = sum(payload.values()) - available
-    assert shortfall == 11
+    assert shortfall == 13
 
     # Updated word20 is presented at PC 2f, but PC 2f is one of many generic
     # HOLD/word-zero instructions.  Nothing fixed can capture selected
@@ -1749,7 +1751,7 @@ def validate_sample_relocated_value_gap(candidate: list[int]) -> str:
     assert q_word(0x38) == 14 and decoded(0x38).word == 15
     assert q_word(0x39) == 15
     assert decoded(0x39) == Instruction(Op.EXEC, action=hold, word=0)
-    return ("H-D2B rejected: live old-noise PC 1b/1c needs 90 independent "
+    return ("H-D2B rejected: live old-noise PC 1b/1c needs 92 independent "
             "bits after excluding the mutually dead old-DQ delta, against the "
             f"strongest 79-bit pool/H-C overlay ({shortfall}-bit shortfall); "
             "q20 at PC 2f and q15 at PC 39 have no fixed consumer")
@@ -1854,15 +1856,17 @@ def validate_sample_relocated_stream_correction(
         "updated_brown": 13,
         "phase2_msb": 1,
         "old_nz_phase": 4,
+        "restart": 1,
+        "clear": 1,
     }
-    assert sum(d2b_payload.values()) == 90
+    assert sum(d2b_payload.values()) == 92
     # The typed q14 transaction stores the only 13-bit resident whose next
     # use is after W0.  It is fetched back as q14 at CAP_W4, reducing the
     # pre-W0 payload.  On this old-noise path CAP_W5 suppresses the old DQ
     # update, so its thirteen-bit delta is not simultaneously live.
     corrected_payload = sum(d2b_payload.values()) \
         - d2b_payload["updated_brown"]
-    assert corrected_payload == 77 and corrected_payload <= 79
+    assert corrected_payload == 79
 
     def counts(image: list[int]) -> tuple[int, ...]:
         pc, slot = SAMPLE_START, 0
@@ -1897,7 +1901,7 @@ def validate_sample_relocated_stream_correction(
     assert sum(word != 0 for word in candidate) == 222
     changed = sum(a != b for a, b in zip(program, candidate))
     return (f"H-D2C candidate: typed q14/q15 and CAP_W40 q20; live "
-            f"old-noise payload 90 -> {corrected_payload} bits within the "
+            f"old-noise payload 92 -> {corrected_payload} bits at the exact "
             f"fixed 79-bit H-C overlay; {changed} image words "
             "change; 16 fixed writes and 222/782/172/158 invariants; "
             "accepted image untouched", candidate)
@@ -2035,7 +2039,9 @@ def validate_sample_context_path_bound(d2d: list[int]) -> str:
                         for old_wave in range(8):
                             for old_mode in range(4):
                                 for old_alt in (False, True):
-                                    for restart in (False, True):
+                                    for control in range(4):
+                                        restart = bool(control & 1)
+                                        clear = bool(control & 2)
                                         cases += 1
                                         old_noise = old_wave == 6 \
                                             and not old_alt
@@ -2048,6 +2054,8 @@ def validate_sample_context_path_bound(d2d: list[int]) -> str:
                                             "live_amplitude": 12,
                                             "noise_lowpass": 16,
                                             "phase2_msb": 1,
+                                            "restart": 1,
+                                            "clear": 1,
                                         }
                                         if not noise:
                                             payload["old_nz_phase"] = \
@@ -2069,22 +2077,23 @@ def validate_sample_context_path_bound(d2d: list[int]) -> str:
                                         assert required <= capacity, (
                                             wt, wave, mode, noise, buzz,
                                             old_wave, old_mode, old_alt,
-                                            restart, payload, capacity)
+                                            restart, clear, payload, capacity)
                                         maxima[wt] = max(maxima[wt], required)
                                         key = (wt, wave == 6, noise,
                                                old_noise)
                                         class_max[key] = max(
                                             class_max.get(key, 0), required)
 
-    assert cases == 32_768
-    assert maxima == {False: 77, True: 76}
-    assert class_max[(False, True, False, True)] == 76
-    assert class_max[(False, True, False, False)] == 73
-    assert class_max[(False, False, False, True)] == 77
-    return ("H-D2E PC1c bound: 32,768 current/old wave-mode-noise-buzz "
+    assert cases == 65_536
+    assert maxima == {False: 79, True: 78}
+    assert class_max[(False, True, False, True)] == 78
+    assert class_max[(False, True, False, False)] == 75
+    assert class_max[(False, False, False, True)] == 79
+    return ("H-D2E-A PC1c bound: 65,536 current/old "
+            "wave-mode-noise-buzz-restart-clear "
             "classes; old-noise17 and old-DQ13 are W5-exclusive; built-in "
-            "maximum 77/79, wavetable maximum 76/92, named brown+old-noise "
-            "76/79; later W0-W6 physical packing remains unproved")
+            "maximum 79/79, wavetable maximum 78/92, named brown+old-noise "
+            "78/79; later W0-W6 physical packing remains unproved")
 
 
 def reachable_to_idle(nodes: list[Node]) -> None:

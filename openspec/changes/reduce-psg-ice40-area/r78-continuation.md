@@ -1665,7 +1665,7 @@ git history; do not repeat them without the recorded changed condition.
   worst built-in live-wave0/7 mode-2 plus selected-old-wave6/non-alt case, PC
   `0x1b` must retain independent DQ-live14, old-noise-step17, live-delta13,
   amplitude12, noise-lowpass16, updated-brown13, phase2-msb1 and
-  old-noise-phase4: **90 bits**.  This corrects
+  old-noise-phase4, plus restart1 and clear1: **92 bits**.  This corrects
   the earlier 99-bit count: old-noise continuation makes `old_nz_r_on` true,
   while CAP_W5 applies old DQ only under `!old_nz_r_on`, so the thirteen-bit
   old-DQ operand/result and old-q carry are semantically dead on the named
@@ -1673,7 +1673,7 @@ git history; do not repeat them without the recorded changed condition.
   current phase at W0.  The A18+B18+N17+O17 pool plus every H-C field dead on
   that path (ARAM index6 and
   built-in-unused sound ID3) provides at most **79 bits**, an unavoidable
-  eleven-bit shortfall.  Two later physical-stream holes independently convict
+  thirteen-bit shortfall.  Two later physical-stream holes independently convict
   the candidate: updated word20 reaches `state_q` on anonymous HOLD/word-zero
   PC `0x2f`, and filter-low word15 does the same on PC `0x39`; neither has a
   fixed consumer before the stream overwrites it.  The model asserts all
@@ -1695,8 +1695,8 @@ git history; do not repeat them without the recorded changed condition.
   word15-repeat action while q15 is present; the final word14/15 actions after
   W84 remain unchanged.  The word20 prime moves from PC `0x2e` to the final
   pre-W40 wait at PC `0x30`, so CAP_W40 consumes q20 directly.  The worst
-  worst old-noise payload falls from 90 to **77 bits**, inside the strongest
-  fixed 79-bit pool/H-C overlay.  This is a corrected necessary bound, not a
+  worst old-noise payload falls from 92 to an exact **79 bits**, equal to the
+  strongest fixed 79-bit pool/H-C overlay.  This is a necessary bound, not a
   complete allocation proof across all current/old/wavetable paths.  The
   candidate differs from the accepted owner-zero image
   in 42 words and retains 222 used words, 782 active clocks, 172 reads, 158
@@ -1718,23 +1718,26 @@ git history; do not repeat them without the recorded changed condition.
   writes and the D2C fixed write set.  No accepted image or RTL changes.  This
   fixes the q17 provenance hole.  The corrected PC-`0x1c` bound is the input
   to D2E; no fixed-capacity contradiction remains.
-- **R.84H-D2E PC-`0x1c` result:** accepted as the path-sensitive information
-  foundation, replacing the false path-insensitive "exact-fit" claim.  At q13
-  / PC `0x1c`, the four-bit old noise phase remains live until its equality
-  operand arrives in q10 at W0.  The executable enumeration covers all
-  **32,768** current/old wave/mode/noise/buzz classes and distinguishes
-  service activity from semantically live results: old-noise continuation and
-  the CAP_W5 old-DQ update are mutually exclusive, and CAP_W5 also suppresses
-  old DQ for wavetable.  Built-in paths overlay dead sound-ID3 and
-  ARAM-index6 fields and peak at **77/79** on live wave0/7 mode-2, noise-off,
-  selected-old-noise.  Wavetable paths keep sound ID/index but may overlay
-  old-q16 and the old tuple6 after classification; they peak at **76/92**.
-  The previously named brown plus old-noise class is 76/79 and the mutually
-  exclusive brown plus old-DQ class is 73/79.  No PC-`0x1c` class requires
-  control recoding or DQ reordering.  A separate read-only whole-window audit
-  found plausible tight later classes at 79/79 (ordinary built-in old-DQ) and
-  83/83 after fixed old-noise context compression, but that is not yet a
-  physical A/B/N/O packing proof.
+- **R.84H-D2E initial PC-`0x1c` result (`ff0d12d`):** replaced the false
+  path-insensitive "exact-fit" claim and proved the central semantic
+  correction.  The four-bit old noise phase remains live until its equality
+  operand arrives in q10 at W0, but old-noise continuation and the CAP_W5
+  old-DQ update are mutually exclusive; CAP_W5 also suppresses old DQ for
+  wavetable.  Its first 32,768-class enumeration reported provisional maxima
+  of 77/79 built-in and 76/92 wavetable.
+- **R.84H-D2E-A control-provenance correction:** the first enumeration omitted
+  two independent control facts: restart must survive through W0/W1 to select
+  snapshot/phase2 and seed behavior, and q13 clear-ack must be compared with
+  the parameter clear toggle for W0 state effects and final acknowledgement.
+  The corrected executable enumeration covers **65,536** current/old
+  wave/mode/noise/buzz/restart/clear classes.  Built-in paths overlay dead
+  sound-ID3 and ARAM-index6 fields and peak at an exact **79/79** on live
+  wave0/7 mode-2, noise-off, selected-old-noise.  Wavetable peaks at **78/92**.
+  Brown plus old-noise is 78/79 and brown plus old-DQ is 75/79.  No
+  PC-`0x1c` class requires control recoding or DQ reordering.  A separate
+  read-only whole-window audit found plausible tight later classes at 79/79
+  and 83/83 after fixed old-noise context compression, but that remains a
+  hypothesis until D2F supplies literal field packing.
 - **R.84H-D2F next permitted hypothesis:** carry D2E through W0--W6 as an
   executable physical allocation.  Enumerate every A18+B18+N17+O17 put/take
   and typed q arrival for the same 32,768 classes; prove W0--W3 reconstruction,
