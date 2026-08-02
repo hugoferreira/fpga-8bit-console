@@ -24,7 +24,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H011.
+- Next hypothesis ID: H012.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
@@ -34,7 +34,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   reductions are deterministic; the 57-LC placed improvement is positive but
   remains just inside the known roughly 60-LC placement-sensitivity band and
   is not claimed as robust.
-- Latest rejected variant: H010's phase-qualified pending bit is exact and
+- Latest rejected variant: H011 proves the reflected ramp is a bitwise
+  complement, but both spellings map identically in the registered-use cone.
+  H010's phase-qualified pending bit is exact and
   saves four LUT4s/one flop in the isolated timing cone, but whole-PSG mapping
   adds 29 LUT4s/five carries and seed-1 placement regresses by 36 LCs. H009's
   shift token failed similarly; H005's `< 3` suffix remains rejected on
@@ -45,9 +47,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H011 resume audit and record one new,
-  bounded, source-exact generic-RTL hypothesis outside the delayed-tick family.
-- Required verification for any accepted H011: focused algebraic or exhaustive
+- Next permitted experiment: perform the H012 resume audit and record one new,
+  bounded, source-exact generic-RTL hypothesis before editing RTL.
+- Required verification for any accepted H012: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -71,6 +73,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H008 | rejected | Keep the two direct counter equalities: Yosys already shares their common high-nibble decode. |
 | H009 | rejected | Keep the countdown form: the exact shift token is smaller alone but adds 36 LUT4s, five carries, and 36 placed LCs in the full PSG. |
 | H010 | rejected | Keep the countdown form: the exact pending bit saves one local flop but adds 29 LUT4s, five carries, and 36 placed LCs in the full PSG. |
+| H011 | rejected | Keep the subtract spelling: Yosys already maps `16'hffff - wx` exactly as `~wx`, with identical registered-use resources. |
 
 ## Hypothesis H001
 
@@ -451,6 +454,33 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   only after the tick/sample ordering, `scnt` representation, delayed-tick
   depth, or mapper sequential lowering changes materially.
 
+## Hypothesis H011
+
+- **ID:** H011.
+- **Hypothesis:** the tilted-saw tail reflects its unsigned 16-bit phase as
+  `16'hffff - wx`, which is identically the bitwise complement `~wx`. Spelling
+  the identity directly may prevent a subtractor/carry chain while making the
+  exact reflection contract simpler.
+- **Scope:** exhaustive all-phase proof and isolated registered-use iCE40
+  synthesis first; `rtl/psg_wave.sv`, permanent waveform proof, whole-PSG
+  mapping, and the complete H007 acceptance battery only if mapping improves.
+  No schedule, state, interface, EBR, R.84, or tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H010 through
+  `032ff34`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1 7,392
+  LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Change:** scratch-only replacement of `16'hffff - wx` with `~wx`; no
+  production RTL or permanent proof changed.
+- **Result:** exhaustive comparison passes all 65,536 unsigned 16-bit phases.
+  Isolated synthesis including the complete registered `t_pre` consumer maps
+  both forms identically to 93 LUT4s, 45 carries, and 19 flops. Yosys already
+  canonicalizes the constant subtract, so no whole-PSG or fidelity battery is
+  needed.
+- **Decision:** rejected before production RTL. The alternative is source-
+  equivalent but does not improve a deterministic mapped resource.
+- **Repeat only if:** a rejected complement spelling may be retried only after
+  the reflected-ramp width, tail arithmetic, mapper constant-subtract
+  lowering, or surrounding consumer changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -483,7 +513,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Handoff
 
-- Next allowed experiment: H011 only after its hypothesis row and baseline are
+- Next allowed experiment: H012 only after its hypothesis row and baseline are
   recorded; it must use a new generic-RTL mechanism outside R.84 ownership.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
@@ -492,6 +522,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   spelling remains rejected. H008 was rejected before production RTL. H009
   was rejected after exact proof and whole-PSG synthesis. H010 failed the same
   full-design gate; both RTL/proof patches are reverted and the delayed-tick
-  representation family is closed unless its mapped context changes.
+  representation family is closed unless its mapped context changes. H011 was
+  rejected before production because its exact spelling maps identically.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
