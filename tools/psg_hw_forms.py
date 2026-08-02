@@ -799,6 +799,7 @@ def sec_timing() -> None:
     widths = []
     invariant_ok = True
     recurrence_ok = True
+    shared_update_ok = True
 
     for clk_hz in clocks:
         width = (clk_hz - 1).bit_length() + 1
@@ -820,7 +821,10 @@ def sec_timing() -> None:
         divd = -down
         for _ in range(20_000):
             sample = divd >= 0
-            divd = divd - down if sample else divd + sample_hz
+            reference = divd - down if sample else divd + sample_hz
+            delta = -down if sample else sample_hz
+            shared_update_ok &= reference == divd + delta
+            divd = reference
             recurrence_ok &= -down <= divd < sample_hz
             recurrence_ok &= signed_lo <= divd <= signed_hi
 
@@ -828,6 +832,8 @@ def sec_timing() -> None:
            "configured CLK_HZ:DIV_W = " + ", ".join(widths))
     report("timing.divd_recurrence", recurrence_ok,
            "exact invariant endpoints plus 20,000 clocks per configuration")
+    report("timing.divd_shared_update", shared_update_ok,
+           "sign-selected delta equals both original recurrence arms")
 
 
 def sec_pitch() -> None:

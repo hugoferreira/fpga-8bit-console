@@ -20,6 +20,8 @@ module psg_timing #(parameter CLK_HZ = 32'd3_506_580)
   localparam logic signed [DIV_W-1:0] DIV_UP = DIV_W'(32'd22050);
   logic signed [DIV_W-1:0] divd;
   logic [1:0]  tick_hold;
+  wire logic signed [DIV_W-1:0] div_step = divd[DIV_W-1]
+      ? DIV_UP : -DIV_DOWN;
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -31,13 +33,12 @@ module psg_timing #(parameter CLK_HZ = 32'd3_506_580)
       tick_hold <= 2'd0;
       pre_tick <= 0;
     end else begin
+      divd <= divd + div_step;
+      sample_en <= !divd[DIV_W-1];
       tick_en <= 0;
       tick_en_d <= 0;
       pre_tick <= 0;
       if (!divd[DIV_W-1]) begin
-        divd <= divd - DIV_DOWN;
-        sample_en <= 1;
-
         tick_en_d <= (tick_hold == 2'd1);
         if (tick_hold != 2'd0)
           tick_hold <= tick_hold - 2'd1;
@@ -52,9 +53,6 @@ module psg_timing #(parameter CLK_HZ = 32'd3_506_580)
           if (scnt == 8'd176)
             pre_tick <= 1;
         end
-      end else begin
-        divd <= divd + DIV_UP;
-        sample_en <= 0;
       end
     end
   end
