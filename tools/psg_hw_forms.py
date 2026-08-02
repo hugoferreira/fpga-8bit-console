@@ -138,6 +138,12 @@ def sec_div() -> None:
            "(24572x)//61440 == recip15((24572x)>>12), x in [0, 61440) "
            "exhaustively")
 
+    ok = all((x >= (61440 if high else 57344))
+             == (((x >> 13) == 7) and (not high or bool(x & 0x1000)))
+             for high in (False, True) for x in range(1 << 16))
+    report("div.tilt_tail_prefix", ok,
+           "high-bit prefix == x >= 0xE000/0xF000, both modes exhaustively")
+
 
 # --- mix: the compressor is //5 ---------------------------------------------
 

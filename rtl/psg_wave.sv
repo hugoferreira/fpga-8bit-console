@@ -91,7 +91,7 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   // Tilt shapes reduce to a linear ramp followed by exact /7 or /15. The
   // split identities are x/d = h*(2^k/d) + (h+l)/d for x=2^k*h+l.
   wire tilt_hi = (wsel_r == 3'd1) && walt_r;
-  wire tilt_tail = tilt_hi ? (wx_r >= 16'd61440) : (wx_r >= 16'd57344);
+  wire tilt_tail = &wx_r[15:13] && (!tilt_hi || wx_r[12]);
   wire [15:0] tramp = tilt_tail ? (16'd65535 - wx_r) : wx_r;
 
   wire [17:0] t_m3 = {2'b0, tramp} + {1'b0, tramp, 1'b0};
