@@ -1811,6 +1811,40 @@ git history; do not repeat them without the recorded changed condition.
   222/782/172/158 counts; reject before image or RTL if any container slice is
   multiply owned, a live value is reconstructed from an untyped source, or a
   service/request lifetime changes.
+- **R.84H-D2F-B literal-packing result:** accepted as the physical allocation
+  foundation, not as a semantic adapter.  The executable table assigns every
+  named value piece to literal A18/B18/N17/O17 and path-dead H-C containers,
+  then bit-packs and reconstructs each logical field to reject overlap,
+  missing split bits or a summed-width-only argument.  Fifteen tight/edge rows
+  cover built-in ordinary/old-noise and wavetable old-noise/old-other,
+  restart/no-restart and the PC1c/W0--W3 peaks.  The two exact fits are
+  built-in selected-old-noise at PC1c (**79/79**) and wavetable selected-old-
+  noise/no-restart at W3 (**97/97**).  Repaired built-in ordinary/no-restart
+  W2 is **107/108 physical bits**, equivalently 85/86 after fixed old-q/tuple;
+  restart is 106/108 and built-in old-noise is 105/108.  No path spills.
+- **D2F-B source/arithmetic convictions:** exhaustive all-32,768-state proof
+  shows CAP_W0's one LFSR shift preserves the pre-advance `nz_hold` byte as
+  post-W0 `lfsr[8:1]`; a transient eight-bit copy is unnecessary.  The
+  initially reported 87/86 counterexample was therefore withdrawn.  The
+  packed old-noise step plus kick is bounded by 39,491 inside signed17, and
+  exhaustive phase/wave/alternate evaluation bounds the built-in primary plus
+  secondary sum at -18,432..18,432 inside signed18.  D2F-A's q16 stream and
+  44-word/222/782/172/158 invariants remain unchanged.  Accepted image and RTL
+  are untouched.  This iteration does not yet prove the fixed q11/q13/q17
+  merges, restart-old-noise phase2 copy, external packing-state hold or final
+  persistent values.
+- **R.84H-D2F-C next permitted hypothesis:** execute every D2F-B packed
+  transition and fixed persistent merge against the independent direct oracle.
+  At PC `0x27`, choose typed q11's old noise-hold or post-W0 `lfsr[8:1]` under
+  the refresh bit while merging old-q low; at PC `0x28` commit final old phase;
+  at PC `0x29` merge typed q17's blend count and old-q high under restart; at
+  PC `0x2a` merge typed q13's clear ack, final nz phase, phase2 high and gain
+  high; at PC `0x2d` commit phase2 low.  Prove old-delta/DQ zero qualification
+  leaves the fixed request cadence unchanged, copy restart-old-noise phase2
+  after W4 and before W6, and inject external hold at every W0--W6 transition.
+  Retain the exact D2F-B layouts and 44-word/222/782/172/158 candidate; reject
+  before RTL/image if any final word depends on the decoded record/trace oracle
+  or an untyped memory value.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

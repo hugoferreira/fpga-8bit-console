@@ -2262,6 +2262,263 @@ def build_sample_w5_q16_candidate(program: list[int], d2d: list[int],
             "accepted image untouched", candidate)
 
 
+def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
+        -> str:
+    """Prove the tight D2F-B physical rows after the q16 prefetch.
+
+    Each row assigns named value pieces to literal physical containers.  The
+    checker rejects a container overflow, a missing/split field bit, or a
+    round-trip alias.  H-C fields still needed by the wave cadence are not
+    listed as capacity; only path-dead slices appear beside A/B/N/O.
+    """
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(candidate[pc])
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    assert decoded(0x21) == Instruction(
+        Op.EXEC, action=action_by_name["CAP_W4"], word=16)
+    assert q_word(0x21) == 14 and q_word(0x22) == 16
+
+    # The pre-W0 LFSR byte does not need an eight-bit transient.  CAP_W0's
+    # exact full-mode shift makes old[7:0] equal new[8:1], and there is no
+    # second visit advance before the typed q11 commit.
+    walk = WALK.read_text()
+    assert "lfsr  <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};" in walk
+    for old_lfsr in range(1 << 15):
+        new_lfsr = ((old_lfsr << 1) & 0x7fff) \
+            | (((old_lfsr >> 14) ^ (old_lfsr >> 13)) & 1)
+        assert ((new_lfsr >> 1) & 0xff) == (old_lfsr & 0xff)
+
+    @dataclass(frozen=True)
+    class RowResult:
+        name: str
+        used: int
+        capacity: int
+
+    def row(name: str, capacities: dict[str, int],
+            assignments: dict[str, tuple[tuple[str, int], ...]],
+            expected_used: int) -> RowResult:
+        field_widths: dict[str, int] = {}
+        pieces: list[tuple[str, str, int, int, int]] = []
+        container_offsets: dict[str, int] = {}
+        for container, fields in assignments.items():
+            assert container in capacities, (name, container)
+            offset = 0
+            for field, width in fields:
+                assert width > 0
+                field_lsb = field_widths.get(field, 0)
+                pieces.append((container, field, offset, field_lsb, width))
+                field_widths[field] = field_lsb + width
+                offset += width
+            assert offset <= capacities[container], \
+                (name, container, offset, capacities[container])
+            container_offsets[container] = offset
+        used = sum(container_offsets.values())
+        assert used == expected_used, (name, used, expected_used)
+
+        # Give every logical field an independent deterministic value, pack
+        # all pieces, then recover it.  This catches overlap and split-field
+        # omissions rather than accepting a summed-width argument alone.
+        values = {
+            field: ((sum(ord(ch) for ch in field) * 0x9e37 + width * 0x45)
+                    & ((1 << width) - 1))
+            for field, width in field_widths.items()
+        }
+        packed = {container: 0 for container in capacities}
+        reconstructed = {field: 0 for field in field_widths}
+        for container, owner, container_lsb, field_lsb, width in pieces:
+            mask = (1 << width) - 1
+            fragment = (values[owner] >> field_lsb) & mask
+            packed[container] |= fragment << container_lsb
+            reconstructed[owner] |= \
+                ((packed[container] >> container_lsb) & mask) << field_lsb
+        assert reconstructed == values, (name, reconstructed, values)
+        return RowResult(name, used, sum(capacities.values()))
+
+    # Common physical fields.  C is the seven-bit live wt/wave/mode/alt
+    # context; T is the six-bit old wave/mode/alt tuple.  WF/MF are the two
+    # bits freed when wavetable wave3 is recoded as is-wave6 and live mode is
+    # retired after W1.
+    base = {"A": 18, "B": 18, "N": 17, "O": 17}
+    bi_early = {**base, "I": 6, "D": 3}
+    bi_late = {**base, "C": 7, "I": 6, "D": 3}
+    bi_restart = {**bi_late, "Q": 16}
+    all_fields = {**base, "Q": 16, "T": 6, "C": 7,
+                  "I": 6, "D": 3}
+    wt_early = {**base, "Q": 16, "T": 6, "X": 1}
+    wt_w0 = {**wt_early, "WF": 2}
+    wt_late = {**wt_w0, "MF": 2}
+
+    rows = []
+    rows.append(row("builtin ordinary PC1c", bi_early, {
+        "A": (("noise_lp", 16), ("phase2_msb", 1), ("old_q_msb", 1)),
+        "B": (("live_dq", 14), ("old_nz_phase", 4)),
+        "N": (("live_delta", 13), ("amplitude", 4)),
+        "O": (("old_delta", 13), ("amplitude", 4)),
+        "I": (("amplitude", 4), ("restart", 1), ("clear", 1)),
+    }, 76))
+    rows.append(row("builtin old-noise PC1c", bi_early, {
+        "A": (("noise_lp", 16), ("phase2_msb", 1), ("restart", 1)),
+        "B": (("live_dq", 14), ("old_nz_phase", 4)),
+        "N": (("live_delta", 13), ("amplitude", 4)),
+        "O": (("old_noise_step", 17),),
+        "I": (("amplitude", 6),),
+        "D": (("amplitude", 2), ("clear", 1)),
+    }, 79))
+    rows.append(row("builtin ordinary W2 no-restart", bi_late, {
+        "A": (("current_primary", 18),),
+        "B": (("live_dq", 14), ("live_gain", 4)),
+        "N": (("phase2_next", 17),),
+        "O": (("old_delta", 13), ("old_q_msb", 1), ("clear", 1),
+              ("refresh", 1), ("nz_phase", 1)),
+        "C": (("live_gain", 7),),
+        "I": (("live_gain", 2), ("post_w1_flags", 2),
+              ("nz_phase", 2)),
+        "D": (("nz_phase", 1), ("restart", 1)),
+    }, 85))
+    rows.append(row("builtin ordinary W2 restart", bi_restart, {
+        "A": (("current_primary", 18),),
+        "B": (("live_dq", 14), ("live_gain", 4)),
+        "N": (("phase2_next", 17),),
+        "O": (("old_delta", 13), ("clear", 1), ("refresh", 1),
+              ("nz_phase", 2)),
+        "Q": (("q10_snapshot", 16),),
+        "C": (("live_gain", 7),),
+        "I": (("live_gain", 2), ("post_w1_flags", 2),
+              ("nz_phase", 2)),
+        "D": (("restart", 1),),
+    }, 100))
+    rows.append(row("builtin old-noise W2", all_fields, {
+        "A": (("current_primary", 18),),
+        "B": (("old_noise_sample", 18),),
+        "N": (("phase2_next", 17),),
+        "O": (("final_old_phase", 16), ("clear", 1)),
+        "Q": (("live_dq", 14), ("nz_phase", 2)),
+        "T": (("live_gain", 6),),
+        "C": (("live_gain", 7),),
+        "I": (("post_w1_flags", 2), ("refresh", 1),
+              ("nz_phase", 2)),
+        "D": (("restart", 1),),
+    }, 105))
+
+    rows.append(row("wavetable old-noise PC1c", wt_early, {
+        "A": (("live_delta", 13),),
+        "B": (("amplitude", 12),),
+        "N": (("noise_lp", 16),),
+        "O": (("old_noise_step", 17),),
+        "Q": (("live_dq", 13), ("phase2_msb", 1),
+              ("restart", 1), ("clear", 1)),
+        "T": (("refresh", 1),),
+    }, 75))
+    rows.append(row("wavetable old-noise W0", wt_w0, {
+        "A": (("primary_fraction", 10),),
+        "B": (("amplitude", 12),),
+        "N": (("live_delta", 13),),
+        "O": (("old_noise_step", 17),),
+        "Q": (("live_dq", 13), ("phase2_msb", 1),
+              ("restart", 1), ("clear", 1)),
+        "T": (("nz_phase", 4), ("refresh", 1)),
+    }, 73))
+
+    def wt_overlay(extra: tuple[tuple[str, int], ...]) \
+            -> dict[str, tuple[tuple[str, int], ...]]:
+        return {
+            "Q": (("amplitude", 12), ("restart", 1), ("clear", 1),
+                  ("nz_phase", 2)),
+            "T": (("nz_phase", 2), ("refresh", 1), *extra[:1]),
+            "X": extra[1:2], "WF": extra[2:3], "MF": extra[3:4],
+        }
+
+    adjacent = (("primary_adjacent", 3), ("primary_adjacent", 1),
+                ("primary_adjacent", 2), ("primary_adjacent", 2))
+    for suffix, old_value, used_w1, used_w2, used_w3 in (
+            ("no-restart", ("old_bias", 17), 81, 89, 97),
+            ("restart", ("old_phase", 14), 78, 86, 94)):
+        overlay_no_adj = wt_overlay(())
+        # Remove empty physical containers from the W1 row.
+        overlay_no_adj = {k: v for k, v in overlay_no_adj.items() if v}
+        rows.append(row(f"wavetable old-noise W1 {suffix}", wt_late, {
+            "A": (("primary_fraction_base", 18),),
+            "B": (("old_fraction", 10),),
+            "N": (("phase2_next", 17),),
+            "O": (old_value,), **overlay_no_adj,
+        }, used_w1))
+        overlay_adj = wt_overlay(adjacent)
+        rows.append(row(f"wavetable old-noise W2 {suffix}", wt_late, {
+            "A": (("primary_fraction_base", 18),),
+            "B": (("old_fraction", 10),),
+            "N": (("phase2_next", 17),),
+            "O": (old_value,), **overlay_adj,
+        }, used_w2))
+        rows.append(row(f"wavetable old-noise W3 {suffix}", wt_late, {
+            "A": (("primary_fraction_base", 18),),
+            "B": (("old_fraction_base", 18),),
+            "N": (("phase2_next", 17),),
+            "O": (old_value,), **overlay_adj,
+        }, used_w3))
+
+    old_other_overlay = wt_overlay(adjacent)
+    rows.append(row("wavetable old-other W3 restart", wt_late, {
+        "A": (("primary_fraction_base", 18),),
+        "B": (("old_fraction_base", 18),),
+        "N": (("phase2_next", 17),),
+        "O": (("q10_snapshot", 16),), **old_other_overlay,
+    }, 96))
+    rows.append(row("wavetable old-other W3 no-restart", wt_late, {
+        "A": (("primary_fraction_base", 18),),
+        "B": (("old_fraction_base", 18),),
+        "N": (("phase2_next", 17),),
+        "O": (("primary_adjacent", 8),),
+        "Q": (("amplitude", 12), ("restart", 1), ("clear", 1),
+              ("nz_phase", 2)),
+        "T": (("nz_phase", 2), ("refresh", 1)),
+    }, 80))
+
+    assert max(result.used / result.capacity for result in rows) == 1
+    tight = sorted(result.name for result in rows
+                   if result.used == result.capacity)
+    assert tight == ["builtin old-noise PC1c",
+                     "wavetable old-noise W3 no-restart"]
+
+    # The early phase2 formation and two compact noise identities used above
+    # are exact over their full source domains.
+    max_kick_draw = 0
+    for lfsr2 in range(1 << 15):
+        inv = 1 ^ ((lfsr2 >> 12) & 1)
+        draw = signed((inv << 11) | (inv << 10)
+                      | ((lfsr2 >> 2) & 0x3ff), 12)
+        draw = draw - (draw >> 3) - (draw >> 6)
+        max_kick_draw = max(max_kick_draw, abs(draw))
+    assert max_kick_draw == 881
+    assert 33_324 + 7 * max_kick_draw == 39_491 < (1 << 16)
+
+    pair_min, pair_max = 0, 0
+    for wave in range(8):
+        for alt in (False, True):
+            for phase in range(1 << 16):
+                pair = wave_value(phase, wave, alt, False) \
+                    + wave_value(phase, wave, alt, True)
+                pair_min = min(pair_min, pair)
+                pair_max = max(pair_max, pair)
+    assert -(1 << 17) <= pair_min and pair_max < (1 << 17)
+
+    return (f"H-D2F-B literal packing: {len(rows)} tight/edge rows; "
+            f"exact fits at {', '.join(tight)}; pre-W0 LFSR byte recovered "
+            f"for all {1 << 15:,} states; old-noise bias <= 39,491; "
+            f"built-in pair range {pair_min}..{pair_max} fits signed18; "
+            "semantic commit executor and RTL remain unproved")
+
+
 def reachable_to_idle(nodes: list[Node]) -> None:
     graph = {node.name: set(node.successors) for node in nodes}
     assert "S_IDLE" in graph
@@ -4206,6 +4463,8 @@ def main() -> int:
     sample_w5_q16, sample_w5_q16_candidate = \
         build_sample_w5_q16_candidate(
             sample_program, sample_blend_candidate, actions)
+    sample_d2fb_packing = validate_sample_d2fb_packing(
+        sample_w5_q16_candidate, actions)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -4276,6 +4535,7 @@ def main() -> int:
     print("sample context-overlay gate: " + sample_overlay)
     print("sample physical-allocation gate: " + sample_physical_gap)
     print("sample W5-q16 candidate: " + sample_w5_q16)
+    print("sample D2F-B packing: " + sample_d2fb_packing)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)
