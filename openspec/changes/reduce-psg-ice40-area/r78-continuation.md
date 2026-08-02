@@ -2171,6 +2171,39 @@ git history; do not repeat them without the recorded changed condition.
   image or RTL if any return value is injected, any frame is parallel scalar
   state, multiplier readiness is an unproved age constant, or stopped service
   state is reset/normalized between slots.
+- **R.84H-D2F-C-B3-B2-A2-A result and decision:** rejected and fully reverted
+  before image or RTL.  The first executable version did materially repair
+  A2: its self-check passed 64 active plus 64 stopped literal-frame slots,
+  address-derived four-byte ARAM reads and replay, CPU upload during synthesis
+  freeze, a translated radix-2 request/synchronizer/ten-step/acknowledge
+  recurrence, 1,920 held edges, eleven count/ack freeze points and all 262,144
+  equal-endpoint interpolation quotients.  Those passing counts still conceal
+  two boundary errors.  `held_step()` invoked the frozen ARAM and multiplier
+  functions but never invoked the controller/frame transition, so its unchanged
+  offset and packed frame were assumptions rather than the required attempted
+  CE-gated step.  It also used one `active` bit for both play and nonzero
+  amplitude.  Source RTL issues all four wavetable reads under `play_bits`
+  alone, but refreshes `wt_pf`/`wt_qf` only under
+  `play_bits && s_eff_a != 0`; a playing zero-amplitude slot therefore reads
+  distinct bytes while retaining preceding fractions and is neither the
+  proved active arm nor the equal-endpoint stopped quotient.  The complete
+  model passed because it omitted that third state class.  All A2-A model code
+  is removed; `tools/psg_exec_model.py` is byte-identical to A1 `dd8a65d`, and
+  accepted image/RTL remain untouched.
+- **R.84H-D2F-C-B3-B2-A2-A1 next permitted hypothesis:** retain A2-A's
+  addressable ARAM and exact slow/fast multiplier recurrence, but drive one
+  pure edge-state function with explicit `play`, nonzero-amplitude and CE
+  inputs.  Compute a complete next controller/frame/service state on every
+  call, then select pre-state atomically when CE is false; a hold test must
+  demonstrate both the different enabled successor and exact frozen state.
+  Execute three persistent cross-slot classes: audible playing, playing with
+  zero amplitude, and stopped.  Only stopped may use the equal-endpoint
+  quotient.  The zero-amplitude class must issue four address-derived bytes
+  while consuming literal retained fractions from the preceding slot, and
+  must show whether those products can reach an old-arm/fold/public commit
+  before any canonicalization is allowed.  Reject before late suffix, image or
+  RTL if the frame/controller CE is an early return, fractions are reseeded,
+  or a service witness supplies candidate state.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
