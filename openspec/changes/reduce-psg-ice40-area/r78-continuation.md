@@ -2375,6 +2375,60 @@ git history; do not repeat them without the recorded changed condition.
   before record commits, fold/public equivalence, image or RTL.  Reject if a
   service bit enters the 108-bit capacity sweep, an absent request is treated
   as a zero result, or the post-W75 row exceeds the existing late-path bound.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1 active hypothesis:** starting from clean
+  scratch `0aa9471`, add only a model-level typed service/take IR.  DQ,
+  multiplier, wave, ARAM and ring results each carry explicit valid and kind
+  state outside the 108-bit frame; every take either consumes the matching
+  issued kind or is rejected, and every width-changing take names its exact
+  raw slice plus retained context.  Prove the W75 bridge as a signed-17 base,
+  difference sign and product-pending bit, with count 64 taking no multiplier
+  result; retain damp, audible and the two filter words through W84.  Prove
+  both synchronous ring captures, play-qualified low-16 write and the live
+  RTL's actual pointer rule: `ring_rp` advances once at every accepted sample
+  start regardless of play, from an explicit predecessor because generic RTL
+  gives it no reset value.  Prove the required action-qualified CAP_W51
+  word-26 to physical-26/30 bank selection for the immediately following
+  CAP_W75.  Sweep built-in, wavetable, playing-zero-amplitude, hidden,
+  stopped-wavetable, reverb, dampen and combined classes.  Baseline gates are
+  the full model, Python compilation, strict OpenSpec validation and
+  byte-identical image/all-RTL.  Stop before record values, fold/public,
+  image or RTL and reject on an untagged/stale take, service/frame double
+  accounting, absent-request zero substitution or a late-frame collision.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1 result and decision:** rejected before
+  model/image/RTL landing by two independent audits.  The candidate's static
+  foundations are sound: the exact late control topology is PC34 current-ring
+  issue, PC35 current capture plus old issue, PC36 old capture plus CAP_W51;
+  action-qualified word 26 selects physical 26/30; the service boundary is
+  177 bits including 31 genuinely new valid/tag bits; W75 grows
+  22 -> 38 -> 54/108 and W84 is 50/108 without collision; and the supplied
+  blend/reverb/dampen arithmetic is exact.  Its execution claim is not: a
+  Python `(kind,value)` FIFO issues and takes immediately, so valid/kind
+  widths are metadata, all CE checks freeze empty pipes, count 64 never faces
+  stale `m_res`, and DQ/wave/ARAM/ring never execute their synchronous
+  recurrence or response cadence.  Taken gain/reciprocal results are discarded
+  before W75 and replaced by injected arms; amplitude is unused; q26/30 never
+  supplies the late damp/reverb fields; ring labels do not mutate one shared
+  eight-slot memory or write address; and lowpass is not clear-qualified.
+  No B1-B1 model, image or RTL is accepted or landed.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1-A next permitted hypothesis:** retain only
+  those static foundations and replace the FIFO sketch with one immutable,
+  cycle-indexed successor over the literal candidate PCs.  Encode multiplier
+  kind/valid and ready cycles, DQ live/old validity, the two-stage wave tags,
+  ARAM q-origin/replay and ring rd/current/old validity; compute the complete
+  enabled successor before CE selects it.  Carry actual service results through
+  interpolation, gain, reciprocal, W75 and W84; drive damp/reverb from poisoned
+  physical word 26/30; distinguish `play` from `play && amplitude != 0`; and
+  qualify old lowpass by clear.  Execute both REVERB builds as accepted samples
+  with one RP advance and eight slots sharing it, explicit PC34/35/36 NBA
+  ordering and addressed PC3c writes.  Reject unless all 22 take equations
+  execute, stale retained outputs remain unusable, count 64 bypasses a nonzero
+  stale product by validity, every literal row round-trips, and all 732 RP
+  predecessors times eight slots satisfy the physical address law.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1-A active hypothesis:** starting from the
+  docs-only B1-B1 rejection, implement only that immutable model proof in
+  `tools/psg_exec_model.py`.  Keep the accepted image and all RTL untouched;
+  stop again before record commits, fold/public equivalence, executor image,
+  synthesis or generic integration.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
