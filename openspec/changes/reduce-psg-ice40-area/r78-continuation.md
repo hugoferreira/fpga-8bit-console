@@ -1283,6 +1283,63 @@ git history; do not repeat them without the recorded changed condition.
   restart ownership changes.  Do not replace the 38-bit bound with captured
   phase arrays, a scratch context queue, variable role selector or second wave
   implementation.
+- **Result:** accepted as the fixed-latency addressed-service boundary.  The
+  direct `psg_wave_ctx` core retains the reciprocal EBR and all three enabled
+  pipeline boundaries; the public `psg_wave` wrapper remains behavior-identical
+  in full and PREVIEW elaborations.  `psg_aram_core` freezes the synthesis-read
+  output and pending sequencer replay together, while the public `psg_aram`
+  wrapper ties freeze low and preserves the accepted generic behavior.  The
+  executor adapter uses words 10, 12 and 16 as the live phase stream and owns
+  exactly **38 flops**: 16 old-q, 16 fixed controls and one six-bit ARAM index.
+  It owns no result register, scratch write, new instruction, image change or
+  generic composition.
+- **Production transaction proof:** both parameter banks and all eight slots
+  execute the unchanged 222-word owner-zero image at exactly **782 active
+  edges, 172 semantic reads and 158 writes** with the accepted instruction
+  histogram.  Built-in and wavetable cases cover playing/inactive slots,
+  amplitude zero/nonzero, secondary on/off, signed ARAM bytes and six-bit
+  adjacent index 63-to-0 wrap.  External hold is injected independently at
+  every W0--W5 role for both service families.  Every hold freezes the complete
+  38-bit adapter context, PC/IR/slot, `state_q`, waveform pipeline, ARAM byte
+  and replay bit; every built-in W2--W5 take is checked against the exact
+  W0--W3 context result, and every ARAM take/replay resumes byte-identically.
+- **Formula and regression gates:** the direct core matches the legacy full
+  and PREVIEW wrappers over all **2,097,152** phase/wave/alternate/secondary
+  contexts plus old-context and hold/resume cases.  The ARAM core passes
+  synthesis-borrow hold/replay while the independent CPU port writes.  H-B
+  passes both banks at 172 reads/158 writes; G-F passes all eleven production
+  transaction paths; the common datapath passes 327,680 arithmetic pairs;
+  controller and movement tests pass.  The executable model remains at
+  **19,728,640 semantic cases and 131,087 synchronous transactions**, and the
+  generated 512-word image is byte-identical.  Executor, paired-target,
+  production-test, ARAM-test, full and PREVIEW Verilator lint pass, as does
+  strict OpenSpec validation.
+- **Physical row A:** final-name canonical Yosys maps **582 LUT4s / 23 carries
+  / 72 flops / 60 unpackable / two EBRs / 642-cell floor**.  The flops are
+  exactly H-B's 34 controller/datapath bits plus the 38 adapter bits.  Seed-1
+  router2 places **647 LCs** and routes at **67.72 MHz** against 28.125 MHz,
+  clearing the 810-floor/834-placed gate by 168/187 cells.
+- **Physical row B:** the paired wrapper marks every adapter stream/tag as
+  retained so issue/take-only decode cannot be pruned.  Its no-adapter baseline
+  is **1,404 LUT4 / 384 carries / 183 flops / 128 unpackable / 12 EBR /
+  1,532-floor / 1,584 placed / 46.42 MHz**; H-C is **1,526 / 384 / 221 / 140 /
+  12 / 1,666 / 1,718 / 46.89 MHz**.  The complete retained-service delta is
+  therefore **+122 LUT4, +0 carries, exactly +38 flops, +12 unpackable, +0 EBR,
+  +134 floor and +134 placed LCs**.  Reproducible final artifacts are under
+  `build/r84hc/final/`.
+- **Decision and claim boundary:** retain H-C.  It proves addressed LOAD/control
+  projections, fixed waveform/ARAM issue-to-consume association and complete
+  external-hold recovery below the physical ceiling.  It does not prove CAP_W0
+  restart substitution, CAP_W0/W1 phase updates, noise/detune/multiply/divide,
+  fold/public commits, generic sample schedule, renders or whole-PSG area.
+- **R.84H-D next permitted hypothesis:** lower the remaining owner-zero
+  noise/detune/multiply/divide/ring services and the literal signed fold onto
+  the H-A dependency graph without changing H-C's W0--W5 issue boundary.  First
+  derive each service-owned request/result lifetime, ready wait, scratch word
+  and restart/phase-update value in the model; price an isolated complete
+  service wrapper before any generic composition.  Do not add a flat request
+  bundle, general result register, second arithmetic chain or partial generic
+  handoff.
 
 ### Active task queue
 
@@ -1340,10 +1397,14 @@ git history; do not repeat them without the recorded changed condition.
 - [x] R.84H-B: prove all owner-zero persistent/scratch reads and writes through
       one synchronous state-memory transaction harness before adding service
       semantics or touching generic PSG composition.
-- [ ] R.84H-C: stream phase words through existing physical state reads and
+- [x] R.84H-C: stream phase words through existing physical state reads and
       retain exactly 38 wave/ARAM context bits; prove the unchanged production
       image's W0--W5 cadence and hold recovery without adding semantic state
       transactions, result storage or generic composition.
+- [ ] R.84H-D: derive and lower the complete remaining owner-zero service/fold
+      graph while preserving H-C's addressed issue boundary; prove restart,
+      phase updates, explicit ready waits, fixed scratch lifetimes and isolated
+      physical cost before any generic composition.
 
 ## Handoff rule
 

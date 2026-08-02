@@ -8,61 +8,29 @@
 `ifndef PSG_WAVE_SV
 `define PSG_WAVE_SV
 
-module psg_wave #(parameter REALTIME_PREVIEW = 0)
-                 (input  bit   clk,
+// Direct fixed-context waveform pipeline.  The executor presents one
+// {phase, wave, alternate, primary/secondary} tuple on every enabled edge.
+// All three sequential boundaries share `ce` so an external executor hold
+// freezes the request, reciprocal lookup and result as one transaction.
+module psg_wave_ctx(input  bit          clk,
+                    input  logic        ce,
+                    input  logic [15:0] ctx_phase,
+                    input  logic [2:0]  ctx_wave,
+                    input  logic        ctx_alt,
+                    input  logic        ctx_secondary,
+                    output logic signed [17:0] z_eval);
 
-                  input  logic iss_sec,
-                  input  logic iss_om,
-                  input  logic iss_os,
-                  input  logic dq_old_ctx,
+  logic [2:0]  wsel_r;
+  logic [15:0] wx_r;
+  logic        wsec_r, walt_r;
 
-                  input  logic [2:0]  s_snd_wave,
-                  input  logic        s_snd_wt,
-                  input  logic [1:0]  s_ch_det,
-                  input  logic        s_ch_buzz,
-
-                  input  logic [15:0] s_phase_hi,
-                  input  logic [23:0] s_phase2,
-                  input  logic [12:0] s_eff_inc_hi,
-
-                  input  logic [2:0]  s_old_wave,
-                  input  logic [15:0] s_old_phase_hi,
-                  input  logic [12:0] s_old_inc_hi,
-                  input  logic [1:0]  old_mode_r,
-                  input  logic        old_alt_r,
-                  input  logic [15:0] old_q0_lo,
-                  output logic signed [17:0] z_eval,
-                  output logic [16:0] dq17,
-                  output logic [15:0] q16);
-
-  logic [2:0]  wsel, wsel_r;
-  logic [15:0] wx, wx_r;
-  logic        wsec, wsec_r, walt_r;
-
-  // Select the evaluation context before the first pipeline register.
-  always_comb begin
-    wsel = s_snd_wave;
-    wx = s_phase_hi;
-    wsec = 1'b0;
-    if (iss_sec) begin
-      wx = q16;
-      wsec = 1'b1;
-    end else if (iss_om) begin
-      wsel = s_old_wave;
-      wx = s_old_phase_hi;
-    end else if (iss_os) begin
-      wsel = s_old_wave;
-      wx = q16;
-      wsec = 1'b1;
+  always_ff @(posedge clk)
+    if (ce) begin
+      wx_r   <= ctx_phase;
+      wsel_r <= ctx_wave;
+      wsec_r <= ctx_secondary;
+      walt_r <= ctx_alt;
     end
-  end
-  wire w_old_ctx = iss_om || iss_os;
-  always_ff @(posedge clk) begin
-    wx_r <= wx;
-    wsel_r <= wsel;
-    wsec_r <= wsec;
-    walt_r <= w_old_ctx ? old_alt_r : s_ch_buzz;
-  end
 
   // One block-RAM word supplies remainders for division by 3, 7, and 15.
   // The address folds each operand until it fits in eight bits; the matching
@@ -71,17 +39,6 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   initial
     for (int i = 0; i < 256; i++)
       recip[i] = {6'(i / 3), 5'(i / 7), 4'(i / 15)};
-
-  wire org_ctx1 = (wsel_r == 3'd5);
-  wire [6:0] rc_h2 = org_ctx1 ? org_h2 : (tilt_hi ? t_h2_15 : t_h2_7);
-  wire [3:0] rc_l2 = org_ctx1 ? org_l2 : (tilt_hi ? t_l2_15 : t_l2_7);
-  wire [7:0] rc_addr = {1'b0, rc_h2} + {4'b0, rc_l2};
-  logic [14:0] recip_q;
-  logic [6:0]  rc_h2_r;
-  always_ff @(posedge clk) begin
-    recip_q <= recip[rc_addr];
-    rc_h2_r <= rc_h2;
-  end
 
   wire signed [16:0] tri_u =
       $signed({1'b0, wx_r ^ {16{wx_r[15]}}}) - 17'sd16384
@@ -120,11 +77,23 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   wire signed [17:0] sq_v = (wx_r < sq_th) ? -18'sd6143 : 18'sd6143;
 
   wire [14:0] org_ramp = wx_r[14] ? 15'(16'd0 - wx_r) : wx_r[14:0];
-
   wire [7:0] org_h = org_ramp[14:7];
   wire [8:0] org_ix = {1'b0, org_h} + {1'b0, org_ramp[6:0], 1'b0};
   wire [6:0] org_h2 = org_ix[8:2];
   wire [3:0] org_l2 = {2'b0, org_ix[1:0]};
+  wire [6:0] rc_h2 = (wsel_r == 3'd5)
+                    ? org_h2 : (tilt_hi ? t_h2_15 : t_h2_7);
+  wire [3:0] rc_l2 = (wsel_r == 3'd5)
+                    ? org_l2 : (tilt_hi ? t_l2_15 : t_l2_7);
+  wire [7:0] rc_addr = {1'b0, rc_h2} + {4'b0, rc_l2};
+  logic [14:0] recip_q;
+  logic [6:0]  rc_h2_r;
+  always_ff @(posedge clk)
+    if (ce) begin
+      recip_q <= recip[rc_addr];
+      rc_h2_r <= rc_h2;
+    end
+
   wire signed [17:0] org_lin =
       !wx_r[14] ? ($signed({2'b0, wx_r}) - 18'sd8192)
                 : (18'sd24576 - $signed({2'b0, wx_r}));
@@ -154,20 +123,21 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   logic signed [17:0] tri4_r;
   logic [2:0]  wsel_r2;
   logic        wsec_r2, walt_r2;
-  always_ff @(posedge clk) begin
-    z_lin_r <= z_lin;
-    t_pre_r <= t_pre[14:0];
-    t_h7_r  <= t_h7;
-    t_h15_r <= t_h15;
-    tilt_hi_r <= tilt_hi;
-    tilt_tail_r <= tilt_tail;
-    org_hi_r <= wx_r[15];
-    org_h_r <= org_h;
-    tri4_r <= tri4;
-    wsel_r2 <= wsel_r;
-    wsec_r2 <= wsec_r;
-    walt_r2 <= walt_r;
-  end
+  always_ff @(posedge clk)
+    if (ce) begin
+      z_lin_r <= z_lin;
+      t_pre_r <= t_pre[14:0];
+      t_h7_r  <= t_h7;
+      t_h15_r <= t_h15;
+      tilt_hi_r <= tilt_hi;
+      tilt_tail_r <= tilt_tail;
+      org_hi_r <= wx_r[15];
+      org_h_r <= org_h;
+      tri4_r <= tri4;
+      wsel_r2 <= wsel_r;
+      wsec_r2 <= wsec_r;
+      walt_r2 <= walt_r;
+    end
 
   wire org_ctx = (wsel_r2 == 3'd5);
   wire [10:0] rc_h = org_ctx ? {3'b0, org_h_r}
@@ -208,6 +178,62 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   assign z_eval =
       tri_core ? (wsec_r2 ? tzs(z_prim, 2'd3) : tzs(z_prim, 2'd2))
                : (wsec_r2 ? tzs(z_prim, 2'd1) : z_prim);
+
+endmodule
+
+module psg_wave #(parameter REALTIME_PREVIEW = 0)
+                 (input  bit   clk,
+
+                  input  logic iss_sec,
+                  input  logic iss_om,
+                  input  logic iss_os,
+                  input  logic dq_old_ctx,
+
+                  input  logic [2:0]  s_snd_wave,
+                  input  logic        s_snd_wt,
+                  input  logic [1:0]  s_ch_det,
+                  input  logic        s_ch_buzz,
+
+                  input  logic [15:0] s_phase_hi,
+                  input  logic [23:0] s_phase2,
+                  input  logic [12:0] s_eff_inc_hi,
+
+                  input  logic [2:0]  s_old_wave,
+                  input  logic [15:0] s_old_phase_hi,
+                  input  logic [12:0] s_old_inc_hi,
+                  input  logic [1:0]  old_mode_r,
+                  input  logic        old_alt_r,
+                  input  logic [15:0] old_q0_lo,
+                  output logic signed [17:0] z_eval,
+                  output logic [16:0] dq17,
+                  output logic [15:0] q16);
+
+  logic [2:0]  wsel;
+  logic [15:0] wx;
+  logic        wsec;
+
+  // Select the evaluation context before the first pipeline register.
+  always_comb begin
+    wsel = s_snd_wave;
+    wx = s_phase_hi;
+    wsec = 1'b0;
+    if (iss_sec) begin
+      wx = q16;
+      wsec = 1'b1;
+    end else if (iss_om) begin
+      wsel = s_old_wave;
+      wx = s_old_phase_hi;
+    end else if (iss_os) begin
+      wsel = s_old_wave;
+      wx = q16;
+      wsec = 1'b1;
+    end
+  end
+  wire w_old_ctx = iss_om || iss_os;
+  psg_wave_ctx u_ctx(
+    .clk(clk), .ce(1'b1), .ctx_phase(wx), .ctx_wave(wsel),
+    .ctx_alt(w_old_ctx ? old_alt_r : s_ch_buzz), .ctx_secondary(wsec),
+    .z_eval(z_eval));
 
   // Per-wave secondary-oscillator increments. All expressions implement the
   // integer forms directly, including their ceiling-biased corrections.
