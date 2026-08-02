@@ -414,16 +414,57 @@ git history; do not repeat them without the recorded changed condition.
   words and 38 flow words spare; physical fixed cost remains negligible
   against the 3,224-floor 6k replacement budget.  Do not cite this result as
   behavioral equivalence or as a PSG LC reduction.
-- **R.84D next permitted hypothesis:** implement and price the actual
-  address-selected action/state datapath behind this controller without
-  partially migrating any `pph`/`sst` consumer.  Actions must select structured
-  family/suboperations and one state address at a time; they may not rebuild a
-  flat register-fed source/destination bundle.  Keep the accepted controller
-  pair in the whole PSG until the replacement datapath is complete enough for
-  an atomic elaboration switch.  Accept R.84D only if the program remains one
-  EBR, the standalone replacement stays on the measured 6k trajectory, and
-  state-read/write timing plus action semantics gain executable proof before
-  whole-PSG integration.
+- **R.84D active hypothesis:** the common action substrate needs only one
+  16-bit accumulator, carry/overflow/zero/negative flags and the synchronous
+  `state_q` word.  Reserve action family 7 for pass, add/adc, sub/sbc, Boolean,
+  shift/rotate, negate and compare micro-operations; feed `state_q` directly
+  as the sole operand and publish the accumulator directly as `state_wd`.
+  Operation selection occurs before one accumulator write site, and carry
+  makes wider values byte/word serial without a second source or destination
+  mux.  This is materially different from R.83's rejected register-fed scalar
+  engine: there is no context bundle, general register index or selected
+  destination, and the operand is the addressed state-memory output.  Scope is
+  the isolated controller/datapath interface, a self-checking arithmetic test,
+  target, and this ledger; generic `psg.sv`, `psg_walk` and `psg_seq` remain
+  untouched.  Baseline R.84C is 86 LUT4s, 7 carries, 14 flops, one EBR, a
+  96-LC floor and 100 placed LCs at 103.16 MHz.  Reject this spelling if the
+  controller plus complete primitive core exceeds a 300-LC floor, loses the
+  one-EBR inference, or requires any flat source/destination bundle.  Passing
+  this gate prices a primitive substrate only; legacy macro-action semantics,
+  schedule and render equivalence remain later gates, and the accepted
+  controller pair stays in the whole PSG until an atomic switch.
+- **R.84D result:** variant A exposed live equality, unsigned-order and
+  signed-order comparisons beside separately spelt arithmetic operations.  It
+  mapped 465 LUT4s, 113 carries, 34 flops, 14 unpackable flops and a 479-LC
+  floor; seed-1 placed 490 LCs at 76.99 MHz.  The `cond` family alone was 216
+  LUT4s.  Variant B made compare an explicit action and exposed registered
+  flags only, but its five source-level arithmetic expressions still mapped
+  as five physical chains: 401 LUT4s, 100 carries, 34 flops, 26 unpackable and
+  a 427-LC floor; 437 placed LCs at 77.62 MHz.  The final spelling selects
+  operand inversion and carry-in before one 17-bit add/sub expression, folding
+  ADD/ADC/SUB/SBC/CMP/NEG onto one physical chain.  It passes 327,680
+  arithmetic operand pairs spanning every low-byte pair with independently
+  perturbed high bytes, plus directed Boolean, shift/rotate, negate, flag,
+  inactive and non-execute cases.  The controller test and both Verilator lint
+  targets pass.  The isolated target maps **271 LUT4s, 23 carries, 34 flops,
+  27 unpackable flops, one EBR and a 298-LC floor**; the datapath subtree is
+  193 LUT4s, 16 carries, 20 flops and a 210-LC floor.  Seed-1 places and routes
+  at **303 LCs / one EBR / 68.50 MHz** against 28.125 MHz.
+- **R.84D decision:** accept the factored primitive substrate.  It is 202
+  mapped cells smaller than the duplicated-adder form, meets the predeclared
+  300-floor gate and leaves 2,926 floor cells inside R.84's 3,224-cell 6k
+  replacement budget.  The changed condition versus R.83 is now physical:
+  one addressed memory operand, one accumulator destination and one carry
+  chain, with compare serialized into that chain.  This does not yet prove any
+  legacy macro action, schedule or render and is not a whole-PSG area result.
+- **R.84E next permitted hypothesis:** lower one complete owner-side record
+  movement family onto the controller plus common accumulator using a real
+  synchronous state-memory model.  Generated action metadata must identify
+  the consumed read and committed write address without adding a general
+  register index or another EBR.  Prove every transaction against the legacy
+  record layout and account every extra hold clock before adding arithmetic
+  macro semantics.  Work remains isolated; do not partially replace a
+  `pph`/`sst` consumer in the whole PSG.
 
 ### Active task queue
 
@@ -444,9 +485,11 @@ git history; do not repeat them without the recorded changed condition.
 - [x] R.84C: generate and exhaustively validate the structured action/program
       contract, including synchronous-read alignment, page/target bounds,
       state addresses, output commits, termination and worst-case clocks.
-- [ ] R.84D: implement and price the address-selected action/state datapath;
+- [x] R.84D: implement and price the address-selected action/state datapath;
       keep legacy controllers intact until an atomic full-mode switch and do
       not rebuild their wide source/destination muxes behind action decode.
+- [ ] R.84E: lower and prove one complete record-movement family through a
+      real synchronous state-memory transaction model before macro arithmetic.
 
 ## Handoff rule
 

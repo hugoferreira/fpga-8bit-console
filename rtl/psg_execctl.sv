@@ -19,7 +19,7 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
                    input  logic [7:0] start_pc,
                    input  logic       hold,
                    input  logic [15:0] cond,
-                   input  logic [15:0] state_q,
+                   input  logic [15:0] state_wd_i,
 
                    output logic       active,
                    output logic       done,
@@ -98,7 +98,7 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
     state_ra = {slot, ir[5:0]};
     state_wa = {slot, ir[5:0]};
     state_we = active && !hold && op == OP_WRITE;
-    state_wd = state_q;
+    state_wd = state_wd_i;
     action = (op == OP_READ || op == OP_WRITE || op == OP_EXEC)
                ? ir[12:6] : 7'd0;
     state_word = ir[5:0];

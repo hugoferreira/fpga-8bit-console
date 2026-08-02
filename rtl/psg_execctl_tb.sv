@@ -7,6 +7,7 @@ module psg_execctl_tb;
   logic [7:0] start_pc;
   logic [15:0] cond;
   logic [15:0] state_q;
+  wire [15:0] state_wd_i = state_q;
   logic active, done, owner, state_we;
   logic [2:0] slot;
   logic [8:0] state_ra, state_wa;

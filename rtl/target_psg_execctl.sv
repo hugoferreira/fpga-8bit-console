@@ -1,4 +1,5 @@
 `include "psg_execctl.sv"
+`include "psg_execdp.sv"
 
 module target_psg_execctl(input  bit          clk,
                           input  bit          reset,
@@ -6,7 +7,7 @@ module target_psg_execctl(input  bit          clk,
                           input  logic        start_owner,
                           input  logic [7:0]  start_pc,
                           input  logic        hold,
-                          input  logic [15:0] cond,
+                          input  logic [7:0]  cond_ext,
                           input  logic [15:0] state_q,
                           output logic [15:0] probe);
   // These wires deliberately stay internal: keep preserves the complete
@@ -20,12 +21,21 @@ module target_psg_execctl(input  bit          clk,
   (* keep *) logic [5:0] state_word;
   (* keep *) logic [2:0] op_dbg;
   (* keep *) logic [7:0] pc;
+  (* keep *) logic [15:0] cond, state_wd_dp, acc_dbg;
+  (* keep *) logic [3:0] flags_dbg;
   /* verilator lint_on UNUSEDSIGNAL */
+
+  psg_execdp u_dp(
+    .clk(clk), .reset(reset), .active(active), .op(op_dbg),
+    .action(action), .state_q(state_q), .cond_ext(cond_ext),
+    .state_wd(state_wd_dp), .cond(cond), .acc_dbg(acc_dbg),
+    .flags_dbg(flags_dbg));
 
   (* keep *)
   psg_execctl dut(
     .clk(clk), .reset(reset), .start(start), .start_owner(start_owner),
-    .start_pc(start_pc), .hold(hold), .cond(cond), .state_q(state_q),
+    .start_pc(start_pc), .hold(hold), .cond(cond),
+    .state_wd_i(state_wd_dp),
     .active(active), .done(done), .owner(owner), .slot(slot),
     .state_ra(state_ra), .state_we(state_we), .state_wa(state_wa),
     .state_wd(state_wd), .action(action), .state_word(state_word),
