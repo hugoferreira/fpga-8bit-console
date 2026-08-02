@@ -716,6 +716,45 @@ git history; do not repeat them without the recorded changed condition.
   prove owner-bank fetch alignment, byte-identical program semantics and the
   isolated two-EBR controller cost; do not restore the normalizer until that
   foundation routes and its whole-PSG EBR accounting is explicit.
+- **R.84G-D active hypothesis:** expand only the control-store address to
+  `{owner, pc}` while leaving the registered owner, eight-bit PC, branch
+  target and sixteen-bit instruction unchanged.  Owner zero contains the
+  62-word sample program and owner one contains the current 125-word
+  tick/flow program; each branch and jump must remain inside its selected
+  bank unless an explicit `OP_OWNER` changes the bank for the following
+  fetch.  The test must distinguish the same PC in both banks, prove an owner
+  change fetches from the new bank without a bubble, and prove hold freezes
+  bank, PC and instruction together.  The generated image must be exactly
+  512 words and the isolated HX8K target must infer exactly two EBRs.  This
+  iteration establishes only the banked foundation and future 223/256
+  tick/flow capacity; it does not yet restore normalization, lower the
+  advance family or claim whole-PSG behavior/area equivalence.
+- **R.84G-D result:** accepted as the owner-banked control-store foundation.
+  The generated image is exactly 512 words: owner zero contains the unchanged
+  62-word sample program, and owner one contains the unchanged 99-word tick
+  plus 26-word flow program.  The generator validates branch and jump targets
+  independently inside each bank, and proves the normalized replacement will
+  occupy 148+75 = **223/256** owner-one words.  The controller self-check
+  distinguishes two instructions at the same PC in different banks, proves
+  `OP_OWNER` fetches the following instruction from the new bank without a
+  bubble, and holds bank, PC and instruction stable together.  Controller,
+  movement, all 327,680 datapath arithmetic pairs, generated-image freshness,
+  full/PREVIEW lint and strict OpenSpec validation pass.
+- **R.84G-D physical result and decision:** canonical Yosys maps **328 LUT4s,
+  24 carries, 34 flops, 27 unpackable flops and exactly two EBRs**, for a
+  **355-LC floor**.  Seed-1 HX8K router2 places **361 LCs** and routes at
+  **61.85 MHz**.  Versus the hold-corrected one-bank foundation, logic and
+  flop counts are unchanged; the ninth address bit costs only two unpackable,
+  floor and placed cells while the second 4-kbit image consumes one EBR.
+  Retain this foundation because atomic R.84 integration exchanges the two
+  legacy walker/sequencer control EBRs for these two executor EBRs and thus
+  preserves the accepted whole-PSG total of 14.  No partial integration or
+  whole-PSG equivalence claim is made here.
+- **Repeat only if:** execution ownership is no longer mutually exclusive,
+  owner changes cannot precede their bank transition, either complete program
+  exceeds 256 words, or atomic integration fails to retire both legacy control
+  EBRs.  Do not retry a larger flat PC or wider instruction for this capacity
+  problem.
 
 ### Active task queue
 
@@ -753,7 +792,7 @@ git history; do not repeat them without the recorded changed condition.
       exceed the physical gate without adding another arithmetic chain.
 - [x] R.84G-C: reject the fixed one-EBR scratch-normalized spelling after its
       fallthrough-minimized 285-word image exceeds capacity by 29 words.
-- [ ] R.84G-D: prove an owner-banked two-EBR control store whose complete
+- [x] R.84G-D: prove an owner-banked two-EBR control store whose complete
       resource exchange preserves the whole-PSG EBR count before restoring
       normalization or lowering the advance family.
 

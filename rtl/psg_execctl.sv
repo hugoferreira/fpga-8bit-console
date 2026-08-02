@@ -4,7 +4,8 @@
 // program selects one per-slot state address at a time; the surrounding
 // executor supplies operation-specific logic and commits results through the
 // existing state-memory write port.  Sample and tick programs share this one
-// PC because their execution windows are mutually exclusive.
+// PC because their execution windows are mutually exclusive; owner selects
+// one of two physical program banks so each schedule has a full 256 words.
 
 `timescale 1ns/1ps
 
@@ -49,26 +50,34 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
     OP_DONE   = 3'd6,
     OP_EXEC   = 3'd7;
 
-  // R.84 reserves the fifteenth and final permitted EBR for the complete
-  // full-mode program.  start_pc remains dynamic so synthesis cannot prune
-  // unvisited pages while the instruction format is being measured.
-  (* ram_style = "block" *) logic [15:0] ucode[0:255];
+  // Atomic R.84 integration retires the walker's and sequencer's two control
+  // EBRs.  Reusing both here preserves the accepted whole-PSG EBR count while
+  // avoiding another PC bit or a wider branch target.
+  (* ram_style = "block" *) logic [15:0] ucode[0:511];
   initial begin
     if (TEST_PROGRAM) begin
-      for (int i = 0; i < 256; i++)
+      for (int i = 0; i < 512; i++)
         ucode[i] = {OP_DONE, 13'd0};
 
-      // A short self-checking path used by psg_execctl_tb.
-      ucode[0] = {OP_READ,   7'd0, 6'd34};
-      ucode[1] = {OP_WRITE,  7'd0, 6'd38};
-      ucode[2] = {OP_BRANCH, 4'd0, 1'b1, 8'd5};
-      ucode[3] = {OP_EXEC,   7'd17, 6'd9};
-      ucode[4] = {OP_JUMP,   5'd0, 8'd6};
-      ucode[5] = {OP_SLOT,   9'd0, 1'b0, 3'd3};
-      ucode[6] = {OP_DONE,  13'd0};
-      ucode[8] = {OP_OWNER, 12'd0, 1'b0};
-      ucode[9] = {OP_SLOT,   9'd0, 1'b1, 3'd0};
-      ucode[10] = {OP_DONE, 13'd0};
+      // Duplicate the base path so the test can enter it through either bank.
+      for (int bank = 0; bank < 2; bank++) begin
+        ucode[{bank[0], 8'd0}] = {OP_READ,   7'd0, 6'd34};
+        ucode[{bank[0], 8'd1}] = {OP_WRITE,  7'd0, 6'd38};
+        ucode[{bank[0], 8'd2}] = {OP_BRANCH, 4'd0, 1'b1, 8'd5};
+        ucode[{bank[0], 8'd3}] = {OP_EXEC,   7'd17, 6'd9};
+        ucode[{bank[0], 8'd4}] = {OP_JUMP,   5'd0, 8'd6};
+        ucode[{bank[0], 8'd5}] = {OP_SLOT,   9'd0, 1'b0, 3'd3};
+        ucode[{bank[0], 8'd6}] = {OP_DONE,  13'd0};
+      end
+      // Owner changes select the next instruction's bank on the same fetch.
+      ucode[{1'b1, 8'd8}] = {OP_OWNER, 12'd0, 1'b0};
+      ucode[{1'b0, 8'd9}] = {OP_SLOT,   9'd0, 1'b1, 3'd0};
+      ucode[{1'b0, 8'd10}] = {OP_DONE, 13'd0};
+      // Same logical PC, deliberately different contents in each bank.
+      ucode[{1'b0, 8'd12}] = {OP_EXEC, 7'd3, 6'd12};
+      ucode[{1'b1, 8'd12}] = {OP_EXEC, 7'd5, 6'd12};
+      ucode[{1'b0, 8'd13}] = {OP_DONE, 13'd0};
+      ucode[{1'b1, 8'd13}] = {OP_DONE, 13'd0};
     end else begin
       $readmemh("./rtl/psg_exec.hex", ucode);
     end
@@ -82,7 +91,9 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
   wire launch = start && !active;
   wire advance = active && !hold && op != OP_DONE;
   wire ucode_ce = launch || advance;
-  wire [7:0] ucode_addr = launch ? start_pc : next_pc;
+  wire next_owner = op == OP_OWNER ? ir[0] : owner;
+  wire [8:0] ucode_addr = launch ? {start_owner, start_pc}
+                                 : {next_owner, next_pc};
 
   // One reset-free sequential read site is the physical EBR output register.
   always_ff @(posedge clk)

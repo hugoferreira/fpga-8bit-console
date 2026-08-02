@@ -93,7 +93,8 @@ module psg_execctl_tb;
     launch(8'd2, 1'b0);
     hold = 1'b1;
     step();
-    if (pc != 2 || !active || state_we)
+    if (pc != 2 || owner || !active || state_we
+        || ir != {3'd2, 4'd0, 1'b1, 8'd5})
       $fatal(1, "hold mismatch");
     hold = 1'b0;
     step();
@@ -113,14 +114,41 @@ module psg_execctl_tb;
     // Owner and slot-increment formats are independently observable.
     launch(8'd8, 1'b1);
     step();
-    if (owner || pc != 9)
-      $fatal(1, "owner instruction mismatch");
+    if (owner || pc != 9 || ir != {3'd3, 9'd0, 1'b1, 3'd0})
+      $fatal(1, "owner-bank transition mismatch");
     step();
-    if (slot != 1 || pc != 10)
+    if (slot != 1 || pc != 10 || ir != {3'd6, 13'd0})
       $fatal(1, "slot increment mismatch");
     step();
     if (active || !done)
       $fatal(1, "third done mismatch");
+
+    // The same logical PC addresses distinct instructions in the two banks.
+    launch(8'd12, 1'b0);
+    if (owner || pc != 12 || action != 7'd3 || state_word != 6'd12
+        || op_dbg != 3'd7)
+      $fatal(1, "sample-bank fetch mismatch");
+    step();
+    step();
+    if (active || !done)
+      $fatal(1, "sample-bank done mismatch");
+
+    launch(8'd12, 1'b1);
+    if (!owner || pc != 12 || action != 7'd5 || state_word != 6'd12
+        || op_dbg != 3'd7)
+      $fatal(1, "tick-bank fetch mismatch");
+    hold = 1'b1;
+    step();
+    if (!owner || pc != 12 || action != 7'd5
+        || ir != {3'd7, 7'd5, 6'd12})
+      $fatal(1, "banked hold mismatch");
+    hold = 1'b0;
+    step();
+    if (!owner || pc != 13 || ir != {3'd6, 13'd0})
+      $fatal(1, "tick-bank release mismatch");
+    step();
+    if (active || !done)
+      $fatal(1, "tick-bank done mismatch");
 
     $display("psg_execctl_tb: PASS");
     $finish;
