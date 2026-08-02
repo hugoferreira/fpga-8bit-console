@@ -831,16 +831,48 @@ git history; do not repeat them without the recorded changed condition.
   the sequencer's existing arbitrated sequential owner in the future adapter;
   the isolated harness must emit effects rather than create a competing
   writer, and must prove same-edge priority before generic integration.
-- **R.84G-F decision:** active.  Accept only after the complete synchronous
-  transaction is exhaustively equal to the legacy advance semantics, all
-  controller/datapath/movement/model/lint/image gates pass, and isolated HX8K
-  mapping retains exactly two EBRs while staying on the 6k replacement-floor
-  trajectory.  This iteration still makes no whole-PSG behavior, render or
-  area claim; those belong to the atomic integration gate.
+- **R.84G-F result:** accepted as the complete normalized advance-transaction
+  foundation.  V_LD0 writes scratch 34 = 1, V_LD6 captures active parameter
+  word 26 or 30 into scratch 53, and K_ADV repurposes the redundant repeated
+  read edge to write scratch 35 = 32.  All P/PC sources and destinations are
+  literal bank-selected addresses; there is no variable address arithmetic.
+  The fixed decoder implements the six projection/merge shapes, exact word-9
+  instrument previous-pitch/volume fields, four owner predicates and emitted
+  VOICE_STOP/SKIP_CPZ effects.  Effects remain outputs for the future existing
+  sequencer owner rather than gaining a competing sequential writer.
+- **R.84G-F transaction gates:** the executable production-image model passes
+  **19,728,640 decomposed semantic cases** and **131,087 synchronous
+  counter-domain/path transactions**, with the 512-word image byte-identical
+  and the exact 68+49-word manifest still occupying 226/256 owner-one words.
+  The controller bank/hold test, all 327,680 common-datapath arithmetic pairs,
+  fixed movement test and 11-path production-image synchronous RTL harness
+  pass.  The latter covers trigger, skip, both parameter banks, voice and
+  instrument no-roll/roll, length priority, stop same-edge priority,
+  loop-before-end, released-loop suppression and instrument done.  Isolated
+  target plus generic full/PREVIEW Verilator lint pass.
+- **R.84G-F physical result and decision:** canonical Yosys maps **530 LUT4s,
+  23 carries, 34 flops, 26 unpackable flops and exactly two EBRs**, for a
+  **556-LC floor**.  Seed-1 HX8K router2 places **561 LCs** and routes at
+  **64.01 MHz** against 28.125 MHz.  Versus G-E this is +202 LUT4s, -1 carry,
+  no added flops/EBRs, -1 unpackable flop, +201 floor and +200 placed.  Netlist
+  audit finds sixteen carries only in the unchanged common datapath and seven
+  in controller PC/slot/program addressing; the fixed decoder adds none.  The
+  complete advance family therefore leaves 2,668 floor cells inside R.84's
+  3,224-cell 6k replacement budget and is retained.  P_W publication data,
+  all other owner actions, generic composition, schedule, renders and
+  whole-PSG area remain unproved; no such claim is made by this iteration.
 - **Repeat only if:** the numbered manifest, state-word layout, parameter-bank
   publication rule, synchronous read latency, side-effect arbitration or
   legacy field layout changes.  Do not retry G-B's selected arithmetic or
   G-C's one-bank capacity shape inside this decoder.
+- **R.84H next permitted hypothesis:** price and lower the remaining complete
+  owner action inventory into the same fixed-address/common-service substrate,
+  then switch the full-mode walker and sequencer only at one atomic composition
+  boundary.  Before any generic RTL edit, enumerate every still-placeholder
+  sample/tick/flow action, persistent-state owner, service handshake and output
+  commit against the 2,668-floor 6k budget.  Do not partially replace a
+  pph/sst consumer, add a register-fed request bundle, or treat G-F's isolated
+  transaction proof as render equivalence.
 
 ### Active task queue
 
@@ -868,7 +900,7 @@ git history; do not repeat them without the recorded changed condition.
       real synchronous state-memory transaction model before macro arithmetic.
 - [x] R.84F: reject the parallel advance-macro shape after exhaustive formula
       proof and mapped attribution show 190 LUT4s / 77 duplicated carries.
-- [ ] R.84G: lower the same exact family as explicit condition-indexed,
+- [x] R.84G: lower the same exact family as explicit condition-indexed,
       synchronous address-state micro-operations through the common chain.
 - [x] R.84G-A: make explicit branch/default/page/action metadata a
       byte-identical generated-control foundation before lowering the family.
@@ -884,7 +916,7 @@ git history; do not repeat them without the recorded changed condition.
 - [x] R.84G-E: independently re-derive and generate the complete 68+49-word
       normalized advance manifest; prove its exact branch algebra and fit the
       complete owner-one image at 226/256 words.
-- [ ] R.84G-F: implement the fixed normalization/merge actions, dynamic
+- [x] R.84G-F: implement the fixed normalization/merge actions, dynamic
       parameter-bank addresses and arbitrated stop/cpz effects; prove the
       complete synchronous advance transaction before generic integration.
 

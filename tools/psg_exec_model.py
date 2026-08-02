@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build and validate the R.84 address-state executor control contract.
 
-This is deliberately a control/data-movement model, not an audio model.  It
+This is deliberately an executor transaction model, not an audio model.  It
 answers the questions that must be closed before replacing psg_walk/psg_seq:
 
 * do two owner-selected 256x16 banks hold the sample and tick/flow programs;
@@ -10,13 +10,15 @@ answers the questions that must be closed before replacing psg_walk/psg_seq:
 * do synchronous state reads line up with the action that consumes them;
 * do all branch/jump targets and per-slot state words stay in range;
 * can every sequencer control state still reach S_IDLE after xs/vcnt become PC;
-* what hard clock headroom remains for address-state operand micro-operations.
+* what hard clock headroom remains for address-state operand micro-operations;
+* whether the exact normalized advance image executes through the fixed
+  decoder against a real synchronous-memory transaction model.
 
 The action field is structured as family[2:0]:subop[3:0].  Sample and tick
 owners interpret it independently, so neither owner gets a flat 256-way PC
 decode.  Arithmetic semantics remain in the established formula/service gates;
-this model must not be cited as behavioral equivalence or as a whole-PSG area
-result.
+this model proves only the lowered advance family and must not be cited as
+whole-PSG behavioral equivalence or as a whole-PSG area result.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ SEQ = ROOT / "rtl" / "psg_seq.sv"
 WALK = ROOT / "rtl" / "psg_walk.sv"
 COMMON = ROOT / "rtl" / "psg_common.svh"
 IMAGE = ROOT / "rtl" / "psg_exec.hex"
+MOVE = ROOT / "rtl" / "psg_execmove.sv"
 
 PAGE_SAMPLE = range(0x00, 0x40)
 PAGE_TICK = range(0x40, 0xC0)
@@ -792,8 +795,262 @@ def validate_advance_semantics() -> int:
             assert ((raw & ~0x03E0) | (row << 5)) & 0xFFFF \
                 == (raw & 0xFC1F) | (row << 5)
             cases += 2
+        for length in range(64):
+            merged_length = (raw & 0xC0FF) | (length << 8)
+            assert (merged_length >> 8) & 0x3F == length
+            assert merged_length & 0xC0FF == raw & 0xC0FF
+            cases += 1
         cases += 3
 
+    return cases
+
+
+def advance_fixed_decode(action: int, op: Op, word: int, state_q: int,
+                         acc: int, *, spar_bank: int, join_stage: int,
+                         playing: int, cpz: int) -> tuple[int | None,
+                                                          tuple[int, int] | None,
+                                                          bool, bool | None]:
+    """Model the fixed-address R.84G-F movement/merge decoder.
+
+    Return (read override, optional extra/direct fixed write, voice-stop pulse,
+    optional cpz update).  An OP_WRITE action not returned here uses acc.
+    """
+    a = ADV_ACTION
+    read_override: int | None = None
+    write: tuple[int, int] | None = None
+    voice_stop = False
+    cpz_update: bool | None = None
+
+    if op == Op.READ and action == 0 and word == 3:
+        write = (34, 1)
+    elif op == Op.READ and 1 <= action <= 7:
+        write = (47 + action, state_q)
+        if action in (5, 7):
+            read_override = 30 if spar_bank else 26
+    elif action == a["INIT"]:
+        write = (35, 32)
+
+    extracts = {
+        a["X_LO_FCNT"]: (36, state_q & 0xFF),
+        a["X_HI_TCNT"]: (37, state_q >> 8),
+        a["X_LO_SPEED"]: (38, state_q & 0xFF),
+        a["X_LENGTH"]: (39, (state_q >> 8) & 0x3F),
+        a["X_ROW_V"]: (40, state_q & 0x1F),
+        a["X_LPS"]: (41, state_q & 0xFF),
+        a["X_LPE"]: (42, state_q >> 8),
+        a["X_ROW_I"]: (40, (state_q >> 5) & 0x1F),
+    }
+    if action in extracts:
+        write = extracts[action]
+    elif action == a["X_END"]:
+        lps, lpe = state_q & 0xFF, state_q >> 8
+        write = (43, lps if lpe == 0 and 1 <= lps <= 31 else 32)
+
+    fixed_writes: dict[int, tuple[int, int, int | None]] = {
+        a["SAVE44_R36"]: (44, acc, 36),
+        a["SAVE45_R39"]: (45, acc, 39),
+        a["SAVE44"]: (44, acc, None),
+        a["MERGE_CTR_V_NR"]: (word, ((state_q & 0xFF) << 8)
+                                      | (acc & 0xFF), None),
+        a["MERGE_CTR_V_ROLL"]: (word, (state_q & 0xFF) << 8, 48),
+        a["PREV_V_PITCH"]: (word, (state_q & 0xF03F)
+                                  | ((state_q & 0x3F) << 6), 49),
+        a["PREV_V_VOL"]: (word, (state_q & 0xFE3F)
+                                | ((state_q & 7) << 6), 54),
+        a["MERGE_ROW_V"]: (word, (state_q & 0xFFE0) | (acc & 0x1F), 44),
+        a["MERGE_LEN_V"]: (word, (state_q & 0xC0FF)
+                                 | ((acc & 0x3F) << 8), None),
+        a["MERGE_CTR_I_NR"]: (word, ((state_q & 0xFF) << 8)
+                                      | (acc & 0xFF), None),
+        a["MERGE_CTR_I_ROLL"]: (word, (state_q & 0xFF) << 8, 51),
+        a["PREV_I_PITCH"]: (word, (state_q & 0xFFC0)
+                                  | ((acc >> 8) & 0x3F), 50),
+        a["PREV_I_VOL"]: (word, (state_q & 0xF1FF)
+                                | (((acc >> 13) & 7) << 9), 50),
+        a["MERGE_ROW_I"]: (word, (state_q & 0xFC1F)
+                                 | ((acc & 0x1F) << 5), None),
+        a["INS_DONE"]: (word, state_q | 0x8000, None),
+    }
+    if action in fixed_writes:
+        wa, wd, ra = fixed_writes[action]
+        write = (wa, wd & 0xFFFF)
+        read_override = ra
+
+    # Literal dynamic publication addresses.  P_W data is an owner macro and
+    # is deliberately outside this fixed decoder; only its address is proved.
+    inactive = (24, 25, 26, 27) if spar_bank else (28, 29, 30, 31)
+    copy_bank = spar_bank ^ join_stage
+    copy_words = (28, 29, 30, 31) if copy_bank else (24, 25, 26, 27)
+    if action == 0x56:
+        read_override = 48
+    elif action == 0x5E:
+        read_override = copy_words[0]
+    elif 0x57 <= action <= 0x5A:
+        n = action - 0x57
+        data = state_q & (0xFF00 if n == 3 and cpz else 0xFFFF)
+        write = (inactive[n], data)
+        read_override = 48 if n == 3 else copy_words[n + 1]
+
+    if action == a["VOICE_STOP"]:
+        voice_stop = True
+        cpz_update = True
+    elif action == a["SKIP_CPZ"]:
+        cpz_update = not playing
+    return read_override, write, voice_stop, cpz_update
+
+
+def run_advance_transaction(program: list[int], labels: dict[str, int],
+                            initial: list[int], *, spar_bank: int = 0,
+                            trig_req: int = 0, walk_tick: int = 1,
+                            playing: int = 1, ins_use: int = 0,
+                            released: int = 0) -> tuple[str, list[int], bool,
+                                                        bool, int]:
+    """Execute the production image against a synchronous 64-word store."""
+    mem = list(initial)
+    assert len(mem) == 64
+    pc = labels["V_LD0"]
+    state_q = 0
+    acc = 0
+    flag_z, flag_c = True, False
+    cpz = False
+    pend_stop = False
+    exits = {labels[name]: name for name in ("T_FL", "ES0", "K_NL",
+                                             "K_ROT", "I_NL")}
+    for cycles in range(256):
+        if pc in exits:
+            return exits[pc], mem, pend_stop, cpz, cycles
+        insn = Instruction.decode(program[pc])
+        cond = {
+            COND_Z: flag_z,
+            COND_C: flag_c,
+            COND_TRIG: bool(trig_req),
+            COND_ADVANCE: bool(walk_tick and playing),
+            COND_INS_USE: bool(ins_use),
+            COND_RELEASED: bool(released),
+        }
+        next_pc = (pc + 1) & 0xFF
+        if insn.op == Op.BRANCH and cond[insn.cond] == bool(insn.sense):
+            next_pc = insn.target
+        elif insn.op == Op.JUMP:
+            next_pc = insn.target
+
+        ra_override, fixed_write, stop, cpz_update = advance_fixed_decode(
+            insn.action, insn.op, insn.word, state_q, acc,
+            spar_bank=spar_bank, join_stage=0, playing=playing, cpz=cpz)
+        ra = insn.word if ra_override is None else ra_override
+        next_state_q = mem[ra]
+
+        if insn.op == Op.WRITE:
+            assert fixed_write is not None, f"pc {pc}: unfixed advance write"
+            wa, wd = fixed_write
+            mem[wa] = wd
+        elif fixed_write is not None:
+            wa, wd = fixed_write
+            mem[wa] = wd
+
+        if insn.op == Op.EXEC and insn.action in COMMON_ACTION.values():
+            if insn.action == COMMON_ACTION["LOAD"]:
+                acc = state_q
+                flag_z = acc == 0
+            elif insn.action == COMMON_ACTION["ADD"]:
+                wide = acc + state_q
+                acc = wide & 0xFFFF
+                flag_c = wide > 0xFFFF
+                flag_z = acc == 0
+            elif insn.action in (COMMON_ACTION["SUB"], COMMON_ACTION["CMP"]):
+                result = (acc - state_q) & 0xFFFF
+                flag_c = acc >= state_q
+                flag_z = result == 0
+                if insn.action == COMMON_ACTION["SUB"]:
+                    acc = result
+
+        if stop:
+            pend_stop = True
+        if cpz_update is not None:
+            cpz = cpz_update
+        state_q = next_state_q
+        pc = next_pc
+    raise AssertionError("advance transaction did not reach an external exit")
+
+
+def validate_advance_transactions(program: list[int], labels: dict[str, int]) -> int:
+    """Bind the numbered image, fixed decoder and synchronous read latency."""
+    cases = 0
+
+    def base() -> list[int]:
+        mem = [0] * 64
+        mem[3], mem[4], mem[5], mem[9] = 0xA53C, 0x4A15, 0xA321, 0x1000
+        mem[26], mem[30], mem[32] = 0x2611, 0x30EE, 0xC000
+        return mem
+
+    # Exhaust both complete counter domains through the real image.  Voice
+    # rollover takes the length path; instrument rollover takes the row path.
+    for fcnt in range(256):
+        for speed in range(256):
+            mem = base()
+            mem[0] = (7 << 8) | fcnt
+            mem[1] = 0
+            mem[2] = (2 << 8) | speed
+            exit_name, out, stop, _, _ = run_advance_transaction(
+                program, labels, mem)
+            roll = fcnt + 1 >= speed
+            assert out[0] == (8 << 8) | (0 if roll else fcnt + 1)
+            assert exit_name == ("K_NL" if roll else "ES0") and not stop
+            cases += 1
+
+            mem = base()
+            mem[0] = (7 << 8) | 0
+            mem[2] = (2 << 8) | 255  # voice no-roll enters instrument
+            mem[6] = (9 << 8) | fcnt
+            mem[7] = 0
+            mem[8] = (37 << 8) | speed
+            mem[5] = (5 << 13) | (1 << 5)
+            exit_name, out, stop, _, _ = run_advance_transaction(
+                program, labels, mem, ins_use=1)
+            roll = fcnt + 1 >= speed
+            assert out[6] == (10 << 8) | (0 if roll else fcnt + 1)
+            assert exit_name == "I_NL" and not stop
+            if roll:
+                assert out[52] & 0x3F == 37
+                assert (out[52] >> 9) & 7 == 5
+            cases += 1
+
+    # Path-complete boundary cases bind length, row, loop, release, trigger,
+    # skip and both active parameter banks without multiplying the already
+    # exhaustive decomposed algebra above by the full microprogram length.
+    directed = [
+        # length,row,lps,lpe,released,exit,row_out,stop
+        (0, 1, 1, 4, 0, "K_NL", 2, False),
+        (0, 3, 1, 4, 0, "K_NL", 1, False),
+        (0, 3, 1, 4, 1, "K_NL", 4, False),
+        (0, 31, 4, 4, 0, "K_ROT", 31, True),
+        (1, 4, 1, 4, 0, "K_ROT", 4, True),
+        (2, 4, 1, 4, 0, "K_NL", 5, False),
+    ]
+    for bank in (0, 1):
+        for length, row, lps, lpe, rel, expected_exit, expected_row, stop in directed:
+            mem = base()
+            mem[0] = (7 << 8) | 1
+            mem[1] = (lpe << 8) | lps
+            mem[2] = (length << 8) | 2
+            mem[32] = 0xC000 | row
+            exit_name, out, got_stop, _, _ = run_advance_transaction(
+                program, labels, mem, spar_bank=bank, released=rel)
+            assert exit_name == expected_exit and got_stop == stop
+            assert out[54] & 0x1F == expected_row
+            assert out[53] == mem[30 if bank else 26]
+            cases += 1
+
+    mem = base()
+    exit_name, _, _, cpz, _ = run_advance_transaction(
+        program, labels, mem, trig_req=1)
+    assert exit_name == "T_FL"
+    cases += 1
+    for playing in (0, 1):
+        exit_name, _, _, cpz, _ = run_advance_transaction(
+            program, labels, mem, walk_tick=0, playing=playing)
+        assert exit_name == "K_ROT" and cpz == (not playing)
+        cases += 1
     return cases
 
 
@@ -1045,8 +1302,9 @@ def tick_movement_inventory(nodes: list[Node]) -> str:
         node = by_name[f"V_ST{i}"]
         assert (node.op, node.word, node.action) == (Op.WRITE, word, 8 + i)
 
-    # K_ADV drains V_LD7's repeated word 26.  P_W3 and PC3 are the two
-    # immediate V_ST0 predecessors and prime scratch word 48 after their
+    # V_LD6 has already consumed active par+2.  K_ADV repurposes the redundant
+    # V_LD7 repeated read edge to initialize scratch 35.  P_W3 and PC3 are the
+    # two immediate V_ST0 predecessors and prime scratch word 48 after their
     # current state_q value has been consumed; K_ROT is not adjacent.
     assert by_name["K_ADV"].action == 0x40
     assert by_name["P_W3"].action == 0x56
@@ -1054,9 +1312,43 @@ def tick_movement_inventory(nodes: list[Node]) -> str:
     assert by_name["P_W3"].successors == ["V_ST0"]
     assert by_name["PC3"].successors == ["V_ST0"]
     assert by_name["K_ROT"].successors == ["PC0"]
-    return ("loads 3,4,5,8,9,26,32 -> scratch 48..54; "
+    return ("loads 3,4,5,8,9,(26|30),32 -> scratch 48..54; "
+            "V_LD0/K_ADV initialize scratch 34/35 to 1/32; "
             "stores scratch 48,49,50,52,54 -> 3,4,5,9,32; "
             "0 extra hold clocks")
+
+
+def validate_move_rtl_contract() -> str:
+    """Bind generated action numbers to the fixed RTL decoder spelling."""
+    text = MOVE.read_text()
+    aliases = {"INIT": "K_ADV"}
+    for name, code in ADV_ACTION.items():
+        rtl_name = aliases.get(name, name)
+        match = re.search(rf"\b{rtl_name}\s*=\s*7'h([0-9a-fA-F]+)", text)
+        assert match and int(match.group(1), 16) == code, \
+            f"{name}: RTL action code is missing or stale"
+    for name, code in {"P_W0": 0x53, "P_W1": 0x54, "P_W2": 0x55,
+                       "P_W3": 0x56, "PC0": 0x57, "PC1": 0x58,
+                       "PC2": 0x59, "PC3": 0x5A,
+                       "K_ROT": 0x5E}.items():
+        match = re.search(rf"\b{name}\s*=\s*7'h([0-9a-fA-F]+)", text)
+        assert match and int(match.group(1), 16) == code
+
+    # Addresses are literal action metadata.  These spellings would recreate
+    # the variable address arithmetic G-F explicitly forbids.
+    for forbidden in ("action - P_W0", "action - PC0", "par_active +",
+                      "par_inactive +", "par_copy +"):
+        assert forbidden not in text, f"variable address arithmetic: {forbidden}"
+
+    for bank in (0, 1):
+        active = (28, 29, 30, 31) if bank else (24, 25, 26, 27)
+        inactive = (24, 25, 26, 27) if bank else (28, 29, 30, 31)
+        assert (30 if bank else 26) == active[2]
+        for join in (0, 1):
+            copy = inactive if join else active
+            assert len(set(copy)) == 4 and len(set(inactive)) == 4
+    return ("27 action codes pinned; literal V_LD/P/PC addresses cover both "
+            "parameter banks and both join-stage sources")
 
 
 def state_address_inventory(seq: str) -> list[int]:
@@ -1093,6 +1385,7 @@ def main() -> int:
     seq_nodes = expand_sequencer(states, successors, actions)
     tick_nodes, flow_nodes = split_pages(seq_nodes)
     movement = tick_movement_inventory(seq_nodes)
+    move_rtl = validate_move_rtl_contract()
     replaced_actions = {"K_ADV", "EA0", "EA1", "EA2", "EA3", "EA4",
                         "EA5"}
     for code in ADV_ACTION.values():
@@ -1101,6 +1394,7 @@ def main() -> int:
             f"advance action {code:02x} collides with retained {old.name}"
     labels, voice_used, instrument_used, normalized_used = emit_advance(
         tick_program, tick_nodes, flow_nodes)
+    advance_transactions = validate_advance_transactions(tick_program, labels)
     program = sample_program + tick_program
 
     validate_instruction_codec(program)
@@ -1134,13 +1428,15 @@ def main() -> int:
     assert normalized_used == 226
     assert normalized_used <= PROGRAM_BANK_WORDS
 
-    print("R.84G-E normalized advance control contract: PASS")
+    print("R.84G-F normalized advance transaction contract: PASS")
     print(f"sample bank: {sample_used}/256 words, {sample_cycles}/"
           f"{SAMPLE_CLOCK_LIMIT} conservative clocks, {sample_spare} spare")
     print(f"tick/flow bank: {normalized_used}/256 words "
           f"({voice_used} voice/K_ADV + {instrument_used} instrument + "
           "83 remaining tick + 26 flow); 30 spare")
     print(f"normalized advance semantics: {advance_cases:,} decomposed cases")
+    print(f"normalized synchronous transactions: {advance_transactions:,} "
+          "counter-domain and path-complete cases")
     print(f"normalized advance actions: {len(ADV_ACTION)} fixed + 4 common")
     print(f"legacy sequencer: {len(states)} states -> {len(seq_nodes)} PC nodes; "
           "all nodes can reach S_IDLE")
@@ -1152,6 +1448,7 @@ def main() -> int:
     print("state words: " + ",".join(str(n) for n in addresses)
           + "; scratch 34..63")
     print("tick record movement: " + movement)
+    print("fixed decoder RTL: " + move_rtl)
     print("externally visible commits: " + ",".join(commits))
     image = "".join(f"{word:04x}\n" for word in program)
     if "--write" in sys.argv[1:]:
@@ -1162,8 +1459,8 @@ def main() -> int:
         assert IMAGE.read_text() == image, \
             f"{IMAGE}: stale; regenerate with --write"
         print(f"image: {IMAGE.relative_to(ROOT)} byte-identical")
-    print("warning: control/data-movement proof only; arithmetic and render "
-          "equivalence remain integration gates")
+    print("warning: exact advance-family transaction proof only; whole-PSG "
+          "schedule/render/area equivalence remain atomic integration gates")
     return 0
 
 
