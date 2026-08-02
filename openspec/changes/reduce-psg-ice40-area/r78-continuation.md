@@ -1845,6 +1845,33 @@ git history; do not repeat them without the recorded changed condition.
   Retain the exact D2F-B layouts and 44-word/222/782/172/158 candidate; reject
   before RTL/image if any final word depends on the decoded record/trace oracle
   or an untyped memory value.
+- **R.84H-D2F-C result and decision:** rejected and reverted as a proof-
+  architecture failure before image or RTL.  The first composed machine stored
+  literal frames but never unpacked one into a transition; instead its W0--W6
+  payloads, persistent writes, W15--W84 values, filter, leaf and fold were fed
+  directly from decoded `SampleRecord`/`SampleParams` and the independent
+  `SampleTrace` oracle.  Its nominal seven hold checks therefore froze an
+  oracle tuple beside an unchanged frame rather than a physical state
+  transition.  The proposed W15 side dictionary was also physically false:
+  on built-in paths B18 still owns the old source from W3 through W27, so a
+  live-gain limb there aliases an independent value; on wavetable paths that
+  limb is not produced until W40, so introducing it at W15 is a future-value
+  leak.  The existing pool model independently fixes those lifetimes.  The
+  64-run production surface further held `clear` at one value only.  No part
+  of this failed machine is retained; D2F-B `c9f6e0e`, the 44-word in-memory
+  candidate, accepted image and all RTL remain unchanged.
+- **R.84H-D2F-C-A next permitted hypothesis:** write the complete physical
+  transition manifest before another executor.  For every edge from PC1c
+  through W84 and every fold step, name each live value's A/B/N/O or exact H-C
+  slice, typed `state_q` or service-token source, production edge, last
+  consumer and replacement.  In particular, retain built-in B18 until the
+  W27 old-gain launch and forbid a wavetable live-gain limb before W40.  The
+  executor may then consume only unpacked manifest state plus fixed typed
+  inputs, and every write must retain `(pc, action, q-source, address, value)`
+  provenance through duplicate commits and the literal fold/dry-valid path.
+  First prove both clear states and all D2F-B path classes structurally; do not
+  write semantic RTL or replace `psg_exec.hex` until the full manifest and
+  no-oracle executor both pass with the 44-word/222/782/172/158 invariants.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
