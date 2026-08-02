@@ -1817,11 +1817,13 @@ git history; do not repeat them without the recorded changed condition.
   then bit-packs and reconstructs each logical field to reject overlap,
   missing split bits or a summed-width-only argument.  Fifteen tight/edge rows
   cover built-in ordinary/old-noise and wavetable old-noise/old-other,
-  restart/no-restart and the PC1c/W0--W3 peaks.  The two exact fits are
+  restart/no-restart and the PC1c/W0--W3 peaks.  The initial exact fits were
   built-in selected-old-noise at PC1c (**79/79**) and wavetable selected-old-
-  noise/no-restart at W3 (**97/97**).  Repaired built-in ordinary/no-restart
-  W2 is **107/108 physical bits**, equivalently 85/86 after fixed old-q/tuple;
-  restart is 106/108 and built-in old-noise is 105/108.  No path spills.
+  noise/no-restart at W3 (**97/97**).  C-B1 adds both missing path/wave-6
+  discriminators and recodes the old tuple from six bits to exact
+  `{old_wave,old_alt,old_mode_is2}`, making built-in ordinary/no-restart W2 a
+  third exact **108/108 physical-bit** fit.  Restart and old-noise retain
+  headroom.  No path spills.
 - **D2F-B source/arithmetic convictions:** exhaustive all-32,768-state proof
   shows CAP_W0's one LFSR shift preserves the pre-advance `nz_hold` byte as
   post-W0 `lfsr[8:1]`; a transient eight-bit copy is unnecessary.  The
@@ -1881,9 +1883,11 @@ git history; do not repeat them without the recorded changed condition.
   I=`phase_index_hold` and D=`snd_id`.  After two independent audits added the
   current/old sign bits, both wave-6 decisions, `snd_wt` discriminator,
   audible gate, W84 reverb lifetimes and wavetable old-gain enable, the
-  built-in W15 row peaks at **106/108 bits** and wavetable at **89/108** with
-  every declared replacement non-overlapping.  Only CAP_W15 results may be
-  born at W15; all other late fields name a pre-W15 D2F-B/service source.
+  built-in W15 row peaks at **106/108 bits**.  C-B1 adds the omitted wavetable
+  old-fraction18 and old-adjacent8 operands: that path is **100/108 before
+  CAP_W15**, atomically replaces them with primary interpolation and relocated
+  control payload, then is **89/108** after the edge.  Every declared
+  replacement is non-overlapping.
 - **D2F-C-A address/fold convictions:** PC36 CAP_W51 encodes word26, but the
   committed movement layer bank-remaps 24..27 only for `OP_READ`; owner-zero
   CAP is `OP_EXEC`.  Therefore D2F-C-B must make this one action-qualified
@@ -1918,6 +1922,34 @@ git history; do not repeat them without the recorded changed condition.
   immutable.  Reject if either result is reconstructed from the oracle, if a
   typed q/source edge is bypassed, or if hold can expose a partial W84
   replacement.
+- **R.84H-D2F-C-B predecessor audit:** C-A's wavetable row is also one edge
+  late.  D2F-B W3 retains the 18-bit old fraction/base and CAP_W4 supplies an
+  eight-bit old adjacent value; both remain physical operands until CAP_W15
+  launches the old interpolation.  The exact restart peak is 100/108 before
+  CAP_W15 and replaces atomically with C-A's 89/108 post-CAP row.  Restart
+  must independently retain original phase2 as final old-q even when
+  amplitude-zero clears current phase2 before W6.  The built-in W2 row further
+  omitted one of the `snd_wt`/`live_is_wave6` discriminators.  The bounded
+  D2F-C-B1 repair is zero-state: after the early word14 commit, modes 0/1 are
+  identical for old phase view and modes are irrelevant for waves 0/7, so
+  recode the old tuple from six bits to
+  `{old_wave[2:0],old_alt,old_mode_is2}`.  Spend that freed bit and W2's one
+  existing spare on the two discriminators, and prove the literal decode plus
+  W4/W5/W6 predecessor replacements before constructing the late executor.
+  Reject C-B1 if any path exceeds the same 108 physical bits or needs a path
+  tag outside the existing H-C context/service facts.
+- **R.84H-D2F-C-B1 predecessor result:** accepted as the corrected bridge
+  foundation.  The executable packing table places `snd_wt` in the existing
+  ordinary-W2 spare and `live_is_wave6` in the bit freed by the exact old-mode
+  recode; the former 107/108 row is exactly 108/108.  Exhaustive phase-view
+  proof covers every 16-bit phase, eight old waves and all four encoded modes.
+  The late manifest retains wavetable B18 old fraction and A8 old adjacent
+  through CAP_W15, then proves the atomic 100/108 to 89/108 replacement.
+  The manifest now keeps original phase2 for restart old-q distinct from final
+  current phase2, including amplitude-zero; the literal W4--W6 value transition
+  remains part of the executor gate.  Full model, accepted-image/RTL
+  immutability and strict OpenSpec gates pass; no executor, image or RTL is
+  claimed yet.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

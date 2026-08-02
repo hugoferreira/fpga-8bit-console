@@ -2351,7 +2351,10 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
     # retired after W1.
     base = {"A": 18, "B": 18, "N": 17, "O": 17}
     bi_early = {**base, "I": 6, "D": 3}
-    bi_late = {**base, "C": 7, "I": 6, "D": 3}
+    # After PC1b commits word14, old phase-view modes 0/1 are identical and
+    # modes are irrelevant for old waves 0/7.  Recode the six-bit old tuple as
+    # wave3/alternate/mode-is-two, freeing TF for the later wave-6 decision.
+    bi_late = {**base, "C": 7, "I": 6, "D": 3, "TF": 1}
     bi_restart = {**bi_late, "Q": 16}
     all_fields = {**base, "Q": 16, "T": 6, "C": 7,
                   "I": 6, "D": 3}
@@ -2384,8 +2387,9 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
         "C": (("live_gain", 7),),
         "I": (("live_gain", 2), ("post_w1_flags", 2),
               ("nz_phase", 2)),
-        "D": (("nz_phase", 1), ("restart", 1)),
-    }, 85))
+        "D": (("nz_phase", 1), ("restart", 1), ("snd_wt", 1)),
+        "TF": (("live_is_wave6", 1),),
+    }, 87))
     rows.append(row("builtin ordinary W2 restart", bi_restart, {
         "A": (("current_primary", 18),),
         "B": (("live_dq", 14), ("live_gain", 4)),
@@ -2396,8 +2400,9 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
         "C": (("live_gain", 7),),
         "I": (("live_gain", 2), ("post_w1_flags", 2),
               ("nz_phase", 2)),
-        "D": (("restart", 1),),
-    }, 100))
+        "D": (("restart", 1), ("snd_wt", 1)),
+        "TF": (("live_is_wave6", 1),),
+    }, 102))
     rows.append(row("builtin old-noise W2", all_fields, {
         "A": (("current_primary", 18),),
         "B": (("old_noise_sample", 18),),
@@ -2408,8 +2413,9 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
         "C": (("live_gain", 7),),
         "I": (("post_w1_flags", 2), ("refresh", 1),
               ("nz_phase", 2)),
-        "D": (("restart", 1),),
-    }, 105))
+        "D": (("restart", 1), ("snd_wt", 1),
+              ("live_is_wave6", 1)),
+    }, 107))
 
     rows.append(row("wavetable old-noise PC1c", wt_early, {
         "A": (("live_delta", 13),),
@@ -2488,7 +2494,17 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
     tight = sorted(result.name for result in rows
                    if result.used == result.capacity)
     assert tight == ["builtin old-noise PC1c",
+                     "builtin ordinary W2 no-restart",
                      "wavetable old-noise W3 no-restart"]
+
+    # The recoded old tuple is exact for every phase/wave/mode combination:
+    # only mode two doubles non-0/7 phases, and alternate is orthogonal.
+    for raw in range(1 << 16):
+        for old_wave in range(8):
+            for old_mode in range(4):
+                recoded_mode = 2 if old_mode == 2 else 0
+                assert phase_view(raw, old_wave, old_mode, False) \
+                    == phase_view(raw, old_wave, recoded_mode, False)
 
     # The early phase2 formation and two compact noise identities used above
     # are exact over their full source domains.
@@ -2513,7 +2529,8 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
     assert -(1 << 17) <= pair_min and pair_max < (1 << 17)
 
     return (f"H-D2F-B literal packing: {len(rows)} tight/edge rows; "
-            f"exact fits at {', '.join(tight)}; pre-W0 LFSR byte recovered "
+            f"exact fits at {', '.join(tight)}; old tuple 6 -> 5 bits exact; "
+            "pre-W0 LFSR byte recovered "
             f"for all {1 << 15:,} states; old-noise bias <= 39,491; "
             f"built-in pair range {pair_min}..{pair_max} fits signed18; "
             "semantic commit executor and RTL remain unproved")
@@ -2711,23 +2728,39 @@ def validate_sample_d2fca_manifest(candidate: list[int],
     )
 
     wavetable = (
+        field("old_adjacent", 8, (("A", 0, 8),),
+              "PRE_W15", "W15", "CAP_W4 ARAM result",
+              "CAP_W15 old interpolation launch"),
+        field("pre_live_gain", 13,
+              (("A", 8, 7), ("A", 17, 1), ("C", 0, 5)),
+              "PRE_W15", "W15", "unpacked D2F-B amplitude gain",
+              "CAP_W15 B relocation"),
         field("primary_interp", 15, (("A", 0, 15),), "W15", "W27",
               "CAP_W15 multiplier", "wavetable current sum"),
         field("snd_wt", 1, (("A", 15, 1),), "PRE_W15", "W84",
               "unpacked D2F-B live context", "path decode"),
         field("live_is_wave6", 1, (("A", 16, 1),), "PRE_W15", "W51",
               "unpacked D2F-B live wave", "live reciprocal bypass"),
-        field("live_gain", 13, (("B", 0, 13),), "PRE_W15", "W27",
-              "unpacked D2F-B amplitude gain", "live-gain launch"),
+        field("old_fraction_base", 18, (("B", 0, 18),),
+              "PRE_W15", "W15", "unpacked D2F-B W3 state",
+              "CAP_W15 old interpolation launch"),
+        field("live_gain", 13, (("B", 0, 13),), "W15", "W27",
+              "CAP_W15 relocation from pre_live_gain", "live-gain launch"),
+        field("pre_final_nz_phase", 4,
+              (("C", 5, 2), ("I", 0, 2)), "PRE_W15", "W15",
+              "unpacked D2F-B W0 state", "CAP_W15 B relocation"),
         field("final_nz_phase", 4, (("B", 13, 4),),
-              "PRE_W15", "PC2A", "unpacked D2F-B W0 state",
+              "W15", "PC2A", "CAP_W15 relocation",
               "word13 merge"),
-        field("refresh", 1, (("B", 17, 1),), "PRE_W15", "PC27",
-              "unpacked D2F-B refresh", "word11 merge"),
+        field("pre_refresh", 1, (("I", 2, 1),), "PRE_W15", "W15",
+              "unpacked D2F-B refresh", "CAP_W15 B relocation"),
+        field("refresh", 1, (("B", 17, 1),), "W15", "PC27",
+              "CAP_W15 relocation", "word11 merge"),
         field("final_phase2", 17, (("N", 0, 17),),
               "PRE_W15", "PC2D", "W6 live-DQ merge", "word13/12 merges"),
         field("final_old_q", 17, (("O", 0, 17),),
-              "PRE_W15", "PC29", "restart phase2 copy",
+              "PRE_W15", "PC29",
+              "original phase2 on restart; typed q11/q17 otherwise",
               "word11/17 merges"),
         field("final_old_phase", 16, (("Q", 0, 16),),
               "PRE_W15", "PC28", "W5 old-noise/phase result",
@@ -2774,6 +2807,7 @@ def validate_sample_d2fca_manifest(candidate: list[int],
     )
 
     def validate_fields(path: str, fields: tuple[LiveField, ...],
+                        expected_pre_w15: int,
                         expected_w15: int) -> tuple[int, int]:
         for item in fields:
             assert item.born in event and item.dead in event
@@ -2801,6 +2835,9 @@ def validate_sample_d2fca_manifest(candidate: list[int],
                                         len(owned))
             assert used <= 108, (path, events[snapshot], used)
             peak = max(peak, used)
+            if snapshot == event["PRE_W15"]:
+                assert used == expected_pre_w15, \
+                    (path, events[snapshot], used, expected_pre_w15)
             if snapshot == event["W15"]:
                 w15 = used
             if snapshot == event["W84"]:
@@ -2814,14 +2851,17 @@ def validate_sample_d2fca_manifest(candidate: list[int],
         assert w15 == expected_w15, (path, w15, expected_w15)
         return w15, peak
 
-    built_w15, built_peak = validate_fields("built-in", built, 106)
-    wave_w15, wave_peak = validate_fields("wavetable", wavetable, 89)
+    built_w15, built_peak = validate_fields("built-in", built, 89, 106)
+    wave_w15, wave_peak = validate_fields("wavetable", wavetable, 100, 89)
     assert {item.name for item in built if item.born == "W15"} \
         == {"live_gain_limb"}
     assert {item.name for item in wavetable if item.born == "W15"} \
-        == {"primary_interp"}
-    assert all(item.born != "W15" or item.source.startswith("CAP_W15")
-               for item in (*built, *wavetable))
+        == {"primary_interp", "live_gain", "final_nz_phase", "refresh"}
+    assert next(item for item in wavetable
+                if item.name == "primary_interp").source.startswith("CAP_W15")
+    assert all("relocation" in item.source
+               for item in wavetable
+               if item.name in {"live_gain", "final_nz_phase", "refresh"})
 
     # The seven literal fold nodes preserve their q stream, fixed destinations
     # and eight physical microstep words.  The final signed-18 work value stays
@@ -2906,8 +2946,8 @@ def validate_sample_d2fca_manifest(candidate: list[int],
 
     return (f"H-D2F-C-A manifest: 18 per-slot writes with exact PC/action/q/"
             f"destination provenance; built W15 {built_w15}/108, peak "
-            f"{built_peak}/108; wavetable W15 {wave_w15}/108, peak "
-            f"{wave_peak}/108; W84 split 50/108 -> 34/108 -> 18/108; "
+            f"{built_peak}/108; wavetable pre/W15 {100}/{wave_w15}/108, "
+            f"peak {wave_peak}/108; W84 split 50/108 -> 34/108 -> 18/108; "
             "active q26/q30 override exposed; seven 20-PC fold "
             f"nodes peak at {fold_peak}/70 and retain A18 through q49 "
             "FOLD_FINISH/dry publication")
