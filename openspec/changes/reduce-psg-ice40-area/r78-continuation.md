@@ -1600,6 +1600,28 @@ git history; do not repeat them without the recorded changed condition.
   band; no flop, EBR or service state was added.  Retain this correctness
   boundary without area credit.  The 70-bit adapter, semantic sample RTL and
   complete H-D physical rows remain unproved.
+- **R.84H-D1 fixed-tail manifest result:** rejected by executable physical
+  provenance, before semantic RTL.  The current sixteen persistent STORE
+  actions do not consume the word they write: PC `0x3c` word-10 sees
+  `state_q=word0`, PC `0x3d` word-11 sees word10, and the stream remains one
+  destination behind through the duplicate word-15/14 commits.  The composed
+  Python machine hid this by decoding fourteen oscillator plus four parameter
+  words into a 202-bit `SampleRecord`, a 42-bit `SampleParams` and then a
+  complete derived `SampleTrace`; every persistent write selected
+  `trace.final_words`.  The 70-bit A/B/N/O proof remains valid for service and
+  fold transients only and cannot justify that record-shaped mirror.  A fixed
+  read-address repair is necessary but insufficient because final phase,
+  phase2, old phase/q, noise/filter state and selected old context must still
+  reach their commits.  Do not transcribe this machine into RTL.
+- **R.84H-D2 next permitted hypothesis:** relocate the existing fourteen
+  unique persistent commits onto fixed W0/W1/W5/W6/W84 or elapsed-HOLD edges
+  where each packed word becomes final, and reuse the tail instruction slots
+  as elapsed fixed actions.  Preserve exactly 222 program words, 782 active
+  clocks, 172 semantic reads and 158 writes; add no hidden action-side write,
+  record mirror, scratch word, EBR, result bundle or schedule edge.  First emit
+  a numbered commit table with physical `state_q` source, packed merge inputs,
+  write address and finalization edge, then execute it without `loaded_words`,
+  `params_words`, `SampleTrace` or direct memory reads before any RTL.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

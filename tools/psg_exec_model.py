@@ -1451,6 +1451,72 @@ def validate_sample_wait_manifest(program: list[int],
             "prime words 12/16; 63 owner-zero image words changed")
 
 
+def validate_sample_fixed_tail_gap(program: list[int], actions: Actions,
+                                   labels: dict[int, str]) -> str:
+    """Prove why the current persistent STORE tail is not implementable.
+
+    The composed semantic oracle below used to make the late writes look
+    physical by selecting ``SampleTrace.final_words``.  In the real executor,
+    however, state_q is the registered output of the *preceding* instruction's
+    state read.  Record that exact stream here before any semantic RTL is
+    allowed to depend on it.
+
+    This is a rejection proof for the unchanged tail, not a claim that every
+    mirror-free schedule is impossible.  A later image may relocate the same
+    fixed writes onto the edges where their values become final.
+    """
+    by_pc = {pc: (labels[pc], Instruction.decode(program[pc]))
+             for pc in labels}
+    q_word: int | None = None
+    stores: list[tuple[str, int, int | None]] = []
+    for pc in range(SAMPLE_START, 0x4e):
+        label, insn = by_pc[pc]
+        action = actions.get("sample", insn.action) \
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC) else None
+        if action is not None and action.name.startswith("STORE_"):
+            stores.append((action.name, insn.word, q_word))
+        # psg_execctl clocks the state EBR on every active READ/WRITE/EXEC,
+        # not only on semantic READ instructions.
+        if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+            q_word = insn.word
+
+    expected = [
+        (f"STORE_{index}_{10 + index}", 10 + index,
+         0 if index == 0 else 9 + index)
+        for index in range(14)
+    ]
+    expected.extend((
+        ("STORE_14_15", 15, 23),
+        ("STORE_15_14", 14, 15),
+        ("STORE_LEAF_LO", 48, 14),
+        ("STORE_LEAF_HI", 49, 48),
+    ))
+    assert stores == expected, (stores, expected)
+
+    # Decoding these inputs wholesale is exactly the forbidden record mirror:
+    # 202 meaningful oscillator bits plus 42 meaningful parameter bits, before
+    # Python's padded 14+4 word lists or the much larger derived SampleTrace.
+    record_bits = sum((16, 8, 17, 17, 1, 13, 13, 4, 2, 13, 17, 16,
+                       7, 14, 2, 2, 3, 14, 1, 1, 2, 3, 16))
+    parameter_bits = sum((14, 3, 1, 3, 2, 2, 2, 1, 1, 12, 1))
+    assert record_bits == 202 and parameter_bits == 42
+    assert record_bits + parameter_bits > 70
+
+    source = Path(__file__).read_text()
+    machine = source[source.index("\nclass SampleImageMachine:"):
+                     source.index("\ndef make_sample_case(")]
+    assert "self.loaded_words: list[int]" in machine
+    assert "self.params_words: list[int]" in machine
+    assert "self.trace: SampleTrace | None" in machine
+    assert "self.trace.final_words" in machine
+
+    first = stores[0]
+    assert first == ("STORE_0_10", 10, 0)
+    return ("fixed persistent STORE tail rejected: 16 writes consume the "
+            "previous destination stream; PC 3c word10 sees q=word0; "
+            "oracle mirror is 202 record + 42 parameter bits before Trace")
+
+
 def reachable_to_idle(nodes: list[Node]) -> None:
     graph = {node.name: set(node.successors) for node in nodes}
     assert "S_IDLE" in graph
@@ -3376,6 +3442,8 @@ def main() -> int:
         sample_program, actions, sample_labels)
     sample_waits = validate_sample_wait_manifest(sample_program,
                                                  sample_labels)
+    sample_tail_gap = validate_sample_fixed_tail_gap(sample_program, actions,
+                                                     sample_labels)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -3437,6 +3505,7 @@ def main() -> int:
     print("fixed decoder RTL: " + move_rtl)
     print("sample action inventory: " + sample_inventory)
     print("sample stored-wait manifest: " + sample_waits)
+    print("sample fixed-tail manifest: " + sample_tail_gap)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)
