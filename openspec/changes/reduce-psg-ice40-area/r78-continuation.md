@@ -2078,6 +2078,36 @@ git history; do not repeat them without the recorded changed condition.
   built-in B18 pre-sum with the x68/x80 sample.  Before code, the next manifest
   must prove the W0--W2 seed/kick union and the simultaneous pre-sum/final-phase
   lifetime fit; do not assume the former `old_bias17` slot can hold both.
+- **R.84H-D2F-C-B3-B2 result and decision:** rejected and reverted before any
+  image or RTL.  The one-word q-stream edit and old-noise arithmetic bounds
+  are sound: W0--W5 receives q10/q12/q16/q19/q14/q16, the step spans
+  -33,324..33,063, the signed18 pre-sum spans -66,092..65,830 and q19[4]
+  supplies selected-old-inc bit13 at W3.  The physical wavetable accounting
+  was false, however.  Moving the primary interpolation request from W4 to W2
+  may consume the arriving pre-edge ARAM adjacent byte and the fraction, but
+  the magnitude-only multiplier retains neither the signed base byte nor the
+  delta sign.  Legacy W15 reconstructs `base + signed_product`, so base8 and
+  sign1 must survive W2--W15.  The claimed W2/W3 60/68-bit rows therefore
+  become at least 69/77, not a 26-bit retirement.  A direct pre-edge `seq_q`
+  bypass is also mandatory because `wt_p1` updates only after the W2 edge.
+  Those corrected early rows fit the 97-bit wavetable envelope.  At PRE_W15,
+  C-A's generic 100/108 frame carried final-old-phase16; B3-B2 has already
+  clamped that value to signed14, so adding retained base8 and sign1 is net
+  +7 and the corrected old-noise peak is 107/108.  That is aggregate capacity
+  only: no literal 97-to-69-to-77-to-107 replacement map exists, and service-
+  held state, stopped-wavetable behavior and hold-frozen ARAM/multiplier
+  transactions remain unproved.  All experimental model code is removed;
+  accepted image and RTL are unchanged.
+- **R.84H-D2F-C-B3-B2-A next permitted hypothesis:** retain B3-B2's exact
+  q12/q16/q19 and seed/kick sequence, but represent the W2 request as an
+  explicit pre-edge ARAM return bypass plus a retained `{base8,delta_sign}`
+  token through W15.  Bind every surviving bit to literal physical slices and
+  prove the complete 97-to-69-to-77-to-107 replacement map across all built-in,
+  wavetable and stopped paths plus hold-frozen ARAM/multiplier state.  Reject
+  before an eight-slot executor, image or RTL if a registered W2 value is
+  consumed on its birth edge, a held service token is normalized, any
+  multiplier transaction advances under external hold, or the repaired
+  PRE_W15 row exceeds 108 physical bits.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
