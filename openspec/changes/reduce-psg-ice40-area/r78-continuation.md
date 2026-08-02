@@ -2204,6 +2204,44 @@ git history; do not repeat them without the recorded changed condition.
   before any canonicalization is allowed.  Reject before late suffix, image or
   RTL if the frame/controller CE is an early return, fractions are reseeded,
   or a service witness supplies candidate state.
+- **R.84H-D2F-C-B3-B2-A2-A1-S result and decision:** accepted only as a
+  bounded sampled W1-through-POST_W26 wave-service lemma, not as A2-A1
+  completion or public equivalence.  One immutable next-state function now
+  computes the enabled successor before a CE selects that successor or the
+  bit-identical prestate across schedule offset, literal A1 packed frame,
+  addressable 4,608-byte ARAM/replay and every slow/fast multiplier field.
+  Sixty-four seeded cases in each of audible playing, playing at zero amplitude
+  and stopped classes pass 8,640 attempted offset/frame/service freezes,
+  exact four-read pre-edge ARAM identity, live CPU upload under synthesis
+  freeze, all ten radix-2 recurrence counts plus acknowledge freeze, and
+  262,144 equal-endpoint interpolation cases.  The playing-zero class executes
+  the real four reads with preceding fractions and a canonical-zero candidate;
+  only retained multiplier request/result payload differs, and 64 following
+  audible runs plus 64 following stopped runs converge the complete sampled
+  frame/ARAM/multiplier state after that payload is overwritten.  Source
+  assertions bind the distinct play/read and play-and-amplitude/fraction gates,
+  gain-zero algebra and old-arm use of `mx_new`.
+- **A2-A1-S exclusion:** `EdgeState.offset` is not the production
+  PC/IR/action/state-q controller.  `source()` supplies correlated sampled
+  non-service fields rather than all legal frames or a production eight-slot
+  stream.  The zero-gain witness proves only that interpolation-specific gain
+  input is zero; real W27/W51, ring, blend, dampen, fold and public commits are
+  absent, and dampen may still emit prior `s_lp`.  Rebuilding a later frame
+  proves service-state convergence only, not convergence of omitted persistent
+  suffix state.  Accepted image and all RTL remain untouched.
+- **R.84H-D2F-C-B3-B2-A2-A1-B next permitted hypothesis:** replace the
+  sampled offset harness with the literal candidate-image PC/IR/action/state-q
+  transaction stream for a production-derived eight-slot state.  Reuse the
+  accepted ARAM/multiplier pure functions but obtain every frame and persistent
+  value from predecessor state or a typed public input, never `source()` or an
+  internal expected value.  Execute W27/W51 through ring/blend/dampen, all
+  seven fold nodes and dry/public commit, including nonzero prior `s_lp`, then
+  compare only final persistent and public outputs with the direct oracle.
+  A held call must compute a different complete enabled successor before CE
+  selects exact prestate across PC, IR, state-q, frame and services.  Reject
+  before image or RTL if zero-amplitude canonicalization changes any suffix
+  state/output, a new 20-bit fraction store appears, or any controller/service
+  value is injected from the oracle.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

@@ -27,9 +27,10 @@ from __future__ import annotations
 import re
 import runpy
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
 from pathlib import Path
+from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 SEQ = ROOT / "rtl" / "psg_seq.sv"
@@ -110,6 +111,19 @@ class Instruction:
         if op in (Op.JUMP, Op.OWNER):
             return Instruction(op, target=word & 0xFF)
         return Instruction(op)
+
+
+PackedFrame = dict[str, int]
+FrameValues = dict[str, int]
+
+
+@dataclass(frozen=True)
+class B3B2AFrameCodec:
+    """Literal A1 physical-frame encoder shared with service proofs."""
+
+    pack: Callable[[str, FrameValues], tuple[PackedFrame, FrameValues]]
+    unpack: Callable[[str, PackedFrame], FrameValues]
+    source: Callable[[int, str, int], int]
 
 
 @dataclass(frozen=True)
@@ -2264,7 +2278,7 @@ def build_sample_w5_q16_candidate(program: list[int], d2d: list[int],
 
 def validate_sample_b3b2a_slice_map(program: list[int], d2fa: list[int],
                                     actions: Actions) \
-        -> tuple[str, list[int]]:
+        -> tuple[str, list[int], B3B2AFrameCodec]:
     """Bind the active wavetable/old-noise repair to literal physical bits.
 
     This is deliberately narrower than a service executor.  It proves the
@@ -2546,8 +2560,24 @@ def validate_sample_b3b2a_slice_map(program: list[int], d2fa: list[int],
                     physical_used["W3"] - 2)
     assert overlay_used == (97, 69, 77)
 
-    def pack(snapshot_name: str, values: dict[str, int]) \
-            -> tuple[dict[str, int], dict[str, int]]:
+    def unpack(snapshot_name: str, packed: PackedFrame) -> FrameValues:
+        fields = snapshot_fields[snapshot_name]
+        assert set(packed) == set(capacities)
+        for container, width in capacities.items():
+            assert 0 <= packed[container] < (1 << width)
+        recovered: FrameValues = {}
+        for item in fields:
+            value = 0
+            field_lsb = 0
+            for container, lsb, width in item.pieces:
+                mask = (1 << width) - 1
+                value |= ((packed[container] >> lsb) & mask) << field_lsb
+                field_lsb += width
+            recovered[item.name] = value
+        return recovered
+
+    def pack(snapshot_name: str, values: FrameValues) \
+            -> tuple[PackedFrame, FrameValues]:
         fields = snapshot_fields[snapshot_name]
         assert set(values) == {item.name for item in fields}, \
             (snapshot_name, set(values) ^ {item.name for item in fields})
@@ -2560,15 +2590,7 @@ def validate_sample_b3b2a_slice_map(program: list[int], d2fa: list[int],
                 packed[container] |= \
                     ((values[item.name] >> field_lsb) & mask) << lsb
                 field_lsb += width
-        recovered: dict[str, int] = {}
-        for item in fields:
-            value = 0
-            field_lsb = 0
-            for container, lsb, width in item.pieces:
-                mask = (1 << width) - 1
-                value |= ((packed[container] >> lsb) & mask) << field_lsb
-                field_lsb += width
-            recovered[item.name] = value
+        recovered = unpack(snapshot_name, packed)
         assert recovered == values, (snapshot_name, recovered, values)
         return packed, recovered
 
@@ -2770,7 +2792,7 @@ def validate_sample_b3b2a_slice_map(program: list[int], d2fa: list[int],
     assert dict(SAMPLE_CAP_SCHEDULE)["W26"] \
         - dict(SAMPLE_CAP_SCHEDULE)["W15"] == 5
 
-    return ("H-D2F-C-B3-B2-A1 active play&&amplitude!=0 wavetable/"
+    summary = ("H-D2F-C-B3-B2-A1 active play&&amplitude!=0 wavetable/"
             "selected-old-noise path map: "
             "q W0..W5="
             "10/12/16/19/14/16; physical W1/W2/W3/PRE_W15/POST_W15/W26 "
@@ -2783,7 +2805,632 @@ def validate_sample_b3b2a_slice_map(program: list[int], d2fa: list[int],
             "W2->W15 and secondary base/sign W15->W26 literal and "
             f"overlap-free; {changed} image words and 222/782/172/158 "
             "unchanged; stopped/hold/service execution and accepted image/RTL "
-            "untouched", candidate)
+            "untouched")
+    return summary, candidate, B3B2AFrameCodec(pack, unpack, source)
+
+
+def validate_sample_b3b2a2a1_edge_services(
+        candidate: list[int], actions: Actions,
+        codec: B3B2AFrameCodec) -> str:
+    """Sample a CE-selected W1--POST_W26 frame/service transducer."""
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+    assert Instruction.decode(candidate[0x1f]) == Instruction(
+        Op.EXEC, action=action_by_name["CAP_W2"], word=19)
+
+    aram_rtl = (ROOT / "rtl" / "psg_aram.sv").read_text()
+    mul_rtl = (ROOT / "rtl" / "psg_mulmp.sv").read_text()
+    walk_rtl = WALK.read_text()
+    for spelling in (
+            "assign seq_frozen = syn_rd | replay;",
+            "wire aram_rd = !syn_freeze && (syn_rd | replay | !seq_hold);",
+            "wire [12:0] aram_addr = syn_rd ? syn_addr : seq_addr;",
+            "seq_q <= aram[aram_addr];",
+            "replay <= syn_rd;"):
+        assert spelling in aram_rtl
+    for spelling in (
+            "assign m_busy     = req_tgl != ack_sync;",
+            "ack_meta <= ack_tgl;",
+            "ack_sync <= ack_meta;",
+            "req_meta <= req_tgl;",
+            "req_sync <= req_meta;",
+            "m_p   <= {21'b0, req_b};",
+            "m_cnt <= req_steps;",
+            "else if (!freeze) begin"):
+        assert spelling in mul_rtl
+    assert "if (prun && !ctrl_stall && s_snd_wt && play_bits[pc_ch])" \
+        in walk_rtl
+    assert "if (play_bits[pc_ch] && s_eff_a != 0) begin" in walk_rtl
+    assert "wire [12:0] g_live = g_a + {1'b0, g_a[12:1]};" in walk_rtl
+    assert "s_snd_wt ? ((s_old_G == 13'd0) ? 17'sd0 : mx_new)" \
+        in walk_rtl
+    assert "mx_aud  <= play_bits[pc_ch]" in walk_rtl
+    assert "wmul_mode = 2'd1;" in walk_rtl
+
+    @dataclass(frozen=True)
+    class Aram:
+        memory: tuple[int, ...]
+        wraddr: int = 0x3100
+        seq_q: int = 0
+        replay: bool = False
+        # Proof witness only: the inferred RTL stores the byte, not its tag.
+        q_origin: int | None = None
+
+    def aram_edge(state: Aram, *, seq_addr: int, syn_rd: bool,
+                  syn_addr: int = 0, syn_freeze: bool,
+                  seq_hold: bool, reset: bool = False,
+                  cpu: tuple[int, int] | None = None) -> Aram:
+        assert len(state.memory) == 4608
+        assert 0 <= seq_addr < 4608 and 0 <= syn_addr < 8192
+        memory = state.memory
+        aram_rd = (not syn_freeze) \
+            and (syn_rd or state.replay or not seq_hold)
+        aram_addr = syn_addr if syn_rd else seq_addr
+        seq_q = state.seq_q
+        q_origin = state.q_origin
+        if aram_rd:
+            assert aram_addr < 4608
+            seq_q = memory[aram_addr]
+            q_origin = aram_addr
+
+        replay = False if reset else (
+            state.replay if syn_freeze else syn_rd)
+        wraddr = 0x3100 if reset else state.wraddr
+        if not reset and cpu is not None:
+            addr, data = cpu
+            assert 0 <= addr < 256 and 0 <= data < 256
+            if addr == 0:
+                wraddr = (state.wraddr & 0xff00) | data
+            elif addr == 1:
+                wraddr = (state.wraddr & 0x00ff) | (data << 8)
+            elif addr == 2:
+                up_idx = state.wraddr - 0x3100
+                if 0 <= up_idx < 4608:
+                    image = list(memory)
+                    image[up_idx] = data
+                    memory = tuple(image)
+                wraddr = (state.wraddr + 1) & 0xffff
+        return Aram(memory, wraddr, seq_q, replay, q_origin)
+
+    @dataclass(frozen=True)
+    class Mul:
+        req_a: int = 0
+        req_b: int = 0
+        req_steps: int = 0
+        req_tgl: int = 0
+        seq_pad: int = 0
+        ack_tgl: int = 0
+        ack_meta: int = 0
+        ack_sync: int = 0
+        req_meta: int = 0
+        req_sync: int = 0
+        m_p: int = 0
+        m_cnt: int = 0
+
+        @property
+        def busy(self) -> bool:
+            return bool(self.req_tgl != self.ack_sync)
+
+    def mul_slow(state: Mul, *, start: bool = False, a: int = 0,
+                 b: int = 0, enable: bool) -> Mul:
+        if not enable:
+            return state
+        nxt = replace(
+            state, ack_meta=state.ack_tgl, ack_sync=state.ack_meta,
+            seq_pad=max(0, state.seq_pad - 1))
+        if start:
+            assert not state.busy
+            assert -(1 << 17) <= a < (1 << 17)
+            assert 0 <= b < (1 << 10)
+            nxt = replace(
+                nxt, req_a=abs(a), req_b=b, req_steps=10,
+                req_tgl=state.req_tgl ^ 1, seq_pad=5)
+        return nxt
+
+    def mul_fast(state: Mul, *, enable: bool) -> Mul:
+        if not enable:
+            return state
+        nxt = replace(state, req_meta=state.req_tgl,
+                      req_sync=state.req_meta)
+        if state.m_cnt != 0:
+            acc = (state.m_p >> 12) & ((1 << 19) - 1)
+            total = acc + (state.req_a if state.m_p & 1 else 0)
+            product = ((total & ((1 << 20) - 1)) << 11) \
+                | ((state.m_p >> 1) & 0x7ff)
+            nxt = replace(nxt, m_p=product,
+                          m_cnt=state.m_cnt - 1)
+            if state.m_cnt == 1:
+                nxt = replace(nxt, ack_tgl=state.req_sync)
+        elif state.req_sync != state.ack_tgl:
+            nxt = replace(nxt, m_p=state.req_b,
+                          m_cnt=state.req_steps)
+        return nxt
+
+    def mul_edge(state: Mul, *, start: bool = False, a: int = 0,
+                 b: int = 0, enable: bool) -> Mul:
+        # clocks.sv and psg_mulmp_tb place the PSG rising edge on a fast-clock
+        # falling edge, followed by exactly six fast rising edges.
+        nxt = mul_slow(state, start=start, a=a, b=b, enable=enable)
+        for _ in range(6):
+            nxt = mul_fast(nxt, enable=enable)
+        return nxt
+
+    def mul_value(state: Mul) -> int:
+        assert not state.busy and state.m_cnt == 0
+        return state.m_p >> 2
+
+    def sample_addr(snd_id: int, index: int, adjacent: bool) -> int:
+        assert 0 <= snd_id < 8 and 0 <= index < 64
+        point = (index + int(adjacent)) & 0x3f
+        return 256 + (snd_id << 6) + (snd_id << 2) + point
+
+    def frame_tuple(frame: PackedFrame) -> tuple[tuple[str, int], ...]:
+        return tuple(sorted(frame.items()))
+
+    def frame_dict(frame: tuple[tuple[str, int], ...]) -> PackedFrame:
+        return dict(frame)
+
+    def carry(prior: FrameValues, *names: str) -> FrameValues:
+        return {name: prior[name] for name in names}
+
+    @dataclass(frozen=True)
+    class Scenario:
+        case: int
+        play: bool
+        amplitude_nonzero: bool
+        primary_phase: int
+        secondary_phase: int
+        primary_fraction: int
+        secondary_fraction: int
+        seq_addr: int
+
+    @dataclass(frozen=True)
+    class EdgeState:
+        offset: int
+        frame_name: str
+        frame: tuple[tuple[str, int], ...]
+        aram: Aram
+        mul: Mul
+        aram_issues: int = 0
+        aram_takes: int = 0
+        mul_issues: int = 0
+        mul_takes: int = 0
+
+    def initial_state(scenario: Scenario, aram: Aram, mul: Mul) -> EdgeState:
+        case = scenario.case
+        nz_tick = bool(case & 1)
+        restart = bool(case & 2)
+        restart_or_nz_tick = restart or nz_tick
+        wrapped_seed = codec.source(case, "wrapped_seed", 16)
+        kick14 = codec.source(case, "kick14", 14)
+        kick16 = kick14 | (0xc000 if kick14 & 0x2000 else 0)
+        seed_union = wrapped_seed if restart_or_nz_tick else kick16
+        amplitude = (codec.source(case, "amplitude", 12) or 1) \
+            if scenario.amplitude_nonzero else 0
+        values = {
+            "primary_fraction": scenario.primary_fraction,
+            "primary_base": 0,
+            "secondary_fraction": scenario.secondary_fraction,
+            "seed_union": seed_union,
+            "original_phase2": codec.source(case, "original_phase2", 17),
+            "old_noise_step": codec.source(case, "old_noise_step", 17),
+            "amplitude": amplitude,
+            "restart": int(restart),
+            "clear": int(bool(case & 4)),
+            "nz_phase": codec.source(case, "nz_phase", 4),
+            "refresh": int(bool(case & 8)),
+            "snd_wt": 1,
+            "live_is_wave6": int((case & 7) == 6),
+            "secondary_index": scenario.secondary_phase >> 10,
+            "snd_id": codec.source(case, "snd_id", 3),
+        }
+        packed = codec.pack("W1", values)[0]
+        return EdgeState(0, "W1", frame_tuple(packed), aram, mul)
+
+    def enabled_successor(state: EdgeState,
+                          scenario: Scenario) -> EdgeState:
+        assert 0 <= state.offset < 15
+        frame = frame_dict(state.frame)
+        pre_q = state.aram.seq_q
+        pre_origin = state.aram.q_origin
+        aram_req = False
+        aram_addr = 0
+        mul_start = False
+        mul_a = 0
+        mul_b = 0
+        frame_name = state.frame_name
+        aram_takes = state.aram_takes
+        mul_takes = state.mul_takes
+
+        snd_id = codec.unpack(frame_name, frame).get(
+            "snd_id", codec.source(scenario.case, "snd_id", 3))
+        pindex = scenario.primary_phase >> 10
+        sindex = scenario.secondary_phase >> 10
+        addresses = (
+            sample_addr(snd_id, pindex, False),
+            sample_addr(snd_id, pindex, True),
+            sample_addr(snd_id, sindex, False),
+            sample_addr(snd_id, sindex, True),
+        )
+
+        if state.offset == 0:
+            if scenario.play:
+                aram_req, aram_addr = True, addresses[0]
+        elif state.offset == 1:
+            values = codec.unpack("W1", frame)
+            if scenario.play:
+                assert pre_origin == addresses[0]
+                aram_takes += 1
+                aram_req, aram_addr = True, addresses[1]
+            else:
+                assert pre_origin == scenario.seq_addr
+            values["primary_base"] = pre_q
+            frame = codec.pack("W1", values)[0]
+        elif state.offset == 2:
+            w1 = codec.unpack("W1", frame)
+            if scenario.play:
+                assert pre_origin == addresses[1]
+                aram_takes += 1
+                aram_req, aram_addr = True, addresses[2]
+            else:
+                assert pre_q == w1["primary_base"]
+            delta = signed(pre_q, 8) - signed(w1["primary_base"], 8)
+            restart_or_nz_tick = bool(w1["restart"] or (scenario.case & 1))
+            q16_old_phase = codec.source(
+                scenario.case, "q16_old_phase", 16)
+            selected_seed = w1["seed_union"] if restart_or_nz_tick else \
+                (q16_old_phase + signed(w1["seed_union"], 16)) & 0xffff
+            pre_sum = signed(selected_seed, 16) \
+                + signed(w1["old_noise_step"], 17)
+            final_old_phase = max(-6_143, min(6_143, pre_sum))
+            w2 = carry(
+                w1, "primary_base", "secondary_fraction",
+                "original_phase2", "amplitude", "restart", "clear",
+                "nz_phase", "refresh", "snd_wt", "live_is_wave6",
+                "secondary_index", "snd_id")
+            w2.update({"primary_delta_sign": int(delta < 0),
+                       "final_old_phase": final_old_phase & 0x3fff})
+            frame = codec.pack("W2", w2)[0]
+            frame_name = "W2"
+            assert not state.mul.busy
+            mul_start, mul_a, mul_b = True, delta, w1["primary_fraction"]
+        elif state.offset == 3:
+            w2 = codec.unpack("W2", frame)
+            if scenario.play:
+                assert pre_origin == addresses[2]
+                aram_takes += 1
+                aram_req, aram_addr = True, addresses[3]
+            w3 = carry(
+                w2, "primary_base", "primary_delta_sign",
+                "secondary_fraction", "original_phase2",
+                "final_old_phase", "amplitude", "restart", "clear",
+                "nz_phase", "refresh", "snd_wt", "live_is_wave6")
+            w3["secondary_base"] = pre_q
+            frame = codec.pack("W3", w3)[0]
+            frame_name = "W3"
+        elif state.offset == 4:
+            w3 = codec.unpack("W3", frame)
+            if scenario.play:
+                assert pre_origin == addresses[3]
+                aram_takes += 1
+            else:
+                assert pre_q == w3["secondary_base"]
+            dq_visit = codec.source(scenario.case, "dq_visit", 17)
+            final_phase2 = (w3["original_phase2"] + dq_visit) & 0x1ffff
+            pre = carry(
+                w3, "primary_base", "primary_delta_sign",
+                "secondary_fraction", "secondary_base",
+                "final_old_phase", "restart", "clear", "nz_phase",
+                "refresh", "snd_wt", "live_is_wave6")
+            pre.update({
+                "secondary_adjacent": pre_q,
+                "live_gain": (w3["amplitude"]
+                              + (w3["amplitude"] >> 1)) & 0x1fff,
+                "final_phase2": final_phase2,
+                "final_old_q": (w3["original_phase2"]
+                                if w3["restart"] else 0),
+                "last_gain_we": int(bool(scenario.case & 16)),
+                "old_q_replace": w3["restart"],
+            })
+            frame = codec.pack("PRE_W15", pre)[0]
+            frame_name = "PRE_W15"
+        elif state.offset == 9:
+            pre = codec.unpack("PRE_W15", frame)
+            magnitude = mul_value(state.mul)
+            assert magnitude == state.mul.req_a * state.mul.req_b
+            product = -magnitude if pre["primary_delta_sign"] else magnitude
+            interp = ((signed(pre["primary_base"], 8) << 10)
+                      + product) >> 3
+            delta = signed(pre["secondary_adjacent"], 8) \
+                - signed(pre["secondary_base"], 8)
+            post = carry(
+                pre, "snd_wt", "live_is_wave6", "live_gain",
+                "final_phase2", "final_old_q", "final_old_phase",
+                "secondary_base", "restart", "clear", "last_gain_we",
+                "old_q_replace", "nz_phase", "refresh")
+            post.update({"primary_interp": interp & 0x7fff,
+                         "secondary_delta_sign": int(delta < 0)})
+            frame = codec.pack("POST_W15", post)[0]
+            frame_name = "POST_W15"
+            mul_start, mul_a, mul_b = True, delta, pre["secondary_fraction"]
+            mul_takes += 1
+        elif state.offset == 10:
+            post = codec.unpack("POST_W15", frame)
+            frame = codec.pack("POST_PC27", {
+                name: value for name, value in post.items()
+                if name != "refresh"})[0]
+            frame_name = "POST_PC27"
+        elif state.offset == 11:
+            post = codec.unpack("POST_PC27", frame)
+            frame = codec.pack("POST_PC28", {
+                name: value for name, value in post.items()
+                if name != "final_old_phase"})[0]
+            frame_name = "POST_PC28"
+        elif state.offset == 12:
+            post = codec.unpack("POST_PC28", frame)
+            frame = codec.pack("POST_PC29", {
+                name: value for name, value in post.items()
+                if name not in {"final_old_q", "old_q_replace"}})[0]
+            frame_name = "POST_PC29"
+        elif state.offset == 13:
+            post = codec.unpack("POST_PC29", frame)
+            values = {name: value for name, value in post.items()
+                      if name not in {"nz_phase", "restart",
+                                      "last_gain_we"}}
+            values["selected_old_gain_hi"] = codec.source(
+                scenario.case, "selected_old_gain_hi", 5)
+            frame = codec.pack("POST_PC2A", values)[0]
+            frame_name = "POST_PC2A"
+        elif state.offset == 14:
+            post = codec.unpack("POST_PC2A", frame)
+            magnitude = mul_value(state.mul)
+            assert magnitude == state.mul.req_a * state.mul.req_b
+            product = -magnitude \
+                if post["secondary_delta_sign"] else magnitude
+            interp = ((signed(post["secondary_base"], 8) << 10)
+                      + product) >> 3
+            old_gain = (post["selected_old_gain_hi"] << 8) \
+                | codec.source(scenario.case, "selected_old_gain_low", 8)
+            values = {name: value for name, value in post.items()
+                      if name not in {"secondary_base",
+                                      "secondary_delta_sign",
+                                      "selected_old_gain_hi"}}
+            values.update({"old_interp": interp & 0x7fff,
+                           "old_gain_nonzero": int(old_gain != 0)})
+            frame = codec.pack("POST_W26", values)[0]
+            frame_name = "POST_W26"
+            mul_takes += 1
+
+        aram = aram_edge(
+            state.aram, seq_addr=scenario.seq_addr, syn_rd=aram_req,
+            syn_addr=aram_addr, syn_freeze=False, seq_hold=True)
+        mul = mul_edge(state.mul, start=mul_start, a=mul_a, b=mul_b,
+                       enable=True)
+        return EdgeState(
+            state.offset + 1, frame_name, frame_tuple(frame), aram, mul,
+            state.aram_issues + int(aram_req), aram_takes,
+            state.mul_issues + int(mul_start), mul_takes)
+
+    def edge(state: EdgeState, scenario: Scenario, *, enable: bool) \
+            -> EdgeState:
+        # Deliberately compute the complete enabled successor first.  The
+        # service CE then chooses that successor or the bit-identical prestate
+        # as one atomic boundary, including schedule offset and packed frame.
+        # The offset is not a production PC/IR/action/state_q controller proof.
+        successor = enabled_successor(state, scenario)
+        return successor if enable else state
+
+    def run(scenario: Scenario, aram: Aram, mul: Mul) \
+            -> tuple[EdgeState, int]:
+        state = initial_state(scenario, aram, mul)
+        holds = 0
+        for offset in range(15):
+            assert state.offset == offset
+            successor = edge(state, scenario, enable=True)
+            assert successor != state
+            assert edge(state, scenario, enable=False) == state
+            state = successor
+            holds += 1
+        assert state.offset == 15 and state.frame_name == "POST_W26"
+        assert not state.mul.busy
+        return state, holds
+
+    def interp(base: int, adjacent: int, fraction: int) -> int:
+        delta = signed(adjacent, 8) - signed(base, 8)
+        product = abs(delta) * fraction
+        if delta < 0:
+            product = -product
+        return ((signed(base, 8) << 10) + product) >> 3
+
+    def fraction_gain_witness(values: FrameValues, play: bool) -> int:
+        if not play:
+            return 0
+        # Exact candidate gain starts at amplitude + amplitude/2.  A zero
+        # amplitude therefore convicts every later gain/blend arm to zero,
+        # independent of both interpolation results.
+        gain = values["live_gain"]
+        combined = signed(values["primary_interp"], 15) \
+            + (signed(values["old_interp"], 15) >> 1)
+        return combined * gain
+
+    quotient_cases = 0
+    for raw in range(256):
+        for fraction in range(1024):
+            assert interp(raw, raw, fraction) == signed(raw, 8) << 7
+            quotient_cases += 1
+    for combined in range(-(1 << 17), 1 << 17):
+        assert combined * 0 == 0
+
+    # Freeze every recurrence count and the returned acknowledge using the
+    # exact CE-selected pure functions, not an elapsed-age abstraction.
+    mul_freezes = 0
+    for target in range(10, 0, -1):
+        mul = mul_slow(Mul(), start=True, a=-255, b=1023, enable=True)
+        for _ in range(64):
+            if mul.m_cnt == target:
+                break
+            mul = mul_fast(mul, enable=True)
+        else:
+            raise AssertionError(("unreached multiplier count", target))
+        assert mul_slow(mul, enable=False) == mul
+        assert mul_fast(mul, enable=False) == mul
+        while mul.busy:
+            mul = mul_edge(mul, enable=True)
+        assert mul_value(mul) == 255 * 1023
+        mul_freezes += 1
+    mul = mul_slow(Mul(), start=True, a=127, b=777, enable=True)
+    for _ in range(64):
+        mul = mul_fast(mul, enable=True)
+        if mul.m_cnt == 0 and mul.ack_tgl != mul.ack_sync:
+            break
+    else:
+        raise AssertionError("unreached multiplier acknowledge crossing")
+    assert mul_slow(mul, enable=False) == mul
+    assert mul_fast(mul, enable=False) == mul
+    while mul.busy:
+        mul = mul_edge(mul, enable=True)
+    assert mul_value(mul) == 127 * 777
+    mul_freezes += 1
+
+    # CPU upload is intentionally outside the executor CE.  It may update RAM
+    # while synthesis output/replay are frozen, and resume must read the same
+    # address rather than an injected request value.
+    memory = tuple((i ^ (i >> 5) ^ 0xa5) & 0xff for i in range(4608))
+    aram = Aram(memory)
+    seq_addr, borrow_addr = 0x101, 0x020
+    aram = aram_edge(aram, seq_addr=seq_addr, syn_rd=False,
+                     syn_freeze=False, seq_hold=False)
+    aram = aram_edge(aram, seq_addr=seq_addr, syn_rd=True,
+                     syn_addr=borrow_addr, syn_freeze=False, seq_hold=True)
+    held_q = aram.seq_q
+    pico_addr = 0x3100 + seq_addr
+    for cpu in ((0, pico_addr & 0xff), (1, pico_addr >> 8), (2, 0xd4)):
+        aram = aram_edge(aram, seq_addr=seq_addr, syn_rd=False,
+                         syn_freeze=True, seq_hold=True, cpu=cpu)
+        assert aram.seq_q == held_q and aram.replay
+    assert aram.memory[seq_addr] == 0xd4
+    aram = aram_edge(aram, seq_addr=seq_addr, syn_rd=False,
+                     syn_freeze=False, seq_hold=True)
+    assert (aram.seq_q, aram.q_origin, aram.replay) \
+        == (0xd4, seq_addr, False)
+
+    class_counts = {"audible": 0, "silent": 0, "stopped": 0}
+    hold_checks = 0
+    convergence = 0
+    for case in range(64):
+        memory = tuple((((i * 0x59) ^ (i >> 4)
+                         ^ (case * 0x6d) ^ 0xa5) & 0xff)
+                       for i in range(4608))
+        seq_addr = (0x700 + case) % 4608
+        aram0 = aram_edge(Aram(memory), seq_addr=seq_addr, syn_rd=False,
+                          syn_freeze=False, seq_hold=False)
+        primary = codec.source(case, "a2a1_primary_phase", 16)
+        secondary = codec.source(case, "a2a1_secondary_phase", 16)
+        audible = Scenario(case, True, True, primary, secondary,
+                           primary & 0x3ff, secondary & 0x3ff, seq_addr)
+        live, held = run(audible, aram0, Mul())
+        hold_checks += held
+        class_counts["audible"] += 1
+        live_values = codec.unpack("POST_W26", frame_dict(live.frame))
+        snd_id = codec.source(case, "snd_id", 3)
+        assert signed(live_values["primary_interp"], 15) == interp(
+            memory[sample_addr(snd_id, primary >> 10, False)],
+            memory[sample_addr(snd_id, primary >> 10, True)],
+            primary & 0x3ff)
+        assert signed(live_values["old_interp"], 15) == interp(
+            memory[sample_addr(snd_id, secondary >> 10, False)],
+            memory[sample_addr(snd_id, secondary >> 10, True)],
+            secondary & 0x3ff)
+        assert (live.aram_issues, live.aram_takes,
+                live.mul_issues, live.mul_takes) == (4, 4, 2, 2)
+        assert (live.aram.seq_q, live.aram.q_origin, live.aram.replay) \
+            == (aram0.seq_q, seq_addr, False)
+
+        # A playing zero-amplitude slot performs the four reads but retains
+        # the preceding audible fractions in legacy RTL.  Execute both that
+        # literal state and the canonical-zero candidate, then compare the
+        # first public leaf and a following audible transaction.
+        silent_legacy = Scenario(
+            case, True, False, primary ^ 0x5a5a, secondary ^ 0xa5a5,
+            primary & 0x3ff, secondary & 0x3ff, seq_addr)
+        silent_zero = replace(silent_legacy,
+                              primary_fraction=0,
+                              secondary_fraction=0)
+        legacy_silent, held = run(silent_legacy, live.aram, live.mul)
+        zero_silent, held_zero = run(silent_zero, live.aram, live.mul)
+        hold_checks += held + held_zero
+        class_counts["silent"] += 1
+        lv = codec.unpack("POST_W26", frame_dict(legacy_silent.frame))
+        zv = codec.unpack("POST_W26", frame_dict(zero_silent.frame))
+        assert fraction_gain_witness(lv, True) \
+            == fraction_gain_witness(zv, True) == 0
+        assert (legacy_silent.aram, legacy_silent.mul.req_tgl,
+                legacy_silent.mul.ack_tgl) \
+            == (zero_silent.aram, zero_silent.mul.req_tgl,
+                zero_silent.mul.ack_tgl)
+        assert replace(legacy_silent.mul,
+                       req_b=zero_silent.mul.req_b,
+                       m_p=zero_silent.mul.m_p) == zero_silent.mul
+        assert legacy_silent.mul.m_p != zero_silent.mul.m_p \
+            or (lv["primary_interp"], lv["old_interp"]) \
+            == (zv["primary_interp"], zv["old_interp"])
+
+        following = Scenario(
+            case, True, True, primary ^ 0x33cc, secondary ^ 0xcc33,
+            (primary ^ 0x33cc) & 0x3ff,
+            (secondary ^ 0xcc33) & 0x3ff, seq_addr)
+        after_legacy, held = run(
+            following, legacy_silent.aram, legacy_silent.mul)
+        after_zero, held_zero = run(
+            following, zero_silent.aram, zero_silent.mul)
+        hold_checks += held + held_zero
+        assert after_legacy == after_zero
+        convergence += 1
+
+        stopped_legacy = Scenario(
+            case, False, True, primary, secondary,
+            primary & 0x3ff, secondary & 0x3ff, seq_addr)
+        stopped_zero = replace(stopped_legacy,
+                               primary_fraction=0,
+                               secondary_fraction=0)
+        legacy_stop, held = run(stopped_legacy, after_zero.aram,
+                                after_zero.mul)
+        zero_stop, held_zero = run(stopped_zero, after_zero.aram,
+                                   after_zero.mul)
+        hold_checks += held + held_zero
+        class_counts["stopped"] += 1
+        lsv = codec.unpack("POST_W26", frame_dict(legacy_stop.frame))
+        zsv = codec.unpack("POST_W26", frame_dict(zero_stop.frame))
+        assert fraction_gain_witness(lsv, False) \
+            == fraction_gain_witness(zsv, False) == 0
+        assert (legacy_stop.aram, legacy_stop.mul.m_p,
+                legacy_stop.mul.req_tgl, legacy_stop.mul.ack_tgl) \
+            == (zero_stop.aram, zero_stop.mul.m_p,
+                zero_stop.mul.req_tgl, zero_stop.mul.ack_tgl)
+        assert replace(legacy_stop.mul,
+                       req_b=zero_stop.mul.req_b) == zero_stop.mul
+        assert (legacy_stop.aram_issues, legacy_stop.aram_takes,
+                legacy_stop.mul_issues, legacy_stop.mul_takes) \
+            == (0, 0, 2, 2)
+        after_legacy_stop, held = run(
+            following, legacy_stop.aram, legacy_stop.mul)
+        after_zero_stop, held_zero = run(
+            following, zero_stop.aram, zero_stop.mul)
+        hold_checks += held + held_zero
+        assert after_legacy_stop == after_zero_stop
+        convergence += 1
+
+    assert class_counts == {"audible": 64, "silent": 64, "stopped": 64}
+    assert hold_checks == 64 * 9 * 15
+    return ("H-D2F-C-B3-B2-A2-A1 sampled W1-POST_W26 wave-service lemma: "
+            "64 audible + 64 playing-zero-amplitude + 64 stopped slots; "
+            f"{hold_checks} attempted offset/frame/service freezes; "
+            f"{mul_freezes} exact multiplier count/ack freezes; "
+            "four-read silent ARAM/replay retained-fraction quotient and "
+            f"{convergence} following-audible convergences; stopped "
+            f"equal-endpoint quotient {quotient_cases:,}; accepted "
+            "image/RTL untouched; PC/IR/state_q and fold/public suffix "
+            "unproved")
 
 
 def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
@@ -5428,9 +6075,11 @@ def main() -> int:
     sample_w5_q16, sample_w5_q16_candidate = \
         build_sample_w5_q16_candidate(
             sample_program, sample_blend_candidate, actions)
-    sample_b3b2a, sample_b3b2a_candidate = \
+    sample_b3b2a, sample_b3b2a_candidate, sample_b3b2a_codec = \
         validate_sample_b3b2a_slice_map(
             sample_program, sample_w5_q16_candidate, actions)
+    sample_b3b2a2a1 = validate_sample_b3b2a2a1_edge_services(
+        sample_b3b2a_candidate, actions, sample_b3b2a_codec)
     sample_d2fb_packing = validate_sample_d2fb_packing(
         sample_b3b2a_candidate, actions)
     sample_d2fca_manifest = validate_sample_d2fca_manifest(
@@ -5506,6 +6155,7 @@ def main() -> int:
     print("sample physical-allocation gate: " + sample_physical_gap)
     print("sample W5-q16 candidate: " + sample_w5_q16)
     print("sample B3-B2-A1 slice map: " + sample_b3b2a)
+    print("sample B3-B2-A2-A1 services: " + sample_b3b2a2a1)
     print("sample D2F-B packing: " + sample_d2fb_packing)
     print("sample D2F-C-A manifest: " + sample_d2fca_manifest)
     print("sample transient pool: " + sample_pool)
