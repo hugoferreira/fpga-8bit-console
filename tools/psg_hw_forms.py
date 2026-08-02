@@ -40,6 +40,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import psg_binary_model as M
@@ -785,6 +787,24 @@ def sec_noise() -> None:
         clamp_ok &= candidate == reference
     report("noise.clamp_prefix", clamp_ok,
            "positive/negative prefixes equal clamp(v, -6143, 6143) for all signed18 values")
+
+    # The kick condition's two adders and relational chain can be one bounded
+    # signed subtraction.  Exercise the actual 16-bit wrap/sign interpretation,
+    # not merely the unbounded algebraic identity.
+    g = np.arange(1 << 13, dtype=np.int32)
+    g3 = 3 * g
+    kick_ok = True
+    delta_lo = 1 << 30
+    delta_hi = -(1 << 30)
+    for dp in range(1 << 13):
+        delta = dp + 497 - g3
+        delta16 = ((delta + (1 << 15)) & 0xffff) - (1 << 15)
+        kick_ok &= np.array_equal(delta16 >= 0, g3 <= dp + 497)
+        delta_lo = min(delta_lo, int(delta.min()))
+        delta_hi = max(delta_hi, int(delta.max()))
+    report("noise.kick_signed_delta", kick_ok,
+           f"signed16 sign equals 3*g <= dp+497 for all 67,108,864 pairs; "
+           f"delta range [{delta_lo}, {delta_hi}]")
 
 
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,

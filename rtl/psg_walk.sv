@@ -364,8 +364,13 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   wire  [16:0] nz_j = {1'b0, nz_dp, 3'b0} + 17'd1120;
 
   wire  [12:0] nz_g       = {lfsr[14:7], lfsr[4:0]};
-  wire  [14:0] nz_g3      = {1'b0, nz_g, 1'b0} + {2'b0, nz_g};
-  wire         nz_kick_en = nz_g3 <= ({2'b0, nz_dp} + 15'd497);
+  // 3*g <= dp+497 is exactly the sign of dp+497-3*g.  The full operand
+  // domain gives [-24076, 8688], so the signed-16 subtraction cannot wrap;
+  // keep it as one arithmetic cone instead of two adds plus a comparator.
+  wire signed [15:0] nz_kick_delta =
+      $signed({3'b0, nz_dp}) + 16'sd497
+      - $signed({2'b0, nz_g, 1'b0}) - $signed({3'b0, nz_g});
+  wire         nz_kick_en = !nz_kick_delta[15];
 
   wire signed [11:0] nz_t11  = $signed({{2{~lfsr2[12]}}, lfsr2[11:2]});
   wire signed [11:0] nz_draw = nz_t11 - (nz_t11 >>> 3) - (nz_t11 >>> 6);
