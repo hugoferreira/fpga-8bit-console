@@ -1787,6 +1787,30 @@ git history; do not repeat them without the recorded changed condition.
   words, 782 clocks, 172 reads, 158 writes, sixteen fixed writes, the two-EBR
   budget and all accepted-image/RTL boundaries.  Reject before RTL if any
   path still spills or if the q16 prime changes a semantic consumer.
+- **R.84H-D2F-A stream-foundation result:** accepted as an in-memory
+  candidate only.  CAP_W4 at PC `0x21` keeps its `OP_EXEC` and CAP action,
+  still consumes q14, and changes only its next-read word from 0 to 16; CAP_W5
+  at PC `0x22` therefore receives q16.  Exhaustive classification of all
+  **65,536** D2E-A paths selects that q16 for 15,360 no-restart ordinary
+  old-DQ cases, the retained q10 snapshot for 15,360 restart ordinary-old-DQ
+  cases, and no old-DQ source for 34,816 wavetable/old-noise cases.  The
+  candidate retains 222 words, 782 clocks, 172 reads, 158 writes and every
+  D2D action/edge.  Since CAP_W4's literal instruction changes, it is
+  necessarily **44 words different** from the accepted image rather than
+  D2D's 43; this is not another action, clock or topology change.  The
+  accepted image and RTL remain untouched.  This foundation proves the
+  source selection and schedule only, not a complete physical allocation,
+  mirror-free executor or semantic sample implementation.
+- **R.84H-D2F-B next permitted hypothesis:** construct the literal path-
+  sensitive A18/B18/N17/O17 plus H-C allocation on the D2F-A candidate through
+  every W0--W6 edge.  Cover built-in and wavetable, selected old-noise and
+  ordinary old-DQ, restart and no-restart, both clear states, all typed q
+  consumers and external hold.  Prove the packed values reconstruct the
+  direct W0--W3 phase/wave contexts and all persistent commits, not merely
+  that their summed widths fit.  Preserve the 44-word candidate and
+  222/782/172/158 counts; reject before image or RTL if any container slice is
+  multiply owned, a live value is reconstructed from an untyped source, or a
+  service/request lifetime changes.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

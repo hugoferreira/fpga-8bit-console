@@ -2161,6 +2161,107 @@ def validate_sample_physical_w2_gap(d2d: list[int], actions: Actions) -> str:
             f"{hc_overlay}-bit H-C overlay = {available} by {deficit} bits")
 
 
+def build_sample_w5_q16_candidate(program: list[int], d2d: list[int],
+                                  actions: Actions) \
+        -> tuple[str, list[int]]:
+    """Build the bounded D2F-A q16 prefetch candidate in memory only."""
+    candidate = list(d2d)
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+
+    def decoded(image: list[int], pc: int) -> Instruction:
+        return Instruction.decode(image[pc])
+
+    def q_word(image: list[int], pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(image, prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    cap_w4 = decoded(candidate, 0x21)
+    assert cap_w4 == Instruction(
+        Op.EXEC, action=action_by_name["CAP_W4"], word=0)
+    assert q_word(candidate, 0x21) == 14
+    candidate[0x21] = Instruction(
+        cap_w4.op, action=cap_w4.action, word=16).encode()
+    assert q_word(candidate, 0x21) == 14
+    assert q_word(candidate, 0x22) == 16
+    assert decoded(candidate, 0x22).action == action_by_name["CAP_W5"]
+    assert [pc for pc, (before, after) in enumerate(zip(d2d, candidate))
+            if before != after] == [0x21]
+
+    # The new q word matters only for the ordinary old-DQ W5 update.  On a
+    # no-restart path it is the original selected old phase.  Restart instead
+    # selects the q10 phase snapshot and aliases selected old-q to phase2;
+    # old-noise and wavetable paths suppress the W5 old-DQ update entirely.
+    classes = 0
+    consumers = {"q16": 0, "q10": 0, "none": 0}
+    for wt in (False, True):
+        for wave in range(8):
+            for mode in range(4):
+                for noise in (False, True):
+                    for buzz in (False, True):
+                        for old_wave in range(8):
+                            for old_mode in range(4):
+                                for old_alt in (False, True):
+                                    for control in range(4):
+                                        restart = bool(control & 1)
+                                        classes += 1
+                                        old_noise = old_wave == 6 \
+                                            and not old_alt
+                                        old_dq = not wt and not old_noise
+                                        if old_dq and restart:
+                                            consumers["q10"] += 1
+                                        elif old_dq:
+                                            consumers["q16"] += 1
+                                        else:
+                                            consumers["none"] += 1
+    assert classes == 65_536
+    assert sum(consumers.values()) == classes
+    assert all(count for count in consumers.values())
+
+    def counts(image: list[int]) -> tuple[int, ...]:
+        pc, slot = SAMPLE_START, 0
+        result = [0] * 8
+        for _ in range(2_000):
+            insn = decoded(image, pc)
+            result[int(insn.op)] += 1
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = slot == 0
+                pc = insn.target if take == bool(insn.sense) \
+                    else (pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                break
+            else:
+                raise AssertionError(insn)
+        else:
+            raise AssertionError("D2F-A sample candidate did not finish")
+        return tuple(result)
+
+    base_counts = counts(program)
+    assert counts(candidate) == base_counts
+    assert sum(base_counts) == 782
+    assert base_counts[int(Op.READ)] == 172
+    assert base_counts[int(Op.WRITE)] == 158
+    assert sum(word != 0 for word in candidate) == 222
+    changed = sum(a != b for a, b in zip(program, candidate))
+    assert changed == 44
+    return (f"H-D2F-A candidate: CAP_W4 word0 -> word16; q14 still consumed "
+            f"at W4 and q16 reaches W5; {classes:,} paths select q16/q10/none "
+            f"as {consumers['q16']}/{consumers['q10']}/{consumers['none']}; "
+            f"{changed} image words change; 222/782/172/158 unchanged; "
+            "accepted image untouched", candidate)
+
+
 def reachable_to_idle(nodes: list[Node]) -> None:
     graph = {node.name: set(node.successors) for node in nodes}
     assert "S_IDLE" in graph
@@ -4102,6 +4203,9 @@ def main() -> int:
         sample_blend_candidate)
     sample_physical_gap = validate_sample_physical_w2_gap(
         sample_blend_candidate, actions)
+    sample_w5_q16, sample_w5_q16_candidate = \
+        build_sample_w5_q16_candidate(
+            sample_program, sample_blend_candidate, actions)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -4171,6 +4275,7 @@ def main() -> int:
     print("sample typed-blend manifest: " + sample_blend)
     print("sample context-overlay gate: " + sample_overlay)
     print("sample physical-allocation gate: " + sample_physical_gap)
+    print("sample W5-q16 candidate: " + sample_w5_q16)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)
