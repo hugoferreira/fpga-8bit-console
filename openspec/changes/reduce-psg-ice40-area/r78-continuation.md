@@ -2558,6 +2558,30 @@ git history; do not repeat them without the recorded changed condition.
   A bench label or hand-authored PC map may not supply causality.  Stop again
   before executor semantics, image change, generic integration or physical
   claims until every one of the 42 PCs and D2F-C-A lifetimes is joined.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1-C2-A active hypothesis:** expose the
+  accepted production-image controller/state/wave/ARAM edge sequence in the
+  existing `psg_execwave_tb.sv`, without changing production RTL or image.
+  Optional `+PSG_EDGE_TRACE` rows shall record actual pre-NBA and settled
+  post-NBA active/hold/owner/slot/PC/IR/op/action, controller read/write port,
+  state-q, wave issue/CE/take/context/result and ARAM request/read-address/
+  replay/take/result signals.  Structural TB provenance may be driven only by
+  actual `state_re/state_ra`, `wave_issue/wave_ce` and `aram_req`; it must be
+  labelled as proof state and may not inject a semantic kind, result or PC
+  label.  Mechanically require every accepted-image PC `0x13..0x3c`, exact
+  pre/post pairing, state-q read-origin continuity, the real W0--W3 to W2--W5
+  wave pipeline and W0--W3 to W1--W4 ARAM borrow/replay chain in both built-in
+  and wavetable runs, including external hold.  Baseline is clean scratch
+  C1 `34973c2`: thirteen production-image runs each execute 782 enabled
+  clocks, 172 semantic reads and 158 writes; built-in runs observe 32 wave
+  issues/takes and wavetable runs observe sixteen ARAM issues/takes.  Scope is
+  this ledger and `rtl/psg_execwave_tb.sv`; accepted `rtl/psg_exec.hex`, all
+  production RTL, generic PSG, main and Tang remain immutable.  This iteration
+  cannot claim D2F's 44-word in-memory candidate, semantic write data, C1
+  multiplier/DQ causality, ring, record/fold/public behavior or physical
+  results: those adapters do not exist in this harness.  Reject if any join
+  needs a bench-case label, expected-value oracle, hand-authored PC/action map
+  or an unobserved production valid/tag.  Repeat only if the accepted image,
+  synchronous state-port contract or real wave/ARAM issue boundary changes.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
