@@ -2138,6 +2138,39 @@ git history; do not repeat them without the recorded changed condition.
   zero-normalize it.  Reject before an eight-slot executor, image or RTL if a
   token lacks an issue edge, ages while held, is consumed before ready, or any
   expected/direct-oracle value seeds internal state.
+- **R.84H-D2F-C-B3-B2-A2 result and decision:** rejected and fully reverted
+  before image or RTL.  Its self-check executed 256 nominal active plus 256
+  stopped slots, four tagged ARAM issue/takes on each active slot, multiplier
+  ages of seven clocks to W15 and five clocks to W26, and 11,520 nominal hold
+  snapshots.  Those counts do not prove the required composition.  `hold()`
+  compared two reads of an untouched Python object without attempting a
+  controller, packed-frame, ARAM or multiplier transition, so the freeze gate
+  was tautological and the A1 literal frame was absent.  ARAM requests carried
+  their returned byte directly, replay injected an independent seeded value,
+  and the stored kind merely rechecked its own tag; there was no addressable
+  audio memory, pre-edge registered-output ordering or returned-address
+  identity.  Multiplier readiness was likewise an assumed `age >= 5`
+  abstraction rather than the retained slow/fast transaction boundary.  Two
+  independent audits agree on these defects.  The complete model still passed
+  only because this isolated abstraction was internally self-consistent; all
+  A2 code is removed, `tools/psg_exec_model.py` is byte-identical to A1
+  `dd8a65d`, and accepted image/RTL remain untouched.
+- **R.84H-D2F-C-B3-B2-A2-A next permitted hypothesis:** build one literal
+  edge-state transducer rather than another service summary.  Its state must
+  contain the actual A1 packed frame, controller edge, an addressable 4,608-byte
+  ARAM with registered `seq_q` plus borrow/replay request address, and the
+  retained multiplier's slow-request/fast-recurrence/acknowledge state (or an
+  explicitly source-proven bisimulation of that state).  Derive all four active
+  bytes and the stopped held byte by executing literal ARAM addresses against
+  the same memory; model same-edge pre-update `seq_q` consumption and replay
+  from that memory, never from request payloads.  Express one CE-gated
+  next-state function and convict external hold by comparing an attempted held
+  step with the exact pre-state across controller, frame, ARAM, replay and all
+  multiplier fields.  Compose W1/W2/W15/W26 by unpacking and repacking A1's
+  literal slices, including base/sign lifetimes.  Reject before late suffix,
+  image or RTL if any return value is injected, any frame is parallel scalar
+  state, multiplier readiness is an unproved age constant, or stopped service
+  state is reset/normalized between slots.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
