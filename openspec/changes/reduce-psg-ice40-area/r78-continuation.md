@@ -1998,6 +1998,48 @@ git history; do not repeat them without the recorded changed condition.
   ownership, a token without an issue edge or any expected/trace dependency.
   Only after this manifest closes may B3 evaluate values or reconnect the
   already-rejected late suffix; accepted image and RTL remain immutable.
+- **R.84H-D2F-C-B3-A result and decision:** rejected before model code.  The
+  real-slice mapping is recoverable: T5:3/T1/T0 hold old wave/mode-is-two/alt,
+  freeing T2 for `live_is_wave6`; wavetable C6 and C3 retain `snd_wt` and
+  `live_is_wave6`, while C0/C5:4/C2:1 are the X/WF/MF pieces and reconstruct
+  primary-adjacent bits 3/5:4/7:6 beside T5:3 bits 2:0.  But a per-slot row IR
+  is still not an executable boundary.  On stopped wavetable slots the legacy
+  ARAM issues no request and W1--W4 capture the service's held `seq_q`; the
+  direct evaluator instead normalizes the inaudible arm to zero.  Therefore
+  expected `SampleTrace` cannot prove internal bridge values even when used
+  only after execution.  The proposed row also omitted this cross-slot ARAM
+  service register.  Separately, active parameter q is a synchronous token:
+  the 44-word candidate must launch physical word 26/30 at CAP_W51 and consume
+  it at CAP_W75; it may not be side-loaded or consumed at W40/W51.  External
+  hold must freeze both pending service registers.  No B3-A model code, image
+  or RTL is retained.
+- **B3-A old-noise conviction:** D2F-B's `old_bias17` has no exact producer.
+  RTL first forms an eighteen-bit selected seed plus kick, stores its wrapped
+  low sixteen bits at W0, then at W1 sign-extends that stored value and adds
+  the seventeen-bit old-noise step before clamping.  On no-restart/no-`nz_tick`
+  paths the predecessor row retains neither original old phase nor the
+  selected seed, and q16 does not arrive until W5.  Reinterpreting `old_bias`
+  as the W1 pre-clamp sum also fails: signed16 seed plus a step bounded by
+  33,324 spans conservatively -66,092..66,091 and requires signed18, not 17.
+  The previous 39,491 bound covered step plus kick but omitted the independent
+  seed and W0's sixteen-bit wrap.  The later old-noise sample additionally
+  needs selected-old-inc bit13 to choose x68/x80, yet no D2F-B W1/W2 row binds
+  that bit.  Thus the old-noise rows and any peak using them are withdrawn as
+  physical-allocation evidence pending a new exact producer/layout proof.
+- **R.84H-D2F-C-B3-B next permitted hypothesis:** move the proof boundary
+  back to the production eight-slot edge stream and derive a typed transducer
+  from the literal 44-word candidate plus source equations.  Persist ARAM,
+  wave, multiplier and state-read output registers across slots; model absent
+  request as hold, not zero, and bind every CAP_W3--W6 replacement to its
+  actual service output.  Generate only real A/B/N/O/Q/T/C/I/D slices from
+  those transitions, but first repair the old-noise predecessor with exact W0
+  wrap/W1 pre-clamp equations and selected-old-inc bit13.  Then compare
+  externally committed record/leaf/fold/dry results with the direct evaluator
+  after the full run.  The direct evaluator must never supply an internal
+  field or service value.  Reject before late suffix, image or RTL if the
+  repaired row exceeds 108 physical bits, source extraction leaves an opaque
+  producer, any service state is per-slot reset, or CAP_W51--W75 does not carry
+  the selected 26/30 value through a held cycle.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
