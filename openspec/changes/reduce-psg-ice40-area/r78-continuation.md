@@ -157,6 +157,46 @@ git history; do not repeat them without the recorded changed condition.
   an independent request queue.  This is not R.63/R.64 adder sharing, R.76--78
   result-lifetime work, or R.79 cross-domain payload storage.
 
+### R.82 - Recompute the live detune result in the W5--W15 gap
+
+- **Hypothesis:** after W5 consumes the old detune result at phase 34, phases
+  35--39 are idle until W15 at phase 40.  Launch the live transaction again on
+  the W5 edge and move W6 from phase 35 to its terminal phase 39.  Both W5 and
+  W6 can then consume the recurrence directly, retiring the complete 14-bit
+  `dq_live_r` lifetime without extending the 530-clock walk or adding a new
+  arithmetic, operand hold, result register or request queue.
+- **Scope:** the W6 control-store offset, `rtl/psg_walk.sv`, the exhaustive
+  detune transaction test if its schedule contract needs coverage, generated
+  schedule assertions/visualization, and the standard isolated PSG gates.
+  `rtl/psg.sv`, audio RAM, sequencer state, H009/H015 diagnostics and Tang
+  board files remain untouched.
+- **Baseline:** accepted R.81B fingerprint `2cae31b4a425`; 6,520 LUT4s, 1,592
+  carries, 1,478 flops and 14 EBRs; seed-1 router2 7,421 LCs at 128.12 MHz
+  fast / 29.90 MHz PSG.
+- **Change:** preserved the phase-19 live and phase-24 old transactions, moved
+  W6 from phase 35 to phase 39, launched a third live transaction at W5, and
+  removed `dq_live_r` plus its phase-24 capture.  The generated control word
+  moved with W6; no other action or visit boundary changed.
+- **Result:** arithmetic and schedule are exact, but the physical shape is
+  wrong.  The exhaustive gate still passes 524,288 formula cases and 57,344
+  transactions.  The complete structural regression passes at 524/850
+  observed clocks, fixed 530+272 with 48 spare, tick preparation 4,008/5,103
+  with 1,095 spare and zero late flips.  Candidate fingerprint
+  `8bbc5b3e64c5` maps 6,546 LUT4s, 1,597 carries, 1,464 flops and 14 EBRs;
+  seed-1 router2 places 7,454 LCs and routes at 120.16 MHz fast / 31.20 MHz
+  PSG.  Versus R.81B this is **+26 LUT4s, +5 carries, -14 flops and +33 placed
+  LCs**.  The third launch and late terminal selection widen the recurrence
+  cover enough to cost more than the removed result lifetime.  The schedule
+  visualizer was non-normative here: its existing `PLAST` parser failure
+  reproduces unchanged on the accepted R.81 checkout.  Render, P.1/P.2 and
+  click gates were not run after the deterministic mapped/placed gate failed.
+- **Decision:** rejected and main RTL remains at R.81B.  Recomputing a result
+  to avoid its lifetime does not pay when it adds another request role to this
+  shared recurrence.
+- **Repeat only if:** the W5--W15 gap, W6 consumer, live tuple lifetime, or
+  recurrence latency changes.  This is a schedule-slack recomputation, not an
+  R.40--R.42 cross-family register alias or an R.79 held payload.
+
 ## Handoff rule
 
 Before opening the next row, record it with exact formula, transaction, schedule,
