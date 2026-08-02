@@ -1700,31 +1700,38 @@ def validate_sample_relocated_value_gap(candidate: list[int]) -> str:
                 source = insn.word
         return source
 
-    # Worst built-in case: current wave6+buzz retains updated brown through
-    # W4 while selected old wave6/non-alt retains its old-noise step through
-    # W1.  At PC 1b the q stream presents word14 and the IR primes word13.
+    # Worst built-in case: updated brown remains uncommitted, a wave0/7 mode-2
+    # live coefficient needs fourteen DQ bits, and selected old wave6/non-alt
+    # retains its old-noise step through W1.  At PC 1b the q stream presents
+    # word14 and the IR primes word13.
     assert q_word(0x1b) == 14
     assert decoded(0x1b) == Instruction(Op.EXEC, action=hold, word=13)
+    # Old-noise continuation and the old DQ update are mutually exclusive at
+    # W5: CAP_W5 applies DQ only under !old_nz_r_on.  q13's old noise-phase
+    # nibble is independently required until q10 supplies the current phase
+    # nibble at W0.  Old q is unchanged on this path and is recovered from its
+    # later typed q17 source rather than retained in the transient pool.
+    old_noise_active = True
+    old_dq_result_live = not old_noise_active
+    assert old_noise_active and not old_dq_result_live
     payload = {
-        # Current wave6 uses K=256/255, so DQ is bounded below 2^13.
-        "dq_live": 13,
+        "dq_live": 14,
         "old_noise_step": 17,
         "live_phase_delta": 13,
-        "old_phase_delta": 13,
         "live_amplitude": 12,
         "noise_lowpass": 16,
         "updated_brown": 13,
-        "old_q_msb": 1,
         "phase2_msb": 1,
+        "old_nz_phase": 4,
     }
-    assert sum(payload.values()) == 99
+    assert sum(payload.values()) == 90
     # A/B/N/O provide 70.  On a built-in path only H-C's ARAM phase index
     # (6) and snd_id (3) are dead; all live/old wave controls and old_q remain
     # required by W0--W5.  The strongest possible overlay is still short.
     available = 70 + 6 + 3
     assert sum(payload.values()) > available
     shortfall = sum(payload.values()) - available
-    assert shortfall == 20
+    assert shortfall == 11
 
     # Updated word20 is presented at PC 2f, but PC 2f is one of many generic
     # HOLD/word-zero instructions.  Nothing fixed can capture selected
@@ -1742,7 +1749,8 @@ def validate_sample_relocated_value_gap(candidate: list[int]) -> str:
     assert q_word(0x38) == 14 and decoded(0x38).word == 15
     assert q_word(0x39) == 15
     assert decoded(0x39) == Instruction(Op.EXEC, action=hold, word=0)
-    return ("H-D2B rejected: PC 1b/1c need 99 independent bits against the "
+    return ("H-D2B rejected: live old-noise PC 1b/1c needs 90 independent "
+            "bits after excluding the mutually dead old-DQ delta, against the "
             f"strongest 79-bit pool/H-C overlay ({shortfall}-bit shortfall); "
             "q20 at PC 2f and q15 at PC 39 have no fixed consumer")
 
@@ -1838,25 +1846,23 @@ def validate_sample_relocated_stream_correction(
     assert decoded(0x4b) == Instruction(
         Op.EXEC, action=COMMON_ACTION["HOLD"])
     d2b_payload = {
-        "dq_live": 13,
+        "dq_live": 14,
         "old_noise_step": 17,
         "live_phase_delta": 13,
-        "old_phase_delta": 13,
         "live_amplitude": 12,
         "noise_lowpass": 16,
         "updated_brown": 13,
-        "old_q_msb": 1,
         "phase2_msb": 1,
+        "old_nz_phase": 4,
     }
-    assert sum(d2b_payload.values()) == 99
+    assert sum(d2b_payload.values()) == 90
     # The typed q14 transaction stores the only 13-bit resident whose next
     # use is after W0.  It is fetched back as q14 at CAP_W4, reducing the
-    # pre-W0 payload, but the DQ recurrence reads selected old_a externally.
-    # Live and old phase deltas are independent, so the strongest 79-bit fixed
-    # H-C overlay remains six bits short.
+    # pre-W0 payload.  On this old-noise path CAP_W5 suppresses the old DQ
+    # update, so its thirteen-bit delta is not simultaneously live.
     corrected_payload = sum(d2b_payload.values()) \
         - d2b_payload["updated_brown"]
-    assert corrected_payload == 86 and corrected_payload > 79
+    assert corrected_payload == 77 and corrected_payload <= 79
 
     def counts(image: list[int]) -> tuple[int, ...]:
         pc, slot = SAMPLE_START, 0
@@ -1890,9 +1896,9 @@ def validate_sample_relocated_stream_correction(
     assert base_counts[int(Op.WRITE)] == 158
     assert sum(word != 0 for word in candidate) == 222
     changed = sum(a != b for a, b in zip(program, candidate))
-    return (f"H-D2C candidate: typed q14/q15 and CAP_W40 q20; pre-W0 "
-            f"payload 99 -> {corrected_payload} bits (still 7 over fixed "
-            f"H-C overlay); {changed} image words "
+    return (f"H-D2C candidate: typed q14/q15 and CAP_W40 q20; live "
+            f"old-noise payload 90 -> {corrected_payload} bits within the "
+            f"fixed 79-bit H-C overlay; {changed} image words "
             "change; 16 fixed writes and 222/782/172/158 invariants; "
             "accepted image untouched", candidate)
 
@@ -1976,33 +1982,109 @@ def validate_sample_typed_blend_correction(
             "accepted image untouched", candidate)
 
 
-def validate_sample_context_overlay_bound() -> str:
-    """Prove the exact-fit D2E control recoding obligation at PC 1c."""
-    # Brown use fixes the current path to built-in wave6+buzz/no-noise; old
-    # noise fixes the selected old path to wave6/non-alt.  After NZ_LIVE is the
-    # last raw coefficient consumer, those nine raw bits can be represented by
-    # two path tags while the two mode fields remain literal.
-    raw_current = 1 + 3 + 1  # wt, wave, buzz
-    raw_old = 3 + 1          # old wave, old alt
-    path_tags = 2
-    recovered = raw_current + raw_old - path_tags
-    assert recovered == 7
-    always_dead = 6 + 3      # ARAM phase index and snd_id on built-in paths
-    capacity = 70 + always_dead + recovered
-    payload = {
-        "dq_live": 13,
-        "old_noise_step": 17,
-        "live_phase_delta": 13,
-        "old_phase_delta": 13,
-        "live_amplitude": 12,
-        "noise_lowpass": 16,
-        "old_q_msb": 1,
-        "phase2_msb": 1,
+def validate_sample_context_path_bound(d2d: list[int]) -> str:
+    """Exhaust every pre-W0 semantic class at the q13/q10 boundary.
+
+    The old four-bit noise-phase value is presented in q13 at PC 1c, but the
+    current phase nibble needed for its equality test does not arrive until
+    q10 at W0.  This is the one-way equality problem: the earlier value needs
+    four bits because every one of its sixteen values has a distinct response
+    over the sixteen possible later values.
+    """
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(d2d[pc])
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    assert decoded(0x1b).word == 13 and q_word(0x1c) == 13
+    assert decoded(0x1c).word == 10 and q_word(0x1d) == 10
+
+    equality_signatures = {
+        tuple(old_nz_phase == later_phase for later_phase in range(16))
+        for old_nz_phase in range(16)
     }
-    assert sum(payload.values()) == capacity == 86
-    return ("H-D2E exact-fit obligation: recode 9 raw live/old path bits as "
-            "2 tags after NZ_LIVE; recover 7 H-C bits; PC 1c payload and "
-            "70+9+7 capacity are both 86 bits with zero headroom")
+    assert len(equality_signatures) == 16
+    nz_phase_bits = (len(equality_signatures) - 1).bit_length()
+    assert nz_phase_bits == 4
+
+    def coefficient(wt: bool, wave: int, mode: int) -> int:
+        if wt:
+            return 256
+        if wave == 0:
+            return 193 if mode == 1 else 384 if mode == 2 else 256
+        if wave == 7:
+            return 250 if mode == 1 else 508 if mode == 2 else 254
+        return 256 if mode == 0 else 255
+
+    class_max: dict[tuple[bool, bool, bool, bool], int] = {}
+    maxima = {False: 0, True: 0}
+    cases = 0
+    for wt in (False, True):
+        for wave in range(8):
+            for mode in range(4):
+                dq_max = (8191 * coefficient(wt, wave, mode)) >> 8
+                dq_bits = max(1, dq_max.bit_length())
+                for noise in (False, True):
+                    for buzz in (False, True):
+                        for old_wave in range(8):
+                            for old_mode in range(4):
+                                for old_alt in (False, True):
+                                    for restart in (False, True):
+                                        cases += 1
+                                        old_noise = old_wave == 6 \
+                                            and not old_alt
+                                        old_dq = not wt and not old_noise
+                                        assert not (old_noise and old_dq)
+
+                                        payload = {
+                                            "dq_live": dq_bits,
+                                            "live_phase_delta": 13,
+                                            "live_amplitude": 12,
+                                            "noise_lowpass": 16,
+                                            "phase2_msb": 1,
+                                        }
+                                        if not noise:
+                                            payload["old_nz_phase"] = \
+                                                nz_phase_bits
+                                        if old_noise:
+                                            payload["old_noise_step"] = 17
+                                        if old_dq:
+                                            payload["old_phase_delta"] = 13
+                                        if old_dq and not restart:
+                                            payload["old_q_msb"] = 1
+                                        required = sum(payload.values())
+
+                                        # Built-in paths do not use ARAM index
+                                        # or sound ID.  Wavetable uses both,
+                                        # but its W2/W3 addresses ignore H-C
+                                        # old-q and old tuple state after
+                                        # classification.
+                                        capacity = 70 + (22 if wt else 9)
+                                        assert required <= capacity, (
+                                            wt, wave, mode, noise, buzz,
+                                            old_wave, old_mode, old_alt,
+                                            restart, payload, capacity)
+                                        maxima[wt] = max(maxima[wt], required)
+                                        key = (wt, wave == 6, noise,
+                                               old_noise)
+                                        class_max[key] = max(
+                                            class_max.get(key, 0), required)
+
+    assert cases == 32_768
+    assert maxima == {False: 77, True: 76}
+    assert class_max[(False, True, False, True)] == 76
+    assert class_max[(False, True, False, False)] == 73
+    assert class_max[(False, False, False, True)] == 77
+    return ("H-D2E PC1c bound: 32,768 current/old wave-mode-noise-buzz "
+            "classes; old-noise17 and old-DQ13 are W5-exclusive; built-in "
+            "maximum 77/79, wavetable maximum 76/92, named brown+old-noise "
+            "76/79; later W0-W6 physical packing remains unproved")
 
 
 def reachable_to_idle(nodes: list[Node]) -> None:
@@ -3942,7 +4024,8 @@ def main() -> int:
     sample_blend, sample_blend_candidate = \
         validate_sample_typed_blend_correction(
             sample_program, sample_stream_candidate)
-    sample_overlay = validate_sample_context_overlay_bound()
+    sample_overlay = validate_sample_context_path_bound(
+        sample_blend_candidate)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -4010,7 +4093,7 @@ def main() -> int:
     print("sample corrected-stream manifest: " + sample_stream)
     print("sample corrected-stream blend gate: " + sample_blend_gap)
     print("sample typed-blend manifest: " + sample_blend)
-    print("sample context-overlay bound: " + sample_overlay)
+    print("sample context-overlay gate: " + sample_overlay)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)
