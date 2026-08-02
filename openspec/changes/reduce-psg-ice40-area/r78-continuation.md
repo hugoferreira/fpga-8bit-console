@@ -1462,6 +1462,18 @@ git history; do not repeat them without the recorded changed condition.
   retaining every request/result stream.  Credit none of the multiplier's
   approximately 590-LUT request-input cone until row B measures its removal.
   Save canonical mapped, placed, routed and timing artifacts before deciding.
+- **Stored-wait foundation result:** the generator now emits the final pre-W0
+  word-10 prime, literal W0/W1 word-12/16 primes, four W40--W51 ring tags and
+  steps 1..8 for all seven fold nodes.  Exactly 61 of 81 HOLD words are
+  nonzero and 63 owner-zero image words change; owner zero remains 222 words,
+  782 clocks, 172 semantic reads and 158 writes, while the complete owner-one
+  bank remains byte-identical at SHA-1
+  `21e4d10952a56460be37cf76de2803b31389e085`.  The model checks every stored
+  tag and rejects any other nonzero HOLD field.  Controller, movement,
+  eleven-path owner-one, two-bank owner-zero transport and production
+  wave/ARAM tests pass; isolated, full and PREVIEW lint plus strict OpenSpec
+  pass.  Accept this as image/address foundation only: the 70-bit value model,
+  sample service semantics, new RTL and physical result remain unproved.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

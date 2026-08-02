@@ -1114,9 +1114,14 @@ def build_sample(actions: Actions, program: list[int]) -> dict[int, str]:
         pc += 1
         return old_pc
 
-    def hold(count: int, label: str) -> None:
-        for n in range(count):
-            put(Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"]),
+    def hold(count: int, label: str,
+             words: tuple[int, ...] | None = None) -> None:
+        if words is None:
+            words = (0,) * count
+        assert len(words) == count
+        for n, word in enumerate(words):
+            put(Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"],
+                            word=word),
                 f"{label}_hold_{n}")
 
     # Slot-wrap branch. start_pc is 1, so address zero is only reached after
@@ -1152,14 +1157,25 @@ def build_sample(actions: Actions, program: list[int]) -> dict[int, str]:
     put(Instruction(Op.EXEC, action=nz_old), "nz_old")
     hold(4, "nz_old")
     put(Instruction(Op.EXEC, action=nz_live), "nz_live")
-    hold(4, "nz_live")
+    # The last elapsed service edge primes current phase for W0.  Earlier H-C
+    # RTL inferred this address from action 0x70; H-D stores it in the already
+    # present word field so the blanket HOLD override can disappear.
+    hold(4, "nz_live", (0, 0, 0, 10))
 
     previous_offset: int | None = None
     for name, offset in SAMPLE_CAP_SCHEDULE:
         if previous_offset is not None:
-            hold(offset - previous_offset - 1, f"cap_{name}_wait")
+            gap = offset - previous_offset - 1
+            # The four W40--W51 elapsed clocks are also the fixed ring-memory
+            # read/capture microsteps.  REVERB=0 simply ignores these tags.
+            words = tuple(range(1, 5)) if name == "W51" else None
+            hold(gap, f"cap_{name}_wait", words)
         code = actions.add("sample", 2, f"CAP_{name}")
-        put(Instruction(Op.EXEC, action=code), f"cap_{name}")
+        # W0 primes phase2 for W1; W1 primes old phase for W2.  These literal
+        # addresses preserve H-C's direct issue stream without action-derived
+        # state-address overrides.
+        word = {"W0": 12, "W1": 16}.get(name, 0)
+        put(Instruction(Op.EXEC, action=code, word=word), f"cap_{name}")
         previous_offset = offset
 
     store_words = list(range(10, 24)) + [15, 14]
@@ -1206,7 +1222,9 @@ def build_sample(actions: Actions, program: list[int]) -> dict[int, str]:
             f"fold_{n}_read_b_hi")
         put(Instruction(Op.EXEC, action=fold_start), f"fold_{n}_start")
         put(Instruction(Op.EXEC, action=fold_run), f"fold_{n}_run")
-        hold(8, f"fold_{n}")
+        # The worst-case fold padding is executable microcode: its word fields
+        # select the eight arithmetic steps, so no fold counter is required.
+        hold(8, f"fold_{n}", tuple(range(1, 9)))
         put(Instruction(Op.SLOT, slot_value=dst_slot),
             f"fold_{n}_slot_dst")
         put(Instruction(Op.WRITE, action=fold_write_lo, word=48),
@@ -1392,6 +1410,45 @@ def validate_sample(program: list[int], actions: Actions,
         + len(FOLD_NODES) * 8
     assert cycles < SAMPLE_CLOCK_LIMIT
     return cycles, SAMPLE_CLOCK_LIMIT - cycles, len(labels)
+
+
+def validate_sample_wait_manifest(program: list[int],
+                                  labels: dict[int, str]) -> str:
+    """Prove every stored wait's physical-address/microstep word field."""
+    by_label = {label: Instruction.decode(program[pc])
+                for pc, label in labels.items()}
+
+    expected_nonzero = {
+        "nz_live_hold_3": 10,
+        "cap_W0": 12,
+        "cap_W1": 16,
+    }
+    expected_nonzero.update({f"cap_W51_wait_hold_{n}": n + 1
+                             for n in range(4)})
+    for node in range(len(FOLD_NODES)):
+        expected_nonzero.update({f"fold_{node}_hold_{n}": n + 1
+                                 for n in range(8)})
+
+    stored_holds = 0
+    nonzero_holds = 0
+    for label, insn in by_label.items():
+        expected_word = expected_nonzero.get(label, 0)
+        if label in expected_nonzero:
+            assert insn.word == expected_word, (label, insn.word,
+                                                 expected_word)
+        if insn.op == Op.EXEC and insn.action == COMMON_ACTION["HOLD"]:
+            stored_holds += 1
+            nonzero_holds += insn.word != 0
+            assert insn.word == expected_word, (label, insn.word,
+                                                 expected_word)
+
+    assert stored_holds == 81
+    assert nonzero_holds == 61  # final W0 prime + four ring + 7*8 fold
+    assert by_label["cap_W0"].word == 12
+    assert by_label["cap_W1"].word == 16
+    assert len(expected_nonzero) == 63
+    return ("81 stored HOLDs: 61 nonzero physical/step words; W0/W1 "
+            "prime words 12/16; 63 owner-zero image words changed")
 
 
 def reachable_to_idle(nodes: list[Node]) -> None:
@@ -1689,6 +1746,8 @@ def main() -> int:
     validate_node_contract(seq_nodes, tick_program)
     sample_cycles, sample_spare, sample_used = validate_sample(
         sample_program, actions, sample_labels)
+    sample_waits = validate_sample_wait_manifest(sample_program,
+                                                 sample_labels)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -1744,6 +1803,7 @@ def main() -> int:
     print("tick record movement: " + movement)
     print("fixed decoder RTL: " + move_rtl)
     print("sample action inventory: " + sample_inventory)
+    print("sample stored-wait manifest: " + sample_waits)
     print("fold word/tree contract: " + fold_contract)
     print("remaining owner action inventory: " + owner_inventory)
     print("condition contract: " + condition_contract)
