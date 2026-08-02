@@ -376,28 +376,25 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
     + (nz_q[0] ?  15'(nz_draw)        : 15'sd0);
   wire signed [17:0] nz_kick = nz_kick_en ? 18'(nz_kick_m) : 18'sd0;
 
-  // Noise phase is clamped to +/-6143.  The exact signed-18 threshold has a
-  // compact prefix form, avoiding two wide relational comparison chains at
-  // each of the live and previous-noise consumers.
-  function automatic signed [15:0] clamp_noise(
-      input signed [17:0] x);
-    logic pos_over;
-    logic neg_under;
-    begin
-      pos_over = !x[17] && ((|x[16:13]) || (x[12] && x[11]));
-      neg_under = x[17]
-                  && ((x[16:13] != 4'hf)
-                      || (!x[12] && (!x[11] || !(|x[10:0]))));
-      clamp_noise = pos_over ? 16'sd6143
-                  : neg_under ? -16'sd6143 : x[15:0];
-    end
-  endfunction
-
   wire  signed [17:0] nz_pre =
       $signed({{2{s_noise_lp[15]}}, s_noise_lp})
       + (nz_tog ? 18'(nz_step) : 18'sd0)
       + nz_kick;
-  wire  signed [15:0] noise_next = clamp_noise(nz_pre);
+  function automatic logic signed [15:0] noise_clamp(
+      input logic signed [17:0] value);
+    logic over, under;
+    begin
+      // The exact out-of-range boundaries are +6144 and -6144 (18'h3e800).
+      // Decode their prefixes directly instead of building signed comparators.
+      over = !value[17] && ((|value[16:13]) || (&value[12:11]));
+      under = value[17]
+              && (!(&value[16:13])
+                  || (!value[12] && (!value[11] || !(|value[10:0]))));
+      noise_clamp = over ? 16'sd6143
+                  : under ? -16'sd6143 : value[15:0];
+    end
+  endfunction
+  wire signed [15:0] noise_next = noise_clamp(nz_pre);
 
   wire  signed [17:0] nz_r6 = nz_out_r >>> 6;
   wire  signed [17:0] nz_z  = einc[13] ? ((nz_r6 <<< 6) + (nz_r6 <<< 2))
@@ -530,7 +527,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   wire signed [17:0] nz_old_pre =
       $signed({{2{s_old_phase[15]}}, s_old_phase})
       + (nz_tog ? {mx_old[16], mx_old} : 18'sd0);
-  wire signed [15:0] nz_old_next = clamp_noise(nz_old_pre);
+  wire signed [15:0] nz_old_next = noise_clamp(nz_old_pre);
   wire signed [17:0] nz_old_r6 = nz_old_out_r >>> 6;
   wire signed [17:0] nz_old_z = s_old_inc[13]
       ? ((nz_old_r6 <<< 6) + (nz_old_r6 <<< 2))

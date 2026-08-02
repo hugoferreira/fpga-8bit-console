@@ -23,7 +23,7 @@ Sections:
   aram  - page-local audio-upload address and range decode
   timing - parameter-derived fractional sample-accumulator width
   pitch - signed pitch-sum bounds and prefix saturation
-  noise - signed noise-phase clamp prefix
+  noise - signed-prefix saturation at the exact +/-6143 audio bounds
   bound - exact worst-case interval propagation through the whole
           pipeline (comb feedback to its fixpoint), and the int16 verdict
           for the mix bus (buffer SIZES live in tools/psg_buffers.py)
@@ -767,24 +767,24 @@ def sec_pitch() -> None:
 
 
 def sec_noise() -> None:
-    print("noise: signed-18 phase clamp at +/-6143")
+    print("noise: signed-prefix saturation at the exact +/-6143 bounds")
 
-    ok = True
+    clamp_ok = True
     for bits in range(1 << 18):
         value = bits - (1 << 18) if bits & (1 << 17) else bits
-        reference = 6143 if value > 6143 else -6143 if value < -6143 else value
-        pos_over = not (bits & (1 << 17)) and (
-            bool(bits & (0xf << 13)) or bool(bits & (1 << 12) and bits & (1 << 11)))
-        neg_under = bool(bits & (1 << 17)) and (
-            ((bits >> 13) & 0xf) != 0xf
-            or (not (bits & (1 << 12))
-                and (not (bits & (1 << 11)) or not (bits & 0x7ff))))
-        low16 = bits & 0xffff
-        candidate = 6143 if pos_over else -6143 if neg_under else (
-            low16 - (1 << 16) if low16 & (1 << 15) else low16)
-        ok &= candidate == reference
-    report("noise.clamp6143_prefix", ok,
-           "prefix form equals signed clamp for all 262,144 signed18 inputs")
+        reference = max(-6143, min(6143, value))
+        positive = not (bits & 0x20000)
+        over = positive and bool(bits & 0x1e000
+                                 or (bits & 0x1800) == 0x1800)
+        under = not positive and (
+            (bits & 0x1e000) != 0x1e000
+            or not (bits & 0x1000)
+            and (not (bits & 0x0800) or not (bits & 0x07ff))
+        )
+        candidate = 6143 if over else -6143 if under else value
+        clamp_ok &= candidate == reference
+    report("noise.clamp_prefix", clamp_ok,
+           "positive/negative prefixes equal clamp(v, -6143, 6143) for all signed18 values")
 
 
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
