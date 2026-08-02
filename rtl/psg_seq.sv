@@ -307,14 +307,14 @@ module psg_seq (input  bit   clk,
   wire [1:0] f_rev  = fdv[3:2];
   wire [1:0] f_damp = fdv[5:4];
 
-  function automatic logic [5:0] pclamp(input logic signed [8:0] v);
-    pclamp = (v < 9'sd0) ? 6'd0 : (v > 9'sd63) ? 6'd63 : 6'(v);
+  function automatic logic [5:0] pclamp(input logic signed [7:0] v);
+    pclamp = v[7] ? 6'd0 : v[6] ? 6'd63 : v[5:0];
   endfunction
 
-  wire signed [8:0] pc_raw = $signed({3'b0, w_cur_pitch})
-                           + $signed({3'b0, w_ins_pitch}) - 9'sd24;
-  wire signed [8:0] pp_raw = $signed({3'b0, w_prev_pitch})
-                           + $signed({3'b0, w_ins_prev_pitch}) - 9'sd24;
+  wire signed [7:0] pc_raw = $signed({2'b0, w_cur_pitch})
+                           + $signed({2'b0, w_ins_pitch}) - 8'sd24;
+  wire signed [7:0] pp_raw = $signed({2'b0, w_prev_pitch})
+                           + $signed({2'b0, w_ins_prev_pitch}) - 8'sd24;
   wire [5:0] e_pitch = ins_use ? pclamp(pc_raw) : w_cur_pitch;
   wire [5:0] e_prevp = ins_use ? pclamp(pp_raw) : w_prev_pitch;
 
@@ -331,10 +331,10 @@ module psg_seq (input  bit   clk,
 
   // Effect intermediates persist across shared multiply/divide requests.
   wire [12:0] pinc_q = crom_q[12:0];
-  wire signed [8:0] arp_raw =
-      e_insfx ? ($signed({3'b0, w_cur_pitch}) + $signed({3'b0, arp_p}) - 9'sd24)
-    : ins_use ? ($signed({3'b0, arp_p}) + $signed({3'b0, w_ins_pitch}) - 9'sd24)
-              :  $signed({3'b0, arp_p});
+  wire signed [7:0] arp_raw =
+      e_insfx ? ($signed({2'b0, w_cur_pitch}) + $signed({2'b0, arp_p}) - 8'sd24)
+    : ins_use ? ($signed({2'b0, arp_p}) + $signed({2'b0, w_ins_pitch}) - 8'sd24)
+              :  $signed({2'b0, arp_p});
   wire [5:0] e_arp = pclamp(arp_raw);
 
   always_comb begin

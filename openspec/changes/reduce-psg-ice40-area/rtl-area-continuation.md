@@ -23,18 +23,20 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H022.
+- Active hypothesis: none; H001--H003, H005, H007, and H022 accepted.
+- Next hypothesis ID: H023.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
+  `build/experiments/h022/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest decision: H007 accepted. Its 46-LUT4, 13-carry, and two-flop mapped
-  reductions are deterministic; the 57-LC placed improvement is positive but
-  remains just inside the known roughly 60-LC placement-sensitivity band and
-  is not claimed as robust.
+- Latest decision: H022 accepted. Its eight-bit live pitch sums and direct
+  sign/high-bit clamp decode trade 17 LUT4s for 14 deterministic mapped carry
+  cells versus H007. Seed-1 placement improves by one LC, which remains inside
+  the known roughly 60-LC placement-sensitivity band and is not claimed as
+  robust.
 - Latest rejected variant: H021 proves the 32-arm filter decode is wrapped
   base-3, but the existing table maps to 23 LUT4/no carries versus 28 LUT4/70
   carries for direct arithmetic and 26 LUT4/11 carries for staged thresholds.
@@ -67,17 +69,19 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   by 36 LCs. H009's shift token failed similarly; H005's `< 3` suffix remains
   rejected on fast-clock timing; H004, H006, and H008 remain rejected as
   indexed below.
-- Best accepted result: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs;
-  seed-1 7,392/7,680 LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- Best accepted result: 6,539 LUT4s, 1,539 carries, 1,476 flops, 14 EBRs;
+  seed-1 7,391/7,680 LCs; 150.53 MHz fast and 29.86 MHz PSG. H007 remains the
+  minimum-LUT4 accepted point at 6,522 LUT4s; H022 is retained for its simpler
+  bounded saturation contract, 14 fewer carries, and non-regressing placement.
 - Last updated: 2026-08-02.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H019 resume audit and record one new,
+- Next permitted experiment: perform the H023 resume audit and record one new,
   bounded, source-exact generic-RTL hypothesis outside the closed reciprocal-
   half-sum, gain-context, divider, detune, delayed-tick, multiplier, and R.84
   families.
-- Required verification for any accepted H019: focused algebraic or exhaustive
+- Required verification for any accepted H023: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -112,6 +116,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H019 | rejected | Keep per-operation state-memory selects: both whole-walk owner forms are exact and locally smaller, but globally add LUT4s/carries; the retained-OR form also fails to route promptly. |
 | H020 | rejected | Keep the redundant audio-RAM busy export: removing it saves one local LUT4 but adds three LUT4s/three carries globally and one placed LC. |
 | H021 | rejected | Keep the 32-arm filter table: its wrapped base-3 identity is exact, but ABC maps the table smaller than direct or staged arithmetic. |
+| H022 | accepted | Keep the eight-bit live pitch sums and exact sign/high-bit saturation decode; they trade 17 LUT4s for 14 carries and one non-robust placed LC without changing behavior. |
 
 ## Hypothesis H001
 
@@ -894,6 +899,66 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   consumer fields, mapper truth-table/arithmetic lowering, or constants-ROM
   port schedule changes materially.
 
+## Hypothesis H022
+
+- **ID:** H022.
+- **Hypothesis:** for signed nine-bit `v`, clamping to unsigned 0..63 is exactly
+  `v[8] ? 0 : |v[7:6] ? 63 : v[5:0]`. Spelling the sign and overflow prefixes
+  directly should remove two relational comparisons from each inlined pitch
+  clamp while making its saturation contract explicit.
+- **Scope:** `rtl/psg_seq.sv`, exhaustive all-512-input proof, isolated
+  registered synthesis of the three live clamp consumers, whole-PSG mapping,
+  and the complete H007 acceptance battery if mapping improves. No pitch value,
+  FSM phase/action, memory, EBR, R.84 executor, or tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H022 setup
+  through `d703d5e`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1
+  7,392 LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Changed condition versus H004:** H004 narrowed one unsigned aligned waveform
+  threshold which Yosys already pruned. H022 replaces both sides of a signed
+  saturating clamp at three sequencer consumers using the sign/overflow prefix;
+  it is a different cone and removes relational operators entirely.
+- **Change:** replace the two relational comparisons in `pclamp` with the exact
+  sign/high-bit decode at all three inlined consumers. Attribute the first
+  whole-PSG result with a second form that also narrows the three live raw sums
+  from nine to eight signed bits using their proved -24..102 range.
+- **Attribution:** the general nine-bit form reduces the isolated live cone
+  from 111 LUT4 / 37 carry / 18 FF to 96 / 24 / 18. Whole-PSG mapping instead
+  moves to 6,546 LUT4 / 1,540 carry / 1,476 FF / 14 EBR and 7,398 seed-1 LCs,
+  or +24 LUT4/-13 carry/+6 LCs versus H007. Timing passes at 150.53 MHz fast /
+  30.83 MHz PSG, but placement fails the no-regression gate. The live-range
+  eight-bit attribution form maps to 6,539 LUT4 / 1,539 carry / 1,476 FF / 14
+  EBR and 7,391 seed-1 LCs, or +17 LUT4/-14 carry/-1 LC versus H007. Timing
+  passes at 150.53 MHz fast / 29.86 MHz PSG. The carry improvement is
+  deterministic; the one-LC placement change is inside sensitivity and is not
+  claimed as robust.
+- **Result:** exhaustive proofs cover all 512 signed-nine inputs and all 4,096
+  live unsigned-six operand pairs, proving the live range -24..102 and exact
+  signed-eight saturation. The complete `tools/psg_hw_forms.py`, full/PREVIEW
+  lint, `make test-psg` (93 analysis tests and every structural test), and the
+  59/59 exact 18.75-MHz frozen-render regression passed. The `/4`, `/5`, and
+  `/6` demand tests retained 524 worst walk/sample clocks and tick results
+  5,757/7,654, 4,737/6,123, and 4,008/5,103 with zero lost writes, overruns, or
+  late flips. `make test-clocks` passed. All eight P.1 Celeste preview checks
+  at 1,275 and 159 clocks/sample passed with 36/38 voiced windows, or 95%, for
+  combined and masks 1/2/4; both P.2 recovery probes passed. Exact hardware
+  and PREVIEW SFX-10 renders were active and `click-v1` found zero clicks. The
+  five-frame Celeste smoke had 2,179/3,668 off-centre samples, range
+  -22,013..9,151, and 1,068 distinct levels. Strict OpenSpec validation and
+  `git diff --check` passed.
+- **Physical result:** canonical seed-1 mapping changed H007's 6,522 LUT4 /
+  1,553 carry / 1,476 FF / 14 EBR / 7,392 placed LCs to 6,539 LUT4 / 1,539
+  carry / 1,476 FF / 14 EBR / 7,391 placed LCs. Routed clocks changed from
+  134.70 and 30.95 MHz to 150.53 and 29.86 MHz; both remain above their 112.50
+  and 18.75-MHz constraints. The 14-carry reduction is deterministic; the
+  one-LC placement improvement is inside sensitivity and is not overclaimed.
+- **Decision:** accepted. It makes the proved -24..102 live range and
+  saturation contract explicit, removes the signed relational comparisons,
+  improves a deterministic mapped resource, does not regress placed LCs,
+  preserves every fidelity gate, and retains 14 EBRs. The 17-LUT4 tradeoff is
+  recorded rather than hidden.
+- **Repeat only if:** if rejected, retry only after pitch operand bounds/width,
+  saturation range, consumer count, or mapper signed-comparison lowering changes.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -945,12 +1010,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h020/candidate.{synth,pnr}.log` | canonical synthesis without exported `seq_frozen` | Whole-PSG map and seed-1 placement regress; rejected. |
 | `build/experiments/h021/filter-{proof.py,proof.log}` | exhaustive wrapped-base-3 proof | All 32 filter codes agree. |
 | `build/experiments/h021/isolated-{baseline,arith,staged}.log` | complete registered filter decoder/consumer synthesis | Both arithmetic forms are larger than the case table. |
+| `build/experiments/h022/clamp_proof.py` and `clamp-proof.log` | exhaustive signed clamp and live-range proof | All signed-nine inputs and live signed-eight sums agree. |
+| `build/experiments/h022/candidate-v2.{synth,pnr}.log` | canonical synthesis with the accepted eight-bit prefix clamp | Accepted mapping, seed-1 placement, and final routed timing. |
+| `build/experiments/h022/clicks/{hardware,preview}.wav` | exact SFX-10 renders at 22,050 Hz | `click-v1` zero-click evidence. |
+| `build/experiments/h022/celeste-smoke.ppm` | five-frame headless Celeste run | Boot and active/nonconstant audio smoke. |
 
 ## Handoff
 
-- Next allowed experiment: H022 only after its resume audit and hypothesis row
+- Next allowed experiment: H023 only after its resume audit and hypothesis row
   are recorded; it must use a new generic-RTL mechanism outside the closed
-  filter-decode arithmetic, audio-RAM busy, whole-walk ownership,
+  pitch-clamp, filter-decode arithmetic, audio-RAM busy, whole-walk ownership,
   half-sum/gain-context, and R.84 families.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
@@ -982,5 +1051,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H021's filter-code arithmetic is exact but locally larger than the current
   table in both measured forms; no production file changed and the family
   closes.
+  H022's exact bounded pitch clamp passes every proof, physical, fidelity,
+  timing, preview, recovery, click, and Celeste-smoke gate; no verification is
+  missing for the accepted RTL/proof changes.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.

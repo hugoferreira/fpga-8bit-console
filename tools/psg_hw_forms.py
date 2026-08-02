@@ -22,6 +22,7 @@ Sections:
   amp   - G, the detune boost and vibrato as pure shift-adds
   aram  - page-local audio-upload address and range decode
   timing - parameter-derived fractional sample-accumulator width
+  pitch - signed pitch-sum bounds and prefix saturation
   bound - exact worst-case interval propagation through the whole
           pipeline (comb feedback to its fixpoint), and the int16 verdict
           for the mix bus (buffer SIZES live in tools/psg_buffers.py)
@@ -721,10 +722,38 @@ def sec_timing() -> None:
            "exact invariant endpoints plus 20,000 clocks per configuration")
 
 
+def sec_pitch() -> None:
+    print("pitch: live signed-sum width and prefix saturation")
+
+    clamp_ok = True
+    for bits in range(1 << 9):
+        value = bits - (1 << 9) if bits & (1 << 8) else bits
+        reference = 0 if value < 0 else 63 if value > 63 else value
+        candidate = 0 if bits & 0x100 else 63 if bits & 0x0c0 else bits & 0x3f
+        clamp_ok &= candidate == reference
+    report("pitch.clamp_prefix", clamp_ok,
+           "sign/high-bit decode equals clamp(v, 0, 63) for all signed9 values")
+
+    live_ok = True
+    lo, hi = 0, 0
+    for a in range(64):
+        for b in range(64):
+            value = a + b - 24
+            lo = min(lo, value)
+            hi = max(hi, value)
+            bits = value & 0xff
+            candidate = (0 if bits & 0x80 else
+                         63 if bits & 0x40 else bits & 0x3f)
+            reference = 0 if value < 0 else 63 if value > 63 else value
+            live_ok &= candidate == reference
+    report("pitch.live_sum_width", live_ok and (lo, hi) == (-24, 102),
+           f"all 4,096 operand pairs stay in [{lo}, {hi}] and signed8 clamp exactly")
+
+
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
             "svc": sec_svc, "tzpow": sec_tzpow, "blend": sec_blend,
             "dq": sec_dq, "amp": sec_amp, "aram": sec_aram,
-            "timing": sec_timing, "bound": sec_bound,
+            "timing": sec_timing, "pitch": sec_pitch, "bound": sec_bound,
             "csd": sec_csd, "rom": sec_rom}
 
 
