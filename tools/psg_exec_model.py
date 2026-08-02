@@ -1533,7 +1533,7 @@ def validate_sample_relocated_commit_manifest(
 
     This deliberately does not replace the accepted image yet.  It proves a
     complete alternative instruction/address manifest first: every relocated
-    write remains an OP_WRITE, its action owns one literal destination, and
+    commit remains an OP_WRITE, its action owns one literal destination, and
     the instruction word primes the following fixed state_q source.  No
     action-side extra write is counted.
     """
@@ -1563,8 +1563,8 @@ def validate_sample_relocated_commit_manifest(
         SampleCommitSite(0x16, "STORE_12_22", 22, 22, "restart select"),
         SampleCommitSite(0x17, "STORE_8_18", 18, 18, "restart select"),
         SampleCommitSite(0x19, "STORE_9_19", 19, 19, "restart select"),
-        SampleCommitSite(0x24, "STORE_13_23", 23, 23, "W0"),
-        SampleCommitSite(0x25, "STORE_0_10", 10, 10, "W1"),
+        SampleCommitSite(0x1d, "CAP_W0", 23, 10, "W0"),
+        SampleCommitSite(0x1e, "CAP_W1", 10, 12, "W1"),
         SampleCommitSite(0x27, "STORE_1_11", 11, 11, "W5"),
         SampleCommitSite(0x28, "STORE_6_16", 16, 16, "W5"),
         SampleCommitSite(0x29, "STORE_7_17", 17, 17, "W5"),
@@ -1578,7 +1578,6 @@ def validate_sample_relocated_commit_manifest(
     next_prefetch = {
         0x13: 20, 0x14: 21, 0x15: 22, 0x16: 18,
         0x18: 19, 0x19: 23,
-        0x23: 23, 0x24: 10,
         0x26: 11, 0x27: 16, 0x28: 17, 0x29: 13,
         0x2c: 12, 0x2d: 17,
         0x3b: 14, 0x3c: 15,
@@ -1606,14 +1605,17 @@ def validate_sample_relocated_commit_manifest(
     set_word("cap_W75", 14)         # original filter high before W84
     set_word("cap_W84_wait_hold_0", 15)  # original filter low
 
-    # Every literal STORE action appears exactly once, and its fixed write
-    # destination remains the one named by that action even when ir.word is a
-    # next-read prefetch.  This is a 16-entry fixed decoder, not an index mux.
+    # Every fixed write action appears exactly once, and its destination stays
+    # the one named by that action even when ir.word is a next-read prefetch.
+    # W0/W1 retain their CAP action codes and gain literal destinations.  This
+    # is a 16-entry fixed decoder, not an index mux.
     action_destination = {
         action_by_name[f"STORE_{index}_{10 + index}"]: 10 + index
-        for index in range(14)
+        for index in range(1, 13)
     }
     action_destination.update({
+        action_by_name["CAP_W0"]: 23,
+        action_by_name["CAP_W1"]: 10,
         action_by_name["STORE_14_15"]: 15,
         action_by_name["STORE_15_14"]: 14,
     })
@@ -1668,9 +1670,9 @@ def validate_sample_relocated_commit_manifest(
     assert candidate_counts[int(Op.WRITE)] == 158
     assert sum(word != 0 for word in candidate) == 222
     changed = sum(a != b for a, b in zip(program, candidate))
-    assert changed == 40, changed
-    return ("H-D2 candidate: 16 fixed STORE actions at numbered finalization "
-            f"edges; 40 image words change; counts remain 222 words / 782 "
+    assert changed == 39, changed
+    return ("H-D2A candidate: 16 fixed write actions at numbered finalization "
+            f"edges; 39 image words change; counts remain 222 words / 782 "
             "clocks / 172 reads / 158 writes; accepted image untouched")
 
 

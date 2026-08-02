@@ -1636,6 +1636,18 @@ git history; do not repeat them without the recorded changed condition.
   words differ and owner one is untouched.  This is an address/lifetime
   candidate only: the accepted image remains byte-identical, and value
   construction without the Python record/trace oracle is still the next gate.
+- **R.84H-D2A finalization-edge correction:** the first value-lifetime audit
+  rejected keeping word23 and word10 until the W6-to-W15 waits: final noise
+  state and phase then overlap the W2/W3 wave peak and recreate the storage
+  gap D1 exposed.  The candidate now makes the existing W0 and W1 instructions
+  `OP_WRITE` while retaining their CAP action codes; W0 commits word23 and W1
+  commits word10 on the edges where those values become final.  The displaced
+  later instructions revert to elapsed HOLDs.  No action code, write, clock,
+  scratch word or state bit is added, and the 222/782/172/158 invariants plus
+  every fixed `state_q` source still pass.  The corrected owner-zero candidate
+  differs in 39 words and contains sixteen fixed write actions; W0/W1 are no
+  longer literal STORE actions.  This corrected candidate, not the earlier
+  W6-to-W15 placement, is the input to the no-mirror value executor.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
