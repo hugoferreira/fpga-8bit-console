@@ -95,8 +95,11 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   wire [15:0] tramp = tilt_tail ? (16'd65535 - wx_r) : wx_r;
 
   wire [17:0] t_m3 = {2'b0, tramp} + {1'b0, tramp, 1'b0};
-  wire [6:0] t_ceil = tilt_hi ? 7'(({1'b0, tramp} + 17'd1023) >> 10)
-                              : 7'(({1'b0, tramp} + 17'd2047) >> 11);
+  // ceil(tramp / 2^N) is the high word plus one for a non-zero remainder.
+  // Keep that narrow boundary explicit instead of adding across all 16 bits.
+  wire [6:0] t_ceil = tilt_hi
+      ? {1'b0, tramp[15:10]} + {6'b0, |tramp[9:0]}
+      : {2'b0, tramp[15:11]} + {6'b0, |tramp[10:0]};
   wire [18:0] t_pre = (tilt_hi ? {t_m3, 1'b0} : {1'b0, t_m3})
                     - {12'b0, t_ceil};
 
