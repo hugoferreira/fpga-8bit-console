@@ -11,6 +11,8 @@ outside this proof.
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -18,6 +20,44 @@ from typing import Any, Callable, Iterable
 
 
 Json = dict[str, Any]
+
+IMAGE = Path(__file__).resolve().parents[1] / "rtl/psg_exec.hex"
+POOL_CONTAINERS = {"A": 18, "B": 18, "N": 17, "O": 17,
+                   "Q": 16, "T": 6, "C": 7, "I": 6, "D": 3}
+D1_PACKING_LAYOUT_SHA256 = \
+    "242bfc8183feab4d80e81e10f04fec297bbdbffa6a358f2587aa5bd5c7f3efb0"
+D1_LIVE_LAYOUT_SHA256 = \
+    "55bb4b046212d20d8074bfcd074883c4a53e702d99e63fd91b43490b9f2c2075"
+D1_SOURCE_PLAN_SHA256 = \
+    "c5d274619488bb26e647ed5dd9a2b7291a37bb0856d1386304695fbaf5028dac"
+
+# A typed state-q read is a legal D1 source only when it arrives from outside
+# the unproved owner-zero write graph at the exact consuming edge.  Presently
+# that is true only for the active parameter-bank damp field.
+LIVE_STATE_Q_SOURCES = {
+    ("built-in", "damp"): ((26, 30), 12, 2, 0x37),
+    ("wavetable", "damp"): ((26, 30), 12, 2, 0x37),
+}
+
+# Root joins close a lifetime only when the observed transaction consumer is
+# exactly the lifetime birth edge.  Anything later requires an independently
+# bound physical relocation.
+LIVE_ROOT_SOURCES = {
+    ("built-in", "live_gain_limb"): ("mul_live_w4", 0),
+    ("built-in", "current_arm"): ("mul_live_recip", 0),
+    ("built-in", "old_gain_limb"): ("mul_old_w27", 0),
+    ("wavetable", "live_gain_limb"): ("mul_live_w27", 0),
+}
+
+# These are literal relocations, but they close only when the predecessor is
+# itself bound.  Keeping blocked relocations explicit prevents capacity-only
+# rows from acquiring invented sources.
+LIVE_PHYSICAL_SOURCES = {
+    ("wavetable", "final_nz_phase"):
+        ("wavetable", "pre_final_nz_phase", 0),
+    ("wavetable", "refresh"): ("wavetable", "pre_refresh", 0),
+    ("wavetable", "live_gain"): ("wavetable", "pre_live_gain", 0),
+}
 
 FIXED_GUARD_FIELDS = {
     "guard_wavetable", "guard_reverb", "guard_audible", "guard_blend",
@@ -62,6 +102,526 @@ def forbidden_manifest_fields(value: Any, path: str = "$") -> list[str]:
             forbidden.extend(forbidden_manifest_fields(child,
                                                         f"{path}[{index}]"))
     return forbidden
+
+
+def source_plan() -> Json:
+    return {
+        "live_state_q": [
+            {"path": path, "field": field, "words": list(words),
+             "lsb": lsb, "width": width, "pc": pc}
+            for (path, field), (words, lsb, width, pc)
+            in sorted(LIVE_STATE_Q_SOURCES.items())
+        ],
+        "live_roots": [
+            {"path": path, "field": field, "root": root, "lsb": lsb}
+            for (path, field), (root, lsb)
+            in sorted(LIVE_ROOT_SOURCES.items())
+        ],
+        "live_physical": [
+            {"path": path, "field": field, "source_path": source_path,
+             "source_field": source_field, "lsb": lsb}
+            for (path, field), (source_path, source_field, lsb)
+            in sorted(LIVE_PHYSICAL_SOURCES.items())
+        ],
+    }
+
+
+def validate_source_plan(plan: Json) -> None:
+    digest = hashlib.sha256(json.dumps(
+        plan, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    require(digest == D1_SOURCE_PLAN_SHA256,
+            "D1 structured source plan changed")
+
+
+def action_occurrence(manifest: Json, pc: int) -> tuple[Json, Json]:
+    matches = [
+        (action, occurrence)
+        for action in manifest["actions"]
+        for occurrence in action["occurrences"]
+        if occurrence["pc"] == pc
+    ]
+    require(len(matches) == 1, f"PC {pc:02x} has no unique action occurrence")
+    return matches[0]
+
+
+def state_read_action(manifest: Json, word: int) -> str:
+    matches = [
+        action["name"] for action in manifest["actions"]
+        if action["source_binding"].get("event") == "state_read"
+        and word in action["source_binding"].get("words", [])
+    ]
+    require(len(matches) == 1, f"state word {word} has no unique read action")
+    return matches[0]
+
+
+def q_source_at_pc(manifest: Json, pc: int) -> int:
+    actions = [
+        occurrence["q_source"]
+        for action in manifest["actions"]
+        for occurrence in action["occurrences"]
+        if occurrence["pc"] == pc
+    ]
+    if actions:
+        require(len(actions) == 1, f"PC {pc:02x} has multiple action origins")
+        return actions[0]
+    holds = [
+        row["q_source"] for row in manifest["changed_pc_bindings"]
+        if row["pc"] == pc
+        and row["source_binding"].get("event") == "fixed_hold"
+    ]
+    require(len(holds) == 1, f"PC {pc:02x} has no explicit q origin")
+    return holds[0]
+
+
+def read_origin_at_pc(manifest: Json, pc: int,
+                      words: tuple[int, ...]) -> Json:
+    origins: list[Json] = []
+    for action in manifest["actions"]:
+        for occurrence in action["occurrences"]:
+            if occurrence["pc"] != pc - 1:
+                continue
+            physical = occurrence.get("physical_read_words",
+                                      [occurrence.get("word")])
+            if set(words) <= set(physical):
+                origins.append({"pc": occurrence["pc"],
+                                "source": action["name"],
+                                "physical_read_words": physical})
+    for row in manifest["changed_pc_bindings"]:
+        if row["pc"] == pc - 1 \
+                and row["source_binding"].get("event") == "fixed_hold" \
+                and row["word"] in words:
+            origins.append({"pc": row["pc"], "source": "fixed_hold",
+                            "physical_read_words": [row["word"]]})
+    require(len(origins) == 1,
+            f"PC {pc:02x} has no unique preceding q read for {words}")
+    return origins[0]
+
+
+def validate_pool_requirements(requirements: Json, manifest: Json) -> None:
+    require(requirements.get("schema") == "psg_exec_pool_requirements_v2",
+            "wrong D1 requirements schema")
+    require(requirements.get("claim") == "requirements-and-source-catalog-only",
+            "D1 requirements overclaim their boundary")
+    require(requirements.get("containers") == POOL_CONTAINERS,
+            "D1 container set changed")
+    require(requirements.get("counts") == {
+        "packing_rows": 15, "built_fields": 32, "wavetable_fields": 35,
+        "fold_fields": 11, "roots": 30, "root_groups": 27,
+        "bound_fields": 0,
+    }, "D1 requirement counts changed")
+    encoded = json.dumps(requirements, sort_keys=True)
+    require("source_binding" not in encoded,
+            "D1 requirements already carry a source binding")
+    require(not forbidden_manifest_fields(requirements),
+            "D1 requirements carry a semantic value field")
+
+    rows = requirements["packing_rows"]
+    require(len(rows) == 15 and len({row["name"] for row in rows}) == 15,
+            "D1 packing row set changed")
+    packing_layout = [
+        {key: row[key] for key in
+         ("name", "capacities", "pieces", "logical_widths")}
+        for row in rows
+    ]
+    packing_digest = hashlib.sha256(json.dumps(
+        packing_layout, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    require(requirements.get("packing_layout_sha256") == packing_digest,
+            "D1 packing layout digest does not match its rows")
+    require(packing_digest == D1_PACKING_LAYOUT_SHA256,
+            "D1 packing layout differs from the accepted literal slices")
+    for row in rows:
+        require(row.get("source_status") == "unbound",
+                f"packing row {row['name']} is not explicitly unbound")
+        require(sum(row["capacities"].values()) == row["capacity"],
+                f"packing row {row['name']} capacity mismatch")
+        occupied: set[tuple[str, int]] = set()
+        logical: dict[str, set[int]] = defaultdict(set)
+        for piece in row["pieces"]:
+            container = piece["container"]
+            width = piece["width"]
+            require(container in row["capacities"] and width > 0,
+                    f"packing row {row['name']} has an invalid piece")
+            require(piece["container_lsb"] + width
+                    <= row["capacities"][container],
+                    f"packing row {row['name']} piece exceeds {container}")
+            for bit in range(width):
+                physical = (container, piece["container_lsb"] + bit)
+                require(physical not in occupied,
+                        f"packing row {row['name']} aliases {physical}")
+                occupied.add(physical)
+                logical[piece["field"]].add(piece["field_lsb"] + bit)
+        require(len(occupied) == row["used"],
+                f"packing row {row['name']} used-bit count changed")
+        require(set(logical) == set(row["logical_widths"]),
+                f"packing row {row['name']} logical field set changed")
+        for field, width in row["logical_widths"].items():
+            require(logical[field] == set(range(width)),
+                    f"packing row {row['name']} field {field} has a gap")
+
+    fields = requirements["live_fields"]
+    require(len(fields) == 78
+            and len({(row["path"], row["name"]) for row in fields}) == 78,
+            "D1 live-field set changed")
+    require(Counter(row["path"] for row in fields)
+            == Counter({"built-in": 32, "wavetable": 35, "fold": 11}),
+            "D1 live-field path counts changed")
+    live_layout = [
+        {key: row[key] for key in
+         ("path", "name", "width", "pieces", "born", "dead")}
+        for row in fields
+    ]
+    live_digest = hashlib.sha256(json.dumps(
+        live_layout, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    require(requirements.get("live_layout_sha256") == live_digest,
+            "D1 live layout digest does not match its fields")
+    require(live_digest == D1_LIVE_LAYOUT_SHA256,
+            "D1 live layout differs from the accepted slices/lifetimes")
+    for row in fields:
+        require(row.get("source_status") == "unbound",
+                f"live field {row['path']}:{row['name']} is not unbound")
+        require(sum(piece["width"] for piece in row["pieces"]) == row["width"],
+                f"live field {row['path']}:{row['name']} width mismatch")
+        occupied: set[tuple[str, int]] = set()
+        for piece in row["pieces"]:
+            container = piece["container"]
+            require(container in POOL_CONTAINERS
+                    and piece["lsb"] + piece["width"]
+                    <= POOL_CONTAINERS[container],
+                    f"live field {row['path']}:{row['name']} bad slice")
+            for bit in range(piece["lsb"], piece["lsb"] + piece["width"]):
+                key = (container, bit)
+                require(key not in occupied,
+                        f"live field {row['path']}:{row['name']} aliases {key}")
+                occupied.add(key)
+
+    catalog = requirements["source_catalog"]
+    roots = {row["name"]: row for row in manifest["roots"]}
+    require(len(catalog) == len(roots) == 30
+            and len({row["name"] for row in catalog}) == 30,
+            "D1 source catalog set changed")
+    for row in catalog:
+        require(row["name"] in roots,
+                f"D1 source {row['name']} has no C2-C-C root")
+        root = roots[row["name"]]
+        signature = {
+            "name": root["name"], "group": root["group"],
+            "width": root["width"], "owner": root["owner"],
+            "producer_event": root["source_binding"]["producer_event"],
+            "consumer_event": root["source_binding"]["consumer_event"],
+        }
+        require({key: row[key] for key in signature} == signature,
+                f"D1 source {row['name']} matches a name but not its root")
+        transaction_bound = root["source_binding"].get("transaction") is not None
+        require(row["transaction_bound_candidate"] == transaction_bound,
+                f"D1 source {row['name']} transaction class changed")
+
+
+def state_q_source(manifest: Json, words: tuple[int, ...], lsb: int,
+                   width: int, source_pc: int | None = None) -> Json:
+    capacity = 32 if words == (48, 49) else 16
+    require(words and 0 <= lsb and 0 < width <= capacity
+            and lsb + width <= capacity,
+            "invalid state-q source slice")
+    if words == (26, 30):
+        action, occurrence = action_occurrence(manifest, 0x36)
+        require(action["name"] == "CAP_W51"
+                and occurrence.get("physical_read_words") == [26, 30],
+                "active parameter-bank state-q origin changed")
+        issued_by = ["CAP_W51"]
+        slices = [
+            {"word": word, "lsb": lsb, "field_lsb": 0, "width": width}
+            for word in words
+        ]
+        selection = "active_parameter_bank"
+    elif words == (48, 49):
+        q_words = {
+            occurrence["q_source"]
+            for action in manifest["actions"]
+            if action["family"] == "fold"
+            for occurrence in action["occurrences"]
+        }
+        require({48, 49} <= q_words, "fold state-q words are not in the stream")
+        issued_by = ["FOLD_PRIME", "FOLD_A_LO", "FOLD_B_LO"]
+        slices = [
+            {"word": 48, "lsb": 0, "field_lsb": 0, "width": 16},
+            {"word": 49, "lsb": 0, "field_lsb": 16, "width": 2},
+        ]
+        selection = "little_endian_composition"
+    else:
+        require(len(words) == 1, "unsupported multiword state-q source")
+        issued_by = ([read_origin_at_pc(manifest, source_pc, words)["source"]]
+                     if source_pc is not None
+                     else [state_read_action(manifest, words[0])])
+        slices = [{"word": words[0], "lsb": lsb, "field_lsb": 0,
+                   "width": width}]
+        selection = "single_word"
+    if source_pc is not None:
+        expected = words[0]
+        require(q_source_at_pc(manifest, source_pc) == expected,
+                f"PC {source_pc:02x} does not consume q{expected}")
+        origin = read_origin_at_pc(manifest, source_pc, words)
+    else:
+        origin = None
+    return {
+        "kind": "state_q_slice",
+        "selection": selection,
+        "slices": slices,
+        "total_width": width,
+        "issued_by": issued_by,
+        "source_pc": source_pc,
+        "read_origin": origin,
+    }
+
+
+def root_source(manifest: Json, name: str, lsb: int, width: int,
+                expected_consumer_event: str) -> Json:
+    matches = [row for row in manifest["roots"] if row["name"] == name]
+    require(len(matches) == 1, f"root {name} is not unique")
+    root = matches[0]
+    binding = root["source_binding"]
+    observation = binding["producer_observation"]
+    require(binding.get("transaction") is not None,
+            f"root {name} is not transaction-bound")
+    require(binding["consumer_event"] == expected_consumer_event,
+            f"root {name} is consumed at {binding['consumer_event']}, not "
+            f"lifetime birth {expected_consumer_event}")
+    require(lsb >= 0 and width > 0 and lsb + width <= root["width"]
+            and lsb + width <= observation["physical_width"],
+            f"root {name} cannot supply slice {lsb}+:{width}")
+    return {
+        "kind": "root_slice",
+        "root": name,
+        "group": root["group"],
+        "lsb": lsb,
+        "width": width,
+        "producer_event": binding["producer_event"],
+        "consumer_event": binding["consumer_event"],
+        "producer_observation": observation,
+        "transaction": binding["transaction"],
+    }
+
+
+def packing_field_rows(requirements: Json, manifest: Json) -> list[Json]:
+    result: list[Json] = []
+    for row in requirements["packing_rows"]:
+        pieces_by_field: dict[str, list[Json]] = defaultdict(list)
+        for piece in row["pieces"]:
+            pieces_by_field[piece["field"]].append({
+                "container": piece["container"],
+                "container_lsb": piece["container_lsb"],
+                "field_lsb": piece["field_lsb"],
+                "width": piece["width"],
+            })
+        for field, width in row["logical_widths"].items():
+            output: Json = {
+                "id": f"packing:{row['name']}:{field}",
+                "row": row["name"], "field": field, "width": width,
+                "pieces": pieces_by_field[field],
+            }
+            # A source value observed before this snapshot does not prove the
+            # unimplemented enabled-edge transport into these literal pieces.
+            output["source_status"] = "unmatched"
+            output["unmatched_reason"] = "physical_transition_unproved"
+            result.append(output)
+    return result
+
+
+def live_field_rows(requirements: Json, manifest: Json) -> list[Json]:
+    fields = {(row["path"], row["name"]): row
+              for row in requirements["live_fields"]}
+    result: list[Json] = []
+    by_key: dict[tuple[str, str], Json] = {}
+    for requirement in requirements["live_fields"]:
+        key = (requirement["path"], requirement["name"])
+        output: Json = {
+            "id": f"lifetime:{key[0]}:{key[1]}",
+            "path": key[0], "field": key[1],
+            "width": requirement["width"],
+            "pieces": requirement["pieces"],
+            "born": requirement["born"], "dead": requirement["dead"],
+        }
+        if key in LIVE_STATE_Q_SOURCES:
+            words, lsb, width, pc = LIVE_STATE_Q_SOURCES[key]
+            require(width == requirement["width"],
+                    f"state-q width changed for {key}")
+            output["source_status"] = "bound"
+            output["source_binding"] = state_q_source(
+                manifest, words, lsb, width, pc)
+        elif key in LIVE_ROOT_SOURCES:
+            root, lsb = LIVE_ROOT_SOURCES[key]
+            output["source_status"] = "bound"
+            output["source_binding"] = root_source(
+                manifest, root, lsb, requirement["width"],
+                requirement["born"])
+        else:
+            output["source_status"] = "unmatched"
+            output["unmatched_reason"] = "no_structured_source_binding"
+        result.append(output)
+        by_key[key] = output
+
+    for target, (source_path, source_name, source_lsb) \
+            in LIVE_PHYSICAL_SOURCES.items():
+        source = (source_path, source_name)
+        require(target in fields and source in fields,
+                f"physical relocation endpoint is missing: {target} <- {source}")
+        target_row = by_key[target]
+        source_row = by_key[source]
+        require(fields[source]["dead"] == fields[target]["born"],
+                f"physical relocation edge is not adjacent: {target} <- {source}")
+        require(source_lsb + fields[target]["width"] <= fields[source]["width"],
+                f"physical relocation slice is too narrow: {target} <- {source}")
+        if source_row["source_status"] == "bound":
+            target_row["source_status"] = "bound"
+            target_row.pop("unmatched_reason", None)
+            target_row["source_binding"] = {
+                "kind": "physical_slice",
+                "source": source_row["id"],
+                "lsb": source_lsb,
+                "width": fields[target]["width"],
+            }
+        else:
+            target_row["unmatched_reason"] = "preceding_physical_slice_unmatched"
+            target_row["blocked_by"] = source_row["id"]
+    return result
+
+
+def build_pool_source_inventory(requirements: Json, manifest: Json) -> Json:
+    validate_pool_requirements(requirements, manifest)
+    validate_source_plan(source_plan())
+    packing = packing_field_rows(requirements, manifest)
+    lifetimes = live_field_rows(requirements, manifest)
+    catalog = [
+        {
+            "name": row["name"], "group": row["group"],
+            "width": row["width"], "owner": row["owner"],
+            "producer_event": row["producer_event"],
+            "consumer_event": row["consumer_event"],
+            "source_status": "joined",
+        }
+        for row in requirements["source_catalog"]
+    ]
+    bound_packing = sum(row["source_status"] == "bound" for row in packing)
+    bound_lifetimes = sum(row["source_status"] == "bound" for row in lifetimes)
+    return {
+        "schema": "psg_exec_pool_source_inventory_v1",
+        "claim": "structured-source-completeness-inventory-only",
+        "containers": requirements["containers"],
+        "packing_fields": packing,
+        "live_fields": lifetimes,
+        "source_catalog": catalog,
+        "counts": {
+            "packing_rows": len(requirements["packing_rows"]),
+            "packing_fields": len(packing),
+            "bound_packing_fields": bound_packing,
+            "unmatched_packing_fields": len(packing) - bound_packing,
+            "live_fields": len(lifetimes),
+            "bound_live_fields": bound_lifetimes,
+            "unmatched_live_fields": len(lifetimes) - bound_lifetimes,
+            "joined_roots": len(catalog),
+        },
+    }
+
+
+def validate_pool_source_inventory(inventory: Json, requirements: Json,
+                                   manifest: Json) -> None:
+    require(inventory["schema"] == "psg_exec_pool_source_inventory_v1",
+            "wrong D1 source-inventory schema")
+    require(not forbidden_manifest_fields(inventory),
+            "D1 source inventory carries a semantic value")
+    for row in inventory["packing_fields"] + inventory["live_fields"]:
+        require(row["source_status"] in {"bound", "unmatched"},
+                f"D1 requirement {row['id']} has no source classification")
+        if row["source_status"] == "bound":
+            binding = row["source_binding"]
+            require(binding["kind"] in {
+                "state_q_slice", "root_slice", "physical_slice"},
+                f"D1 requirement {row['id']} has a forbidden source kind")
+            text = json.dumps(binding, sort_keys=True)
+            require(not any(name in text for name in
+                            ("record_commit", "state_wd", "final_words")),
+                    f"D1 requirement {row['id']} uses a final legacy value")
+        else:
+            require("source_binding" not in row and row["unmatched_reason"],
+                    f"D1 requirement {row['id']} hides an unmatched source")
+    expected = build_pool_source_inventory(requirements, manifest)
+    require(inventory == expected, "D1 source inventory differs from its inputs")
+
+
+def check_pool_mutations(requirements: Json, manifest: Json,
+                         inventory: Json) -> int:
+    convictions = 0
+
+    def reject(action: Callable[[], None], label: str) -> None:
+        nonlocal convictions
+        rejected = False
+        try:
+            action()
+        except AssertionError:
+            rejected = True
+        require(rejected, f"D1 mutation survived: {label}")
+        convictions += 1
+
+    missing = copy.deepcopy(requirements)
+    missing["packing_rows"].pop()
+    reject(lambda: validate_pool_requirements(missing, manifest), "missing row")
+
+    wrong_slice = copy.deepcopy(requirements)
+    piece = next(
+        piece for row in wrong_slice["packing_rows"]
+        if row["name"] == "builtin ordinary PC1c"
+        for piece in row["pieces"] if piece["field"] == "phase2_msb"
+    )
+    piece["container"] = "D"
+    piece["container_lsb"] = 0
+    reject(lambda: validate_pool_requirements(wrong_slice, manifest),
+           "wrong literal slice")
+
+    wrong_live = copy.deepcopy(requirements)
+    live = next(row for row in wrong_live["live_fields"]
+                if row["path"] == "built-in"
+                and row["name"] == "live_gain_limb")
+    live["pieces"][0]["container"] = "O"
+    reject(lambda: validate_pool_requirements(wrong_live, manifest),
+           "wrong live slice")
+
+    final_value = copy.deepcopy(inventory)
+    bound = next(row for row in final_value["live_fields"]
+                 if row["source_status"] == "bound")
+    bound["source_binding"] = {"kind": "final_value", "signal": "state_wd"}
+    reject(lambda: validate_pool_source_inventory(final_value, requirements,
+                                                  manifest), "final value")
+
+    false_root = copy.deepcopy(requirements)
+    false_root["source_catalog"][0]["group"] += "-wrong"
+    reject(lambda: build_pool_source_inventory(false_root, manifest),
+           "false root-name match")
+
+    wrong_plan = source_plan()
+    wrong_plan["live_roots"][0]["root"] = "noise_old_issue"
+    reject(lambda: validate_source_plan(wrong_plan), "wrong root target")
+    require(convictions == 6, "D1 mutation conviction count changed")
+    return convictions
+
+
+def write_pool_source_inventory(path: Path, inventory: Json,
+                                inputs: tuple[Path, ...]) -> None:
+    output = path.resolve()
+    require(output != IMAGE.resolve(),
+            "D1 source inventory must not replace rtl/psg_exec.hex")
+    for input_path in inputs:
+        source = input_path.resolve()
+        require(output != source, "D1 source inventory aliases an input")
+        if output.exists() and source.exists():
+            require(not output.samefile(source),
+                    "D1 source inventory hard-links an input")
+    encoded = json.dumps(inventory, sort_keys=True, indent=2) + "\n"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(encoded)
+    require(output.read_text() == encoded,
+            "D1 source inventory readback changed")
 
 
 def pair_trace(rows: list[Json], key_fields: tuple[str, ...]) \
@@ -498,11 +1058,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mul", type=Path, required=True)
     parser.add_argument("--dq", type=Path, required=True)
     parser.add_argument("--execwave", type=Path, required=True)
+    parser.add_argument("--pool-requirements", type=Path)
+    parser.add_argument("--pool-out", type=Path)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    require((args.pool_requirements is None) == (args.pool_out is None),
+            "--pool-requirements and --pool-out must be used together")
     manifest = load_json(args.manifest)
     legacy = load_jsonl(args.legacy)
     mul = load_jsonl(args.mul)
@@ -514,10 +1078,22 @@ def main() -> int:
     result.update(check_multiplier(mul))
     result.update(check_dq(dq))
     result.update(check_execwave(execwave))
+    if args.pool_requirements is not None:
+        requirements = load_json(args.pool_requirements)
+        inventory = build_pool_source_inventory(requirements, manifest)
+        validate_pool_source_inventory(inventory, requirements, manifest)
+        result["pool_mutations"] = check_pool_mutations(
+            requirements, manifest, inventory)
+        write_pool_source_inventory(
+            args.pool_out, inventory,
+            (args.manifest, args.pool_requirements, args.legacy,
+             args.mul, args.dq, args.execwave))
+        result.update(inventory["counts"])
     print("psg_exec_bindings: PASS "
           + " ".join(f"{key}={value}" for key, value in result.items()))
-    print("boundary: structural source contract only; no semantic values, "
-          "adapter equivalence, generic integration, synthesis or area claim")
+    print("boundary: structural source/source-completeness inventory only; "
+          "no semantic values, pool transitions, adapter equivalence, "
+          "generic integration, synthesis or area claim")
     return 0
 
 

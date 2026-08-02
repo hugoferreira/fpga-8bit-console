@@ -25,6 +25,7 @@ cited as whole-PSG behavioral, render, schedule or area equivalence.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import runpy
@@ -135,7 +136,7 @@ class D2FPackingRow:
     used: int
     capacity: int
     capacities: tuple[tuple[str, int], ...]
-    assignments: tuple[tuple[str, tuple[tuple[str, int], ...]], ...]
+    pieces: tuple[tuple[str, str, int, int, int], ...]
     logical_widths: tuple[tuple[str, int], ...]
 
 
@@ -3584,8 +3585,7 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
             used=used,
             capacity=sum(capacities.values()),
             capacities=tuple(capacities.items()),
-            assignments=tuple((container, tuple(fields))
-                              for container, fields in assignments.items()),
+            pieces=tuple(pieces),
             logical_widths=tuple(sorted(field_widths.items())),
         )
 
@@ -6341,13 +6341,17 @@ def write_sample_d1_requirement_manifest(
             "used": row.used,
             "capacity": row.capacity,
             "capacities": dict(row.capacities),
-            "assignments": {
-                container: [
-                    {"field": field_name, "width": width}
-                    for field_name, width in assignments
-                ]
-                for container, assignments in row.assignments
-            },
+            "pieces": [
+                {
+                    "container": container,
+                    "container_lsb": container_lsb,
+                    "field": field_name,
+                    "field_lsb": field_lsb,
+                    "width": width,
+                }
+                for container, field_name, container_lsb, field_lsb, width
+                in row.pieces
+            ],
             "logical_widths": dict(row.logical_widths),
             "source_status": "unbound",
         }
@@ -6391,13 +6395,33 @@ def write_sample_d1_requirement_manifest(
     all_live = built_fields + wavetable_fields + fold_fields
     assert all(item.path in {"built-in", "wavetable", "fold"}
                for item in all_live)
+    packing_output = [packing_row(row) for row in packing_rows]
+    packing_layout = [
+        {key: row[key] for key in
+         ("name", "capacities", "pieces", "logical_widths")}
+        for row in packing_output
+    ]
+    packing_layout_sha256 = hashlib.sha256(json.dumps(
+        packing_layout, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    live_output = [live_field(item) for item in all_live]
+    live_layout = [
+        {key: row[key] for key in
+         ("path", "name", "width", "pieces", "born", "dead")}
+        for row in live_output
+    ]
+    live_layout_sha256 = hashlib.sha256(json.dumps(
+        live_layout, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
     manifest = {
-        "schema": "psg_exec_pool_requirements_v1",
+        "schema": "psg_exec_pool_requirements_v2",
         "claim": "requirements-and-source-catalog-only",
         "containers": {"A": 18, "B": 18, "N": 17, "O": 17,
                        "Q": 16, "T": 6, "C": 7, "I": 6, "D": 3},
-        "packing_rows": [packing_row(row) for row in packing_rows],
-        "live_fields": [live_field(item) for item in all_live],
+        "packing_layout_sha256": packing_layout_sha256,
+        "packing_rows": packing_output,
+        "live_layout_sha256": live_layout_sha256,
+        "live_fields": live_output,
         "source_catalog": root_rows,
         "counts": {
             "packing_rows": len(packing_rows),

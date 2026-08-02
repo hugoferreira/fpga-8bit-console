@@ -17,6 +17,17 @@ git history; do not repeat them without the recorded changed condition.
   112.5/18.75 MHz requirements.  Yosys maps **6,598 LUT4s, 1,597 carries and
   1,478 flops** at RTL fingerprint `343f28025ab0`.  The pre-correction R.81B
   7,421-LC number is historical and is no longer the integration baseline.
+- **Separate generic branches, not composed:** H023 plus the canonical H027
+  clamp spelling is recorded as `4166e9f` on `codex/psg-rtl-direct-here`:
+  6,550 LUT4s, 1,464 carries, 1,476 flops, 14 EBRs and 7,306 seed-1 placed
+  LCs at 146.69/32.99 MHz.  The independent continuation then accepted H030
+  / `a747493`, an exact trigger-length saturation decode, at 6,546 LUT4s,
+  1,462 carries, 1,476 flops, 14 EBRs and 7,297 seed-1 LCs at
+  133.69/31.08 MHz.  They change `psg_walk.sv` / `psg_seq.sv`, are not on
+  main or in this R.84 scratch tree, and earn no R.84 integration credit;
+  composition requires regenerated C2-C-C lineage plus the complete cadence,
+  render and physical battery.  H030 has been sent to the coordinating task
+  for branch adjudication.
 - Fresh preserved-scope accounting attributes 2,557 LUT4s / 564 flops /
   150 unpackable flops / one EBR to `u_walk`, and 1,972 / 535 / 256 / one
   EBR to `u_seq`.  Their joint floor is **4,935 cells**; the full netlist floor
@@ -27,11 +38,13 @@ git history; do not repeat them without the recorded changed condition.
   559 placed LCs at 68.24 MHz.  It proves G-F's normalized advance family plus
   the complete owner-zero address/data transaction boundary; it implements no
   sample service semantics and is not composed into the generic PSG.
-- **Scratch sample frontier:** accepted C2-C-B / `fe92b79` adds the generated
-  128-byte action/address map and isolated real-controller read/write override
-  proof.  It covers eighteen fixed writes plus CAP_W51 in both banks and all
-  slots, but deliberately carries synthetic write data and earns no generic
-  integration, synthesis or area credit.
+- **Scratch sample frontier:** accepted C2-C-C / `5c133aa` proves the live
+  legacy source/value boundary for 30 roots / 27 groups / 18 fixed writes.
+  D1-A / `bd6188a` materializes the physical-pool requirements, and the
+  current D1-B source audit proves that existing observations close none of
+  154 packing fields and only six of 78 path/fold lifetimes.  These are
+  proof-only foundations: no candidate transitions, write data, adapter,
+  generic integration, synthesis or area credit exists.
 - Exact generic gates at the last full checkpoint remain 530 walker + 272
   sequencer clocks in the 850-clock `/6` interval; 59/59 hardware renders
   byte-identical; P.1/P.2 and `click-v1` clean; full/PREVIEW lint, clocks and
@@ -3114,6 +3127,53 @@ git history; do not repeat them without the recorded changed condition.
   checkers, Python compilation, strict OpenSpec, production-image immutability
   and diff checks.  No proof-bench, adapter RTL, image, generic integration,
   synthesis, routing, timing, render or area claim is permitted.
+- **C2-C-D1-B result and decision:** accepted as a deterministic negative
+  source-completeness audit; its source-complete hypothesis is rejected.
+  Requirements schema `psg_exec_pool_requirements_v2` now gives every packing
+  piece explicit logical/physical offsets and anchors the complete packing
+  and live-field layouts at SHA-256 `242bfc81...` / `55bb4b04...`.  The
+  structured source plan is independently anchored at `c5d27461...`.  Two
+  complete 19,728,640-formula / 131,087-transaction model runs produce
+  byte-identical requirements SHA-256 `5a7b9809...`; two joins against the
+  accepted C2-C-C manifest `438d85a0...` and independent 400-sample traces
+  produce byte-identical source inventories SHA-256 `95619e61...`.
+  All **154/154 packing fields are explicitly unmatched** because no
+  enabled-edge physical transition exists.  Exactly **6/78 lifetimes bind**:
+  four exact-edge multiplier-root slices and the active-bank q26/q30 damp
+  slice on both paths; the other **72/78** remain explicit unmatched.  Thus
+  all 226 unclosed rows are visible rather than inferred from prose, names or
+  final legacy values.  Six in-memory convictions reject missing rows, wrong
+  packing/live slices, a final-value injection, a false root identity and a
+  wrong root target; an independent read-only audit also rejects attacks that
+  recompute the mutated self-digests or alter the source maps.  The accepted
+  production image remains SHA-256 `59b6f86e...`.  D1-B proves capacity and
+  observation are not the missing mechanism: the missing object is the
+  complete enabled-edge transition relation.  No D1-derived RTL hypothesis
+  exists yet.
+- **Next permitted C2-C-D1-C:** build a declarative edge-SSA obligation graph
+  over the complete owner-zero pool-affecting execution closure, not merely
+  the 44 changed PCs.  The accepted manifest has 114 action occurrences;
+  every executable occurrence must either name typed destination/source
+  slices, exact pre-edge operands, guard and one closed primitive kind, or be
+  proved retain-only with no source take or write.  Leaves may be only tagged
+  prior-address `state_q`, C2-C-C transaction roots, constants or preceding
+  physical slices.  Transport kinds are limited to retain, slice,
+  concatenate, extend and bit-preserving relocation.  Arithmetic/select/
+  clamp/filter work becomes a named primitive obligation, not an evaluated
+  Python expression.  Reject free-form expressions, trace-driven state
+  mutation, a sample loop, final legacy write inputs, incomplete action
+  coverage, guard gaps, multiple slice definitions, read-before-write and
+  hold drift.  D1-C remains structural only and may not compute a pool state
+  or candidate write value.
+- **Following C2-C-D1-D boundary:** prove each non-transport D1-C primitive
+  separately against the live `psg_walk.sv` cone with width, signedness,
+  truncation, pre/post-NBA edge phase and guard explicit.  Existing service
+  arithmetic stays a transaction-bound proved root rather than being
+  reimplemented.  Only after those certificates compose by induction through
+  unique/disjoint slice definitions, exhaustive guards, hold identity,
+  lifetime closure and all eighteen comparison-boundary writes may an RTL
+  substrate be hypothesized.  Any such RTL hypothesis must first be sent to
+  the coordinating optimization task.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
