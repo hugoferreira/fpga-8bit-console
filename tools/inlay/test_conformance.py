@@ -30,15 +30,19 @@ CELESTE_REFERENCE_DIR = (
     ROOT / "tests/inlay/reference/celeste-customasm"
 )
 CELESTE_MEMMAP = CELESTE_REFERENCE_DIR / "memmap.asm"
-EXPECTED_CELESTE_TYPED_OPERATIONS = 89
-EXPECTED_CELESTE_OVERLAY_OPERATIONS = 207
+EXPECTED_CELESTE_TYPED_OPERATIONS = 246
+EXPECTED_CELESTE_OVERLAY_OPERATIONS = 229
 EXPECTED_CELESTE_OFFSET_SETUPS = 0
-EXPECTED_CELESTE_SEMANTIC_OFFSETS = 97
-EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 129
-EXPECTED_CELESTE_COUNTED_SHIFTS = 11
+EXPECTED_CELESTE_SEMANTIC_OFFSETS = 127
+EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 171
+EXPECTED_CELESTE_COUNTED_SHIFTS = 18
+EXPECTED_CELESTE_ROM_SHA256 = (
+    "cc4776862ccaa444289cff9cda746996f04c3b3baa1aa4535f93a172a6a03af6"
+)
 READABLE_CELESTE_MODULES = {
     "audio.inlay.asm",
     "collide.inlay.asm",
+    "content.inlay.asm",
     "draw.inlay.asm",
     "fx.inlay.asm",
     "game.inlay.asm",
@@ -56,6 +60,7 @@ READABLE_CELESTE_MODULES = {
 EXPECTED_CELESTE_MODULES = {
     "audio.inlay.asm",
     "collide.inlay.asm",
+    "content.inlay.asm",
     "draw.inlay.asm",
     "fx.inlay.asm",
     "game.inlay.asm",
@@ -77,6 +82,7 @@ EXPECTED_CELESTE_SEMANTIC_INCLUDES = {
     "obj.inlay.asm",
     "collide.inlay.asm",
     "player.inlay.asm",
+    "content.inlay.asm",
     "room.inlay.asm",
     "draw.inlay.asm",
     "fx.inlay.asm",
@@ -616,38 +622,56 @@ def check_celeste_source_boundary(
 
 
 def check_generated_gfx_payload() -> None:
-    def payload(path: Path) -> bytes:
-        values: list[int] = []
-        for line in path.read_text(encoding="ascii").splitlines():
-            if not line.lstrip().startswith("#d8 "):
-                continue
-            values.extend(
-                int(value, 16)
-                for value in re.findall(r"\$([0-9A-Fa-f]{2})", line)
-            )
-        return bytes(values)
-
     current = CELESTE_DIR / "gfx.inlay.asm"
-    reference = CELESTE_REFERENCE_DIR / "gfx.asm"
-    if payload(current) != payload(reference):
-        raise AssertionError(
-            "generated Gfx payload changed from the Phase-A asset oracle"
-        )
     text = current.read_text(encoding="ascii")
+
+    def table(label: str, following: str) -> bytes:
+        match = re.search(
+            rf"^{label}:\n(.*?)^{following}", text,
+            re.MULTILINE | re.DOTALL,
+        )
+        if match is None:
+            raise AssertionError(f"Gfx table {label!r} is missing")
+        return bytes(
+            int(value, 16)
+            for value in re.findall(r"\$([0-9A-Fa-f]{2})", match.group(1))
+        )
+
     required = {
-        "draw_palette", "player_slots", "sheet", "tile_base", "tile_attr",
-        "upload_bytes",
-        "player_attr", "smoke_first", "smoke_attr", "hair_big",
-        "hair_small", "solid", "dot",
+        "upload_bytes", "hair_big", "hair_small", "solid", "dot",
+        "palette_1", "palette_6", "palette_7", "palette_8", "palette_11",
+        "palette_12", "palette_14", "palette_15", "draw_palette",
+        "sprite_base", "sprite_attr", "sheet", "tile_base", "tile_attr",
     }
     exports = set(re.findall(r"^\s*export ([a-z0-9_]+)$", text, re.MULTILINE))
-    missing = required - exports
-    if missing:
-        raise AssertionError(f"Gfx public manifest is missing {sorted(missing)}")
-    if "export smoke_stride" in text:
-        raise AssertionError("Gfx implementation stride must remain private")
-    if "export sheet_bytes" in text:
-        raise AssertionError("Gfx implementation byte count must remain private")
+    if exports != required:
+        raise AssertionError(
+            f"Gfx public manifest changed: expected {sorted(required)}, "
+            f"got {sorted(exports)}"
+        )
+
+    size_match = re.search(r"^\s*sheet_bytes = (\d+)$", text, re.MULTILINE)
+    if size_match is None:
+        raise AssertionError("Gfx sheet byte count is missing")
+    sheet = table("sheet", "; tile id -> pattern slot base")
+    sheet_bytes = int(size_match.group(1))
+    if len(sheet) != sheet_bytes or sheet_bytes > 2048 or sheet_bytes % 8:
+        raise AssertionError(
+            f"Gfx sheet payload is inconsistent: declared {sheet_bytes}, "
+            f"encoded {len(sheet)}"
+        )
+    for label, following, expected in (
+        ("draw_palette", "; Cart sprite id", 16),
+        ("sprite_base", "; Cart sprite id -> map", 128),
+        ("sprite_attr", "; The sheet image", 128),
+        ("tile_base", "; tile id -> map attribute", 128),
+        ("tile_attr", "end", 128),
+    ):
+        actual = len(table(label, following))
+        if actual != expected:
+            raise AssertionError(
+                f"Gfx table {label!r} has {actual} bytes, expected {expected}"
+            )
 
 
 def expect_celeste_boundary_failure(directory: Path, fragment: str) -> None:
@@ -861,7 +885,7 @@ def check_objects_design() -> None:
     if text.count("namespace Objects\n") != 1:
         raise AssertionError("obj.inlay.asm must own one Objects namespace")
     expected_exports = {
-        "pointer", "clear", "allocate", "dispatch", "spawn_smoke",
+        "pointer", "clear", "allocate", "spawn_marker", "dispatch", "spawn_smoke",
         "destroy", "update_all", "draw_all",
         "flag_collideable", "flag_solids", "slot_count",
         "slot", "spawn_type", "spawn_x", "spawn_y", "spawn_slot",
@@ -876,6 +900,8 @@ def check_objects_design() -> None:
         )
     expected_procedures = {
         "pointer": "proc pointer using console6502",
+        "noop": "proc noop using console6502 naked",
+        "spawn_marker": "proc spawn_marker using console6502",
         "clear": "proc clear using console6502",
         "allocate": "proc allocate using console6502",
         "dispatch": "proc dispatch using console6502 naked",
@@ -907,8 +933,8 @@ def check_objects_design() -> None:
         "saved_self : ptr CelesteObject in frame",
         "mov [saved_self], self",
         "mov self, [saved_self]",
-        "data u8 low(Player.init), low(Spawn.init), "
-        "low(Smoke.init), low(Title.init)",
+        "data u8 low(Player.init), low(Spawn.init), low(Smoke.init), low(Title.init)",
+        "jsr Berries.collected",
         "ldw value, [self.core.remainder_x]",
         "ldw operand, [self.core.speed_x]",
         "addw ab, operand",
@@ -1029,10 +1055,10 @@ def check_remaining_subsystem_design() -> None:
     manifests = {
         "collide.inlay.asm": (
             "Collision",
-            {"solid", "ice", "box", "spikes", "offset_x", "offset_y"},
+            {"solid", "ice", "box", "object", "spikes", "offset_x", "offset_y"},
             {
-                "solid", "ice", "box", "flags", "tiles", "floor", "spikes",
-                "ids", "lo", "hi",
+                "solid", "ice", "box", "object", "flags", "tiles", "floor",
+                "spikes", "ids", "lo", "hi",
             },
             {"down", "up", "right", "left"},
         ),
@@ -1051,11 +1077,12 @@ def check_remaining_subsystem_design() -> None:
             "Draw",
             {
                 "frame", "sprite", "object", "hair_create", "hair_color",
-                "hair_draw", "overlay_init", "overlay_dirty", "room_title",
+                "cart_sprite", "hair_draw", "overlay_init", "overlay_dirty",
+                "room_title",
             },
             {
                 "frame", "palette", "palette_slots", "sprite", "object",
-                "position", "hair_create", "hair_color", "hair_palette",
+                "cart_sprite", "position", "hair_create", "hair_color", "hair_palette",
                 "hair_draw", "hair_chase", "asr_w1", "asr_w2",
                 "overlay_init", "overlay_dirty", "overlay_clear",
                 "overlay_begin", "overlay_end", "char", "text", "string",
@@ -1128,10 +1155,11 @@ def check_remaining_subsystem_design() -> None:
         for path in sorted(CELESTE_DIR.glob("*.inlay.asm"))
     )
     required_qualified_calls = {
-        "Collision.solid", "Collision.ice", "Collision.box",
+        "Collision.solid", "Collision.ice", "Collision.box", "Collision.object",
         "Collision.spikes", "Room.init", "Room.title", "Room.load",
         "Room.next", "Room.restart", "Room.camera", "Draw.frame",
-        "Draw.sprite", "Draw.object", "Draw.hair_create", "Draw.hair_color",
+        "Draw.sprite", "Draw.object", "Draw.cart_sprite", "Draw.hair_create",
+        "Draw.hair_color",
         "Draw.hair_draw", "Draw.overlay_init", "Draw.overlay_dirty",
         "Draw.room_title", "Audio.init", "Audio.sfx", "Audio.guarded_sfx",
         "Audio.music", "Audio.fade", "Audio.stop",
@@ -1172,10 +1200,10 @@ def check_remaining_subsystem_design() -> None:
         for text in [path.read_text(encoding="ascii")]
         if re.search(r"\([^)]*\)\[(?:7:0|15:8)\]", text)
     }
-    if raw_slices != {"obj.inlay.asm": 4, "rooms.inlay.asm": 8}:
+    if raw_slices != {"obj.inlay.asm": 4, "rooms.inlay.asm": 22}:
         raise AssertionError(
             "raw target address-slice audit changed: "
-            f"expected obj=4 and rooms=8, got {raw_slices}"
+            f"expected obj=4 and rooms=22, got {raw_slices}"
         )
 
 
@@ -1278,12 +1306,14 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
         "enum ObjectKind : u8",
         "enum SpawnPhase : u8",
         "union ObjectPayload",
+        "struct Extra packed",
         "struct VideoRegisters",
         "struct PsgRegisters",
         "struct TileMap packed",
         "struct OverlayFramebuffer packed",
         "struct RoomTileBuffer packed",
         "struct OverlayRowPointers",
+        "struct BerryBits packed",
         "struct ZeroPageWorking",
         "struct GameState",
         "overlay video : VideoRegisters at $4000 volatile",
@@ -1294,6 +1324,7 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
         "overlay game : GameState at $0030",
         "overlay room_tiles : RoomTileBuffer at $5400",
         "overlay overlay_rows : OverlayRowPointers at $5500",
+        "overlay berries : BerryBits at $55f8",
         "overlay overlay_shadow : OverlayFramebuffer at $6000",
     }
     missing_layout = sorted(
@@ -1330,6 +1361,11 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
         raise AssertionError(
             f"Celeste ROM size changed: expected 65536, got {len(frontend_bytes)}"
         )
+    if digest != EXPECTED_CELESTE_ROM_SHA256:
+        raise AssertionError(
+            "Celeste current ROM digest changed: "
+            f"expected {EXPECTED_CELESTE_ROM_SHA256}, got {digest}"
+        )
     metrics_path = (
         ROOT / "tests/inlay/reference/celeste-phase-b-final.json"
     )
@@ -1345,30 +1381,10 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
         raise AssertionError("Celeste final metrics phase changed")
     if metrics.get("assembly") != expected_assembly:
         raise AssertionError("Celeste final assembly measurements changed")
-    if metrics.get("rom", {}).get("bytes") != len(frontend_bytes):
-        raise AssertionError("Celeste final metric ROM size is stale")
-    if metrics.get("rom", {}).get("sha256") != digest:
-        raise AssertionError("Celeste final metric ROM digest is stale")
-    measured_source = metrics.get("source", {})
-    if measured_source.get("objectOffsetSetups") != offset_setups:
-        raise AssertionError("Celeste final offset measurement is stale")
-    if measured_source.get("rawObjectIndirects") != raw_indirects:
-        raise AssertionError("Celeste final indirect measurement is stale")
-    custom_operations = {
-        operation: sum(
-            len(re.findall(
-                rf"^\s*{operation}\b", text, re.MULTILINE
-            ))
-            for text in module_texts
-        )
-        for operation in (
-            "mov", "add", "sub", "ldab", "stab", "addw", "subw", "cmpw",
-            "cbeq", "cbne", "cblt", "cbge", "tbz", "tbnz", "bzero",
-            "bnzero", "asr", "asrw",
-        )
-    }
-    if measured_source.get("customOperations") != custom_operations:
-        raise AssertionError("Celeste final custom-operation metrics are stale")
+    # This snapshot is the immutable closeout of the earlier Inlay redesign,
+    # not a live-current digest. Stage-2 content intentionally changes the ROM,
+    # source operation counts and program span; the structural counts above and
+    # tools/test_celeste.py now gate the current production image.
     counted_shift_sites = sum(
         len(re.findall(
             r"^\s*(?:asl|lsr|rol|ror) a,\s*\d+", text, re.MULTILINE
@@ -1381,8 +1397,6 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
             f"expected {EXPECTED_CELESTE_COUNTED_SHIFTS}, "
             f"got {counted_shift_sites}"
         )
-    if measured_source.get("countedShiftSites") != counted_shift_sites:
-        raise AssertionError("Celeste final counted-shift measurement is stale")
     return (
         len(frontend_bytes), digest, overlay_operations,
         offset_setups, raw_indirects,

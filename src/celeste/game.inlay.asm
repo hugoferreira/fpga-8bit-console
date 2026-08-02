@@ -24,6 +24,7 @@ namespace Game
     location room_bank : u8 at $3c
     location level : u8 at $3d
     location camera_y : u8 at $3e
+    location has_key : u8 at $3f
     location buttons : u8 at $40
     location previous_buttons : u8 at $41
     location pressed_buttons : u8 at $42
@@ -47,6 +48,7 @@ begin
     jsr Audio.init
     jsr Fx.init
     jsr Objects.clear
+    jsr Berries.clear
 
     lda #0
     sta [game.frames]
@@ -62,6 +64,7 @@ begin
     sta [game.sfx_timer]
     sta [game.music_timer]
     sta [game.has_dashed]
+    sta [game.has_key]
     sta [game.pause_player]
     sta [game.buttons]
     sta [game.previous_buttons]

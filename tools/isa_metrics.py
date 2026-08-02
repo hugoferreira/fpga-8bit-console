@@ -44,6 +44,7 @@ CORPORA = [
                "src/celeste/obj.inlay.asm",
                "src/celeste/collide.inlay.asm",
                "src/celeste/player.inlay.asm",
+               "src/celeste/content.inlay.asm",
                "src/celeste/room.inlay.asm",
                "src/celeste/draw.inlay.asm",
                "src/celeste/sound.inlay.asm"]},

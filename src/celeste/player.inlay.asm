@@ -206,7 +206,12 @@ end
 proc active_dash using console6502
     self : ptr CelesteObject in Machine.object
 begin
-    dec [Machine.object.payload.player.dash_effect] ; dash_effect_time -= 1
+    ; Zero must stay zero: underflow made an ordinary fake-wall bump look like
+    ; a dash. Positive dash-effect time still counts down once per frame.
+    lda [Machine.object.payload.player.dash_effect]
+    beq .effect_done
+    dec [Machine.object.payload.player.dash_effect]
+.effect_done:
     mov y, offset CelesteObject.payload.player.dash_time
     lda (Machine.object), y                ; if dash_time > 0 then ... else move
     beq .move

@@ -15,6 +15,7 @@
 namespace Draw
     export frame
     export sprite
+    export cart_sprite
     export object
     export hair_create
     export hair_color
@@ -167,34 +168,47 @@ sprite:
 ;
 ; The cart's sprite numbers survive in the object's sprite field, so the
 ; game logic reads the way the Lua does; the translation to a sheet slot is one
-; place, here. Two families is all stage 1 has - the player's seven frames and
-; smoke's three.
+; place, here. The generated table now covers every sprite used by resident
+; content, so new object families do not need drawing-specific range tests.
 ; ------------------------------------------------------------------------------
-; ca65 .if -> #assert below: SPR_SMOKE_STRIDE != 1
-; "smoke frames are no longer adjacent; object needs a multiply"
-;
-
 object:
     mov y, offset CelesteObject.core.sprite
     lda (Machine.object), y
     beq .done                   ; the cart's `elseif obj.spr > 0`
-    cmp #29
-    bcs .smoke
-    tax                         ; the player's frames are no longer a fixed
-    lda Gfx.player_slots-1, x    ; stride apart: bpp is chosen per pattern, so
-    pha                         ; the generator emits their slots as a table
-    lda #Gfx.player_attr
-    jmp .flip
-.smoke:
-    sub #29
-    add #Gfx.smoke_first
+    tax
+    lda Gfx.sprite_base, x
+    beq .done
     pha
-    lda #Gfx.smoke_attr
-.flip:
+    lda Gfx.sprite_attr, x
     mov y, offset CelesteObject.core.flip
     ora (Machine.object), y
     sta Machine.t3
     jsr position
+    pla
+    jmp sprite
+.done:
+    rts
+
+; ------------------------------------------------------------------------------
+; cart_sprite: draw cart sprite A at world t4/t5 with flip bits t6. This is the
+; multi-cell/content counterpart to object(), used by platforms, fake walls,
+; balloons and flying-fruit wings. Clobbers A, X, Y and t3..t5.
+; ------------------------------------------------------------------------------
+cart_sprite:
+    tax
+    lda Gfx.sprite_base, x
+    beq .done
+    pha
+    lda Gfx.sprite_attr, x
+    ora Machine.t6
+    sta Machine.t3
+    lda Machine.t4
+    add [game.shake_x]
+    sta Machine.t4
+    lda Machine.t5
+    sub [game.camera_y]
+    add [game.shake_y]
+    sta Machine.t5
     pla
     jmp sprite
 .done:

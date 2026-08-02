@@ -16,7 +16,7 @@ Measure with `make metrics`.
 | --- | --- | --- | --- | --- |
 | `breakout` | Breakout Hero (Krystman / Lazy Devs) | **yes** | 1928 | 32.9% |
 | `nemo` | NEMO - Puzzle Pack II (mooon) | **no** | 1811 | 34.2% |
-| `celeste` | Celeste Classic (Thorson / Berry), stage 1 | **yes** | 2539 | 24.8% — but read §The pointer-setup blind spot |
+| `celeste` | Celeste Classic (Thorson / Berry), stage-1 measurement; runtime through room 9 | **yes** | 2539 | 24.8% — but read §The pointer-setup blind spot |
 
 ### breakout
 
@@ -98,9 +98,11 @@ class chain and an event bus.
 
 ### celeste
 
-`src/celeste/`. Stage 1 of a port of Celeste Classic: a 30 fps precision
-platformer with an object list, per-type dispatch, and sub-pixel physics that
-accumulates a 16-bit remainder per axis per object per frame.
+`src/celeste/`. A partial port of Celeste Classic through playable room 9: a
+30 fps precision platformer with an object list, per-type dispatch, and
+sub-pixel physics that accumulates a 16-bit remainder per axis per object per
+frame. The gate figures below remain the stage-1 baseline until Stage-2 task
+6.5 re-measures the expanded hand-written corpus.
 
 - **Good at measuring**: 16-bit arithmetic (**117 high-half operands and, unlike
   either other corpus, literal add/subtract chains** — 37 `sec`/`sbc` pairs
@@ -118,35 +120,35 @@ accumulates a 16-bit remainder per axis per object per frame.
   over a RAM copy of the room; `spikes_at` with all four orientations; the
   player (run, ice accel, wall slide, grace, jump buffer, wall jump, dash with
   eight directions, animation); the spawn animation; smoke; room load,
-  transition and restart; the vertical camera; hair; the HUD.
-- **Systems not implemented** (stage 2, and they are data and dispatch breadth
-  rather than new idioms): the other eleven object types — springs, balloons,
-  fall floors, fruit, fake walls, the key and chest, platforms, the message, the
-  big chest, the orb and the flag — the title screen, and the effects layer
-  (clouds, particles, the death burst).
+  transition and restart; playable rooms 0–9 in progression order; springs,
+  balloons, fall floors, ordinary and flying strawberries, fake walls, the key
+  and chest, and moving platforms; persistent strawberry collection; the
+  vertical camera; hair; the HUD; clouds and particles.
+- **Systems not implemented**: playable rooms 10–30; the message, big chest,
+  orb and flag object families; snow, the death burst and the ending sequences.
 - **Divergences from the original**:
   - **Vertical camera follow.** A room is 128 lines and the display is 120, so
     the camera tracks the player through the missing 8. The cart's camera is
     static per room. This is the one divergence that changes how the game feels
     and it was chosen deliberately over cropping the bottom half-tile row, which
     in a precision platformer carries floors, spikes and room boundaries.
-  - **Three rooms, cycled, plus the title room.** Levels 0, 11 ("old site") and
-    20, chosen for tile-flag variety rather than adjacency: between them they
-    cover 25 solid tiles, 9 ice tiles and all four spike orientations. Level 31
-    is resident as slot 0 and is only entered from reset, so `next_room` wraps
-    to the first *playing* room and never back to the title.
+  - **Ten rooms, then a temporary wrap, plus the title room.** Playable levels
+    0–9 are resident in progression order. Level 31 is resident as slot 0 and
+    is only entered from reset; until room 10 lands, leaving room 9 wraps to the
+    first *playing* room and never back to the title.
   - **The music is complete, the rooms that cue it are not.** All four of the
-    cart's `next_room` music cues are ported as a table; this room set reaches
-    two of them (leaving 11 cues music 20, leaving 20 cues music 30). The
-    `music_timer` countdown that restores the climb is implemented, but only
-    the orb starts it, and the orb is stage 2.
+    cart's `next_room` music cues are ported as a table; the first cue is on
+    leaving room 10, just beyond the current campaign. The `music_timer`
+    countdown that restores the climb is implemented, but only the unported orb
+    starts it.
   - **The hair is sprites, not circles**, and chases at 0.625 rather than the
     cart's 1/1.5 — two shifts and an add instead of a divide. The recolour that
     shows the dash state is free, because a sprite entry carries its own palette
     base.
-  - **No screen-space effects.** The console has no line, circle or rectangle
-    primitive, so the clouds, the particles, the death burst and the black panel
-    behind the room title are absent.
+  - **Clouds and particles use ordered sprites.** The sprite behind-split puts
+    clouds behind terrain and particles in front; a repeat field renders a
+    cloud run as one list entry. The death burst and the black panel behind the
+    room title remain absent.
   - **Screen shake moves sprites, not the camera.** The camera registers scroll
     the tile layer only; shaking with them would slide the terrain out from
     under the player. The offset is added to each sprite as the list is built.
@@ -157,12 +159,12 @@ accumulates a 16-bit remainder per axis per object per frame.
     therefore costs two sheet slots instead of four. The whole program uses 14
     distinct colours, so a 16-entry palette has two spare entries to duplicate
     with, and `tools/p8_celeste.py` hill-climbs an arrangement in which every
-    colour set the program needs lands inside some window. Terrain fell from
-    268 slots to 118 (56%), and the sheet from 255 of 256 to **148**. No colour
+    colour set the program needs lands inside some window. With rooms 0–9 and
+    their object art resident, the sheet uses **181 of 256 slots**. No colour
     changed: the tile layer still matches the cart at 99.5%.
-  - The title screen has no stars: the cart's `particles` are drawn with
-    `rectfill`, and the console has no rectangle primitive. Its credits are
-    white rather than colour 5, because the overlay has one colour register.
+  - The title-screen stars are restored through the particle sprite path. Its
+    credits are white rather than colour 5, because the overlay has one colour
+    register.
 
   **Fidelity, measured rather than asserted**: the tile layer matches the
   cart's own pixels at **99.49%** over the whole 128x120 playfield, against a

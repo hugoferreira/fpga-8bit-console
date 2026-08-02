@@ -14,6 +14,7 @@ Usage: test_celeste.py build/celeste.bin build/celeste.lbl
 import hashlib
 import re
 import sys
+from collections import Counter
 
 from sim6502 import Sim6502
 
@@ -21,13 +22,54 @@ from sim6502 import Sim6502
 O_TYPE, O_SPR, O_X, O_Y = 0, 1, 2, 3
 O_SPDX, O_SPDY, O_REMX, O_REMY = 4, 6, 8, 10
 O_FLAGS, O_STATE, O_DJUMP, O_GRACE = 17, 18, 20, 21
+O_DASH_TIME, O_DASH_EFFECT = 23, 24
 O_SIZE, OBJ_MAX, OBJPOOL = 64, 16, 0x5000
-T_PLAYER, T_SPAWN, T_SMOKE, T_TITLE = 1, 2, 3, 4
+(
+    T_PLAYER, T_SPAWN, T_SMOKE, T_TITLE, T_SPRING, T_BALLOON,
+    T_FALL_FLOOR, T_FRUIT, T_FLY_FRUIT, T_LIFEUP, T_FAKE_WALL,
+    T_KEY, T_CHEST, T_PLATFORM,
+) = range(1, 15)
+
+TYPE_NAME = {
+    T_PLAYER: "player",
+    T_SPAWN: "spawn",
+    T_SMOKE: "smoke",
+    T_TITLE: "title",
+    T_SPRING: "spring",
+    T_BALLOON: "balloon",
+    T_FALL_FLOOR: "fall_floor",
+    T_FRUIT: "fruit",
+    T_FLY_FRUIT: "fly_fruit",
+    T_LIFEUP: "lifeup",
+    T_FAKE_WALL: "fake_wall",
+    T_KEY: "key",
+    T_CHEST: "chest",
+    T_PLATFORM: "platform",
+}
+
+# Exact marker-derived rosters immediately after each room is loaded. Every
+# playable room also gets the transient room-title object.
+ROOM_OBJECTS = {
+    0: {"spawn": 1, "title": 1, "fake_wall": 1},
+    1: {"spawn": 1, "title": 1},
+    2: {"spawn": 1, "title": 1, "fruit": 1, "spring": 2},
+    3: {"spawn": 1, "title": 1, "fly_fruit": 1, "fall_floor": 12},
+    4: {"spawn": 1, "title": 1, "key": 1, "chest": 1},
+    5: {"spawn": 1, "title": 1, "balloon": 1},
+    6: {"spawn": 1, "title": 1, "fly_fruit": 1, "platform": 10},
+    7: {"spawn": 1, "title": 1, "balloon": 1, "spring": 1,
+        "fall_floor": 6},
+    8: {"spawn": 1, "title": 1, "fake_wall": 1, "balloon": 2,
+        "spring": 2},
+    9: {"spawn": 1, "title": 1, "fall_floor": 4},
+}
 
 # zero page
 FRAMES, SECONDS, DEATHS, FREEZE, SHAKE = 0x30, 0x31, 0x33, 0x35, 0x36
 LEVEL, CAMERA_Y, ROOM_SLOT = 0x3D, 0x3E, 0x3B
+MAX_DJUMP, HAS_KEY, HAS_DASHED, PAUSE_PLAYER = 0x34, 0x3F, 0x45, 0x46
 ROOMTILES = 0x5400
+BERRIES = 0x55F8
 
 BTN_L, BTN_R, BTN_U, BTN_D, BTN_JUMP, BTN_DASH = 1, 2, 4, 8, 0x10, 0x20
 
@@ -35,16 +77,16 @@ FAIL = []
 
 VISUAL_CHECKPOINTS = {
     "title":
-        "9f6d80ffa88c5b2833c95c6a9b36553133d5e0bd3ea9fc24f66cbcf91d43b53c",
+        "8294bad8970e094a949edac7bc51f81b39633be9e96505003f6ef6c0d17ea395",
     "first-room-play":
-        "f6baa171ed5e6f3d4b9689316cc397b50d40436fedf16a9ce0096d71176ed993",
+        "69c239ce4776015c1e6d30fcdb1bf9c17a0a09179532d43daf65feb4e4439137",
     "hud":
-        "654a80be192ffa148acc3a9924c4f9b7660671b2a7b017cc239fd0ce8a7c303f",
+        "a4b15bdcb63a6582b963d6eb4890e2d3d2f53d25de1fa224b57b8d2ebeb753dd",
     "room-transition":
-        "7520f38e450645c502cfdecdf9668522ee4db7e6b2bac37af8137653a3f29091",
+        "244a4f4833e42880e961c739f05f3cc892ee6dc5c6600a7c06da6eb9c35b1a39",
 }
 AUDIO_TRACE_SHA256 = (
-    "0f40c1e74d5de88e5fa973794285010fd20cfdd02e7317451e7ae3f3f0a74ca8"
+    "04eac74d856835b74b8044524b85bbd39f17319a62d5b5d68d21eed1b5cb5a97"
 )
 
 
@@ -172,6 +214,20 @@ class Rig:
         self.frames(n)
         self.buttons = 0
 
+    def call(self, name, a=None, object_base=None):
+        """Call a named Inlay routine, then resume the interrupted main loop."""
+        resume = self.cpu.pc
+        if a is not None:
+            self.cpu.a = a
+        if object_base is not None:
+            self.cpu.m[0x10] = object_base & 0xFF
+            self.cpu.m[0x11] = object_base >> 8
+        self.cpu.call(self.sym[inlay_symbol(name)])
+        self.cpu.pc = resume
+
+    def load_room(self, level):
+        self.call("Room.load", a=level + 1)
+
     def objects(self, kind=None):
         m = self.cpu.m
         out = []
@@ -191,6 +247,196 @@ class Rig:
 
     def word(self, base, off):
         return s16(self.cpu.m[base + off] | self.cpu.m[base + off + 1] << 8)
+
+    def roster(self):
+        return Counter(TYPE_NAME[t] for _, _, t in self.objects())
+
+
+def playing_rig(image, sym, level, settle=70):
+    rig = Rig(image, sym)
+    rig.frames(2)
+    rig.load_room(level)
+    rig.frames(settle)
+    return rig
+
+
+def set_word(memory, base, offset, value):
+    value &= 0xFFFF
+    memory[base + offset] = value & 0xFF
+    memory[base + offset + 1] = value >> 8
+
+
+def run_room_and_content_checks(image, sym):
+    print("\n== rooms 0..9: marker rosters and idle survival ==")
+    rooms = Rig(image, sym)
+    rooms.frames(2)
+    for level, expected in ROOM_OBJECTS.items():
+        rooms.load_room(level)
+        chk(rooms.cpu.m[LEVEL] == level and rooms.cpu.m[ROOM_SLOT] == level + 1,
+            f"room {level} loaded from resident slot {level + 1}")
+        actual = rooms.roster()
+        chk(actual == Counter(expected),
+            f"room {level} object roster {dict(sorted(actual.items()))}")
+        rooms.frames(70)
+        chk(rooms.player() is not None and rooms.cpu.m[LEVEL] == level,
+            f"room {level} survives 70 idle frames with a live player")
+
+    print("\n== room 3 frame-work budget ==")
+    perf_rig = playing_rig(image, sym, 3)
+    perfm = perf_rig.cpu.m
+    perfm[PAUSE_PLAYER] = 1
+    floor = perf_rig.objects(T_FALL_FLOOR)[0][1]
+    stationary_before = bytes(perfm[floor + O_X:floor + O_REMY + 2])
+    before = perf_rig.cpu.cycles
+    perf_rig.call("Objects.move", object_base=floor)
+    stationary_steps = perf_rig.cpu.cycles - before
+    stationary_after = bytes(perfm[floor + O_X:floor + O_REMY + 2])
+    chk(stationary_before == stationary_after and stationary_steps <= 32,
+        f"a stationary fall floor skips movement in {stationary_steps} instructions")
+
+    before = perf_rig.cpu.cycles
+    perf_rig.call("Objects.update_all")
+    update_steps = perf_rig.cpu.cycles - before
+    chk(update_steps <= 12_000,
+        f"room 3 object update fits its 12000-instruction budget ({update_steps})")
+
+    print("\n== spring launch and persistent strawberry ==")
+    spring_rig = playing_rig(image, sym, 2)
+    sm = spring_rig.cpu.m
+    player = spring_rig.player()
+    spring = spring_rig.objects(T_SPRING)[0][1]
+    sm[PAUSE_PLAYER] = 1
+    sm[player + O_X] = sm[spring + O_X]
+    sm[player + O_Y] = (sm[spring + O_Y] - 4) & 0xFF
+    set_word(sm, player, O_SPDY, 0)
+    sm[player + O_DJUMP] = 0
+    spring_rig.frames(1)
+    chk(spring_rig.word(player, O_SPDY) == -0x300,
+        "spring launches the player at -3 px/frame")
+    chk(sm[player + O_DJUMP] == sm[MAX_DJUMP],
+        "spring refills the player's dash")
+    chk(sm[spring + O_SPR] == 19, "spring enters its compressed frame")
+
+    fruit = spring_rig.objects(T_FRUIT)[0][1]
+    sm[player + O_X] = sm[fruit + O_X]
+    sm[player + O_Y] = sm[fruit + O_Y]
+    spring_rig.frames(1)
+    chk(not spring_rig.objects(T_FRUIT) and spring_rig.objects(T_LIFEUP),
+        "strawberry contact replaces the fruit with a life-up")
+    chk(sm[BERRIES] & (1 << 2), "room 2 strawberry is recorded persistently")
+    spring_rig.load_room(2)
+    chk(not spring_rig.objects(T_FRUIT),
+        "collected room 2 strawberry stays absent after reload")
+
+    print("\n== fall floor and fake wall ==")
+    floor_rig = playing_rig(image, sym, 3)
+    fm = floor_rig.cpu.m
+    player = floor_rig.player()
+    floor = floor_rig.objects(T_FALL_FLOOR)[0][1]
+    fm[PAUSE_PLAYER] = 1
+    fm[player + O_X] = fm[floor + O_X]
+    fm[player + O_Y] = (fm[floor + O_Y] - 8) & 0xFF
+    floor_rig.frames(1)
+    floor_timer = fm[floor + O_STATE + 1]
+    chk(fm[floor + O_STATE] == 1 and 0 < floor_timer <= 15,
+        f"standing on a fall floor starts its break sequence (timer {floor_timer})")
+
+    wall_rig = playing_rig(image, sym, 0)
+    wm = wall_rig.cpu.m
+    player = wall_rig.player()
+    wall = wall_rig.objects(T_FAKE_WALL)[0][1]
+
+    # A zero dash-effect timer used to underflow to 255 every ordinary frame.
+    # That made merely walking into this wall destroy it and bounce the player.
+    wm[player + O_X] = (wm[wall + O_X] + 16) & 0xFF
+    wm[player + O_Y] = wm[wall + O_Y]
+    set_word(wm, player, O_SPDX, 0)
+    set_word(wm, player, O_SPDY, 0)
+    set_word(wm, player, O_REMX, 0)
+    set_word(wm, player, O_REMY, 0)
+    wm[player + O_DASH_EFFECT] = 0
+    wall_rig.buttons = BTN_L
+    for _ in range(4):
+        wall_rig.frames(0)
+    blocked_x = wm[player + O_X]
+    chk(wall_rig.objects(T_FAKE_WALL)
+        and wm[player + O_DASH_EFFECT] == 0,
+        "an ordinary wall bump neither breaks the fake wall nor arms a dash")
+    wall_rig.buttons = BTN_R
+    for _ in range(4):
+        wall_rig.frames(0)
+    wall_rig.buttons = 0
+    chk(s8(wm[player + O_X]) > s8(blocked_x),
+        "the player can reverse away after bumping the fake wall")
+
+    wm[PAUSE_PLAYER] = 1
+    wm[player + O_X] = (wm[wall + O_X] - 4) & 0xFF
+    wm[player + O_Y] = wm[wall + O_Y]
+    wm[player + O_DASH_EFFECT] = 1
+    set_word(wm, player, O_SPDX, 0x100)
+    wall_rig.frames(1)
+    chk(not wall_rig.objects(T_FAKE_WALL), "a dashing player breaks the fake wall")
+    chk(len(wall_rig.objects(T_FRUIT)) == 1,
+        "the broken fake wall reveals its strawberry")
+
+    print("\n== key, chest and balloon ==")
+    chest_rig = playing_rig(image, sym, 4)
+    cm = chest_rig.cpu.m
+    player = chest_rig.player()
+    key = chest_rig.objects(T_KEY)[0][1]
+    cm[PAUSE_PLAYER] = 1
+    cm[player + O_X] = cm[key + O_X]
+    cm[player + O_Y] = cm[key + O_Y]
+    chest_rig.frames(1)
+    chk(cm[HAS_KEY] == 1 and not chest_rig.objects(T_KEY),
+        "key contact records the key and removes it")
+    chest_rig.frames(20)
+    chk(not chest_rig.objects(T_CHEST) and chest_rig.objects(T_FRUIT),
+        "the keyed chest opens and produces a strawberry")
+
+    ball_rig = playing_rig(image, sym, 5)
+    bm = ball_rig.cpu.m
+    player = ball_rig.player()
+    balloon = ball_rig.objects(T_BALLOON)[0][1]
+    bm[PAUSE_PLAYER] = 1
+    bm[player + O_X] = bm[balloon + O_X]
+    bm[player + O_Y] = bm[balloon + O_Y]
+    bm[player + O_DJUMP] = 0
+    ball_rig.frames(1)
+    chk(bm[player + O_DJUMP] == bm[MAX_DJUMP]
+        and bm[balloon + O_SPR] == 0,
+        "balloon refills the dash and hides for its cooldown")
+    ball_rig.frames(60)
+    chk(bm[balloon + O_SPR] == 22,
+        "balloon reappears after its 60-frame cooldown")
+
+    print("\n== flying strawberry and moving platform ==")
+    fly_rig = playing_rig(image, sym, 3)
+    flym = fly_rig.cpu.m
+    flym[PAUSE_PLAYER] = 1
+    flym[HAS_DASHED] = 1
+    fly_rig.frames(1)
+    fly = fly_rig.objects(T_FLY_FRUIT)
+    chk(fly and flym[fly[0][1] + O_STATE] == 1,
+        "dashing arms the flying strawberry's escape")
+    fly_rig.frames(30)
+    chk(not fly_rig.objects(T_FLY_FRUIT),
+        "the flying strawberry accelerates upward and leaves the room")
+
+    platform_rig = playing_rig(image, sym, 6)
+    pm = platform_rig.cpu.m
+    player = platform_rig.player()
+    platform = platform_rig.objects(T_PLATFORM)[0][1]
+    pm[PAUSE_PLAYER] = 1
+    pm[player + O_X] = pm[platform + O_X]
+    pm[player + O_Y] = (pm[platform + O_Y] - 8) & 0xFF
+    player_x = pm[player + O_X]
+    platform_x = pm[platform + O_X]
+    platform_rig.frames(1)
+    platform_delta = s8((pm[platform + O_X] - platform_x) & 0xFF)
+    player_delta = s8((pm[player + O_X] - player_x) & 0xFF)
+    chk(platform_delta != 0 and player_delta == platform_delta,
+        f"moving platform carries the player by {player_delta} pixel")
 
 
 def main():
@@ -416,36 +662,32 @@ def main():
     if p is not None:
         m[p + O_Y] = 0xF0               # y = -16, above the room
         r.frames(2)
-        chk(m[LEVEL] == 11, f"walking off the top loaded the next room (level {m[LEVEL]})")
-        # slot 0 is the title room, so the playing rooms are slots 1..3
+        chk(m[LEVEL] == 1,
+            f"walking off the top loaded room 1 (level {m[LEVEL]})")
+        # Slot 0 is the title room; slots 1..10 are playable rooms 0..9.
         chk(m[ROOM_SLOT] == 2, f"advanced to resident-room slot {m[ROOM_SLOT]}")
         chk(len(r.objects(T_SPAWN)) == 1, "which spawned its own player")
         checkpoint_visual(r, "room-transition")
 
-        print("\n== the room-transition music cues ==")
+        progression = [m[LEVEL]]
+        for expected in (*range(2, 10), 0):
+            r.call("Room.next")
+            progression.append(m[LEVEL])
+            chk(m[LEVEL] == expected,
+                f"campaign advances to room {expected}")
+        chk(progression == [*range(1, 10), 0],
+            f"rooms progress 0 -> ... -> 9 -> 0: {progression}")
+
+    print("\n== the room-transition music cue table ==")
+    for cue_level, cue_music in ((10, 30), (11, 20), (20, 30), (29, 30)):
         r.music.clear()
-        p = r.player()
-        if p is None:
-            r.frames(40)
-            p = r.player()
-        if p is not None:
-            m[p + O_Y] = 0xF0           # leave level 11 -> the cart cues music 20
-            r.frames(2)
-            chk(r.music == [(20, 31)],
-                f"leaving 'old site' cues music(20) with a 500 ms fade: {r.music}")
-            chk(m[LEVEL] == 20, f"and loaded level {m[LEVEL]}")
-            r.music.clear()
-            p = r.player()
-            if p is None:
-                r.frames(40)
-                p = r.player()
-            if p is not None:
-                m[p + O_Y] = 0xF0       # leave level 20 -> music 30
-                r.frames(2)
-                chk(r.music == [(30, 31)],
-                    f"leaving level 20 cues music(30): {r.music}")
-                chk(m[LEVEL] == 0, "and wraps to the first playing room, "
-                                   "never back to the title")
+        m[LEVEL] = cue_level
+        m[ROOM_SLOT] = 1
+        r.call("Room.next")
+        chk(r.music == [(cue_music, 31)],
+            f"leaving level {cue_level} cues music({cue_music}) with a 500 ms fade")
+
+    run_room_and_content_checks(image, sym)
 
     encoded_trace = repr(r.audio_trace).encode("ascii")
     trace_digest = hashlib.sha256(encoded_trace).hexdigest()

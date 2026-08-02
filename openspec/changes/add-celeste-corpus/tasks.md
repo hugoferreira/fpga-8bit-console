@@ -105,6 +105,11 @@
       plays it; `make shot GAME=celeste` captures headlessly. Player moves,
       dashes, collides, dies and rooms transition. **Not yet run on real
       hardware** — see 7.1
+- [x] 3.8a **macOS simulator text input disabled.** SDL2 implicitly enables
+      desktop Unicode text input, which let the macOS press-and-hold accent
+      picker steal a held/repeated Z dash input. The interactive runner now
+      disables text input after SDL initialization, asserts the postcondition,
+      and continues to read Z/X through the unaffected raw-scancode API
 - [x] 3.9 `make test-celeste`: the whole program driven from the reset vector
       under `tools/sim6502.py` with the PPU faked — spawn animation handover,
       gravity and landing, sub-pixel accumulation, maxrun clamping, facing,
@@ -174,12 +179,33 @@
 
 ## 6. Stage 2 — content (optional, not gating)
 
-- [ ] 6.1 The remaining rooms, which need the 2bpp terrain encoding (2.5a)
-- [ ] 6.2 Strawberries and the collection count
-- [ ] 6.3 Balloons, springs, fake walls, the key and chest, platforms. These
-      bring back `obj_collide` and the three object checks `is_solid` drops in
-      stage 1 (3.3), so they are the first thing that will change the
-      pointer-ops counts
+- [x] 6.1a **Playable rooms 0–9, done.** The resident campaign is now title
+      room 31 followed by the cart's first ten rooms in progression order,
+      using the 2bpp terrain encoding. `tools/test_celeste.py` asserts every
+      room's exact marker-derived object roster, holds each room for 70 idle
+      frames, and proves progression `0 -> ... -> 9 -> 0`. Room data lives at
+      `$6a00` so executable code remains below the `$4000` MMIO window; the
+      generated sheet uses 181 of 256 slots
+- [ ] 6.1b The remaining playable rooms 10–30
+- [x] 6.2 **Strawberries and the collection count for rooms 0–9, done.** A
+      four-byte bitset persists one collected flag per cart level; collection
+      refills the dash, produces the life-up animation, and suppresses the
+      room's strawberry-dependent objects after reload. The focused simulator
+      check collects room 2 and proves persistence
+- [x] 6.3 **First-ten-room object families, done:** balloons, springs, fall
+      floors, ordinary and flying strawberries, fake walls, the key and chest,
+      and moving platforms. `obj_collide` and the fall-floor/fake-wall/platform
+      solidity checks are restored. Focused tests cover every mechanic,
+      including ordinary fake-wall contact followed by reversing away; that
+      regression caught and fixed an idle `dash_effect` underflow that made a
+      normal bump look like a dash
+- [x] 6.3a **Stationary-object movement fast path, done.** A hardware report
+      exposed room 3's twelve fall floors running two full solid/object scans
+      per frame despite having zero speed and remainder. `Objects.move` now
+      returns before fixed-point and collision work only when all eight motion
+      bytes are zero. Simulator instruction counts fell from 36,786 to 15,138
+      per room-3 frame, and `test_celeste.py` holds the object update below a
+      12,000-instruction regression budget while retaining all mechanic checks
 - [x] 6.4a **Clouds and particles, done — with no hardware change at all.**
       The first reading of this said clouds needed a background-capable
       framebuffer layer (`hardware-gaps.md` entry 9). That was wrong: the sprite

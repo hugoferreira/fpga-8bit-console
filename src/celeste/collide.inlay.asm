@@ -28,6 +28,7 @@ namespace Collision
     export solid
     export ice
     export box
+    export object
     export spikes
 ; ------------------------------------------------------------------------------
 ; is_solid / is_ice: the object at pObj, offset by c_ox/c_oy. Returns A = 0 for
@@ -41,7 +42,33 @@ namespace Collision
 solid:
     mov mask, #Room.flag_solid
     jsr box
-    jmp flags
+    jsr flags
+    bne .hit
+
+    ; A platform only catches downward motion when the receiver was not already
+    ; overlapping it at the undisplaced position.
+    lda offset_y
+    beq .objects
+    bmi .objects
+    sta last_row
+    mov type, #ObjectKind.platform
+    mov offset_y, #0
+    jsr object
+    sta mask
+    lda last_row
+    sta offset_y
+    lda mask
+    bne .objects
+    jsr object
+    bne .hit
+.objects:
+    mov type, #ObjectKind.fall_floor
+    jsr object
+    bne .hit
+    mov type, #ObjectKind.fake_wall
+    jsr object
+.hit:
+    rts
 ice:
     mov mask, #Room.flag_ice
     jsr box
@@ -68,6 +95,90 @@ box:
     sta width
     lda [Machine.object.core.hitbox.h]
     sta height
+    rts
+
+; ------------------------------------------------------------------------------
+; object: collide the receiver against another live object of `type`, displaced
+; by offset_x/offset_y. Returns A/Z and leaves Machine.other pointing at the hit.
+; Coordinates are biased by 32 before unsigned comparisons so the room's small
+; negative edge positions retain signed ordering without 16-bit boxes.
+; Clobbers A, X, Y, t3..t7 and Machine.other.
+; ------------------------------------------------------------------------------
+object:
+    jsr box
+    lda Collision.x
+    add #32
+    sta Machine.t3              ; receiver left
+    add width
+    sta Machine.t5              ; receiver right
+    lda Collision.y
+    add #32
+    sta Machine.t4              ; receiver top
+    add height
+    sta Machine.t6              ; receiver bottom
+
+    ldx #0
+.candidate:
+    lda obj_lo, x
+    sta Machine.other
+    cmp Machine.object
+    bne .kind
+    lda obj_hi, x
+    sta Machine.other+1
+    cmp Machine.object+1
+    beq .next
+    jmp .kind_ready
+.kind:
+    lda obj_hi, x
+    sta Machine.other+1
+.kind_ready:
+    mov y, offset CelesteObject.core.kind
+    lda (Machine.other), y
+    cmp type
+    bne .next
+    mov y, offset CelesteObject.core.flags
+    lda (Machine.other), y
+    and #Objects.flag_collideable
+    beq .next
+
+    mov y, offset CelesteObject.core.x
+    lda (Machine.other), y
+    mov y, offset CelesteObject.core.hitbox.x
+    clc
+    adc (Machine.other), y
+    add #32
+    cmp Machine.t5
+    bcs .next
+    sta Machine.t7              ; other left
+    mov y, offset CelesteObject.core.hitbox.w
+    clc
+    adc (Machine.other), y
+    cmp Machine.t3
+    bcc .next
+    beq .next
+
+    mov y, offset CelesteObject.core.y
+    lda (Machine.other), y
+    mov y, offset CelesteObject.core.hitbox.y
+    clc
+    adc (Machine.other), y
+    add #32
+    cmp Machine.t6
+    bcs .next
+    sta Machine.t7              ; other top
+    mov y, offset CelesteObject.core.hitbox.h
+    clc
+    adc (Machine.other), y
+    cmp Machine.t4
+    bcc .next
+    beq .next
+    lda #1
+    rts
+.next:
+    inx
+    cpx #Objects.slot_count
+    bne .candidate
+    lda #0
     rts
 ; ------------------------------------------------------------------------------
 ; tile_flag_at: is any tile overlapping the box c_x,c_y,c_w,c_h flagged c_mask?

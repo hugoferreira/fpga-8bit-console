@@ -265,7 +265,8 @@ LaLimits la_default_limits(void)
 {
     LaLimits limits;
     limits.max_source_bytes = 32767;
-    limits.max_name_bytes = 8192;
+    /* Full multi-module games exceed the original 8 KiB interned-name arena. */
+    limits.max_name_bytes = 16384;
     limits.max_tokens = 8192;
     limits.max_structs = 128;
     limits.max_unions = 64;

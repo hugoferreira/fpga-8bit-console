@@ -37,6 +37,7 @@ namespace Objects
     export pointer
     export clear
     export allocate
+    export spawn_marker
     export dispatch
     export spawn_smoke
     export destroy
@@ -76,19 +77,95 @@ end
 ; does not define that method, which is the cart's `if type.update ~= nil`.
 ; ------------------------------------------------------------------------------
 type_tile:
-    #d8 0, Room.tile_spawn, 0, 0
+    #d8 0, Room.tile_spawn, 0, 0, 18, 22, 23, 26, 28, 0, 64, 8, 20, 0
 type_init_lo:
     data u8 low(Player.init), low(Spawn.init), low(Smoke.init), low(Title.init)
+    data u8 low(Spring.init), low(Ball.init), low(Floor.init), low(Fruit.init)
+    data u8 low(Fly.init), low(Life.init), low(noop), low(noop), low(Chest.init), low(Mover.init)
 type_init_hi:
     data u8 high(Player.init), high(Spawn.init), high(Smoke.init), high(Title.init)
+    data u8 high(Spring.init), high(Ball.init), high(Floor.init), high(Fruit.init)
+    data u8 high(Fly.init), high(Life.init), high(noop), high(noop), high(Chest.init), high(Mover.init)
 type_update_lo:
     data u8 low(Player.update), low(Spawn.update), low(Smoke.update), low(Title.update)
+    data u8 low(Spring.update), low(Ball.update), low(Floor.update), low(Fruit.update)
+    data u8 low(Fly.update), low(Life.update), low(Wall.update), low(Key.update)
+    data u8 low(Chest.update), low(Mover.update)
 type_update_hi:
     data u8 high(Player.update), high(Spawn.update), high(Smoke.update), high(Title.update)
+    data u8 high(Spring.update), high(Ball.update), high(Floor.update), high(Fruit.update)
+    data u8 high(Fly.update), high(Life.update), high(Wall.update), high(Key.update)
+    data u8 high(Chest.update), high(Mover.update)
 type_draw_lo:
     data u8 low(Player.draw), low(Spawn.draw), low(Smoke.draw), low(Title.draw)
+    data u8 low(Spring.draw), low(Ball.draw), low(Floor.draw), low(Fruit.draw)
+    data u8 low(Fly.draw), low(Life.draw), low(Wall.draw), low(Key.draw)
+    data u8 low(Chest.draw), low(Mover.draw)
 type_draw_hi:
     data u8 high(Player.draw), high(Spawn.draw), high(Smoke.draw), high(Title.draw)
+    data u8 high(Spring.draw), high(Ball.draw), high(Floor.draw), high(Fruit.draw)
+    data u8 high(Fly.draw), high(Life.draw), high(Wall.draw), high(Key.draw)
+    data u8 high(Chest.draw), high(Mover.draw)
+
+; Marker tiles present in playable rooms 0-9. Animation-only sprite ids do not
+; appear here; the generator's content manifest owns those art dependencies.
+marker_tile:
+    #d8 1, 8, 11, 12, 18, 20, 22, 23, 26, 28, 64
+marker_kind:
+    #d8 2, 12, 14, 14            ; spawn, key, platform left/right
+    #d8 5, 13, 6, 7              ; spring, chest, balloon, fall floor
+    #d8 8, 9, 11                 ; fruit, flying fruit, fake wall
+type_hide:
+    #d8 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0
+
+proc noop using console6502 naked
+begin
+    ret
+end
+
+; ------------------------------------------------------------------------------
+; spawn_marker: A is a cart marker tile; spawn_x/spawn_y are its pixel position.
+; Unknown markers are ignored. Objects hidden after this room's strawberry has
+; been collected follow the cart's `if_not_fruit` rule.
+; ------------------------------------------------------------------------------
+proc spawn_marker using console6502
+begin
+    sta Machine.t7
+    ldx #0
+.find:
+    cmp marker_tile, x
+    beq .found
+    inx
+    cpx #11
+    bne .find
+    ret
+.found:
+    lda marker_kind, x
+    sta spawn_type
+    tax
+    lda type_hide-1, x
+    beq .allocate
+    jsr Berries.collected
+    bne .done
+.allocate:
+    jsr allocate
+    lda spawn_slot
+    bmi .done
+    lda Machine.t7
+    cmp #11
+    beq .left
+    cmp #12
+    bne .done
+    lda #1
+    bne .platform
+.left:
+    lda #$FF
+.platform:
+    sta [Machine.object.payload.extra.value]
+    jsr Mover.configure
+.done:
+    ret
+end
 
 ; ------------------------------------------------------------------------------
 ; clear: empty the pool. Inputs: none. Returns: none. Clobbers: A, X, Y.
@@ -294,6 +371,30 @@ proc move using console6502
     value : u16 in Fixed.word0
     operand : u16 in Fixed.word1
 begin
+    ; A truly stationary object cannot change position or motion state here.
+    ; Avoid the fixed-point work and, more importantly, the zero-distance
+    ; solid checks: room 3 has twelve fall floors, and each otherwise scans the
+    ; object pool against the other floors once per axis despite never moving.
+    mov y, offset CelesteObject.core.speed_x.fraction
+    lda (Machine.object), y
+    iny
+    ora (Machine.object), y
+    iny
+    ora (Machine.object), y
+    iny
+    ora (Machine.object), y
+    iny
+    ora (Machine.object), y
+    iny
+    ora (Machine.object), y
+    iny
+    ora (Machine.object), y
+    iny
+    ora (Machine.object), y
+    bne .moving
+    ret
+
+.moving:
     ldw value, [self.core.remainder_x] ; rem.x += spd.x
     ldw operand, [self.core.speed_x]
     ldab Fixed.word0

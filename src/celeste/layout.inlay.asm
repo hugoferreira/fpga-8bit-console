@@ -23,6 +23,16 @@ enum ObjectKind : u8
     spawn = 2
     smoke = 3
     title = 4
+    spring = 5
+    balloon = 6
+    fall_floor = 7
+    fruit = 8
+    fly_fruit = 9
+    lifeup = 10
+    fake_wall = 11
+    key = 12
+    chest = 13
+    platform = 14
 end
 
 enum SpawnPhase : u8
@@ -89,12 +99,26 @@ struct HairPayload packed
     reserved : u8[7] at 39
 end
 
+; Stage-2 objects use disjoint interpretations of the same compact state slots.
+; Keeping one variant avoids multiplying qualified layout names while retaining
+; typed signed start positions/direction for the routines that need them.
+struct Extra packed
+    state : u8
+    timer : u8
+    start_x : i8
+    start_y : i8
+    phase : u8
+    value : i8
+    reserved : u8[40]
+end
+
 union ObjectPayload
     player : PlayerPayload
     spawn : SpawnPayload
     smoke : SmokePayload
     title : TitlePayload
     hair : HairPayload
+    extra : Extra
     raw : u8[46]
 end
 
@@ -183,6 +207,10 @@ struct OverlayRowPointers
     high : u8[120] at 128
 end
 
+struct BerryBits packed
+    bits : u8[4]
+end
+
 ; Effects are intentionally structure-of-arrays. Each 32-byte component keeps
 ; the physical X index and the established gaps for the 17/25 live entries.
 struct FxStorage packed
@@ -230,7 +258,7 @@ struct ZeroPageWorking
     collision_j : u8 at 44
     collision_i1 : u8 at 45
     collision_j1 : u8 at 46
-    game_state : u8[30] at 48
+    game_state : u8[32] at 48
     player_scratch : u8[16] at 80
     drawing_scratch : u8[18] at 96
 end
@@ -251,6 +279,7 @@ struct GameState
     room_bank : u8 at 12
     level : u8 at 13
     camera_y : u8 at 14
+    has_key : u8 at 15
     buttons : u8 at 16
     previous_buttons : u8 at 17
     pressed_buttons : u8 at 18
@@ -276,6 +305,7 @@ overlay zero_page : ZeroPageWorking at $0000
 overlay game : GameState at $0030
 overlay room_tiles : RoomTileBuffer at $5400
 overlay overlay_rows : OverlayRowPointers at $5500
+overlay berries : BerryBits at $55f8
 overlay overlay_shadow : OverlayFramebuffer at $6000
 overlay overlay_shadow_pages : OverlayFramebufferPages at $6000
 overlay effects : FxStorage at $5600
@@ -294,6 +324,9 @@ static_assert CelesteObject.payload.title.delay.offset == 19
 static_assert CelesteObject.payload.hair.hair.offset == 37
 static_assert CelesteObject.payload.hair.hair.count == 5
 static_assert CelesteObject.payload.hair.hair.stride == 4
+static_assert CelesteObject.payload.extra.state.offset == 18
+static_assert CelesteObject.payload.extra.start_y.offset == 21
+static_assert CelesteObject.payload.extra.value.offset == 23
 static_assert VideoRegisters.random.offset == 15
 static_assert VideoRegisters.split.offset == 54
 static_assert VideoRegisters.size == 56
@@ -312,6 +345,7 @@ static_assert OverlayFramebufferPages.size == 2400
 static_assert RoomTileBuffer.size == 256
 static_assert OverlayRowPointers.high.offset == 128
 static_assert OverlayRowPointers.size == 248
+static_assert BerryBits.size == 4
 static_assert FxStorage.cloud_x_high.offset == $020
 static_assert FxStorage.particle_x_low.offset == $0c0
 static_assert FxStorage.particle_offset.offset == $1a0
@@ -421,6 +455,7 @@ static_assert $5000 + objects.count * objects.stride == $5400
 static_assert $5400 + RoomTileBuffer.size == $5500
 static_assert $5500 + OverlayRowPointers.high.offset == $5580
 static_assert $5500 + OverlayRowPointers.size == $55f8
+static_assert $55f8 + BerryBits.size == $55fc
 static_assert $5600 + FxStorage.size == $57c0
 
 ; Effects structure-of-arrays component boundaries (effects overlay at $5600).

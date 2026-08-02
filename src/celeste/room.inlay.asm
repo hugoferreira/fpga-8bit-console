@@ -67,6 +67,7 @@ load:
     tax
     mov [game.level], room_levels + x
     mov [game.has_dashed], #0
+    mov [game.has_key], #0
     mov Machine.source, room_ptr_lo + x
     mov Machine.source+1, room_ptr_hi + x
     jsr Objects.clear           ; the cart's foreach(objects, destroy)
@@ -115,11 +116,11 @@ load:
 .norow:
     dec Machine.t6
     bne .row
-    ldx #0                      ; spawn the objects the marker tiles ask for
+    ldx #0                      ; spawn every marker kind resident in the campaign
 .spawn:
     lda [room_tiles.cells[x]]
-    cmp #tile_spawn
-    bne .nextspawn
+    beq .nextspawn
+    pha
     txa
     and #15
     asl a, 3
@@ -129,8 +130,8 @@ load:
     lsr
     sta Objects.spawn_y
     stx [game.room_load_index]
-    mov Objects.spawn_type, #ObjectKind.spawn
-    jsr Objects.allocate
+    pla
+    jsr Objects.spawn_marker
     ldx [game.room_load_index]
 .nextspawn:
     inx
@@ -167,10 +168,9 @@ load:
 ; ------------------------------------------------------------------------------
 ; next_room / restart_room
 ;
-; The cart walks the level index in order. The three resident rooms were chosen
-; for tile-flag variety rather than adjacency (see inventory.md), so the port
-; cycles the table instead. Everything the transition exercises - unload, load
-; into the far bank, camera flip, respawn - is the same either way.
+; The resident table is now title followed by playable levels 0..9, matching the
+; cart's progression. Reaching the top of level 9 wraps to level 0 until the next
+; campaign slice adds level 10.
 ; ------------------------------------------------------------------------------
 next:
     ldx #0                      ; the cart's four music cues, keyed on the room
