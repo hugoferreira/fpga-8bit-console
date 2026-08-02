@@ -1486,6 +1486,16 @@ git history; do not repeat them without the recorded changed condition.
   and seven-bit table output.  Accept the **70-bit no-spill bound** and fold
   formula foundation; restart/noise/phase value transactions, semantic RTL
   and physical cost remain the next unproved H-D boundary.
+- **Phase-substitution model result:** a second independent addressed-state
+  form now matches the legacy source/NBA sequence over **73,728 W0--W6
+  cases** spanning every reachable play/amplitude/wavetable/restart/old-noise/
+  old-gain control combination, all waves and detune modes, and signed/wrapping
+  numeric boundaries.  Direct convictions prove W0 observes pre-update phase,
+  W1 observes an amplitude-zero restart clear, W2 observes the later noise
+  seed/old-noise update, W3 observes restart old-q, W5 applies old DQ only to
+  a non-noise built-in arm, and W6 applies live DQ only while running.  Accept
+  this substitution/writeback law; multiplier/noise/blend value semantics,
+  semantic RTL and physical cost remain unproved.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

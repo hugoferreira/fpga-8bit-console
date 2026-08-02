@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build and validate the R.84 address-state executor control contract.
 
-This is deliberately an executor transaction model, not an audio model.  It
-answers the questions that must be closed before replacing psg_walk/psg_seq:
+This begins with the executor transaction model and adds only the bounded
+sample-service formula/lifetime proofs needed before replacing psg_walk/psg_seq.
+It answers the questions that must be closed before that replacement:
 
 * do two owner-selected 256x16 banks hold the sample and tick/flow programs;
 * can the owner-zero 256-word bank represent every persistent read/write,
@@ -16,10 +17,9 @@ answers the questions that must be closed before replacing psg_walk/psg_seq:
 
 The action field is structured as family[2:0]:subop[3:0].  Sample and tick
 owners interpret it independently, so neither owner gets a flat 256-way PC
-decode.  Arithmetic semantics remain in the established formula/service gates;
-this model proves the owner-zero schedule/dependency manifest and the lowered
-owner-one advance family, but must not be cited as whole-PSG behavioral
-equivalence or as a whole-PSG area result.
+decode.  The model proves the owner-zero schedule/dependency manifest, critical
+context substitution and the lowered owner-one advance family.  It must not be
+cited as whole-PSG behavioral, render, schedule or area equivalence.
 """
 
 from __future__ import annotations
@@ -1795,6 +1795,210 @@ def validate_sample_pool_contract() -> str:
             "counter-free fold lifetimes execute without overlap or spill")
 
 
+@dataclass(frozen=True)
+class PhaseContextCase:
+    phase: int
+    phase2: int
+    old_phase: int
+    old_q: int
+    eff_inc: int
+    old_inc: int
+    dq_live: int
+    dq_old: int
+    noise_seed: int
+    old_noise_next: int
+    play: bool
+    amp_nonzero: bool
+    wt: bool
+    restart: bool
+    old_noise_on: bool
+    old_gain_nonzero: bool
+    wave: int
+    mode: int
+    old_wave: int
+    old_mode: int
+
+
+@dataclass(frozen=True)
+class PhaseContextResult:
+    w0_primary: int
+    w1_secondary: int
+    w2_old_primary: int
+    w3_old_secondary: int
+    phase: int
+    phase2: int
+    old_phase: int
+    old_q: int
+
+
+def phase_view(raw: int, wave: int, mode: int, wt: bool) -> int:
+    """Exact low-16 context transform used by psg_execwave."""
+    raw &= 0xffff
+    if not wt and wave in (0, 7):
+        return raw
+    if mode == 2:
+        return (raw << 1) & 0xffff
+    return raw
+
+
+def legacy_phase_contexts(case: PhaseContextCase) -> PhaseContextResult:
+    """Execute W0/W1/W5/W6 in legacy nonblocking-assignment source order."""
+    phase = case.phase & 0xffff
+    phase2 = case.phase2 & 0x1ffff
+    old_phase = case.old_phase & 0xffff
+    old_q = case.old_q & 0x1ffff
+    run = case.play and case.amp_nonzero
+
+    # W0 issues the old value before any edge assignments commit.
+    w0_primary = phase
+    if run and not case.wt:
+        phase = (phase + (case.eff_inc >> 1)) & 0xffff
+
+    if case.restart:
+        old_phase = case.phase & 0xffff
+        old_q = case.phase2 & 0x1ffff
+        if not case.amp_nonzero:
+            phase = 0
+            phase2 = 0
+
+    old_nz_active = run and case.old_noise_on
+    # noise_filt_step is textually after restart and therefore wins this NBA.
+    if old_nz_active:
+        old_phase = case.noise_seed & 0xffff
+
+    w1_secondary = phase_view(phase2, case.wave, case.mode, case.wt)
+
+    # W1 consumes the old-noise temporary and advances wavetable primary phase.
+    if old_nz_active:
+        old_phase = case.old_noise_next & 0xffff
+    if run and case.wt:
+        phase = (phase + (case.eff_inc >> 1)) & 0xffff
+
+    w2_old_primary = old_phase
+    w3_old_secondary = phase_view(old_q, case.old_wave,
+                                  case.old_mode, False)
+
+    # W5/W6 updates are later writeback values, after their issue contexts.
+    if (not case.wt and case.old_gain_nonzero and not old_nz_active):
+        old_phase = (old_phase + (case.old_inc >> 1)) & 0xffff
+        old_q = (old_q + case.dq_old) & 0x1ffff
+    if run:
+        phase2 = (phase2 + case.dq_live) & 0x1ffff
+
+    return PhaseContextResult(w0_primary, w1_secondary, w2_old_primary,
+                              w3_old_secondary, phase, phase2,
+                              old_phase, old_q)
+
+
+def compiled_phase_contexts(case: PhaseContextCase) -> PhaseContextResult:
+    """Closed addressed-state substitution intended for the H-D adapter."""
+    run = case.play and case.amp_nonzero
+    w0_primary = case.phase & 0xffff
+
+    # Restart selects the just-audible tuple.  The later noise seed has source
+    # priority only while the old-noise arm is actually running.
+    old_nz_active = run and case.old_noise_on
+    selected_old_phase = ((case.phase if case.restart else case.old_phase)
+                          & 0xffff)
+    if old_nz_active:
+        selected_old_phase = case.noise_seed & 0xffff
+    w2_old_primary = ((case.old_noise_next if old_nz_active
+                       else selected_old_phase) & 0xffff)
+    selected_old_q = ((case.phase2 if case.restart else case.old_q)
+                      & 0x1ffff)
+
+    cleared = case.restart and not case.amp_nonzero
+    selected_phase2 = 0 if cleared else case.phase2 & 0x1ffff
+    w1_secondary = phase_view(selected_phase2, case.wave,
+                              case.mode, case.wt)
+    w3_old_secondary = phase_view(selected_old_q, case.old_wave,
+                                  case.old_mode, False)
+
+    phase = case.phase & 0xffff
+    if run:
+        phase = (phase + (case.eff_inc >> 1)) & 0xffff
+    elif cleared:
+        phase = 0
+    phase2 = selected_phase2
+    if run:
+        phase2 = (phase2 + case.dq_live) & 0x1ffff
+
+    old_phase = w2_old_primary
+    old_q = selected_old_q
+    if (not case.wt and case.old_gain_nonzero and not old_nz_active):
+        old_phase = (old_phase + (case.old_inc >> 1)) & 0xffff
+        old_q = (old_q + case.dq_old) & 0x1ffff
+
+    return PhaseContextResult(w0_primary, w1_secondary, w2_old_primary,
+                              w3_old_secondary, phase, phase2,
+                              old_phase, old_q)
+
+
+def validate_phase_substitution_contract() -> str:
+    """Prove control priority and context/writeback association at W0--W6."""
+    numeric = [0, 1, 2, 0x7fff, 0x8000, 0xffff, 0x1ffff]
+    value = 0x4d35
+    while len(numeric) < 64:
+        value = (value * 25_173 + 13_849) & 0x1ffff
+        numeric.append(value)
+
+    cases = 0
+    for flags in range(64):
+        play = bool(flags & 1)
+        amp_nonzero = bool(flags & 2)
+        wt = bool(flags & 4)
+        restart = bool(flags & 8)
+        old_noise_on = bool(flags & 16)
+        old_gain_nonzero = bool(flags & 32)
+        if restart and not play:  # blend_restart itself includes play_bits
+            continue
+        for wave in range(8):
+            for mode in range(3):
+                for n, raw in enumerate(numeric):
+                    case = PhaseContextCase(
+                        phase=raw, phase2=(raw * 3 + n) & 0x1ffff,
+                        old_phase=(raw * 5 + 7) & 0xffff,
+                        old_q=(raw * 9 + 11) & 0x1ffff,
+                        eff_inc=(raw * 13 + 17) & 0x3fff,
+                        old_inc=(raw * 19 + 23) & 0x3fff,
+                        dq_live=(raw * 29 + 31) & 0x3fff,
+                        dq_old=(raw * 37 + 41) & 0x3fff,
+                        noise_seed=(raw * 43 + 47) & 0xffff,
+                        old_noise_next=(raw * 53 + 59) & 0xffff,
+                        play=play, amp_nonzero=amp_nonzero, wt=wt,
+                        restart=restart, old_noise_on=old_noise_on,
+                        old_gain_nonzero=old_gain_nonzero,
+                        wave=wave, mode=mode,
+                        old_wave=(wave + 3) & 7,
+                        old_mode=(mode + 1) % 3)
+                    legacy = legacy_phase_contexts(case)
+                    compiled = compiled_phase_contexts(case)
+                    assert compiled == legacy, (case, legacy, compiled)
+                    cases += 1
+
+    # Direct convictions for the three non-commutative substitution edges.
+    zero_restart = PhaseContextCase(
+        phase=0x1234, phase2=0x15678, old_phase=0xaaaa,
+        old_q=0x1bbbb, eff_inc=0x321, old_inc=0x222,
+        dq_live=0x111, dq_old=0x333, noise_seed=0x4444,
+        old_noise_next=0x5555, play=True, amp_nonzero=False, wt=False,
+        restart=True, old_noise_on=True, old_gain_nonzero=True,
+        wave=2, mode=2, old_wave=7, old_mode=1)
+    result = compiled_phase_contexts(zero_restart)
+    assert result.w0_primary == 0x1234
+    assert result.w1_secondary == 0
+    assert result.w2_old_primary == 0x1234
+    assert result.w3_old_secondary == 0x5678
+
+    noise_restart = PhaseContextCase(
+        **{**zero_restart.__dict__, "amp_nonzero": True,
+           "noise_seed": 0x6789, "old_noise_next": 0x789a})
+    result = compiled_phase_contexts(noise_restart)
+    assert result.w2_old_primary == 0x789a
+    return (f"{cases:,} W0--W6 context/writeback cases; restart zero, "
+            "noise-seed priority and old/live DQ association exact")
+
+
 def remaining_owner_action_inventory(nodes: list[Node]) -> str:
     """Separate proved transactions from every owner-one placeholder site."""
     names = {node.name for node in nodes}
@@ -1915,6 +2119,7 @@ def main() -> int:
     fold_contract = validate_fold_word_contract()
     fold_arithmetic = validate_fold_arithmetic_contract()
     sample_pool = validate_sample_pool_contract()
+    phase_substitution = validate_phase_substitution_contract()
     owner_inventory = remaining_owner_action_inventory(seq_nodes)
     condition_contract = validate_condition_contract(sample_program,
                                                      tick_program)
@@ -1969,6 +2174,7 @@ def main() -> int:
     print("sample action inventory: " + sample_inventory)
     print("sample stored-wait manifest: " + sample_waits)
     print("sample transient pool: " + sample_pool)
+    print("sample phase substitution: " + phase_substitution)
     print("fold word/tree contract: " + fold_contract)
     print("fold arithmetic contract: " + fold_arithmetic)
     print("remaining owner action inventory: " + owner_inventory)
