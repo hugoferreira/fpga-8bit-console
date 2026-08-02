@@ -24,7 +24,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H020.
+- Next hypothesis ID: H021.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
@@ -35,7 +35,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   reductions are deterministic; the 57-LC placed improvement is positive but
   remains just inside the known roughly 60-LC placement-sensitivity band and
   is not claimed as robust.
-- Latest rejected variant: H019 proves whole-walk state-memory ownership is
+- Latest rejected variant: H020 proves the audio-RAM busy export is contained
+  inside `prun` and locally saves one LUT4, but whole-PSG mapping adds three
+  LUT4s/three carries and seed-1 placement adds one LC. H019 proves whole-walk state-memory ownership is
   behaviorally exact and both forms reduce the isolated mux/store cone, but
   whole-PSG mapping adds 48 LUT4s/seven carries for the complete bundle and 22
   LUT4s/six carries for the retained-enable-OR form. H018's exact 25-bit
@@ -105,6 +107,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H017 | rejected | Keep separate new/old gain cones: full and scale-only sharing save carries locally/globally but both add LUT4s and placed LCs in the whole PSG. |
 | H018 | rejected | Keep the 26-bit add-then-shift: the exact 25-bit half-sum saves one carry locally but globally adds 31 LUT4s, nine carries, and 38 LCs. |
 | H019 | rejected | Keep per-operation state-memory selects: both whole-walk owner forms are exact and locally smaller, but globally add LUT4s/carries; the retained-OR form also fails to route promptly. |
+| H020 | rejected | Keep the redundant audio-RAM busy export: removing it saves one local LUT4 but adds three LUT4s/three carries globally and one placed LC. |
 
 ## Hypothesis H001
 
@@ -810,6 +813,48 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   interval, state-memory port topology, mapper mux absorption, or sequencer
   write-gating contract changes materially.
 
+## Hypothesis H020
+
+- **ID:** H020.
+- **Hypothesis:** audio-RAM synthesis reads are explicitly qualified by
+  `prun`, and their registered one-cycle replay occurs while the walk is still
+  active. Therefore `seq_frozen = syn_rd | replay` is already implied by the
+  top-level `prun` hold. Removing that exported busy term while retaining the
+  RAM's internal replay/reissue should simplify the hold cone without changing
+  any address, data, FSM, credit, or sample clock.
+- **Scope:** `rtl/psg_aram.sv`, `rtl/psg.sv`, focused phase/containment proof,
+  isolated registered hold-cone synthesis, whole-PSG mapping, and the complete
+  H007 acceptance battery if mapping improves. No RAM content/port operation,
+  sequencer/walker action, arithmetic, state layout, EBR, R.84 executor, or
+  tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H020 setup
+  through `f3e5f8d`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1
+  7,392 LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Containment proof obligation:** `psg_walk.syn_rd` is zero by default and
+  can become one only inside `prun && !ctrl_stall`. In preview its last possible
+  read is phase 13 versus `PLAST=23`; in multipumped hardware the last read is
+  action W3 at phase 32 versus `PLAST=61`. Since `replay <= syn_rd`, every
+  replay edge also occurs while `prun` remains one, including a stalled phase.
+  Thus `syn_rd | replay` cannot add a held clock beyond `prun`; only the internal
+  `aram_rd = syn_rd | replay | !seq_hold` reissue remains semantically live.
+- **Change:** remove the redundant `seq_frozen` output and its top-level
+  OR term, without changing `replay`, `aram_rd`, or the address mux.
+- **Result:** the focused proof exhausts all six preview/hardware wavetable-read
+  phases and proves their replay edges precede `PLAST`. Full and PREVIEW lint
+  pass. The isolated registered hold cone falls from 13 to 12 LUT4s with six
+  carries and nine flops unchanged. Canonical whole-PSG mapping instead moves
+  from 6,522 LUT4 / 1,553 carry / 1,476 FF / 14 EBR / 7,392 LCs to 6,525 /
+  1,556 / 1,476 / 14 / 7,393. Routed timing passes at 142.86 MHz fast / 28.95
+  MHz PSG, but both deterministic mapping and no-placement-regression gates
+  fail. The complete fidelity battery is correctly skipped. Both production
+  RTL files are restored byte-for-byte.
+- **Decision:** rejected after whole-PSG synthesis. The temporal redundancy is
+  exact, but removing its explicit output changes flattened covering for the
+  worse and has no accepted physical metric.
+- **Repeat only if:** if rejected, retry only after wavetable-read phase,
+  audio-RAM replay depth, walk termination, mapper busy-cone lowering, or
+  sequencer-credit ownership changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -856,12 +901,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h019/owner-{proof.py,proof.log}` | exhaustive legal-owner and replay-timeline proof | All write states, consumed reads, and replay observation points agree. |
 | `build/experiments/h019/candidate-v1.{synth,pnr}.log` | canonical synthesis with complete-bundle ownership | Whole-PSG map and placement regress; rejected. |
 | `build/experiments/h019/candidate-v2.{synth,pnr}.log` | canonical synthesis with retained write-enable OR | Whole-PSG map regresses; router stopped after the mapped gate failed. |
+| `build/experiments/h020/containment-{proof.py,proof.log}` | exhaustive wavetable-read/replay containment proof | All six possible read phases and following replay edges remain inside `prun`. |
+| `build/experiments/h020/isolated-{baseline,candidate}.log` | registered audio-RAM/top-level hold cone | Exact candidate saves one local LUT4. |
+| `build/experiments/h020/candidate.{synth,pnr}.log` | canonical synthesis without exported `seq_frozen` | Whole-PSG map and seed-1 placement regress; rejected. |
 
 ## Handoff
 
-- Next allowed experiment: H020 only after its resume audit and hypothesis row
+- Next allowed experiment: H021 only after its resume audit and hypothesis row
   are recorded; it must use a new generic-RTL mechanism outside the closed
-  whole-walk ownership, half-sum/gain-context, and R.84 families.
+  audio-RAM busy, whole-walk ownership, half-sum/gain-context, and R.84 families.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -887,5 +935,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H019's whole-walk memory ownership is exact but both mapped forms are
   globally worse; all production/proof changes are reverted and the family
   closes.
+  H020's redundant audio-RAM busy export is exact but globally worse; both
+  production files are reverted and the family closes.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
