@@ -675,6 +675,47 @@ git history; do not repeat them without the recorded changed condition.
   R.84E's 324/24/34/27/one-EBR/351-floor/357-placed result.  The two-cell
   cost is retained because every integrated executor must freeze atomically;
   it does not establish any R.84G-C normalizer or whole-PSG result.
+- **R.84G-C physical probe:** the cheapest six-action sidecar only
+  zero-extends a fixed low byte, high byte or voice/instrument row and merges
+  a row back into its fixed raw word.  Folding those results into R.84E's
+  existing copy write-data selector maps **356 LUT4s, 24 carries, 34 flops,
+  25 unpackable flops, one EBR and a 381-LC floor** on the canonical toolchain;
+  seed-1 router2 places **387 LCs** and routes at **62.31 MHz**.  This is an
+  optimistic +28-cell price over the hold-corrected R.84E baseline, with no
+  added carry or flop, but it is only a primitive probe: previous-value,
+  `ins_use` and side-effect actions are not present.
+- **R.84G-C program-capacity result:** the fixed normalized manifest cannot
+  fit the one-EBR instruction store.  Scratch 34..45 hold constants 1/32,
+  normalized fcnt/tcnt/speed/length/row/lps/lpe/end-bound, tcnt-or-length and
+  row-plus-one; the exact end bound is lps only when lpe is zero and lps is
+  1..31, otherwise 32.  The explicit voice and instrument paths require 69
+  and 50 words.  Exhaustive layout removes every unconditional transfer whose
+  target can physically fall through, four and one respectively, leaving a
+  fixed-manifest lower bound of **65 + 49 = 114 words**.  Every remaining word
+  is a distinct READ, WRITE, EXEC or conditional BRANCH; the three-bit opcode
+  cannot combine those effects, and synchronous reads already issue the next
+  address in the preceding consume operation.
+- **R.84G-C capacity arithmetic and decision:** the live image is 62 sample +
+  99 tick + 26 flow words, and `K_ADV/EA0..EA5` occupy exactly
+  4+1+1+1+4+1+4 = 16 tick words.  Replacement yields
+  `62 + (99-16+65) + (26+49) = 285` words: tick is 148/128, flow is 75/64,
+  and the 4,560-bit image exceeds one 4,096-bit EBR by **29 words / 464 bits**.
+  Cross-page packing cannot help because tick+flow alone is 223/192.  This is
+  an optimistic failure: preinitialized constants cost no words, while exact
+  `ins_use`, cpz/pend-stop and any missing side effect can only add work.
+  Reject the fixed one-EBR scratch-normalized spelling before RTL or image
+  expansion.  The six-action pricing sidecar remains scratch-only; no R.84G-C
+  RTL, test or generated image lands.
+- **R.84G-D next permitted hypothesis:** bank the program with the already
+  registered execution owner: address two 256x16 banks as `{owner, pc}` so
+  the 62-word sample program and 223-word tick/flow program each fit without
+  widening the PC, branch target or instruction.  This is a whole-substrate
+  resource exchange, not a one-EBR retry: atomic integration retires the
+  walker's and sequencer's two control EBRs, so a two-EBR executor preserves
+  the accepted whole-PSG total of 14, still below the 15-EBR ceiling.  First
+  prove owner-bank fetch alignment, byte-identical program semantics and the
+  isolated two-EBR controller cost; do not restore the normalizer until that
+  foundation routes and its whole-PSG EBR accounting is explicit.
 
 ### Active task queue
 
@@ -708,8 +749,13 @@ git history; do not repeat them without the recorded changed condition.
       byte-identical generated-control foundation before lowering the family.
 - [x] R.84G hold prerequisite: prevent common datapath commits while the
       controller and movement layer are frozen; re-prove and re-price R.84E.
-- [ ] R.84G-B: price field-selected operations through the existing common
-      chain before spending program words on the complete advance sequence.
+- [x] R.84G-B: reject two field-selected common-chain spellings after both
+      exceed the physical gate without adding another arithmetic chain.
+- [x] R.84G-C: reject the fixed one-EBR scratch-normalized spelling after its
+      fallthrough-minimized 285-word image exceeds capacity by 29 words.
+- [ ] R.84G-D: prove an owner-banked two-EBR control store whose complete
+      resource exchange preserves the whole-PSG EBR count before restoring
+      normalization or lowering the advance family.
 
 ## Handoff rule
 
