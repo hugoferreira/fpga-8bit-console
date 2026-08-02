@@ -6,22 +6,26 @@ module psg_dqsvc_tb;
   always #5 clk = ~clk;
 
   logic start = 0;
-  logic [12:0] start_a = 0;
+  logic [12:0] live_a = 0;
+  logic [12:0] old_a = 0;
   logic [8:0] start_k = 0;
+  logic start_old = 0;
   logic [13:0] result;
   logic done, busy, start_ready;
 
   psg_dqsvc dut(
     .clk(clk), .reset(reset),
-    .start(start), .start_a(start_a), .start_k(start_k),
+    .start(start), .live_a(live_a), .old_a(old_a),
+    .start_k(start_k), .start_old(start_old),
     .result(result), .done(done),
     .busy(busy), .start_ready(start_ready));
 
   task automatic launch(input logic [12:0] a,
                         input logic [8:0] k);
     while (!start_ready) @(negedge clk);
-    start_a = a;
+    live_a = a;
     start_k = k;
+    start_old = 1'b0;
     start = 1'b1;
     @(negedge clk);
     start = 1'b0;
@@ -59,8 +63,9 @@ module psg_dqsvc_tb;
     while (!(done && busy && start_ready)) @(negedge clk);
     if (result !== 14'd16254)
       $fatal(1, "dq chained first result mismatch: got %0d", result);
-    start_a = 13'd7331;
+    old_a = 13'd7331;
     start_k = 9'd193;
+    start_old = 1'b1;
     start = 1'b1;
     @(negedge clk);
     start = 1'b0;

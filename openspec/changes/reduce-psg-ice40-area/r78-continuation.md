@@ -6,12 +6,12 @@ git history; do not repeat them without the recorded changed condition.
 
 ## Current accepted checkpoint
 
-- **R.78 / `e447962`**: RTL fingerprint `dd6d98592a1d` across the synthesis
-  target's RTL set; retained PSG fingerprint `e12aae41e2ce` in the long-form
-  ledger.
-- Seed-1 HX8K router2: 7,437/7,680 LCs, 14/32 EBRs, 144.80 MHz fast and
-  29.94 MHz PSG against 112.5/18.75 MHz requirements.
-- Yosys: 6,536 LUT4s, 1,596 carries, 1,490 flops; 525 flops are unpackable.
+- **R.81B / `2cae31b4a425`**: the detune recurrence carries its one-bit
+  live/old context in the otherwise constant `p[26]`, removing the 13-bit
+  operand hold without a phase-decode cone.
+- Seed-1 HX8K router2: 7,421/7,680 LCs, 14/32 EBRs, 128.12 MHz fast and
+  29.90 MHz PSG against 112.5/18.75 MHz requirements.
+- Yosys: 6,520 LUT4s, 1,592 carries and 1,478 flops.
 - Exact gates: 530 walker + 272 sequencer clocks in the 850-clock `/6`
   interval; 59/59 hardware renders byte-identical; P.1/P.2 and `click-v1`
   clean; full/PREVIEW lint, clocks and Celeste smoke pass.
@@ -25,9 +25,9 @@ git history; do not repeat them without the recorded changed condition.
 - R.67: a parallel reciprocal-table port for the tilted-saw tail; +86 LCs.
 - R.68/R.69: partial or overlaid schedule/control encodings; the shared decode
   did not retire.
-- R.76--R.78: revisit the detune recurrence/result lifetimes only if a request
-  enters the idle interval, a consumer moves, or the physical service itself
-  can disappear.
+- R.76--R.78: revisit the detune result lifetimes only if a request enters the
+  idle interval, a consumer moves, or the physical service itself can
+  disappear.  R.81B separately removed the service's duplicated operand hold.
 
 ## Active hypothesis
 
@@ -104,9 +104,62 @@ git history; do not repeat them without the recorded changed condition.
 - **Repeat only if:** coefficient selection, reciprocal folding, pipeline
   boundaries, or mapper arithmetic inference changes materially.
 
+### R.81 - Remove the detune service operand hold
+
+- **Hypothesis:** `psg_dqsvc.start_a_hold[12:0]` duplicates operands that are
+  already stable in walker registers for the complete phase-19..29 service
+  window.  Feed the recurrence from those existing registers instead.  A
+  fixed schedule selector keeps the live operand through the phase-24 terminal
+  step/old-request handoff, then selects the old operand for phases 25..29.
+  This should retire 13 flops and their launch-input lifetime without changing
+  either recurrence, result lifetime, request phase or consumer.
+- **Scope:** `rtl/psg_dqsvc.sv`, `rtl/psg_dqsvc_tb.sv`, `rtl/psg_walk.sv`, the
+  exhaustive detune gate, standard PSG structural/render gates, and an isolated
+  seed-1 HX8K synthesis.  `rtl/psg.sv`, audio RAM, H009/H015 diagnostics and
+  Tang board files stay untouched.
+- **Baseline:** accepted R.78 fingerprint `e12aae41e2ce`; 6,536 LUT4s, 1,596
+  carries, 1,490 flops, 525 unpackable flops and 14 EBRs; seed-1 router2 7,437
+  LCs at 144.80 MHz fast / 29.94 MHz PSG.
+- **Change:** variant A replaced the launch-captured multiplicand with one
+  recurrence operand input.  The walker selected live through phase 24 and old
+  from phase 25 onward, so the first terminal step and chained coefficient
+  launch remained simultaneous.  Variant B moved only that context bit into
+  an otherwise constant recurrence bit, preserving it across steps.
+  This removes the new phase-decode cone while retaining twelve net flop
+  savings; it does not restore the 13-bit operand payload.  The recurrence
+  selects `live_a` or `old_a` from `p[26]`, preserves that bit across all five
+  steps, and loads it from `start_old` at each launch.
+- **Result:** variant A passes 524,288 formulas, 57,344 transactions, both lint
+  modes and the complete structural regression at 524/850 observed clocks,
+  fixed 530+272 with 48 spare, and tick preparation 4,008/5,103 with 1,095
+  spare and zero late flips.  Fingerprint `1ec43ab92a05` maps 6,538 LUT4s,
+  1,590 carries, 1,477 flops and 14 EBRs; seed-1 router2 still places exactly
+  7,437 LCs and routes at 127.58 MHz fast / 31.88 MHz PSG.  Versus R.78 this
+  is +2 LUT4s, -6 carries, -13 flops, unchanged EBRs/LCs.  Unpackable flops
+  rise 525 -> 529, so the retired state did not reduce binding cells.  Variant
+  B fingerprint `2cae31b4a425` passes the same 524,288 formula and 57,344
+  transaction cases, both lint modes, and the complete structural regression:
+  524/850 observed clocks, fixed 530+272 with 48 spare, tick preparation
+  4,008/5,103 with 1,095 spare and zero late flips.  All 59 frozen hardware
+  renders are byte-identical at 18.75 MHz.  P.1 passes at 1,275 and 159
+  clocks/sample (combined 93%; channels 0/1/2 100%/100%/91%; channel 3
+  inactive), and P.2 passes both synthetic and frozen-Celeste recovery.
+  `/4`, `/5` and `/6`, plus the lowercase five-frame Celeste smoke, pass.
+  Four-second hardware and PREVIEW renders have zero `click-v1` events.
+  Variant B maps 6,520 LUT4s, 1,592 carries, 1,478 flops and 14 EBRs; seed-1
+  router2 places 7,421 LCs and routes at 128.12 MHz fast / 29.90 MHz PSG.
+  Versus R.78 this is -16 LUT4s, -4 carries, -12 flops, unchanged EBRs and
+  **-16 placed LCs**, with both clocks above their constraints.
+- **Decision:** variant A is neutral and not retained.  Variant B is accepted:
+  it meets every exactness, schedule, physical-area and routed-timing gate.
+- **Repeat only if:** the phase-24 chained handoff moves, either source operand
+  can change during its five recurrence steps, or the service interface gains
+  an independent request queue.  This is not R.63/R.64 adder sharing, R.76--78
+  result-lifetime work, or R.79 cross-domain payload storage.
+
 ## Handoff rule
 
-Before opening R.81, record its row with exact formula, transaction, schedule,
+Before opening the next row, record it with exact formula, transaction, schedule,
 render, mapped, placed, routed and timing evidence.
 Commit either the accepted RTL or the reverted-source rejection record as one
 scoped iteration.  Never stage unrelated files from the dirty main worktree.

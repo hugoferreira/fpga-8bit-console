@@ -427,8 +427,6 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   wire [13:0] dq_old_inc_now = blend_restart ? s_last_inc : s_old_inc;
   wire [2:0] dq_old_wave_now = blend_restart ? s_last_wave : s_old_wave;
   wire [1:0] dq_old_mode_now = blend_restart ? last_mode_r : old_mode_r;
-  wire [12:0] dq_start_a = dq_start_old ? dq_old_inc_now[13:1]
-                                           : s_eff_inc[13:1];
   wire [2:0] dq_start_wave = dq_start_old ? dq_old_wave_now : s_snd_wave;
   wire [1:0] dq_start_mode = dq_start_old ? dq_old_mode_now : s_ch_det;
   wire [8:0] dq_start_k = dq_coeff(s_snd_wt, dq_start_wave, dq_start_mode);
@@ -438,7 +436,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
 
   psg_dqsvc u_dq(
     .clk(clk), .reset(reset),
-    .start(dq_start), .start_a(dq_start_a), .start_k(dq_start_k),
+    .start(dq_start),
+    .live_a(s_eff_inc[13:1]), .old_a(dq_old_inc_now[13:1]),
+    .start_k(dq_start_k), .start_old(dq_start_old),
     .result(dq_result), .done(dq_done),
     .busy(dq_busy), .start_ready(dq_start_ready));
 

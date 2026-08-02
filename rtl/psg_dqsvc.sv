@@ -17,8 +17,10 @@ module psg_dqsvc (
     input  bit          clk,
     input  bit          reset,
     input  logic        start,
-    input  logic [12:0] start_a,
+    input  logic [12:0] live_a,
+    input  logic [12:0] old_a,
     input  logic [8:0]  start_k,
+    input  logic        start_old,
     output logic [13:0] result,
     output logic        done,
     output logic        busy,
@@ -30,17 +32,17 @@ module psg_dqsvc (
   // carry the radix-4 sum before the combined register shifts by two.
   logic [26:0] p;
   logic [2:0]  count;
-  logic [12:0] start_a_hold;
 
+  wire [12:0] step_a = p[26] ? old_a : live_a;
   wire [13:0] acc = p[23:10];
   wire [1:0]  digit = p[1:0];
   wire [14:0] addend = (digit == 2'd0) ? 15'd0
-                       : (digit == 2'd1) ? {2'b0, start_a_hold}
-                       : (digit == 2'd2) ? {1'b0, start_a_hold, 1'b0}
-                       : ({2'b0, start_a_hold}
-                          + {1'b0, start_a_hold, 1'b0});
+                       : (digit == 2'd1) ? {2'b0, step_a}
+                       : (digit == 2'd2) ? {1'b0, step_a, 1'b0}
+                       : ({2'b0, step_a}
+                          + {1'b0, step_a, 1'b0});
   wire [15:0] sum = {2'b0, acc} + {1'b0, addend};
-  wire [26:0] step_next = {3'b0, sum, p[9:2]};
+  wire [26:0] step_next = {p[26], 2'b0, sum, p[9:2]};
 
   assign busy = count != 0;
   assign start_ready = count == 0 || count == 1;
@@ -57,9 +59,8 @@ module psg_dqsvc (
       if (count != 0) begin
         if (count == 1) begin
           if (start) begin
-            p            <= {17'b0, 1'b0, start_k};
-            start_a_hold <= start_a;
-            count        <= 3'd5;
+            p     <= {start_old, 16'b0, 1'b0, start_k};
+            count <= 3'd5;
           end else begin
             p     <= step_next;
             count <= 3'd0;
@@ -69,9 +70,8 @@ module psg_dqsvc (
           count <= count - 1'b1;
         end
       end else if (start) begin
-        p            <= {17'b0, 1'b0, start_k};
-        start_a_hold <= start_a;
-        count        <= 3'd5;
+        p     <= {start_old, 16'b0, 1'b0, start_k};
+        count <= 3'd5;
       end
     end
   end
