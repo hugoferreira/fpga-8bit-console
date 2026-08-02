@@ -1633,6 +1633,168 @@ def validate_fold_word_contract() -> str:
             "literal nodes preserve ((0,1),(2,3)),((4,5),(6,7)) ordering")
 
 
+def validate_fold_arithmetic_contract() -> str:
+    """Prove the base-256 /5 lowering over every reachable fold sum."""
+    threshold = 24_576
+    pair_lo = -(1 << 16)
+    pair_hi = (1 << 16) - 2
+    excess_max = max(pair_hi - threshold, -threshold - pair_lo)
+    assert excess_max == 40_960
+
+    def split5(excess: int) -> tuple[int, int, int]:
+        high, low = divmod(excess, 256)
+        address = high + low
+        return 51 * high + address // 5, address, address // 5
+
+    for excess in range(excess_max + 1):
+        quotient, address, table_q = split5(excess)
+        assert quotient == excess // 5
+        assert 0 <= address <= 414
+        assert 0 <= table_q < (1 << 7)
+
+    def shipped(sum_value: int) -> int:
+        if sum_value >= threshold:
+            excess = sum_value - threshold
+            return threshold + ((excess * 52_429) >> 18)
+        if sum_value <= -threshold:
+            excess = -threshold - sum_value
+            return -threshold - ((excess * 52_429) >> 18)
+        return sum_value
+
+    def lowered(sum_value: int) -> int:
+        if sum_value >= threshold:
+            return threshold + split5(sum_value - threshold)[0]
+        if sum_value <= -threshold:
+            return -threshold - split5(-threshold - sum_value)[0]
+        return sum_value
+
+    outputs = []
+    for sum_value in range(pair_lo, pair_hi + 1):
+        got = lowered(sum_value)
+        assert got == shipped(sum_value), sum_value
+        assert -(1 << 15) <= got < (1 << 15)
+        outputs.append(got)
+    assert len(outputs) == 131_071
+    assert min(outputs) == -(1 << 15) and max(outputs) == (1 << 15) - 1
+    return ("131,071 signed-int16 pair sums and 40,961 reachable /5 "
+            "excesses; exact reciprocal equivalence and signed16 result")
+
+
+def validate_sample_pool_contract() -> str:
+    """Execute the four-field 70-bit transient lifetime hypothesis.
+
+    This is an information/lifetime proof, not sample arithmetic.  Persistent
+    oscillator/restart state and state owned inside wave, DQ, multiplier and
+    ring services are deliberately outside this pool.
+    """
+    capacities = {"A": 18, "B": 18, "N": 17, "O": 17}
+
+    class Pool:
+        def __init__(self) -> None:
+            self.live: dict[str, tuple[str, int] | None] = {
+                field: None for field in capacities
+            }
+            self.peak_payload = 0
+
+        def put(self, field: str, name: str, bits: int) -> None:
+            assert self.live[field] is None, (field, self.live[field], name)
+            assert 0 < bits <= capacities[field], (field, name, bits)
+            self.live[field] = (name, bits)
+            self.peak_payload = max(
+                self.peak_payload,
+                sum(value[1] for value in self.live.values()
+                    if value is not None))
+
+        def take(self, field: str, name: str) -> None:
+            assert self.live[field] is not None
+            assert self.live[field][0] == name, (field, self.live[field], name)
+            self.live[field] = None
+
+        def empty(self) -> None:
+            assert all(value is None for value in self.live.values()), self.live
+
+    def begin_visit(pool: Pool) -> None:
+        pool.put("N", "dq_live", 14)        # W-5 -> W6
+        pool.put("O", "old_noise_step", 17) # W-5 -> W1
+
+    # Built-in oscillator path.
+    built = Pool()
+    begin_visit(built)
+    built.take("O", "old_noise_step")        # W1
+    built.put("A", "new_wave", 18)           # W2 -> W4
+    built.put("B", "old_wave", 18)           # W3 -> W27
+    built.take("A", "new_wave")              # W4 gain launch
+    built.put("A", "sign_aud_flags", 3)      # W4 -> W84
+    built.take("N", "dq_live")               # W6
+    built.put("N", "live_gain_limb", 17)     # W15 -> W27
+    built.take("N", "live_gain_limb")        # W27
+    built.put("N", "current_arm", 17)        # W27 -> W84
+    built.take("B", "old_wave")               # W27 old-gain launch
+    built.put("O", "old_gain_limb", 17)      # W40 -> W51
+    built.take("O", "old_gain_limb")         # W51
+    built.put("O", "old_arm", 17)            # W51 -> W84
+    built.take("N", "current_arm")           # W84
+    built.take("O", "old_arm")
+    built.take("A", "sign_aud_flags")
+    built.put("A", "filtered_leaf", 17)      # W84 -> word48/49
+    built.take("A", "filtered_leaf")
+    built.empty()
+
+    # Wavetable path.  The 18-bit packed point is exactly fraction10 plus a
+    # signed byte.  Linear interpolation is a convex combination, so its
+    # scaled result is bounded by signed-byte*128: -16384..16256 (signed15).
+    interp_min = (-128 * 1024) >> 3
+    interp_max = (127 * 1024) >> 3
+    assert (interp_min, interp_max) == (-16_384, 16_256)
+    assert -(1 << 14) <= interp_min and interp_max < (1 << 14)
+
+    wave = Pool()
+    begin_visit(wave)
+    wave.take("O", "old_noise_step")          # W1
+    wave.put("A", "primary_fraction_base", 18)
+    wave.put("O", "primary_adjacent", 8)     # W2 -> W4
+    wave.put("B", "old_fraction_base", 18)   # W3 -> W15
+    wave.take("O", "primary_adjacent")       # W4 primary launch
+    wave.take("A", "primary_fraction_base")
+    wave.put("O", "old_adjacent", 8)         # W4 -> W15
+    wave.take("N", "dq_live")                # W6
+    wave.take("B", "old_fraction_base")      # W15 old launch
+    wave.take("O", "old_adjacent")
+    wave.put("A", "primary_interpolated", 15)
+    wave.put("B", "old_interpolated", 15)   # W26
+    wave.take("A", "primary_interpolated")   # W27 gain launch
+    wave.take("B", "old_interpolated")
+    wave.put("A", "sign_aud_flags", 3)
+    wave.put("N", "live_gain_limb", 17)     # W40 -> W51
+    wave.take("N", "live_gain_limb")
+    wave.put("N", "current_arm", 17)        # W51 -> W84
+    wave.take("N", "current_arm")
+    wave.take("A", "sign_aud_flags")
+    wave.put("A", "filtered_leaf", 17)
+    wave.take("A", "filtered_leaf")
+    wave.empty()
+
+    # The fold begins only after the eighth leaf write, so it reuses the same
+    # fields.  HOLD words 1..8 are its step identity; no state counter exists.
+    fold = Pool()
+    fold.put("A", "fold_a", 18)
+    fold.put("B", "fold_b", 18)
+    fold.take("A", "fold_a")
+    fold.take("B", "fold_b")
+    fold.put("A", "fold_sum_or_result", 18)
+    fold.put("N", "fdiv5_q", 7)
+    assert tuple(range(1, 9)) == (1, 2, 3, 4, 5, 6, 7, 8)
+    fold.take("N", "fdiv5_q")
+    fold.take("A", "fold_sum_or_result")
+    fold.empty()
+
+    assert sum(capacities.values()) == 70
+    assert max(built.peak_payload, wave.peak_payload,
+               fold.peak_payload) <= 70
+    return ("A18+B18+N17+O17 = 70 shared bits; built-in, wavetable and "
+            "counter-free fold lifetimes execute without overlap or spill")
+
+
 def remaining_owner_action_inventory(nodes: list[Node]) -> str:
     """Separate proved transactions from every owner-one placeholder site."""
     names = {node.name for node in nodes}
@@ -1751,6 +1913,8 @@ def main() -> int:
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
+    fold_arithmetic = validate_fold_arithmetic_contract()
+    sample_pool = validate_sample_pool_contract()
     owner_inventory = remaining_owner_action_inventory(seq_nodes)
     condition_contract = validate_condition_contract(sample_program,
                                                      tick_program)
@@ -1804,7 +1968,9 @@ def main() -> int:
     print("fixed decoder RTL: " + move_rtl)
     print("sample action inventory: " + sample_inventory)
     print("sample stored-wait manifest: " + sample_waits)
+    print("sample transient pool: " + sample_pool)
     print("fold word/tree contract: " + fold_contract)
+    print("fold arithmetic contract: " + fold_arithmetic)
     print("remaining owner action inventory: " + owner_inventory)
     print("condition contract: " + condition_contract)
     print(public_priority)

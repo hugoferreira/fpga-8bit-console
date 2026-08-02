@@ -1474,6 +1474,18 @@ git history; do not repeat them without the recorded changed condition.
   wave/ARAM tests pass; isolated, full and PREVIEW lint plus strict OpenSpec
   pass.  Accept this as image/address foundation only: the 70-bit value model,
   sample service semantics, new RTL and physical result remain unproved.
+- **Transient/fold model result:** the executable model now runs separate
+  built-in and wavetable lifetimes through A18+B18+N17+O17.  It checks every
+  producer/consumer and rejects an overwrite, width overflow or live value at
+  leaf commit.  Wavetable fraction/base packing is exactly eighteen bits and
+  its convex interpolation range is -16,384..16,256, so the replacement
+  signed-15 value fits before the fields are reused.  After leaf commit the
+  same pool executes a counter-free fold.  Independently, all 131,071
+  signed-int16 pair sums match the shipped reciprocal form, and all 40,961
+  reachable excesses match the base-256 `fdiv5` lowering with address <=414
+  and seven-bit table output.  Accept the **70-bit no-spill bound** and fold
+  formula foundation; restart/noise/phase value transactions, semantic RTL
+  and physical cost remain the next unproved H-D boundary.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
