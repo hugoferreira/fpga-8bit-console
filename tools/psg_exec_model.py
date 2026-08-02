@@ -2096,6 +2096,71 @@ def validate_sample_context_path_bound(d2d: list[int]) -> str:
             "78/79; later W0-W6 physical packing remains unproved")
 
 
+def validate_sample_physical_w2_gap(d2d: list[int], actions: Actions) -> str:
+    """Reject D2F on the unchanged stream's no-restart old-DQ path.
+
+    D2E-A proves an information bound at PC 1c.  This proof advances the
+    literal D2D q stream through W2 and counts only values that are still
+    independently observable on the named path.  One counterexample is
+    sufficient to reject a physical allocation of the unchanged stream.
+    """
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(d2d[pc])
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+    assert decoded(0x1f).action == action_by_name["CAP_W2"]
+    assert decoded(0x21).action == action_by_name["CAP_W4"]
+    assert decoded(0x22).action == action_by_name["CAP_W5"]
+    # D2D still primes word zero on CAP_W4, so W5 cannot recover word16's
+    # original selected-old phase from the synchronous state output.
+    assert decoded(0x21).word == 0 and q_word(0x22) == 0
+
+    wt = False
+    old_noise = False
+    restart = False
+    ordinary_old_dq = not wt and not old_noise
+    assert ordinary_old_dq and not restart
+
+    post_w2 = {
+        "current_primary": 18,
+        "selected_old_phase": 16,
+        "live_dq": 14,
+        "phase2": 17,
+        "amplitude": 12,
+        "old_phase_delta": 13,
+        "old_q_msb": 1,
+    }
+    required = sum(post_w2.values())
+    assert required == 91
+
+    # H-C owns 38 bits.  The no-restart ordinary-old-DQ path must retain the
+    # old-q low word and old wave/mode/alternate tuple until W5, leaving only
+    # sixteen H-C bits for transient overlay beside A18+B18+N17+O17.
+    pool = 18 + 18 + 17 + 17
+    hc_total = 38
+    hc_retained = 16 + (3 + 2 + 1)
+    hc_overlay = hc_total - hc_retained
+    available = pool + hc_overlay
+    assert pool == 70 and hc_retained == 22 and hc_overlay == 16
+    assert available == 86 and required > available
+    deficit = required - available
+    assert deficit == 5
+
+    return ("H-D2F rejected: unchanged CAP_W4 primes word0, so no-restart "
+            "ordinary old-DQ retains selected-old-phase16 through W5; "
+            f"post-W2 payload {required} exceeds 70-bit pool + "
+            f"{hc_overlay}-bit H-C overlay = {available} by {deficit} bits")
+
+
 def reachable_to_idle(nodes: list[Node]) -> None:
     graph = {node.name: set(node.successors) for node in nodes}
     assert "S_IDLE" in graph
@@ -4035,6 +4100,8 @@ def main() -> int:
             sample_program, sample_stream_candidate)
     sample_overlay = validate_sample_context_path_bound(
         sample_blend_candidate)
+    sample_physical_gap = validate_sample_physical_w2_gap(
+        sample_blend_candidate, actions)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -4103,6 +4170,7 @@ def main() -> int:
     print("sample corrected-stream blend gate: " + sample_blend_gap)
     print("sample typed-blend manifest: " + sample_blend)
     print("sample context-overlay gate: " + sample_overlay)
+    print("sample physical-allocation gate: " + sample_physical_gap)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)

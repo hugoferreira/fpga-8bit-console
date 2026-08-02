@@ -1740,12 +1740,53 @@ git history; do not repeat them without the recorded changed condition.
   hypothesis until D2F supplies literal field packing.
 - **R.84H-D2F next permitted hypothesis:** carry D2E through W0--W6 as an
   executable physical allocation.  Enumerate every A18+B18+N17+O17 put/take
-  and typed q arrival for the same 32,768 classes; prove W0--W3 reconstruction,
+  and typed q arrival for the same 65,536 classes; prove W0--W3 reconstruction,
   restart/clear tags, old-noise versus old-DQ service liveness, external-hold
   freeze and every D2D fixed consumer without a decoded record/trace mirror.
   Preserve D2D's 43-word candidate and 222/782/172/158 invariants.  Do not add
   path tags, move a DQ request, add scratch/EBR/state or write RTL unless the
   physical allocation itself exposes a contradiction.
+- **R.84H-D2F active hypothesis:** test the unchanged D2D stream at every
+  W0--W6 boundary before allowing a repair.  The candidate counterexample is
+  the no-restart built-in path with ordinary selected-old DQ immediately
+  after W2: current primary, the selected old phase retained for W5, live DQ,
+  reconstructed phase2, amplitude, old phase delta and the old-q carry are
+  all independent.  Bind the proof to the literal CAP_W4/CAP_W5 word stream,
+  the exact 70-bit A/B/N/O pool and H-C's 38-bit context, and reject D2F if the
+  required payload exceeds the path-specific overlay.  Scope is this ledger
+  plus `tools/psg_exec_model.py`; accepted `rtl/psg_exec.hex`, RTL, generic
+  PSG, main and Tang remain untouched.  Baseline is D2E-A `3a6e5ec` with the
+  43-word D2D candidate and 222/782/172/158 invariants.  Repeat only if a
+  fixed existing q prefetch removes the selected-old-phase lifetime or the
+  W5 old-DQ consumer moves; do not add a path tag, request, scratch word, EBR
+  or state bit to make the unchanged stream fit.
+- **R.84H-D2F result and decision:** rejected by the first literal W0--W6
+  allocation counterexample.  The model binds CAP_W2/W4/W5 to PCs
+  `0x1f/0x21/0x22` in the exact D2D image and proves CAP_W4 still primes word
+  zero.  On the no-restart built-in ordinary-old-DQ path, immediately after
+  W2 the independent live set is current-primary18, selected-old-phase16,
+  live-DQ14, reconstructed-phase2-17, amplitude12, old-phase-delta13 and
+  old-q-msb1: **91 bits**.  H-C's 38 bits must still retain old-q-low16 and
+  old wave/mode/alternate6, so only sixteen can overlay the 70-bit A/B/N/O
+  pool.  The unchanged stream therefore has **86 available and a five-bit
+  deficit**.  This is path-specific: restart aliases selected old-q to phase2,
+  while old-noise and wavetable suppress the W5 old-DQ update.  The complete
+  executable model remains clean at 19,728,640 decomposed cases, 131,087
+  synchronous transactions, 65,536 D2E-A classes and 64 production-image
+  runs; accepted image and RTL remain byte-identical/untouched.  Do not retry
+  the unchanged CAP_W4 word-zero stream.
+- **R.84H-D2F-A next permitted hypothesis:** change only the alternate D2D
+  candidate's CAP_W4 stored word from 0 to 16, leaving its action, operation,
+  W5 edge and every request/write/clock unchanged.  The synchronous state
+  port then presents original word16 as q16 at W5: no-restart ordinary old-DQ
+  can consume the selected old phase there instead of retaining its W2 copy;
+  restart keeps q10 in H-C storage freed because selected old-q aliases
+  phase2; old-noise and wavetable ignore the extra q16 on W5.  First prove
+  literal packing for all 65,536 paths, both restart branches, W0--W3
+  reconstruction, hold freeze and every D2D typed consumer.  Preserve 222
+  words, 782 clocks, 172 reads, 158 writes, sixteen fixed writes, the two-EBR
+  budget and all accepted-image/RTL boundaries.  Reject before RTL if any
+  path still spills or if the q16 prime changes a semantic consumer.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
