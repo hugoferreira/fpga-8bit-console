@@ -1950,6 +1950,31 @@ git history; do not repeat them without the recorded changed condition.
   remains part of the executor gate.  Full model, accepted-image/RTL
   immutability and strict OpenSpec gates pass; no executor, image or RTL is
   claimed yet.
+- **R.84H-D2F-C-B2 result and decision:** rejected and reverted as another
+  disconnected-executor proof.  The suffix machine itself passed 64 runs / 512
+  slots, 12,800 nominal held transitions, 32 stopped-wavetable paths, both
+  clear states, all damp levels, ordered suffix writes, arms, ring, blend, the
+  W84 split and literal fold.  Those counts are not semantic evidence: its
+  wrapper seeded the packed PRE_W15 frame and typed/service inputs directly
+  from `evaluate_sample_slot()` output, including final phase/state, wave and
+  ARAM results, primary interpolation, live-gain limb and final words.  The
+  source-level oracle guard inspected only `execute_d2fcb_late`, excluding the
+  leaking wrapper.  This is the same architectural defect that rejected the
+  first D2F-C machine, now hidden behind a better late executor.  All B2 model
+  code is removed; accepted image, RTL and B1 foundation `7f776da` are
+  unchanged.
+- **R.84H-D2F-C-B3 next permitted hypothesis:** begin from literal D2F-B
+  packed W2/W3 rows, mechanically unpack them, then execute the W4, W5 and W6
+  edge replacements into the corrected PRE_W15 frame before any late suffix
+  comparison.  The direct evaluator may construct only the final expected
+  result after execution; it may not seed a frame, typed q value, service
+  result, persistent word or fold input.  Derive every wave/ARAM/multiply token
+  from the modeled issue/return edge, make stopped-wavetable zero
+  normalization explicit, and obtain active word26/30 through the modeled
+  action-qualified state read before CAP_W51.  Extend the oracle guard across
+  the harness as well as the executor.  Reject before image or RTL if any
+  predecessor or suffix value is copied from the expected trace, or if a hold
+  changes packed state, service state, write provenance or publication.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
