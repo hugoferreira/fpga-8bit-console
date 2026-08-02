@@ -2307,6 +2307,74 @@ git history; do not repeat them without the recorded changed condition.
   reverb and dampen classes.  Reject before executor code if any path exceeds
   A18+B18+N17+O17 plus H-C, if a service-resident bit is double-counted as
   frame state, or if a prose bundle hides independently timed values.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B active hypothesis:** starting from clean
+  scratch `c0e7302`, replace B1-A's coarse owner strings with a typed physical
+  manifest whose every retained value has literal `{container,lsb,width}`
+  pieces and whose service outputs are named outside the 108-bit frame.
+  Split the eighteen fixed writes, W75--word15 filter/dampen chain, playing-
+  only ring write and ring-position advance, W0 LFSR-byte provenance and the
+  complete word48/49-to-fold-to-dry path.  Mechanically sweep bit ownership at
+  every named replacement edge for active built-in, active wavetable,
+  playing-zero-amplitude, hidden-silent, stopped-wavetable, reverb, dampen and
+  combined reverb+dampen classes.  Baseline gates are the full executable
+  model, Python compilation, strict OpenSpec validation and byte-identical
+  accepted image/all-RTL immutability.  Reject before executor/image/RTL on
+  any collision or spill, a missing class/commit/fold edge, an oracle-derived
+  producer, service/frame double accounting, or an independently timed value
+  hidden behind a bundle name.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B result and decision:** rejected before
+  model/image/RTL change by an independent literal-slice audit.  B1-A's
+  `dq_live_hold -> frame:N17` classification is physically impossible:
+  original/final phase2 already occupies N17 through W6.  The exact live DQ
+  payload is fourteen service bits in the chained DQ live-result register;
+  W6 zero-extends them while atomically replacing N with final phase2.  The
+  old DQ result likewise stays in the DQ recurrence until W5.  Noise services
+  expose a 24-bit multiplier slice plus the still-stable random sign before
+  replacing O with a signed seventeen-bit old step; interpolation changes
+  from a nineteen-bit service magnitude plus base/sign to a signed fifteen-
+  bit frame value; reciprocal results require a retained seventeen-bit limb
+  plus `m_p[28:3]`, not one direct multiplier slice.  Treating any of those
+  stages as one retained value would either collide or double-count state.
+- **B1-B late-path audit:** the existing D2F-C-A built and wavetable rows are
+  collision-free only after keeping those services external to the frame.
+  The exact ring path still needs post-read sixteen-bit current/old captures,
+  the playing-only `sample_f[15:0]` ring write and one persistent ten-bit ring
+  position advanced once per sample.  A viable W75 replacement retires both
+  arms, ring values, reverb flags and blend count while retaining a seventeen-
+  bit blend base, one difference-sign bit and one product-pending bit beside
+  damp/audible; count 64 takes the no-product arm.  This bridge needs a new
+  arithmetic/value proof and service-valid state.  The current CAP_W51
+  `OP_EXEC word26` also remains physically wrong for parameter bank one:
+  `psg_execmove` remaps 26 to 30 only for `OP_READ`.
+- **B1-B persistent/output audit:** the eighteen write sites remain split at
+  PCs 14/15/16/17/19/1b/1d/1e/27/28/29/2a/2d/39/3c/3d/4c/4d, but D2F-C-A
+  proves only action/q/destination provenance; it does not provide eighteen
+  independent value equations.  Their exact q/destination pairs are
+  20/20, 21/21, 22/22, 18/18, 19/19, 14/14, 10/23, 12/10, 11/11, 16/16,
+  17/17, 13/13, 12/12, 15/15, 14/14, 15/15, 0/48 and 48/49.  W0's pre-edge
+  LFSR byte needs no new store:
+  after the shift, new `lfsr[8:1]` is exactly old `lfsr[7:0]` through the
+  word11 merge.  Fold arithmetic/slices remain reusable, but the no-oracle
+  word48/49-to-A/B/N-to-final-A-to-`dry16` transfer is still unbound:
+  `SampleImageMachine.FOLD_FINISH` currently rereads slot-zero word48 rather
+  than publishing retained A, so it proves memory consistency instead of the
+  proposed physical boundary.  Ring RP also has no reset assignment in the
+  generic walker, so an integrated executor needs an explicit initialization/
+  provenance contract rather than silently assuming a start address.
+  Active built-in/wavetable rows therefore do not prove playing-zero,
+  hidden-silent, stopped-wavetable, reverb or dampen suffix behavior.  The
+  accepted model/image/all RTL are unchanged; B1-B is not a complete physical
+  manifest.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1 next permitted hypothesis:** build only the
+  exact service/take and W75-to-W84 transition IR.  Give DQ, multiplier, wave,
+  ARAM and ring services literal result/valid slices outside A/B/N/O+H-C;
+  split every width-changing take into separate service and frame values;
+  prove the count-64/product-pending bridge, both ring captures, play-only
+  ring write/RP update and active-bank 26/30 source algebra across built-in,
+  wavetable, playing-zero, hidden, stopped, reverb and dampen classes.  Stop
+  before record commits, fold/public equivalence, image or RTL.  Reject if a
+  service bit enters the 108-bit capacity sweep, an absent request is treated
+  as a zero result, or the post-W75 row exceeds the existing late-path bound.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
