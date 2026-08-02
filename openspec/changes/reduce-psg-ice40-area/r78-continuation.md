@@ -2242,6 +2242,40 @@ git history; do not repeat them without the recorded changed condition.
   before image or RTL if zero-amplitude canonicalization changes any suffix
   state/output, a new 20-bit fraction store appears, or any controller/service
   value is injected from the oracle.
+- **R.84H-D2F-C-B3-B2-A2-A1-B0 production boundary audit:** accepted as a
+  docs-only replacement manifest; no model, image or RTL changes.  The existing
+  `SampleImageMachine` is useful only for its literal owner-zero PC/IR/state-q,
+  memory-address, fold and dry-public skeleton.  It calls
+  `evaluate_sample_slot()` immediately after the 14 record plus four parameter
+  loads, then launches 24 service tokens directly from `self.trace`: DQ/noise,
+  all four built-in or ARAM results, both interpolation and gain chains, ring
+  reads and blend.  Twenty-six trace-dependent equality assertions merely
+  compare those injected tokens with their own source.  The remaining direct
+  semantic roots are selected final-record words, `trace.leaf`, next LFSR/LFSR2
+  and a final-word decode that controls blend launch.  Therefore its reported
+  64 production-image runs, 512 slots, 8,052 service transactions and exact
+  fold/dry commits prove image topology and oracle consistency, not a
+  mirror-free semantic executor.
+- **B0 atomic replacement rule:** do not graft A2-A1-S into only CAP_W0--W26
+  while retaining any other `self.trace` launch, direct store, leaf, control or
+  LFSR use; that would again let the direct evaluator supply candidate state.
+  Keep `SampleTrace` only outside the machine as a final-output oracle.  Inside,
+  the first acceptable cut replaces all 24 token values plus the six direct
+  state/output roots from loaded words, public inputs, addressable ARAM, exact
+  service recurrences and predecessor candidate state in one executable path.
+  The 26 trace comparisons must become comparisons at the final record, ring,
+  leaf and dry boundaries only.  Preserve the literal PC/IR/state-q and fold
+  skeleton, but replace its snapshot `inject_hold()` with the A2-A1-S pure
+  enabled-successor/CE selection across every new persistent field.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1 next permitted hypothesis:** first define a
+  typed producer manifest for those 30 atomic roots, grouped by the earliest
+  production edge that can derive each value.  Every root must name loaded-word
+  slices or a public input, service request/response, exact birth and last use,
+  physical A/B/N/O plus H-C slices, and its final persistent/public consumer.
+  Reject before executor code if a root names `SampleTrace`, if two groups hide
+  the same arithmetic behind different names, if ring/dampen/fold state is
+  absent, or if any root exceeds the already-proved frame capacity/lifetime.
+  Only a complete manifest may drive the atomic no-oracle executor rewrite.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
