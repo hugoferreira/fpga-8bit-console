@@ -1872,6 +1872,38 @@ git history; do not repeat them without the recorded changed condition.
   First prove both clear states and all D2F-B path classes structurally; do not
   write semantic RTL or replace `psg_exec.hex` until the full manifest and
   no-oracle executor both pass with the 44-word/222/782/172/158 invariants.
+- **R.84H-D2F-C-A manifest result:** accepted as a structural foundation only.
+  The candidate now keeps all eighteen per-slot writes as exact
+  `(pc, action, q-source, destination, value-origin)` records, including both
+  word-14/15 writes and the leaf writes, rather than reducing them to the last
+  value per address.  Literal post-W6 allocations use the full A18+B18+N17+O17
+  plus exact H-C aliases Q=`old_q[15:0]`, T=old tuple, C=live context,
+  I=`phase_index_hold` and D=`snd_id`.  After two independent audits added the
+  current/old sign bits, both wave-6 decisions, `snd_wt` discriminator,
+  audible gate, W84 reverb lifetimes and wavetable old-gain enable, the
+  built-in W15 row peaks at **106/108 bits** and wavetable at **89/108** with
+  every declared replacement non-overlapping.  Only CAP_W15 results may be
+  born at W15; all other late fields name a pre-W15 D2F-B/service source.
+- **D2F-C-A address/fold convictions:** PC36 CAP_W51 encodes word26, but the
+  committed movement layer bank-remaps 24..27 only for `OP_READ`; owner-zero
+  CAP is `OP_EXEC`.  Therefore D2F-C-B must make this one action-qualified
+  physical read select active word26/30 before using dampen at CAP_W75.  The
+  manifest also proves each of seven literal 20-PC fold nodes, four typed
+  word48/49 inputs, steps 1..8, two fixed writes and q49 at `FOLD_FINISH`.
+  Its stepwise A/B/N allocation peaks at **36/70 bits** and retains the signed
+  A18 result through both writes and dry publication; the previous prose that
+  emptied the pool before `FOLD_FINISH` was invalid.  Accepted image and all
+  RTL remain untouched.
+- **R.84H-D2F-C-B next permitted hypothesis:** execute the manifest as value
+  transitions, not as field-name intervals.  Mechanically unpack every D2F-B
+  PC1c/W0--W3 row, perform the W4/W5/W6 replacements into the 106/108 or
+  89/108 pre-W15 frame, and consume only that frame, typed q values and named
+  service results through W84 and the literal fold.  Model the CAP_W51
+  active-bank 26/30 read explicitly, exercise both clear values, and preserve
+  ordered write provenance plus external-hold freeze.  Reject before RTL if a
+  value appears from a source string rather than a packed predecessor or if
+  fold/dry publication reads memory directly.  Preserve the 44-word candidate
+  and 222/782/172/158 invariants.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

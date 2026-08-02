@@ -2519,6 +2519,380 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
             "semantic commit executor and RTL remain unproved")
 
 
+def validate_sample_d2fca_manifest(candidate: list[int],
+                                   actions: Actions) -> str:
+    """Prove the post-D2F-B physical-state and fixed-write manifest.
+
+    This is deliberately a manifest rather than another semantic executor.
+    It binds every late value to literal A/B/N/O or H-C bit slices, checks
+    replacement at each producer/consumer edge, retains full write provenance,
+    and proves the literal fold keeps its result until dry publication.
+    """
+    action_by_code = actions.by_owner["sample"]
+    action_by_name = {action.name: code
+                      for code, action in action_by_code.items()}
+
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(candidate[pc])
+
+    def action_name(pc: int) -> str:
+        action = action_by_code.get(decoded(pc).action)
+        return "HOLD" if action is None \
+            and decoded(pc).action == COMMON_ACTION["HOLD"] else \
+            ("" if action is None else action.name)
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    # Every persistent/scratch write keeps its PC, action, physical q source,
+    # fixed destination and value provenance.  In particular, the early and
+    # final word-14/15 writes may not disappear in a last-value dictionary.
+    writes = (
+        (0x14, "STORE_10_20", 20, 20, "selected old/current tuple"),
+        (0x15, "STORE_11_21", 21, 21, "current increment low"),
+        (0x16, "STORE_12_22", 22, 22, "last controls/gain low"),
+        (0x17, "STORE_8_18", 18, 18, "selected old increment low"),
+        (0x19, "STORE_9_19", 19, 19, "selected old gain/inc high"),
+        (0x1b, "STORE_15_14", 14, 14, "early brown/mode/filter sign"),
+        (0x1d, "CAP_W0", 10, 23, "final noise lowpass"),
+        (0x1e, "CAP_W1", 12, 10, "final current phase"),
+        (0x27, "STORE_1_11", 11, 11, "nz hold/old-q low"),
+        (0x28, "STORE_6_16", 16, 16, "final old phase"),
+        (0x29, "STORE_7_17", 17, 17, "blend/old-q high"),
+        (0x2a, "STORE_3_13", 13, 13, "ack/gains/nz/phase2 high"),
+        (0x2d, "STORE_2_12", 12, 12, "final phase2 low"),
+        (0x39, "STORE_14_15", 15, 15, "clear-qualified filter low"),
+        (0x3c, "STORE_4_14", 14, 14, "final filter high/mode/brown"),
+        (0x3d, "STORE_5_15", 15, 15, "final filter low"),
+        (0x4c, "STORE_LEAF_LO", 0, 48,
+         "audible-gated retained filtered value low"),
+        (0x4d, "STORE_LEAF_HI", 48, 49,
+         "audible-gated retained filtered value high"),
+    )
+    for pc, name, q_source, destination, origin in writes:
+        insn = decoded(pc)
+        assert insn.op == Op.WRITE, (pc, insn)
+        assert action_name(pc) == name, (pc, action_name(pc), name)
+        assert q_word(pc) == q_source, (pc, q_word(pc), q_source)
+        assert 10 <= destination <= 23 or destination in (48, 49)
+        assert origin
+    destinations = [destination for _, _, _, destination, _ in writes]
+    assert {word: destinations.count(word) for word in range(10, 24)} \
+        == {word: (2 if word in (14, 15) else 1)
+            for word in range(10, 24)}
+    assert destinations.count(48) == destinations.count(49) == 1
+
+    typed_q = {0x1c: 13, 0x21: 14, 0x22: 16, 0x27: 11,
+               0x28: 16, 0x29: 17, 0x2a: 13, 0x2b: 19,
+               0x2d: 12, 0x2e: 17, 0x31: 20, 0x38: 14,
+               0x39: 15}
+    assert {pc: q_word(pc) for pc in typed_q} == typed_q
+
+    # CAP_W51's literal word 26 is intended to prefetch active-bank dampen for
+    # CAP_W75, but the committed movement layer remaps 24..27 only on OP_READ
+    # while CAP is OP_EXEC.  D2F-C-B must add this exact action-qualified
+    # 26/30 address selection before semantic RTL can be accepted.  Audible is
+    # captured from play/hidden into one manifest bit until the leaf writes.
+    assert decoded(0x36) == Instruction(
+        Op.EXEC, action=action_by_name["CAP_W51"], word=26)
+    assert q_word(0x37) == 26
+    move = MOVE.read_text()
+    assert "if (sample && op == OP_READ && state_word[5:2] == 4'b0110)" \
+        in move
+    assert tuple(30 if spar_bank else 26 for spar_bank in (0, 1)) == (26, 30)
+
+    events = ("PRE_W15", "W15", "PC27", "PC28", "PC29", "PC2A",
+              "W26", "W27", "PC2D", "PC2E", "W40", "W51", "W75",
+              "PC38", "PC39", "W84", "LEAF")
+    event = {name: index for index, name in enumerate(events)}
+    capacities = {"A": 18, "B": 18, "N": 17, "O": 17,
+                  "Q": 16, "T": 6, "C": 7, "I": 6, "D": 3}
+    assert sum(capacities.values()) == 108
+    hc_aliases = {
+        "Q": "old_q[15:0]",
+        "T": "{old_wave[2:0],old_mode[1:0],old_alt}",
+        "C": "{snd_wt,snd_wave[2:0],snd_mode[1:0],snd_alt}",
+        "I": "phase_index_hold[5:0]",
+        "D": "snd_id[2:0]",
+    }
+    assert set(hc_aliases) == set(capacities) - {"A", "B", "N", "O"}
+
+    @dataclass(frozen=True)
+    class LiveField:
+        name: str
+        width: int
+        pieces: tuple[tuple[str, int, int], ...]
+        born: str
+        dead: str
+        source: str
+        consumer: str
+
+    def field(name: str, width: int,
+              pieces: tuple[tuple[str, int, int], ...],
+              born: str, dead: str, source: str,
+              consumer: str) -> LiveField:
+        return LiveField(name, width, pieces, born, dead, source, consumer)
+
+    built = (
+        field("final_nz_phase", 4, (("A", 0, 4),), "PRE_W15", "PC2A",
+              "unpacked D2F-B W0 state", "word13 merge"),
+        field("refresh", 1, (("A", 4, 1),), "PRE_W15", "PC27",
+              "unpacked D2F-B refresh", "word11 merge"),
+        field("restart", 1, (("A", 5, 1),), "PRE_W15", "PC2A",
+              "unpacked D2F-B restart", "blend/gain merges"),
+        field("clear", 1, (("A", 6, 1),), "PRE_W15", "PC39",
+              "unpacked D2F-B clear", "word13/15 merges"),
+        field("last_gain_we", 1, (("A", 7, 1),), "PRE_W15", "PC2A",
+              "play/music predicate", "word13 merge"),
+        field("old_q_replace", 1, (("A", 8, 1),), "PRE_W15", "PC29",
+              "restart or old-DQ update", "word11/17 merges"),
+        field("live_gain_hi", 5, (("A", 9, 5),), "PRE_W15", "PC2A",
+              "unpacked D2F-B live gain", "word13 last-gain merge"),
+        field("current_sign", 1, (("A", 14, 1),), "PRE_W15", "W27",
+              "sign of W4 current source", "signed current arm"),
+        field("snd_wt", 1, (("A", 15, 1),), "PRE_W15", "W84",
+              "unpacked D2F-B live context", "path decode"),
+        field("live_is_wave6", 1, (("A", 16, 1),), "PRE_W15", "W27",
+              "unpacked D2F-B live wave", "live reciprocal bypass"),
+        field("audible", 1, (("A", 17, 1),), "PRE_W15", "LEAF",
+              "W4 play/hidden capture", "leaf48/49 gate"),
+        field("old_source", 18, (("B", 0, 18),), "PRE_W15", "W27",
+              "unpacked D2F-B W3 pair", "old-gain launch"),
+        field("live_gain_limb", 17, (("N", 0, 17),), "W15", "W27",
+              "CAP_W15 multiplier result", "current-arm reciprocal"),
+        field("final_phase2", 17, (("O", 0, 17),), "PRE_W15", "PC2D",
+              "W6 live-DQ merge", "word13/12 merges"),
+        field("final_old_phase", 16, (("Q", 0, 16),),
+              "PRE_W15", "PC28", "W5 old phase update", "word16 write"),
+        field("final_old_q", 17,
+              (("T", 0, 6), ("C", 0, 7), ("I", 0, 4)),
+              "PRE_W15", "PC29", "W5 old-q update/copy",
+              "word11/17 merges"),
+        field("old_wave", 3, (("D", 0, 3),), "PRE_W15", "W27",
+              "unpacked D2F-B selected tuple", "old-gain launch"),
+        field("selected_old_gain_hi", 5, (("Q", 0, 5),),
+              "PC2A", "W26", "typed q13", "typed q19 merge"),
+        field("selected_old_gain", 13, (("Q", 0, 13),),
+              "W26", "W27", "q13 high plus typed q19 low",
+              "old-gain launch"),
+        field("current_arm", 17, (("N", 0, 17),), "W27", "W84",
+              "CAP_W27 reciprocal", "blend/dampen"),
+        field("old_sign", 1, (("D", 0, 1),), "W27", "W51",
+              "sign of retained old source", "signed old arm"),
+        field("old_is_wave6", 1, (("D", 1, 1),), "W27", "W51",
+              "compressed selected old wave", "old reciprocal bypass"),
+        field("blend_count", 7, (("T", 0, 6), ("C", 0, 1)),
+              "PC2E", "W75", "typed final q17", "blend launch/bypass"),
+        field("old_gain_limb", 17, (("O", 0, 17),), "W40", "W51",
+              "CAP_W40 multiplier", "old-arm reciprocal"),
+        field("reverb_flags", 4, (("C", 1, 4),), "W40", "W84",
+              "typed q20", "current/old ring combine and W84 base"),
+        field("old_arm", 17, (("O", 0, 17),), "W51", "W84",
+              "CAP_W51 reciprocal", "blend/dampen"),
+        field("filter_hi", 16, (("B", 0, 16),), "PC38", "W84",
+              "typed q14 at PC38", "filter/word14 merge"),
+        field("damp", 2, (("A", 0, 2),), "W75", "W84",
+              "active-bank q26/q30 at CAP_W75", "CAP_W84 dampen"),
+        field("filter_lo", 16, (("Q", 0, 16),), "PC39", "W84",
+              "clear-qualified typed q15", "filter/word15 merge"),
+        field("filtered_value", 17, (("A", 0, 17),), "W84", "LEAF",
+              "CAP_W84 dampen", "word14/15/48/49 writes"),
+    )
+
+    wavetable = (
+        field("primary_interp", 15, (("A", 0, 15),), "W15", "W27",
+              "CAP_W15 multiplier", "wavetable current sum"),
+        field("snd_wt", 1, (("A", 15, 1),), "PRE_W15", "W84",
+              "unpacked D2F-B live context", "path decode"),
+        field("live_is_wave6", 1, (("A", 16, 1),), "PRE_W15", "W51",
+              "unpacked D2F-B live wave", "live reciprocal bypass"),
+        field("live_gain", 13, (("B", 0, 13),), "PRE_W15", "W27",
+              "unpacked D2F-B amplitude gain", "live-gain launch"),
+        field("final_nz_phase", 4, (("B", 13, 4),),
+              "PRE_W15", "PC2A", "unpacked D2F-B W0 state",
+              "word13 merge"),
+        field("refresh", 1, (("B", 17, 1),), "PRE_W15", "PC27",
+              "unpacked D2F-B refresh", "word11 merge"),
+        field("final_phase2", 17, (("N", 0, 17),),
+              "PRE_W15", "PC2D", "W6 live-DQ merge", "word13/12 merges"),
+        field("final_old_q", 17, (("O", 0, 17),),
+              "PRE_W15", "PC29", "restart phase2 copy",
+              "word11/17 merges"),
+        field("final_old_phase", 16, (("Q", 0, 16),),
+              "PRE_W15", "PC28", "W5 old-noise/phase result",
+              "word16 write"),
+        field("restart", 1, (("T", 0, 1),), "PRE_W15", "PC2A",
+              "unpacked D2F-B restart", "blend/gain merges"),
+        field("clear", 1, (("T", 1, 1),), "PRE_W15", "PC39",
+              "unpacked D2F-B clear", "word13/15 merges"),
+        field("last_gain_we", 1, (("T", 2, 1),), "PRE_W15", "PC2A",
+              "play/music predicate", "word13 merge"),
+        field("old_q_replace", 1, (("T", 3, 1),), "PRE_W15", "PC29",
+              "restart", "word11/17 merges"),
+        field("selected_old_gain_hi", 5, (("Q", 0, 5),),
+              "PC2A", "W26", "typed q13", "typed q19 merge"),
+        field("old_interp", 15, (("O", 0, 15),), "W26", "W27",
+              "CAP_W26 multiplier", "wavetable current sum"),
+        field("old_gain_nonzero", 1, (("Q", 0, 1),), "W26", "W84",
+              "q13 high plus typed q19 low", "old-arm enable through base"),
+        field("current_sign", 1, (("T", 0, 1),), "W27", "W51",
+              "sign of wavetable current sum", "signed current arm"),
+        field("audible", 1, (("A", 17, 1),), "W27", "LEAF",
+              "W27 play/hidden capture", "leaf48/49 gate"),
+        field("blend_count", 7, (("C", 0, 7),), "PC2E", "W75",
+              "typed final q17", "blend launch/bypass"),
+        field("reverb_flags", 4, (("I", 0, 4),), "W40", "W84",
+              "typed q20", "current/old ring combine and W84 base"),
+        field("live_gain_limb", 17, (("N", 0, 17),), "W40", "W51",
+              "CAP_W40 multiplier", "current-arm reciprocal"),
+        field("current_arm", 17, (("N", 0, 17),), "W51", "W84",
+              "CAP_W51 reciprocal", "blend/dampen"),
+        field("filter_hi", 16, (("B", 0, 16),), "PC38", "W84",
+              "typed q14 at PC38", "filter/word14 merge"),
+        field("damp", 2, (("A", 0, 2),), "W75", "W84",
+              "active-bank q26/q30 at CAP_W75", "CAP_W84 dampen"),
+        field("filter_lo", 16, (("O", 0, 16),), "PC39", "W84",
+              "clear-qualified typed q15", "filter/word15 merge"),
+        field("filtered_value", 17, (("A", 0, 17),), "W84", "LEAF",
+              "CAP_W84 dampen", "word14/15/48/49 writes"),
+    )
+
+    def validate_fields(path: str, fields: tuple[LiveField, ...],
+                        expected_w15: int) -> tuple[int, int]:
+        for item in fields:
+            assert item.born in event and item.dead in event
+            assert event[item.born] < event[item.dead], item
+            assert sum(width for _, _, width in item.pieces) == item.width
+            assert item.source and item.consumer
+            for container, lsb, width in item.pieces:
+                assert container in capacities
+                assert 0 <= lsb and lsb + width <= capacities[container], item
+        peak = 0
+        w15 = 0
+        for snapshot in range(len(events)):
+            owned: set[tuple[str, int]] = set()
+            used = 0
+            for item in fields:
+                if event[item.born] <= snapshot < event[item.dead]:
+                    used += item.width
+                    for container, lsb, width in item.pieces:
+                        for bit in range(lsb, lsb + width):
+                            key = (container, bit)
+                            assert key not in owned, (path, events[snapshot],
+                                                      key, item.name)
+                            owned.add(key)
+            assert used == len(owned), (path, events[snapshot], used,
+                                        len(owned))
+            assert used <= 108, (path, events[snapshot], used)
+            peak = max(peak, used)
+            if snapshot == event["W15"]:
+                w15 = used
+        assert w15 == expected_w15, (path, w15, expected_w15)
+        return w15, peak
+
+    built_w15, built_peak = validate_fields("built-in", built, 106)
+    wave_w15, wave_peak = validate_fields("wavetable", wavetable, 89)
+    assert {item.name for item in built if item.born == "W15"} \
+        == {"live_gain_limb"}
+    assert {item.name for item in wavetable if item.born == "W15"} \
+        == {"primary_interp"}
+    assert all(item.born != "W15" or item.source.startswith("CAP_W15")
+               for item in (*built, *wavetable))
+
+    # The seven literal fold nodes preserve their q stream, fixed destinations
+    # and eight physical microstep words.  The final signed-18 work value stays
+    # in A through FOLD_FINISH, because that action receives q49 rather than a
+    # typed q48 and must publish dry16 from retained state.
+    fold_entry = decoded(0).target
+    assert fold_entry == 0x50
+    fold_prime = action_by_name["FOLD_PRIME"]
+    fold_a_lo = action_by_name["FOLD_A_LO"]
+    fold_a_hi = action_by_name["FOLD_A_HI"]
+    fold_b_lo = action_by_name["FOLD_B_LO"]
+    fold_start = action_by_name["FOLD_START"]
+    fold_run = action_by_name["FOLD_RUN"]
+    fold_write_lo = action_by_name["FOLD_WRITE_LO"]
+    fold_write_hi = action_by_name["FOLD_WRITE_HI"]
+    for node, (a_slot, b_slot, dst_slot) in enumerate(FOLD_NODES):
+        base = fold_entry + node * 20
+        assert decoded(base) == Instruction(Op.SLOT, slot_value=a_slot)
+        assert decoded(base + 1) == Instruction(
+            Op.READ, action=fold_prime, word=48)
+        assert decoded(base + 2) == Instruction(
+            Op.READ, action=fold_a_lo, word=49)
+        assert decoded(base + 3) == Instruction(
+            Op.EXEC, action=fold_a_hi)
+        assert decoded(base + 4) == Instruction(Op.SLOT, slot_value=b_slot)
+        assert decoded(base + 5) == Instruction(
+            Op.READ, action=fold_prime, word=48)
+        assert decoded(base + 6) == Instruction(
+            Op.READ, action=fold_b_lo, word=49)
+        assert decoded(base + 7) == Instruction(
+            Op.EXEC, action=fold_start)
+        assert decoded(base + 8) == Instruction(
+            Op.EXEC, action=fold_run)
+        for step in range(8):
+            assert decoded(base + 9 + step) == Instruction(
+                Op.EXEC, action=COMMON_ACTION["HOLD"], word=step + 1)
+        assert decoded(base + 17) == Instruction(
+            Op.SLOT, slot_value=dst_slot)
+        assert decoded(base + 18) == Instruction(
+            Op.WRITE, action=fold_write_lo, word=48)
+        assert decoded(base + 19) == Instruction(
+            Op.WRITE, action=fold_write_hi, word=49)
+        assert q_word(base + 18) == 8 and q_word(base + 19) == 48
+    finish_pc = fold_entry + len(FOLD_NODES) * 20
+    assert decoded(finish_pc) == Instruction(
+        Op.EXEC, action=action_by_name["FOLD_FINISH"])
+    assert q_word(finish_pc) == 49
+    assert decoded(finish_pc + 1).op == Op.DONE
+    fold_events = ("INPUTS", "STEP1", "STEP2", "STEP3", "STEP4",
+                   "STEP5", "STEP6", "STEP7", "STEP8", "WRITE_LO",
+                   "WRITE_HI", "FINISH", "DONE")
+    fold_event = {name: index for index, name in enumerate(fold_events)}
+    fold_fields = (
+        ("fold_a", 18, (("A", 0, 18),), "INPUTS", "STEP1"),
+        ("fold_b", 18, (("B", 0, 18),), "INPUTS", "STEP1"),
+        ("fold_sum", 18, (("A", 0, 18),), "STEP1", "STEP2"),
+        ("threshold_class", 2, (("B", 0, 2),), "STEP2", "STEP7"),
+        ("absolute_excess", 16, (("A", 0, 16),), "STEP2", "STEP4"),
+        ("split_high_low", 16, (("A", 0, 16),), "STEP4", "STEP5"),
+        ("partial_51high", 13, (("A", 0, 13),), "STEP5", "STEP6"),
+        ("fdiv5_address", 9, (("B", 2, 9),), "STEP5", "STEP6"),
+        ("fdiv5_q", 7, (("N", 0, 7),), "STEP5", "STEP6"),
+        ("fold_quotient", 16, (("A", 0, 16),), "STEP6", "STEP7"),
+        ("fold_result", 18, (("A", 0, 18),), "STEP7", "DONE"),
+    )
+    fold_peak = 0
+    for snapshot, snapshot_name in enumerate(fold_events):
+        owned: set[tuple[str, int]] = set()
+        for name, width, pieces, born, dead in fold_fields:
+            assert sum(part for _, _, part in pieces) == width
+            if fold_event[born] <= snapshot < fold_event[dead]:
+                for container, lsb, part in pieces:
+                    assert lsb + part <= capacities[container]
+                    for bit in range(lsb, lsb + part):
+                        key = (container, bit)
+                        assert key not in owned, (snapshot_name, key, name)
+                        owned.add(key)
+        fold_peak = max(fold_peak, len(owned))
+        if snapshot_name in ("WRITE_LO", "WRITE_HI", "FINISH"):
+            assert all(("A", bit) in owned for bit in range(18))
+    assert fold_peak == 36
+
+    return (f"H-D2F-C-A manifest: 18 per-slot writes with exact PC/action/q/"
+            f"destination provenance; built W15 {built_w15}/108, peak "
+            f"{built_peak}/108; wavetable W15 {wave_w15}/108, peak "
+            f"{wave_peak}/108; active q26/q30 override exposed; seven 20-PC fold "
+            f"nodes peak at {fold_peak}/70 and retain A18 through q49 "
+            "FOLD_FINISH/dry publication")
+
+
 def reachable_to_idle(nodes: list[Node]) -> None:
     graph = {node.name: set(node.successors) for node in nodes}
     assert "S_IDLE" in graph
@@ -4465,6 +4839,8 @@ def main() -> int:
             sample_program, sample_blend_candidate, actions)
     sample_d2fb_packing = validate_sample_d2fb_packing(
         sample_w5_q16_candidate, actions)
+    sample_d2fca_manifest = validate_sample_d2fca_manifest(
+        sample_w5_q16_candidate, actions)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -4536,6 +4912,7 @@ def main() -> int:
     print("sample physical-allocation gate: " + sample_physical_gap)
     print("sample W5-q16 candidate: " + sample_w5_q16)
     print("sample D2F-B packing: " + sample_d2fb_packing)
+    print("sample D2F-C-A manifest: " + sample_d2fca_manifest)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)
