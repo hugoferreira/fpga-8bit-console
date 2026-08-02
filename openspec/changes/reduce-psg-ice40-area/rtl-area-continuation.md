@@ -24,22 +24,24 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003 accepted.
-- Next hypothesis ID: H004.
+- Next hypothesis ID: H005.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/` and `build/experiments/h003/` synthesis,
   placement, click, and smoke artifacts.
 - Latest decision: H003 accepted. Its 19-LUT4 and two-carry mapped reductions
   are deterministic; its 25-LC placed improvement is positive but below the
   known roughly 60-LC placement-sensitivity band and is not claimed as robust.
+- Latest rejected experiment: H004; narrowing the square/pulse threshold
+  comparison to its five significant high bits maps identically in isolation.
 - Best accepted result: 6,565 LUT4s, 1,575 carries, 1,478 flops, 14 EBRs;
   seed-1 7,453/7,680 LCs; 131.72 MHz fast and 30.51 MHz PSG.
 - Last updated: 2026-08-02.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H004 resume audit and record one new,
+- Next permitted experiment: perform the H005 resume audit and record one new,
   bounded, source-exact generic-RTL hypothesis before editing RTL.
-- Required verification for any accepted H004: focused algebraic or exhaustive
+- Required verification for any accepted H005: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -56,6 +58,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H001 | accepted | Keep the exact narrow tilted-saw ceiling form; treat the mapped carry reduction as the durable physical result. |
 | H002 | accepted | Keep the four-interval Boolean decode for `ceil(3*r/128)`; the deterministic result is 18 fewer LUT4s. |
 | H003 | accepted | Keep the exact high-bit prefix test; the deterministic result is 19 fewer LUT4s and two fewer carries. |
+| H004 | rejected | Do not narrow the square/pulse threshold comparator: Yosys already removes the aligned low bits. |
 
 ## Hypothesis H001
 
@@ -183,6 +186,29 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - **Repeat only if:** a rejected prefix form may be retried only after the
   tail thresholds, phase width, or mapper comparison lowering changes.
 
+## Hypothesis H004
+
+- **ID:** H004.
+- **Hypothesis:** all four square/pulse thresholds are aligned to 2^11, so
+  comparing `wx[15:11]` against 16, 19, 22, or 25 may remove eleven comparator
+  bits while keeping the threshold contract more explicit.
+- **Scope:** exhaustive scratch proof and isolated `synth_ice40` comparison of
+  the current and narrowed forms. Production RTL and fidelity gates are
+  conditional on a deterministic isolated mapped reduction.
+- **Baseline:** accepted H003 commit `68f9a35`; isolated current square/pulse
+  selection maps to seven LUT4s and five carries.
+- **Change:** scratch-only five-bit threshold and phase-high-word comparison;
+  no production file changed.
+- **Result:** all 1,048,576 waveform-selector, alternate-mode, and 16-bit phase
+  combinations matched exactly. Isolated `synth_ice40` still mapped seven
+  LUT4s and five carries: Yosys already proves the eleven aligned low bits
+  irrelevant through the current 16-bit spelling.
+- **Decision:** rejected before production RTL. The candidate changes source
+  without changing the deterministic mapped netlist.
+- **Repeat only if:** the thresholds lose their 2^11 alignment, comparator
+  lowering changes, or a surrounding consumer prevents the current low-bit
+  pruning.
+
 ## Active DNR Index
 
 - Selected arithmetic and service families: R.63, R.64, R.80, R.83.
@@ -211,10 +237,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Handoff
 
-- Next allowed experiment: H004 only after its hypothesis row and baseline are
+- Next allowed experiment: H005 only after its hypothesis row and baseline are
   recorded; it must be a new generic-RTL mechanism outside R.84 ownership.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
-- Verification still missing: none for H001--H003.
+- Verification still missing: none for accepted H001--H003; H004 was rejected
+  before production RTL.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
