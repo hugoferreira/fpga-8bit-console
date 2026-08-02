@@ -1019,6 +1019,77 @@ git history; do not repeat them without the recorded changed condition.
   R.84F's parallel macros, G-B's selected field arithmetic, G-C's one-bank
   program or a partial pph/sst consumer migration.
 
+### R.84H-A - Make the complete service graph executable before RTL
+
+- **Hypothesis:** both owner programs can name every remaining action family,
+  fixed service wait, persistent/scratch address, fold edge, condition bit and
+  public-write priority without rebuilding `pph`, `sst`, a flat request bundle
+  or a register-resident fold stack.  Owner zero may spend its otherwise idle
+  bank on an unrolled literal schedule; owner one retains the exact G-F
+  advance image while the remaining semantic sites stay visibly classified.
+- **Scope:** `tools/psg_exec_model.py`, its generated 512-word
+  `rtl/psg_exec.hex`, this ledger, and isolated executor proof/synthesis only.
+  No generic PSG RTL, sample action decoder, service adapter, owner-one
+  completion logic or public-state writer is introduced by this iteration.
+- **Rejected first draft:** the first executable spelling used 212 owner-zero
+  words and reported 702/1,003 clocks, but it moved the seven old conservative
+  CAP wait credits behind W84.  That preserved a total clock count while
+  collapsing the accepted W6--W15, W15--W26, W27--W40, W40--W51 and
+  W75--W84 service dependencies.  A service graph cannot consume or relaunch
+  multiplier/wave results early merely because its total visit length is
+  conservative.  The draft was corrected before generation or commit; do not
+  restore the 212/702 result.
+- **Accepted owner-zero program:** the final bank uses **222/256 words** and
+  executes in **782/1,003 clocks**, leaving 34 words and 221 clocks.  Its 61
+  fixed action codes are 18 addressed loads, 16 named noise/CAP service
+  edges, 18 addressed stores and nine fold actions.  Eighty-one stored HOLD
+  words encode the two four-clock noise gaps, the exact seventeen holes in
+  the accepted W0..W84 cadence and eight post-launch clocks for each of seven
+  worst-case fold nodes.  The model imports `gen_psg_ctrl.py` and reads the
+  live PNZ constants from `psg_walk.sv`, then checks every visit against those
+  source facts; waits are no longer Python-only metadata.
+- **Fold and condition result:** leaves and intermediates occupy per-slot
+  scratch words 48/49 as signed 18-bit low/high pairs.  All 262,144 signed
+  18-bit values round-trip through that representation.  The literal sequence
+  proves the exact non-associative tree `(0,1)->0`, `(2,3)->2`, `(0,2)->0`,
+  `(4,5)->4`, `(6,7)->6`, `(4,6)->4`, `(0,4)->0`; every read and write is
+  checked against its slot and word.  Owner-zero slot wrap is external
+  condition 8, common Z/N/C/V remain 0..3, hard-zero 4..7 remain unused, and
+  owner-one's external advance predicates remain 8..11 under owner-qualified
+  condition selection.
+- **Owner-one and public ownership result:** the image retains G-F's exact
+  226/256 owner-one bank byte-for-byte (SHA-1
+  `21e4d10952a56460be37cf76de2803b31389e085`).  The executable inventory keeps
+  eighteen proved movement transactions, four address-only P_W sites and 56
+  visibly placeholder sites split as 19 trigger/note, 27 effect/service and
+  ten music-flow actions.  The legacy source-order audit pins the single future
+  public adapter as `service < boundary < action < pre_tick < CPU < tail` and
+  inventories dry/bank/play/trigger/music/fade/clear commits without claiming
+  that adapter exists yet.
+- **Gates and physical result:** the model passes the exact 19,728,640
+  decomposed advance cases, 131,087 synchronous advance transactions, the
+  signed-18/fold/address/cadence/condition/priority checks and byte-identical
+  image freshness.  Controller, 327,680-pair datapath, movement and 11-path
+  production-image Icarus tests pass; isolated target plus generic full and
+  PREVIEW Verilator lint pass.  Fresh canonical HX8K synthesis is unchanged
+  at **530 LUT4s / 23 carries / 34 flops / 26 unpackable / two EBRs / 556-cell
+  floor**; seed-1 router2 places **561 LCs** and routes at **63.58 MHz** against
+  28.125 MHz.  Strict OpenSpec validation passes.
+- **Decision:** accept H-A as the generated control/dependency foundation.
+  It fixes the three R.84H model defects and proves program capacity, but it
+  implements no sample semantics and retires no generic controller.  Do not
+  cite 782 clocks as a whole-PSG schedule or 561 LCs as a PSG area result.
+- **Repeat only if:** the accepted NZ/CAP schedule, state-word layout, fold
+  representation/order, condition ownership, public NBA priority or either
+  program manifest changes.
+- **R.84H-B next permitted hypothesis:** lower the complete owner-zero
+  persistent read/write transaction family through fixed addressed actions
+  and a real synchronous state-memory harness, re-reading words at use and
+  storing only the cross-service lifetimes already named by H-A.  First prove
+  all eight slots, both parameter banks, repeated words 14/15, leaf words
+  48/49 and no hidden record mirror.  Price the fixed decoder before adding
+  wave, ARAM, multiplier, detune or fold arithmetic semantics.
+
 ### Active task queue
 
 - [x] Prove exact waveform formulae, cycle state, widths and `/4` schedule.
@@ -1068,10 +1139,13 @@ git history; do not repeat them without the recorded changed condition.
       generic target, enumerate all remaining actions/owners/services/commits,
       and record the executable-control, fold-address, condition-index and EBR
       blockers before semantic RTL.
-- [ ] R.84H-A: derive and prove the complete addressed-state/service-dependency
+- [x] R.84H-A: derive and prove the complete addressed-state/service-dependency
       manifests, owner-qualified conditions, explicit wait states, fold
       schedule and one global-public priority function before adding another
       action decoder.
+- [ ] R.84H-B: prove all owner-zero persistent/scratch reads and writes through
+      one synchronous state-memory transaction harness before adding service
+      semantics or touching generic PSG composition.
 
 ## Handoff rule
 

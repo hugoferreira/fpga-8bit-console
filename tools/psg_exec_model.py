@@ -5,8 +5,8 @@ This is deliberately an executor transaction model, not an audio model.  It
 answers the questions that must be closed before replacing psg_walk/psg_seq:
 
 * do two owner-selected 256x16 banks hold the sample and tick/flow programs;
-* can the 64-word sample page represent every persistent read/write and the
-  ordered fold without reintroducing pph;
+* can the owner-zero 256-word bank represent every persistent read/write,
+  explicit service-latency clock and ordered fold without reintroducing pph;
 * do synchronous state reads line up with the action that consumes them;
 * do all branch/jump targets and per-slot state words stay in range;
 * can every sequencer control state still reach S_IDLE after xs/vcnt become PC;
@@ -17,13 +17,15 @@ answers the questions that must be closed before replacing psg_walk/psg_seq:
 The action field is structured as family[2:0]:subop[3:0].  Sample and tick
 owners interpret it independently, so neither owner gets a flat 256-way PC
 decode.  Arithmetic semantics remain in the established formula/service gates;
-this model proves only the lowered advance family and must not be cited as
-whole-PSG behavioral equivalence or as a whole-PSG area result.
+this model proves the owner-zero schedule/dependency manifest and the lowered
+owner-one advance family, but must not be cited as whole-PSG behavioral
+equivalence or as a whole-PSG area result.
 """
 
 from __future__ import annotations
 
 import re
+import runpy
 import sys
 from dataclasses import dataclass
 from enum import IntEnum
@@ -35,8 +37,9 @@ WALK = ROOT / "rtl" / "psg_walk.sv"
 COMMON = ROOT / "rtl" / "psg_common.svh"
 IMAGE = ROOT / "rtl" / "psg_exec.hex"
 MOVE = ROOT / "rtl" / "psg_execmove.sv"
+CTRL_GEN = ROOT / "tools" / "gen_psg_ctrl.py"
 
-PAGE_SAMPLE = range(0x00, 0x40)
+PAGE_SAMPLE = range(0x00, 0x100)
 PAGE_TICK = range(0x40, 0xC0)
 PAGE_FLOW = range(0xC0, 0x100)
 PROGRAM_BANK_WORDS = 256
@@ -136,7 +139,6 @@ class Action:
     subop: int
     name: str
     consumes: int | None = None
-    wait: int = 0
 
     @property
     def code(self) -> int:
@@ -151,24 +153,24 @@ class Actions:
         self.next_sub: dict[tuple[str, int], int] = {}
 
     def add(self, owner: str, family: int, name: str,
-            *, subop: int | None = None, consumes: int | None = None,
-            wait: int = 0) -> int:
+            *, subop: int | None = None,
+            consumes: int | None = None) -> int:
         key = (owner, family)
         if subop is None:
             subop = self.next_sub.get(key, 0)
         assert 0 <= family < 8 and 0 <= subop < 16, \
             f"{owner} action family {family} exceeds sixteen subops"
-        action = Action(owner, family, subop, name, consumes, wait)
+        action = Action(owner, family, subop, name, consumes)
         assert action.code not in self.by_owner[owner]
         self.by_owner[owner][action.code] = action
         self.next_sub[key] = max(self.next_sub.get(key, 0), subop + 1)
         return action.code
 
     def pin(self, owner: str, code: int, name: str,
-            *, consumes: int | None = None, wait: int = 0) -> int:
+            *, consumes: int | None = None) -> int:
         assert 0 <= code < 128
         return self.add(owner, code >> 4, name, subop=code & 15,
-                        consumes=consumes, wait=wait)
+                        consumes=consumes)
 
     def get(self, owner: str, code: int) -> Action | None:
         return self.by_owner[owner].get(code)
@@ -217,6 +219,7 @@ ADV_ACTION = {
 }
 
 COMMON_ACTION = {
+    "HOLD": 0x70,
     "LOAD": 0x71,
     "ADD": 0x72,
     "SUB": 0x74,
@@ -229,6 +232,50 @@ COND_TRIG = 8
 COND_ADVANCE = 9
 COND_INS_USE = 10
 COND_RELEASED = 11
+
+# Condition bits 0..3 are the common Z/N/C/V flags.  Owner-zero conditions
+# therefore live in the external bank at 8..15, just as owner-one's exact
+# predicates do.  The old sample sketch incorrectly used Z/N as slot-wrap and
+# fold-more.  The fold is now unrolled, so it needs no dynamic condition.
+COND_SAMPLE_SLOT_WRAP = 8
+
+# The exact ordered seven-node reduction.  Leaves and intermediate results are
+# signed 18-bit pairs in per-slot scratch words 48 (low sixteen) and 49 (top
+# two, sign extended by the fixed fold adapter).  Each node overwrites its
+# left input, so no register-resident stack or variable address is required.
+FOLD_NODES = (
+    (0, 1, 0),
+    (2, 3, 2),
+    (0, 2, 0),
+    (4, 5, 4),
+    (6, 7, 6),
+    (4, 6, 4),
+    (0, 4, 0),
+)
+
+# Exact full-mode CAP cadence from gen_psg_ctrl.py, relative to W0.  The gaps
+# are service dependencies, not disposable pph padding: W15/W26/W40/W51/W84
+# consume or relaunch multiplier/wave results that cannot be made adjacent.
+SAMPLE_CAP_SCHEDULE = (
+    ("W0", 0),
+    ("W1", 1),
+    ("W2", 2),
+    ("W3", 3),
+    ("W4", 4),
+    ("W5", 5),
+    ("W6", 6),
+    ("W15", 9),
+    ("W26", 14),
+    ("W27", 15),
+    ("W40", 20),
+    ("W51", 25),
+    ("W75", 26),
+    ("W84", 30),
+)
+SAMPLE_SERVICE_SCHEDULE = (
+    ("NZ_OLD_LOAD_PAR_3", -10),
+    ("NZ_LIVE", -5),
+) + tuple((f"CAP_{name}", offset) for name, offset in SAMPLE_CAP_SCHEDULE)
 
 
 def advance_manifest() -> tuple[list[AssemblyInstruction],
@@ -1056,16 +1103,28 @@ def validate_advance_transactions(program: list[int], labels: dict[str, int]) ->
 
 def build_sample(actions: Actions, program: list[int]) -> dict[int, str]:
     labels: dict[int, str] = {}
+    pc = 0
 
-    def put(pc: int, insn: Instruction, label: str) -> None:
+    def put(insn: Instruction, label: str) -> int:
+        nonlocal pc
         assert pc in PAGE_SAMPLE and program[pc] == 0
         program[pc] = insn.encode()
         labels[pc] = label
+        old_pc = pc
+        pc += 1
+        return old_pc
+
+    def hold(count: int, label: str) -> None:
+        for n in range(count):
+            put(Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"]),
+                f"{label}_hold_{n}")
 
     # Slot-wrap branch. start_pc is 1, so address zero is only reached after
-    # OP_SLOT has advanced the completed slot. cond0 means the 3-bit slot
-    # wrapped to zero after slot seven.
-    put(0, Instruction(Op.BRANCH, cond=0, target=54), "slot_wrap")
+    # OP_SLOT has advanced the completed slot.  Reserve its word until the
+    # exact unrolled fold entry is known.  Condition 8 is owner-zero's external
+    # slot-wrap fact; common condition 0 is Z and must never be overloaded.
+    put(Instruction(Op.BRANCH, cond=COND_SAMPLE_SLOT_WRAP, target=0),
+        "slot_wrap")
 
     reads = list(range(10, 24)) + [24, 25, 26, 27]
     consume_codes: list[int] = []
@@ -1080,53 +1139,84 @@ def build_sample(actions: Actions, program: list[int]) -> dict[int, str]:
                                          f"LOAD_PAR_{word - 24}",
                                          consumes=word))
     assert len(reads) == len(consume_codes) == 18
-    for i, (word, code) in enumerate(zip(reads, consume_codes), start=1):
-        put(i, Instruction(Op.READ, action=code, word=word),
+    for word, code in zip(reads, consume_codes):
+        put(Instruction(Op.READ, action=code, word=word),
             f"read_{word}")
 
     # The first service action also consumes the final pipelined parameter
-    # read. Four extra clocks on each noise action state the five-edge dq/noise
-    # transaction without storing those idle clocks in the program EBR.
+    # read.  Fixed service latency is represented by real common-HOLD
+    # instructions.  It is no longer Python-only Action.wait metadata.
     nz_old = actions.add("sample", 2, "NZ_OLD_LOAD_PAR_3",
-                         consumes=27, wait=4)
-    nz_live = actions.add("sample", 2, "NZ_LIVE", wait=4)
-    put(19, Instruction(Op.EXEC, action=nz_old), "nz_old")
-    put(20, Instruction(Op.EXEC, action=nz_live), "nz_live")
+                         consumes=27)
+    nz_live = actions.add("sample", 2, "NZ_LIVE")
+    put(Instruction(Op.EXEC, action=nz_old), "nz_old")
+    hold(4, "nz_old")
+    put(Instruction(Op.EXEC, action=nz_live), "nz_live")
+    hold(4, "nz_live")
 
-    caps = ["W0", "W1", "W2", "W3", "W4", "W5", "W6", "W15",
-            "W26", "W27", "W40", "W51", "W75", "W84"]
-    for i, name in enumerate(caps, start=21):
-        # Seven conservative wait credits restore the full accepted 68-phase
-        # single-clock visit when combined with the two five-edge noise waits.
-        wait = 7 if name == "W84" else 0
-        code = actions.add("sample", 2, f"CAP_{name}", wait=wait)
-        put(i, Instruction(Op.EXEC, action=code), f"cap_{name}")
+    previous_offset: int | None = None
+    for name, offset in SAMPLE_CAP_SCHEDULE:
+        if previous_offset is not None:
+            hold(offset - previous_offset - 1, f"cap_{name}_wait")
+        code = actions.add("sample", 2, f"CAP_{name}")
+        put(Instruction(Op.EXEC, action=code), f"cap_{name}")
+        previous_offset = offset
 
     store_words = list(range(10, 24)) + [15, 14]
-    for i, word in enumerate(store_words, start=35):
-        code = actions.add("sample", 3 if i < 49 else 4,
-                           f"STORE_{i - 35}_{word}")
-        put(i, Instruction(Op.WRITE, action=code, word=word),
+    for i, word in enumerate(store_words):
+        code = actions.add("sample", 3 if i < 14 else 4,
+                           f"STORE_{i}_{word}")
+        put(Instruction(Op.WRITE, action=code, word=word),
             f"store_{word}")
-    leaf = actions.add("sample", 4, "STORE_LEAF")
-    put(51, Instruction(Op.WRITE, action=leaf, word=48), "store_leaf")
-    put(52, Instruction(Op.SLOT, slot_inc=True), "slot_inc")
-    put(53, Instruction(Op.JUMP, target=0), "slot_loop")
+    leaf_lo = actions.add("sample", 4, "STORE_LEAF_LO")
+    leaf_hi = actions.add("sample", 4, "STORE_LEAF_HI")
+    put(Instruction(Op.WRITE, action=leaf_lo, word=48), "store_leaf_lo")
+    put(Instruction(Op.WRITE, action=leaf_hi, word=49), "store_leaf_hi")
+    put(Instruction(Op.SLOT, slot_inc=True), "slot_inc")
+    put(Instruction(Op.JUMP, target=0), "slot_loop")
 
-    fold_setup = actions.add("sample", 5, "FOLD_SETUP")
-    fold_ra = actions.add("sample", 5, "FOLD_READ_A")
-    fold_rb = actions.add("sample", 5, "FOLD_READ_B")
-    fold_start = actions.add("sample", 5, "FOLD_START")
-    fold_run = actions.add("sample", 5, "FOLD_RUN", wait=8)
-    fold_write = actions.add("sample", 5, "FOLD_WRITE")
-    put(54, Instruction(Op.EXEC, action=fold_setup), "fold_setup")
-    put(55, Instruction(Op.READ, action=fold_ra, word=48), "fold_read_a")
-    put(56, Instruction(Op.READ, action=fold_rb, word=48), "fold_read_b")
-    put(57, Instruction(Op.EXEC, action=fold_start), "fold_start")
-    put(58, Instruction(Op.EXEC, action=fold_run), "fold_run")
-    put(59, Instruction(Op.WRITE, action=fold_write, word=44), "fold_write")
-    put(60, Instruction(Op.BRANCH, cond=1, target=55), "fold_more")
-    put(61, Instruction(Op.DONE), "sample_done")
+    fold_entry = pc
+    program[0] = Instruction(Op.BRANCH, cond=COND_SAMPLE_SLOT_WRAP,
+                             target=fold_entry).encode()
+
+    # Unroll the seven-node tree.  The controller's literal OP_SLOT and word
+    # fields are the address schedule; no fold selector, loop counter or
+    # register-resident stack is hidden in an action decoder.
+    fold_prime = actions.add("sample", 5, "FOLD_PRIME")
+    fold_a_lo = actions.add("sample", 5, "FOLD_A_LO", consumes=48)
+    fold_a_hi = actions.add("sample", 5, "FOLD_A_HI", consumes=49)
+    fold_b_lo = actions.add("sample", 5, "FOLD_B_LO", consumes=48)
+    fold_start = actions.add("sample", 5, "FOLD_START", consumes=49)
+    fold_run = actions.add("sample", 5, "FOLD_RUN")
+    fold_write_lo = actions.add("sample", 5, "FOLD_WRITE_LO")
+    fold_write_hi = actions.add("sample", 5, "FOLD_WRITE_HI")
+    fold_finish = actions.add("sample", 5, "FOLD_FINISH")
+    for n, (a_slot, b_slot, dst_slot) in enumerate(FOLD_NODES):
+        put(Instruction(Op.SLOT, slot_value=a_slot), f"fold_{n}_slot_a")
+        put(Instruction(Op.READ, action=fold_prime, word=48),
+            f"fold_{n}_read_a_lo")
+        put(Instruction(Op.READ, action=fold_a_lo, word=49),
+            f"fold_{n}_read_a_hi")
+        put(Instruction(Op.EXEC, action=fold_a_hi),
+            f"fold_{n}_take_a_hi")
+        put(Instruction(Op.SLOT, slot_value=b_slot), f"fold_{n}_slot_b")
+        put(Instruction(Op.READ, action=fold_prime, word=48),
+            f"fold_{n}_read_b_lo")
+        put(Instruction(Op.READ, action=fold_b_lo, word=49),
+            f"fold_{n}_read_b_hi")
+        put(Instruction(Op.EXEC, action=fold_start), f"fold_{n}_start")
+        put(Instruction(Op.EXEC, action=fold_run), f"fold_{n}_run")
+        hold(8, f"fold_{n}")
+        put(Instruction(Op.SLOT, slot_value=dst_slot),
+            f"fold_{n}_slot_dst")
+        put(Instruction(Op.WRITE, action=fold_write_lo, word=48),
+            f"fold_{n}_write_lo")
+        put(Instruction(Op.WRITE, action=fold_write_hi, word=49),
+            f"fold_{n}_write_hi")
+
+    put(Instruction(Op.EXEC, action=fold_finish), "fold_finish")
+    put(Instruction(Op.DONE), "sample_done")
+    assert pc <= PROGRAM_BANK_WORDS
     return labels
 
 
@@ -1212,45 +1302,50 @@ def validate_node_contract(nodes: list[Node], program: list[int]) -> None:
 def validate_sample(program: list[int], actions: Actions,
                     labels: dict[int, str]) -> tuple[int, int, int]:
     pc, slot, pending = SAMPLE_START, 0, None
-    fold_remaining = 0
     cycles = 0
-    writes: list[tuple[int, int]] = []
+    writes: list[tuple[int, int, str]] = []
+    fold_reads: list[tuple[str, int, int]] = []
+    service_cycles: dict[int, list[tuple[str, int]]] = {}
     visits = 0
+    hold_clocks = 0
     for _ in range(4000):
         insn = Instruction.decode(program[pc])
         action = actions.get("sample", insn.action) \
             if insn.op in (Op.READ, Op.WRITE, Op.EXEC) else None
         if action and action.consumes is not None:
-            assert pending == action.consumes, \
+            assert pending is not None and pending[1] == action.consumes, \
                 f"pc {pc}: {action.name} consumes {pending}, expected " \
                 f"{action.consumes}"
+            if action.name.startswith("FOLD_"):
+                fold_reads.append((action.name, pending[0], pending[1]))
             pending = None
-        if action:
-            cycles += action.wait
-            if action.name == "FOLD_SETUP":
-                fold_remaining = 7
-            elif action.name == "FOLD_WRITE":
-                assert fold_remaining > 0
-                fold_remaining -= 1
+        if action and (action.name.startswith("NZ_")
+                       or action.name.startswith("CAP_")):
+            service_cycles.setdefault(visits, []).append((action.name,
+                                                          cycles))
+        if insn.op == Op.EXEC and insn.action == COMMON_ACTION["HOLD"]:
+            hold_clocks += 1
 
         cycles += 1
         if insn.op == Op.READ:
-            pending = insn.word
+            pending = (slot, insn.word)
             pc = (pc + 1) & 0xFF
         elif insn.op == Op.WRITE:
-            writes.append((slot, insn.word))
+            writes.append((slot, insn.word,
+                           action.name if action else "COMMON"))
             pc = (pc + 1) & 0xFF
         elif insn.op == Op.EXEC:
             pc = (pc + 1) & 0xFF
         elif insn.op == Op.SLOT:
             slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
-            visits += 1
+            if insn.slot_inc:
+                visits += 1
             pc = (pc + 1) & 0xFF
         elif insn.op == Op.JUMP:
             pc = insn.target
         elif insn.op == Op.BRANCH:
-            take = (insn.cond == 0 and slot == 0) \
-                or (insn.cond == 1 and fold_remaining > 0)
+            assert insn.cond == COND_SAMPLE_SLOT_WRAP
+            take = slot == 0
             pc = insn.target if take == bool(insn.sense) else (pc + 1) & 0xFF
         elif insn.op == Op.DONE:
             break
@@ -1259,14 +1354,42 @@ def validate_sample(program: list[int], actions: Actions,
     else:
         raise AssertionError("sample program did not terminate")
 
-    assert visits == 8 and slot == 0 and fold_remaining == 0
-    expected = list(range(10, 24)) + [15, 14, 48]
+    assert visits == 8 and slot == 0 and pending is None
+    expected = list(range(10, 24)) + [15, 14, 48, 49]
     for voice in range(8):
-        actual = [word for owner, word in writes
-                  if owner == voice and word != 44]
+        actual = [word for owner, word, name in writes
+                  if owner == voice and name.startswith("STORE_")]
         assert actual == expected, (voice, actual, expected)
-    assert [(owner, word) for owner, word in writes if word == 44] \
-        == [(0, 44)] * 7
+        service = service_cycles[voice]
+        w0_cycle = dict(service)["CAP_W0"]
+        relative = [(name, cycle - w0_cycle) for name, cycle in service]
+        assert relative == list(SAMPLE_SERVICE_SCHEDULE), \
+            (voice, relative, SAMPLE_SERVICE_SCHEDULE)
+
+    expected_fold_reads: list[tuple[str, int, int]] = []
+    expected_fold_writes: list[tuple[int, int, str]] = []
+    for a_slot, b_slot, dst_slot in FOLD_NODES:
+        expected_fold_reads.extend((
+            ("FOLD_A_LO", a_slot, 48),
+            ("FOLD_A_HI", a_slot, 49),
+            ("FOLD_B_LO", b_slot, 48),
+            ("FOLD_START", b_slot, 49),
+        ))
+        expected_fold_writes.extend((
+            (dst_slot, 48, "FOLD_WRITE_LO"),
+            (dst_slot, 49, "FOLD_WRITE_HI"),
+        ))
+    assert fold_reads == expected_fold_reads
+    assert [write for write in writes if write[2].startswith("FOLD_WRITE")] \
+        == expected_fold_writes
+
+    # Per visit: four old-noise and four live-noise clocks, plus the exact
+    # seventeen holes in the accepted W0..W84 service cadence.
+    # Per fold node: eight clocks after the explicit FOLD_RUN instruction.
+    cap_holds = SAMPLE_CAP_SCHEDULE[-1][1] - (len(SAMPLE_CAP_SCHEDULE) - 1)
+    assert cap_holds == 17
+    assert hold_clocks == 8 * (4 + 4 + cap_holds) \
+        + len(FOLD_NODES) * 8
     assert cycles < SAMPLE_CLOCK_LIMIT
     return cycles, SAMPLE_CLOCK_LIMIT - cycles, len(labels)
 
@@ -1373,6 +1496,170 @@ def output_commit_inventory(seq: str, walk: str) -> list[str]:
     return commits
 
 
+def validate_sample_action_inventory(actions: Actions,
+                                     program: list[int]) -> str:
+    """Prove every owner-zero action belongs to one fixed lowering family."""
+    names = {action.name for action in actions.by_owner["sample"].values()}
+    loads = {name for name in names
+             if name == "READ_PRIME" or name.startswith("LOAD_")}
+    services = {name for name in names
+                if name.startswith("NZ_") or name.startswith("CAP_")}
+    stores = {name for name in names if name.startswith("STORE_")}
+    folds = {name for name in names if name.startswith("FOLD_")}
+    assert not names - loads - services - stores - folds
+    assert (len(loads), len(services), len(stores), len(folds), len(names)) \
+        == (18, 16, 18, 9, 61)
+
+    # Name every service edge rather than treating CAP as a generic macro.
+    dependencies = {
+        "NZ_OLD_LOAD_PAR_3": ("state", "mul", "dq"),
+        "NZ_LIVE": ("mul", "dq"),
+        "CAP_W0": ("aram", "phase", "noise"),
+        "CAP_W1": ("aram", "wave", "dq"),
+        "CAP_W2": ("aram", "wave"),
+        "CAP_W3": ("aram", "wave"),
+        "CAP_W4": ("aram", "wave", "mul"),
+        "CAP_W5": ("wave", "dq"),
+        "CAP_W6": ("dq",),
+        "CAP_W15": ("wave", "mul"),
+        "CAP_W26": ("mul",),
+        "CAP_W27": ("mul",),
+        "CAP_W40": ("mul",),
+        "CAP_W51": ("mul",),
+        "CAP_W75": ("mul", "ring"),
+        "CAP_W84": ("mul", "ring", "dampen"),
+    }
+    assert set(dependencies) == services
+    assert all(deps for deps in dependencies.values())
+
+    # Bind the model to the accepted full-mode schedule rather than copying a
+    # prose list.  The CAP indices and the two noise launches are executable
+    # source facts in the current walker/control generator.
+    ctrl = runpy.run_path(str(CTRL_GEN))
+    expected_caps = {offset: n
+                     for n, (_, offset) in enumerate(SAMPLE_CAP_SCHEDULE)}
+    assert ctrl["PWORK"] == 29 and ctrl["CAPS"] == expected_caps
+    walk = WALK.read_text()
+    assert re.search(r"localparam int PNZ_OLD\s*=\s*19;", walk)
+    assert re.search(r"localparam int PNZ_LIVE\s*=\s*24;", walk)
+
+    static_holds = sum(
+        Instruction.decode(word).op == Op.EXEC
+        and Instruction.decode(word).action == COMMON_ACTION["HOLD"]
+        for word in program)
+    cap_holds = SAMPLE_CAP_SCHEDULE[-1][1] - (len(SAMPLE_CAP_SCHEDULE) - 1)
+    assert static_holds == 4 + 4 + cap_holds + len(FOLD_NODES) * 8
+    return ("61 owner-zero actions: 18 addressed loads, 16 named service/CAP "
+            "edges, 18 addressed stores and 9 unrolled-fold actions; "
+            f"{static_holds} fixed-latency HOLD words; exact accepted "
+            "NZ/W0..W84 cadence")
+
+
+def validate_fold_word_contract() -> str:
+    """Prove the two-word signed-18 representation and literal tree shape."""
+    for value in range(-(1 << 17), 1 << 17):
+        lo = value & 0xffff
+        hi = (value >> 16) & 0xffff
+        raw = ((hi & 3) << 16) | lo
+        decoded = raw - (1 << 18) if raw & (1 << 17) else raw
+        assert decoded == value
+
+    # Treat the fold as an arbitrary non-associative binary operation.  If
+    # the symbolic expression is exact, the address schedule preserves the
+    # required soft_add ordering independently of its arithmetic internals.
+    values: list[object] = list(range(8))
+    for a_slot, b_slot, dst_slot in FOLD_NODES:
+        values[dst_slot] = (values[a_slot], values[b_slot])
+    expected = (((0, 1), (2, 3)), ((4, 5), (6, 7)))
+    assert values[0] == expected
+    return ("all 262,144 signed-18 values round-trip through words 48/49; "
+            "literal nodes preserve ((0,1),(2,3)),((4,5),(6,7)) ordering")
+
+
+def remaining_owner_action_inventory(nodes: list[Node]) -> str:
+    """Separate proved transactions from every owner-one placeholder site."""
+    names = {node.name for node in nodes}
+    advance = {"K_ADV", "EA0", "EA1", "EA2", "EA3", "EA4", "EA5"}
+    movement = ({f"V_LD{i}" for i in range(8)}
+                | {f"V_ST{i}" for i in range(5)}
+                | {"K_ROT", "PC0", "PC1", "PC2", "PC3"})
+    publication = {"P_W0", "P_W1", "P_W2", "P_W3"}
+    remaining = names - advance - movement - publication
+    assert len(names) == 85
+    assert len(advance) == 7 and advance <= names
+    assert len(movement) == 18 and movement <= names
+    assert len(publication) == 4 and publication <= names
+    assert len(remaining) == 56
+
+    trigger_note = ({f"T_{name}" for name in ("FL", "SP", "LS", "LE",
+                                               "NL", "NH", "LD")}
+                    | {"K_NL", "K_NH", "K_LD"}
+                    | {f"I_TR{i}" for i in range(5)}
+                    | {"I_TW", "I_NL", "I_NH", "I_LD"})
+    effect = ({"ES0", "ES1", "ES2", "K_ARP", "K_ARPC", "K_PF0"}
+              | {f"K_FX{i}" for i in range(12)}
+              | {f"K_SL{i}" for i in range(9)})
+    flow = ({"S_IDLE", "W_MUS", "ML_STOP", "ML_RD0", "MS_RD", "MS_CK"}
+            | {f"ML_L{i}" for i in range(4)})
+    assert (len(trigger_note), len(effect), len(flow)) == (19, 27, 10)
+    assert remaining == trigger_note | effect | flow
+    return ("owner-one: 18 proved memory transactions, 4 address-only "
+            "publication sites, 56 placeholders (19 trigger/note, 27 effect/"
+            "service, 10 music flow); completion/arbitration still external")
+
+
+def validate_condition_contract(sample_program: list[int],
+                                tick_program: list[int]) -> str:
+    sample_conds = {
+        Instruction.decode(word).cond
+        for word in sample_program
+        if Instruction.decode(word).op == Op.BRANCH
+    }
+    tick_conds = {
+        Instruction.decode(word).cond
+        for word in tick_program
+        if Instruction.decode(word).op == Op.BRANCH
+    }
+    assert sample_conds == {COND_SAMPLE_SLOT_WRAP}
+    assert not (sample_conds | tick_conds) & set(range(4, 8))
+    assert {COND_TRIG, COND_ADVANCE, COND_INS_USE, COND_RELEASED} \
+        <= tick_conds
+    return ("owner-zero slot-wrap is external condition 8; owner-one exact "
+            "advance predicates occupy external conditions 8..11; common "
+            "Z/N/C/V remain 0..3 and hard-zero 4..7 are unused")
+
+
+def validate_public_priority(seq: str) -> str:
+    """Pin the source-order/NBA priority that one future adapter must retain."""
+    start = seq.index("// Main controller.")
+    end = seq.index("// Register-resident record words", start)
+    owner = seq[start:end]
+    tokens = (
+        "if (ptick_pend && !m_busy)",
+        "if (tick_en_d)",
+        "case (sst)",
+        "if (pre_tick)",
+        "if (cs && rw && addr[7:4] == 4'h1)",
+        "if (cs && rw && addr == 8'h21)",
+    )
+    positions = [owner.index(token) for token in tokens]
+    assert positions == sorted(positions)
+
+    layers = ("service", "boundary", "action", "pre_tick", "cpu", "tail")
+    rank = {name: n for n, name in enumerate(layers)}
+    winner_sets = (
+        (("service", "action"), "action"),
+        (("boundary", "action"), "action"),
+        (("action", "pre_tick"), "pre_tick"),
+        (("action", "cpu"), "cpu"),
+        (("pre_tick", "cpu"), "cpu"),
+        (("cpu", "tail"), "tail"),
+    )
+    for contenders, expected in winner_sets:
+        assert max(contenders, key=rank.__getitem__) == expected
+    return "public priority: " + " < ".join(layers)
+
+
 def main() -> int:
     seq, walk, _ = legacy_contract()
     states = sequencer_states(seq)
@@ -1402,6 +1689,13 @@ def main() -> int:
     validate_node_contract(seq_nodes, tick_program)
     sample_cycles, sample_spare, sample_used = validate_sample(
         sample_program, actions, sample_labels)
+    sample_inventory = validate_sample_action_inventory(actions,
+                                                        sample_program)
+    fold_contract = validate_fold_word_contract()
+    owner_inventory = remaining_owner_action_inventory(seq_nodes)
+    condition_contract = validate_condition_contract(sample_program,
+                                                     tick_program)
+    public_priority = validate_public_priority(seq)
     reachable_to_idle(seq_nodes)
     addresses = state_address_inventory(seq)
     commits = output_commit_inventory(seq, walk)
@@ -1423,12 +1717,12 @@ def main() -> int:
                     f"{insn.target:02x} is not a same-bank label"
 
     assert len(program) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
-    assert sample_used == 62
+    assert sample_used == 222
     assert voice_used + instrument_used == 117
     assert normalized_used == 226
     assert normalized_used <= PROGRAM_BANK_WORDS
 
-    print("R.84G-F normalized advance transaction contract: PASS")
+    print("R.84H-A addressed-state/service manifest contract: PASS")
     print(f"sample bank: {sample_used}/256 words, {sample_cycles}/"
           f"{SAMPLE_CLOCK_LIMIT} conservative clocks, {sample_spare} spare")
     print(f"tick/flow bank: {normalized_used}/256 words "
@@ -1449,6 +1743,11 @@ def main() -> int:
           + "; scratch 34..63")
     print("tick record movement: " + movement)
     print("fixed decoder RTL: " + move_rtl)
+    print("sample action inventory: " + sample_inventory)
+    print("fold word/tree contract: " + fold_contract)
+    print("remaining owner action inventory: " + owner_inventory)
+    print("condition contract: " + condition_contract)
+    print(public_priority)
     print("externally visible commits: " + ",".join(commits))
     image = "".join(f"{word:04x}\n" for word in program)
     if "--write" in sys.argv[1:]:
@@ -1459,8 +1758,9 @@ def main() -> int:
         assert IMAGE.read_text() == image, \
             f"{IMAGE}: stale; regenerate with --write"
         print(f"image: {IMAGE.relative_to(ROOT)} byte-identical")
-    print("warning: exact advance-family transaction proof only; whole-PSG "
-          "schedule/render/area equivalence remain atomic integration gates")
+    print("warning: owner-zero actions and remaining owner-one actions are "
+          "manifests, not semantic RTL; whole-PSG schedule/render/area "
+          "equivalence remain atomic integration gates")
     return 0
 
 
