@@ -107,6 +107,26 @@ class Instruction:
 
 
 @dataclass(frozen=True)
+class AssemblyInstruction:
+    op: Op
+    action: int = 0
+    word: int = 0
+    cond: int = 0
+    sense: int = 1
+    target: str | None = None
+
+    def encode(self, labels: dict[str, int]) -> int:
+        if self.op == Op.BRANCH:
+            assert self.target is not None
+            return Instruction(self.op, cond=self.cond, sense=self.sense,
+                               target=labels[self.target]).encode()
+        if self.op == Op.JUMP:
+            assert self.target is not None
+            return Instruction(self.op, target=labels[self.target]).encode()
+        return Instruction(self.op, action=self.action, word=self.word).encode()
+
+
+@dataclass(frozen=True)
 class Action:
     owner: str
     family: int
@@ -159,6 +179,207 @@ class Actions:
             out.append(f"{owner} actions {sum(counts)}; family occupancy "
                        + "/".join(str(n) for n in counts))
         return out
+
+
+# R.84G-E reuses the action codes vacated by K_ADV/EA0..EA5 plus genuinely
+# unused owner-local codes.  Family seven remains the common R.84D ALU.
+ADV_ACTION = {
+    "INIT": 0x40,
+    "X_LO_FCNT": 0x47,
+    "X_HI_TCNT": 0x48,
+    "X_LO_SPEED": 0x49,
+    "X_LENGTH": 0x4A,
+    "SAVE44_R36": 0x4B,
+    "MERGE_CTR_V_NR": 0x4C,
+    "MERGE_CTR_V_ROLL": 0x4D,
+    "PREV_V_PITCH": 0x4E,
+    "PREV_V_VOL": 0x4F,
+    "X_ROW_V": 0x0D,
+    "X_LPS": 0x0E,
+    "X_LPE": 0x0F,
+    "X_END": 0x1C,
+    "SAVE45_R39": 0x1D,
+    "SAVE44": 0x1E,
+    "MERGE_ROW_V": 0x1F,
+    "MERGE_LEN_V": 0x29,
+    "VOICE_STOP": 0x2A,
+    "SKIP_CPZ": 0x2B,
+    "MERGE_CTR_I_NR": 0x2C,
+    "MERGE_CTR_I_ROLL": 0x2D,
+    "PREV_I_PITCH": 0x2E,
+    "PREV_I_VOL": 0x2F,
+    "X_ROW_I": 0x3D,
+    "MERGE_ROW_I": 0x3E,
+    "INS_DONE": 0x3F,
+}
+
+COMMON_ACTION = {
+    "LOAD": 0x71,
+    "ADD": 0x72,
+    "SUB": 0x74,
+    "CMP": 0x7F,
+}
+
+COND_Z = 0
+COND_C = 2
+COND_TRIG = 8
+COND_ADVANCE = 9
+COND_INS_USE = 10
+COND_RELEASED = 11
+
+
+def advance_manifest() -> tuple[list[AssemblyInstruction],
+                                list[AssemblyInstruction]]:
+    """Return the exact fallthrough-packed K_ADV/EA replacement manifest."""
+    a = ADV_ACTION
+    c = COMMON_ACTION
+
+    def read(word: int, action: int = 0) -> AssemblyInstruction:
+        return AssemblyInstruction(Op.READ, action=action, word=word)
+
+    def execute(action: int, word: int = 0) -> AssemblyInstruction:
+        return AssemblyInstruction(Op.EXEC, action=action, word=word)
+
+    def write(word: int, action: int) -> AssemblyInstruction:
+        return AssemblyInstruction(Op.WRITE, action=action, word=word)
+
+    def branch(cond: int, sense: int, target: str) -> AssemblyInstruction:
+        return AssemblyInstruction(Op.BRANCH, cond=cond, sense=sense,
+                                   target=target)
+
+    def jump(target: str) -> AssemblyInstruction:
+        return AssemblyInstruction(Op.JUMP, target=target)
+
+    def v(n: int) -> str:
+        return f"ADV_V{n:02d}"
+
+    def i(n: int) -> str:
+        return f"ADV_I{n:02d}"
+
+    voice = [
+        execute(a["INIT"]),
+        branch(COND_TRIG, 1, "T_FL"),
+        branch(COND_ADVANCE, 0, v(66)),
+        read(0),
+        read(0, a["X_LO_FCNT"]),
+        read(2, a["X_HI_TCNT"]),
+        read(2, a["X_LO_SPEED"]),
+        read(37, a["X_LENGTH"]),
+        execute(c["LOAD"], 34),
+        execute(c["ADD"]),
+        write(44, a["SAVE44_R36"]),
+        execute(c["LOAD"], 34),
+        execute(c["ADD"], 38),
+        execute(c["CMP"]),
+        branch(COND_C, 1, v(19)),
+        read(44),
+        write(0, a["MERGE_CTR_V_NR"]),
+        branch(COND_INS_USE, 1, "EA0"),
+        jump("ES0"),
+        read(44),
+        write(0, a["MERGE_CTR_V_ROLL"]),
+        write(48, a["PREV_V_PITCH"]),
+        write(49, a["PREV_V_VOL"]),
+        read(1, a["X_ROW_V"]),
+        read(1, a["X_LPS"]),
+        read(1, a["X_LPE"]),
+        read(40, a["X_END"]),
+        execute(c["LOAD"], 34),
+        execute(c["ADD"]),
+        write(45, a["SAVE45_R39"]),
+        execute(c["LOAD"], 34),
+        execute(c["SUB"]),
+        write(44, a["SAVE44"]),
+        branch(COND_C, 0, v(44)),
+        branch(COND_Z, 1, v(64)),
+        read(45),
+        execute(c["LOAD"], 35),
+        execute(c["CMP"]),
+        branch(COND_Z, 1, v(64)),
+        read(54),
+        write(54, a["MERGE_ROW_V"]),
+        execute(c["LOAD"], 2),
+        write(2, a["MERGE_LEN_V"]),
+        jump("K_NL"),
+        read(41),
+        execute(c["LOAD"], 42),
+        execute(c["CMP"]),
+        branch(COND_C, 1, v(53)),
+        branch(COND_RELEASED, 1, v(53)),
+        read(45),
+        execute(c["LOAD"], 42),
+        execute(c["CMP"]),
+        branch(COND_C, 1, v(60)),
+        read(45),
+        execute(c["LOAD"], 43),
+        execute(c["CMP"]),
+        branch(COND_C, 1, v(64)),
+        read(54),
+        write(54, a["MERGE_ROW_V"]),
+        jump("K_NL"),
+        read(41),
+        execute(c["LOAD"], 54),
+        write(54, a["MERGE_ROW_V"]),
+        jump("K_NL"),
+        execute(a["VOICE_STOP"]),
+        jump("K_ROT"),
+        execute(a["SKIP_CPZ"]),
+        jump("K_ROT"),
+    ]
+
+    instrument = [
+        read(6),
+        read(6, a["X_LO_FCNT"]),
+        read(8, a["X_HI_TCNT"]),
+        read(37, a["X_LO_SPEED"]),
+        execute(c["LOAD"], 34),
+        execute(c["ADD"]),
+        write(44, a["SAVE44_R36"]),
+        execute(c["LOAD"], 34),
+        execute(c["ADD"], 38),
+        execute(c["CMP"]),
+        branch(COND_C, 1, i(14)),
+        read(44),
+        write(6, a["MERGE_CTR_I_NR"]),
+        jump("I_NL"),
+        read(44),
+        write(6, a["MERGE_CTR_I_ROLL"]),
+        execute(c["LOAD"], 52),
+        write(52, a["PREV_I_PITCH"]),
+        execute(c["LOAD"], 52),
+        write(52, a["PREV_I_VOL"]),
+        read(7, a["X_ROW_I"]),
+        read(7, a["X_LPS"]),
+        read(7, a["X_LPE"]),
+        read(40, a["X_END"]),
+        execute(c["LOAD"], 34),
+        execute(c["ADD"]),
+        write(45, a["SAVE45_R39"]),
+        read(41),
+        execute(c["LOAD"], 42),
+        execute(c["CMP"]),
+        branch(COND_C, 1, i(35)),
+        read(45),
+        execute(c["LOAD"], 42),
+        execute(c["CMP"]),
+        branch(COND_C, 1, i(42)),
+        read(45),
+        execute(c["LOAD"], 43),
+        execute(c["CMP"]),
+        branch(COND_C, 1, i(46)),
+        read(50),
+        write(50, a["MERGE_ROW_I"]),
+        jump("I_NL"),
+        read(41),
+        execute(c["LOAD"], 50),
+        write(50, a["MERGE_ROW_I"]),
+        jump("I_NL"),
+        read(49),
+        write(49, a["INS_DONE"]),
+        jump("I_NL"),
+    ]
+    assert len(voice) == 68 and len(instrument) == 49
+    return voice, instrument
 
 
 @dataclass(frozen=True)
@@ -416,6 +637,164 @@ def emit(nodes: list[Node], page: range, labels: dict[str, int],
                     Op.JUMP, target=labels[node.default]).encode()
                 pc += 1
     return pc - page.start
+
+
+def emit_advance(program: list[int], tick_nodes: list[Node],
+                 flow_nodes: list[Node]) -> tuple[dict[str, int], int, int, int]:
+    """Pack the exact advance manifests and remaining legacy control in bank 1."""
+    removed = {"K_ADV", "EA0", "EA1", "EA2", "EA3", "EA4", "EA5"}
+    tick_rest = [node for node in tick_nodes if node.name not in removed]
+    assert len(tick_nodes) - len(tick_rest) == len(removed)
+    voice, instrument = advance_manifest()
+
+    voice_base = 0
+    tick_base = voice_base + len(voice)
+    tick_labels = layout(tick_rest, range(tick_base, PROGRAM_BANK_WORDS))
+    tick_used = sum(block_size(node,
+                               tick_rest[n + 1].name
+                               if n + 1 < len(tick_rest) else None)
+                    for n, node in enumerate(tick_rest))
+    instrument_base = tick_base + tick_used
+    flow_base = instrument_base + len(instrument)
+    flow_labels = layout(flow_nodes, range(flow_base, PROGRAM_BANK_WORDS))
+    flow_used = sum(block_size(node,
+                               flow_nodes[n + 1].name
+                               if n + 1 < len(flow_nodes) else None)
+                    for n, node in enumerate(flow_nodes))
+
+    labels = {**tick_labels, **flow_labels}
+    labels.update({f"ADV_V{n:02d}": voice_base + n
+                   for n in range(len(voice))})
+    labels.update({f"ADV_I{n:02d}": instrument_base + n
+                   for n in range(len(instrument))})
+    labels["K_ADV"] = voice_base
+    labels["EA0"] = instrument_base
+    assert len(labels) == len(set(labels.values())) + 2
+
+    for base, section in ((voice_base, voice),
+                          (instrument_base, instrument)):
+        for offset, insn in enumerate(section):
+            program[base + offset] = insn.encode(labels)
+    emit(tick_rest, range(tick_base, instrument_base), labels, program)
+    emit(flow_nodes, range(flow_base, flow_base + flow_used), labels, program)
+
+    total = len(voice) + tick_used + len(instrument) + flow_used
+    assert (tick_used, flow_used, total) == (83, 26, 226)
+    assert flow_base + flow_used == total
+    return labels, len(voice), len(instrument), total
+
+
+def validate_advance_semantics() -> int:
+    """Exhaust decomposed domains for the normalized EA branch algebra."""
+    cases = 0
+
+    # Counter rollover and reconstruction factor into an 8-bit counter pair
+    # plus an independent modulo-256 tick-count update.
+    for fcnt in range(256):
+        for speed in range(256):
+            fnext = fcnt + 1
+            roll = fnext >= speed
+            merged = (0 if roll else fnext) & 0xFF
+            legacy = 0 if roll else ((fcnt + 1) & 0xFF)
+            assert merged == legacy
+            cases += 1
+    for tcnt in range(256):
+        wrapped = 0 if tcnt == 255 else tcnt + 1
+        assert ((tcnt + 1) & 0xFF) == wrapped
+        cases += 1
+
+    def end_bound(lps: int, lpe: int) -> int:
+        return min(lps, 32) if lpe == 0 and lps != 0 else 32
+
+    for lps in range(256):
+        for lpe in range(256):
+            expected = lps if lpe == 0 and 1 <= lps <= 31 else 32
+            assert end_bound(lps, lpe) == expected
+            cases += 1
+
+    # The nonzero-length path has priority over loop/end and depends only on
+    # the six-bit foreground length and five-bit row.
+    for length in range(64):
+        for row in range(32):
+            decremented = (length - 1) & 0xFFFF
+            carry = length >= 1
+            zero = decremented == 0
+            if not carry:
+                decision = "loop_end"
+            elif zero or row + 1 == 32:
+                decision = "stop"
+            else:
+                decision = "advance"
+            expected = ("loop_end" if length == 0 else
+                        "stop" if length == 1 or row == 31 else "advance")
+            assert decision == expected
+            cases += 1
+
+    # With length zero, loop-before-end priority is exhaustive over every raw
+    # loop byte, row and release state.  Instrument advance ignores release.
+    for lps in range(256):
+        for lpe in range(256):
+            bound = end_bound(lps, lpe)
+            for row in range(32):
+                row_next = row + 1
+                for released in (False, True):
+                    valid_loop = lps < lpe and not released
+                    if valid_loop and row_next >= lpe:
+                        normalized = ("loop", lps & 31)
+                    elif row_next >= bound:
+                        normalized = ("stop", row)
+                    else:
+                        normalized = ("advance", row_next & 31)
+                    if lps < lpe and not released and row_next >= lpe:
+                        legacy = ("loop", lps & 31)
+                    elif row_next >= bound:
+                        legacy = ("stop", row)
+                    else:
+                        legacy = ("advance", row_next & 31)
+                    assert normalized == legacy
+                    cases += 1
+
+                if lps < lpe and row_next >= lpe:
+                    normalized_i = ("loop", lps & 31)
+                elif row_next >= bound:
+                    normalized_i = ("done", row)
+                else:
+                    normalized_i = ("advance", row_next & 31)
+                if lps < lpe and row_next >= lpe:
+                    legacy_i = ("loop", lps & 31)
+                elif row_next >= bound:
+                    legacy_i = ("done", row)
+                else:
+                    legacy_i = ("advance", row_next & 31)
+                assert normalized_i == legacy_i
+                cases += 1
+
+    # Fixed projection/merge actions preserve every unrelated bit.
+    for raw in range(1 << 16):
+        assert ((raw & ~0x0FC0) | ((raw & 0x3F) << 6)) \
+            == ((raw & 0xF03F) | ((raw & 0x3F) << 6))
+        assert ((raw & ~0x01C0) | ((raw & 7) << 6)) \
+            == ((raw & 0xFE3F) | ((raw & 7) << 6))
+        assert ((raw | 0x8000) & 0xFFFF) == raw | 0x8000
+        for pitch in range(64):
+            merged_pitch = (raw & 0xFFC0) | pitch
+            assert merged_pitch & 0x3F == pitch
+            assert merged_pitch & 0xFFC0 == raw & 0xFFC0
+            cases += 1
+        for volume in range(8):
+            merged_volume = (raw & 0xF1FF) | (volume << 9)
+            assert (merged_volume >> 9) & 7 == volume
+            assert merged_volume & 0xF1FF == raw & 0xF1FF
+            cases += 1
+        for row in range(32):
+            assert ((raw & ~0x001F) | row) & 0xFFFF \
+                == (raw & 0xFFE0) | row
+            assert ((raw & ~0x03E0) | (row << 5)) & 0xFFFF \
+                == (raw & 0xFC1F) | (row << 5)
+            cases += 2
+        cases += 3
+
+    return cases
 
 
 def build_sample(actions: Actions, program: list[int]) -> dict[int, str]:
@@ -714,11 +1093,14 @@ def main() -> int:
     seq_nodes = expand_sequencer(states, successors, actions)
     tick_nodes, flow_nodes = split_pages(seq_nodes)
     movement = tick_movement_inventory(seq_nodes)
-    tick_labels = layout(tick_nodes, PAGE_TICK)
-    flow_labels = layout(flow_nodes, PAGE_FLOW)
-    labels = {**tick_labels, **flow_labels}
-    tick_used = emit(tick_nodes, PAGE_TICK, labels, tick_program)
-    flow_used = emit(flow_nodes, PAGE_FLOW, labels, tick_program)
+    replaced_actions = {"K_ADV", "EA0", "EA1", "EA2", "EA3", "EA4",
+                        "EA5"}
+    for code in ADV_ACTION.values():
+        old = actions.get("tick", code)
+        assert old is None or old.name in replaced_actions, \
+            f"advance action {code:02x} collides with retained {old.name}"
+    labels, voice_used, instrument_used, normalized_used = emit_advance(
+        tick_program, tick_nodes, flow_nodes)
     program = sample_program + tick_program
 
     validate_instruction_codec(program)
@@ -729,13 +1111,13 @@ def main() -> int:
     reachable_to_idle(seq_nodes)
     addresses = state_address_inventory(seq)
     commits = output_commit_inventory(seq, walk)
+    advance_cases = validate_advance_semantics()
 
     # Branches and jumps never cross an owner-selected bank.  OP_OWNER is the
     # only instruction allowed to select the other bank for the next fetch.
     bank_contracts = (
         (OWNER_SAMPLE, sample_program, set(sample_labels)),
-        (OWNER_TICK, tick_program,
-         set(tick_labels.values()) | set(flow_labels.values())),
+        (OWNER_TICK, tick_program, set(labels.values())),
     )
     for owner, bank, live_pcs in bank_contracts:
         assert len(bank) == PROGRAM_BANK_WORDS
@@ -748,22 +1130,23 @@ def main() -> int:
 
     assert len(program) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
     assert sample_used == 62
-    assert tick_used + flow_used == 125
-    normalized_tick, normalized_flow = 148, 75
-    assert normalized_tick + normalized_flow == 223
-    assert normalized_tick + normalized_flow <= PROGRAM_BANK_WORDS
+    assert voice_used + instrument_used == 117
+    assert normalized_used == 226
+    assert normalized_used <= PROGRAM_BANK_WORDS
 
-    print("R.84G-D owner-banked executor contract: PASS")
+    print("R.84G-E normalized advance control contract: PASS")
     print(f"sample bank: {sample_used}/256 words, {sample_cycles}/"
           f"{SAMPLE_CLOCK_LIMIT} conservative clocks, {sample_spare} spare")
-    print(f"tick/flow bank: {tick_used + flow_used}/256 words "
-          f"({tick_used} tick/effect + {flow_used} trigger/music); "
-          f"normalized capacity {normalized_tick + normalized_flow}/256")
+    print(f"tick/flow bank: {normalized_used}/256 words "
+          f"({voice_used} voice/K_ADV + {instrument_used} instrument + "
+          "83 remaining tick + 26 flow); 30 spare")
+    print(f"normalized advance semantics: {advance_cases:,} decomposed cases")
+    print(f"normalized advance actions: {len(ADV_ACTION)} fixed + 4 common")
     print(f"legacy sequencer: {len(states)} states -> {len(seq_nodes)} PC nodes; "
           "all nodes can reach S_IDLE")
     lowered = sum(node.lowered for node in seq_nodes)
-    print(f"explicit branch IR: {lowered} lowered / "
-          f"{len(seq_nodes) - lowered} visibly unlowered nodes")
+    print(f"explicit branch IR: 117 exact advance words; {lowered} other "
+          f"lowered / {len(seq_nodes) - 7 - lowered} visibly unlowered nodes")
     for line in actions.report():
         print(line)
     print("state words: " + ",".join(str(n) for n in addresses)
