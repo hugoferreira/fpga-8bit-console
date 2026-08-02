@@ -2608,7 +2608,8 @@ def validate_sample_d2fca_manifest(candidate: list[int],
 
     events = ("PRE_W15", "W15", "PC27", "PC28", "PC29", "PC2A",
               "W26", "W27", "PC2D", "PC2E", "W40", "W51", "W75",
-              "PC38", "PC39", "W84", "LEAF")
+              "PC38", "PC39", "W84", "PC3C", "PC3D", "PC4C", "PC4D",
+              "DONE")
     event = {name: index for index, name in enumerate(events)}
     capacities = {"A": 18, "B": 18, "N": 17, "O": 17,
                   "Q": 16, "T": 6, "C": 7, "I": 6, "D": 3}
@@ -2659,7 +2660,7 @@ def validate_sample_d2fca_manifest(candidate: list[int],
               "unpacked D2F-B live context", "path decode"),
         field("live_is_wave6", 1, (("A", 16, 1),), "PRE_W15", "W27",
               "unpacked D2F-B live wave", "live reciprocal bypass"),
-        field("audible", 1, (("A", 17, 1),), "PRE_W15", "LEAF",
+        field("audible", 1, (("A", 17, 1),), "PRE_W15", "DONE",
               "W4 play/hidden capture", "leaf48/49 gate"),
         field("old_source", 18, (("B", 0, 18),), "PRE_W15", "W27",
               "unpacked D2F-B W3 pair", "old-gain launch"),
@@ -2700,8 +2701,13 @@ def validate_sample_d2fca_manifest(candidate: list[int],
               "active-bank q26/q30 at CAP_W75", "CAP_W84 dampen"),
         field("filter_lo", 16, (("Q", 0, 16),), "PC39", "W84",
               "clear-qualified typed q15", "filter/word15 merge"),
-        field("filtered_value", 17, (("A", 0, 17),), "W84", "LEAF",
-              "CAP_W84 dampen", "word14/15/48/49 writes"),
+        field("sample_f", 17, (("A", 0, 17),), "W84", "DONE",
+              "CAP_W84 blend/dampen result", "ring and word48/49 writes"),
+        field("final_filter_hi", 16, (("B", 0, 16),), "W84", "PC3C",
+              "lp_final sign merged with typed q14 payload",
+              "final word14 write"),
+        field("final_filter_lo", 16, (("Q", 0, 16),), "W84", "PC3D",
+              "lp_final low word", "final word15 write"),
     )
 
     wavetable = (
@@ -2742,7 +2748,7 @@ def validate_sample_d2fca_manifest(candidate: list[int],
               "q13 high plus typed q19 low", "old-arm enable through base"),
         field("current_sign", 1, (("T", 0, 1),), "W27", "W51",
               "sign of wavetable current sum", "signed current arm"),
-        field("audible", 1, (("A", 17, 1),), "W27", "LEAF",
+        field("audible", 1, (("A", 17, 1),), "W27", "DONE",
               "W27 play/hidden capture", "leaf48/49 gate"),
         field("blend_count", 7, (("C", 0, 7),), "PC2E", "W75",
               "typed final q17", "blend launch/bypass"),
@@ -2758,8 +2764,13 @@ def validate_sample_d2fca_manifest(candidate: list[int],
               "active-bank q26/q30 at CAP_W75", "CAP_W84 dampen"),
         field("filter_lo", 16, (("O", 0, 16),), "PC39", "W84",
               "clear-qualified typed q15", "filter/word15 merge"),
-        field("filtered_value", 17, (("A", 0, 17),), "W84", "LEAF",
-              "CAP_W84 dampen", "word14/15/48/49 writes"),
+        field("sample_f", 17, (("A", 0, 17),), "W84", "DONE",
+              "CAP_W84 blend/dampen result", "ring and word48/49 writes"),
+        field("final_filter_hi", 16, (("B", 0, 16),), "W84", "PC3C",
+              "lp_final sign merged with typed q14 payload",
+              "final word14 write"),
+        field("final_filter_lo", 16, (("O", 0, 16),), "W84", "PC3D",
+              "lp_final low word", "final word15 write"),
     )
 
     def validate_fields(path: str, fields: tuple[LiveField, ...],
@@ -2792,6 +2803,14 @@ def validate_sample_d2fca_manifest(candidate: list[int],
             peak = max(peak, used)
             if snapshot == event["W15"]:
                 w15 = used
+            if snapshot == event["W84"]:
+                assert used == 50, (path, events[snapshot], used)
+            if snapshot == event["PC3C"]:
+                assert used == 34, (path, events[snapshot], used)
+            if snapshot in (event["PC3D"], event["PC4C"], event["PC4D"]):
+                assert used == 18, (path, events[snapshot], used)
+            if snapshot == event["DONE"]:
+                assert used == 0, (path, events[snapshot], used)
         assert w15 == expected_w15, (path, w15, expected_w15)
         return w15, peak
 
@@ -2888,7 +2907,8 @@ def validate_sample_d2fca_manifest(candidate: list[int],
     return (f"H-D2F-C-A manifest: 18 per-slot writes with exact PC/action/q/"
             f"destination provenance; built W15 {built_w15}/108, peak "
             f"{built_peak}/108; wavetable W15 {wave_w15}/108, peak "
-            f"{wave_peak}/108; active q26/q30 override exposed; seven 20-PC fold "
+            f"{wave_peak}/108; W84 split 50/108 -> 34/108 -> 18/108; "
+            "active q26/q30 override exposed; seven 20-PC fold "
             f"nodes peak at {fold_peak}/70 and retain A18 through q49 "
             "FOLD_FINISH/dry publication")
 

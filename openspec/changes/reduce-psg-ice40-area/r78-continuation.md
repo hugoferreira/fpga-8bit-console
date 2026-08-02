@@ -1904,6 +1904,20 @@ git history; do not repeat them without the recorded changed condition.
   value appears from a source string rather than a packed predecessor or if
   fold/dry publication reads memory directly.  Preserve the 44-word candidate
   and 222/782/172/158 invariants.
+- **R.84H-D2F-C-B active hypothesis:** the first independent late-lifetime
+  audit found that C-A's single `filtered_value` role was false.  At W84 the
+  audible/ring value is `sample_f`, but the persistent lowpass is
+  `lp_final = damp ? sample_f : lp0`; they differ whenever damp is zero.
+  Correct the physical replacement atomically to A18=`{audible,sample_f}`,
+  B16=final word14 and Q16 (built-in) or O16 (wavetable)=final word15.  The
+  allocation is 50/108 at W84, 34/108 after PC3c and 18/108 after PC3d through
+  both leaf writes.  Then implement the unpack-only predecessor transitions,
+  explicitly mapping PC36 `OP_EXEC`/`CAP_W51` action `0x2d` word26 to physical
+  active-bank word26/30.  Baseline is structural C-A `5f6cb83`; scope remains
+  this ledger and `tools/psg_exec_model.py`, with accepted image and all RTL
+  immutable.  Reject if either result is reconstructed from the oracle, if a
+  typed q/source edge is bypassed, or if hold can expose a partial W84
+  replacement.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
