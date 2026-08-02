@@ -8,6 +8,10 @@ module psg_execctl_tb;
   logic [15:0] cond;
   logic [15:0] state_q;
   wire [15:0] state_wd_i = state_q;
+  logic state_ra_override_i;
+  logic [5:0] state_ra_word_i;
+  logic state_we_i;
+  logic [5:0] state_wa_word_i;
   logic active, done, owner, state_we;
   logic [2:0] slot;
   logic [8:0] state_ra, state_wa;
@@ -43,15 +47,28 @@ module psg_execctl_tb;
     hold = 0;
     cond = 0;
     state_q = 16'h5a3c;
+    state_ra_override_i = 1'b0;
+    state_ra_word_i = 6'd0;
+    state_we_i = 1'b0;
+    state_wa_word_i = 6'd0;
     step();
     reset = 0;
 
-    // READ 34, WRITE the returned word to 38, take branch 0 to slot=3, DONE.
+    // READ 34 with movement overrides, WRITE the returned word to 38, take
+    // branch 0 to slot=3, DONE.  The instruction metadata remains visible
+    // while the addressed memory transaction is redirected.
     cond[0] = 1'b1;
+    state_ra_override_i = 1'b1;
+    state_ra_word_i = 6'd49;
+    state_we_i = 1'b1;
+    state_wa_word_i = 6'd50;
     launch(8'd0, 1'b1);
     if (!active || !owner || pc != 0 || ir != {3'd0, 7'd0, 6'd34}
-        || state_ra != 9'd34 || state_word != 6'd34 || op_dbg != 3'd0)
-      $fatal(1, "launch/read mismatch");
+        || state_ra != 9'd49 || !state_we || state_wa != 9'd50
+        || state_word != 6'd34 || op_dbg != 3'd0)
+      $fatal(1, "launch/redirected-read mismatch");
+    state_ra_override_i = 1'b0;
+    state_we_i = 1'b0;
     step();
     if (pc != 1 || ir != {3'd1, 7'd0, 6'd38}
         || !state_we || state_wa != 9'd38

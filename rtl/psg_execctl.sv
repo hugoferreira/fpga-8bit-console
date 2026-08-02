@@ -20,6 +20,10 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
                    input  logic       hold,
                    input  logic [15:0] cond,
                    input  logic [15:0] state_wd_i,
+                   input  logic       state_ra_override_i,
+                   input  logic [5:0] state_ra_word_i,
+                   input  logic       state_we_i,
+                   input  logic [5:0] state_wa_word_i,
 
                    output logic       active,
                    output logic       done,
@@ -95,9 +99,9 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
   end
 
   always_comb begin
-    state_ra = {slot, ir[5:0]};
-    state_wa = {slot, ir[5:0]};
-    state_we = active && !hold && op == OP_WRITE;
+    state_ra = {slot, state_ra_override_i ? state_ra_word_i : ir[5:0]};
+    state_wa = {slot, state_we_i ? state_wa_word_i : ir[5:0]};
+    state_we = active && !hold && (op == OP_WRITE || state_we_i);
     state_wd = state_wd_i;
     action = (op == OP_READ || op == OP_WRITE || op == OP_EXEC)
                ? ir[12:6] : 7'd0;

@@ -457,7 +457,7 @@ git history; do not repeat them without the recorded changed condition.
   one addressed memory operand, one accumulator destination and one carry
   chain, with compare serialized into that chain.  This does not yet prove any
   legacy macro action, schedule or render and is not a whole-PSG area result.
-- **R.84E next permitted hypothesis:** lower one complete owner-side record
+- **R.84E hypothesis:** lower one complete owner-side record
   movement family onto the controller plus common accumulator using a real
   synchronous state-memory model.  Generated action metadata must identify
   the consumed read and committed write address without adding a general
@@ -465,6 +465,50 @@ git history; do not repeat them without the recorded changed condition.
   record layout and account every extra hold clock before adding arithmetic
   macro semantics.  Work remains isolated; do not partially replace a
   `pph`/`sst` consumer in the whole PSG.
+- **R.84E result:** accepted after the generated program invalidated the first
+  apparently passing spelling.  `V_LD0..7` read persistent words
+  `3,4,5,8,9,26,32,26`; actions 1..7 stream the first seven returns into
+  scratch `48..54`, and the existing `K_ADV` action drains the final repeated
+  word 26 into scratch 53.  `V_ST0..4` copy scratch `48,49,50,52,54` back to
+  persistent `3,4,5,9,32`.  No general register index, movement register,
+  second EBR or hold clock is introduced.
+- **R.84E defect and correction:** the first test put `K_ROT` immediately
+  before `V_ST0` and therefore passed, but the real generated paths are
+  `K_ROT -> PC0..PC3 -> V_ST0` and the evaluated `P_W0..P_W3 -> V_ST0` path.
+  Both overwrite the synchronous read output, so a `K_ROT` scratch-48 prime
+  was invalid.  The corrected contract issues scratch 48 on `PC3` or `P_W3`,
+  after each action has consumed its current `state_q`; they are the two
+  immediate predecessors of `V_ST0`.  The executable generator now pins both
+  codes, successors and all V_LD/V_ST word metadata, and the synchronous
+  memory test executes both store paths.  This is why R.84E is a transaction
+  proof rather than a decode-only test.
+- **R.84E gates and physical result:** the generated image remains
+  byte-identical at 62/64 sample, 99/128 tick and 26/64 flow words; all 85 PC
+  nodes still reach idle and the conservative sample path remains 652/1,003
+  clocks.  Icarus passes the controller redirection test, all 327,680 R.84D
+  arithmetic pairs and the synchronous 8-load plus two-by-5-store movement
+  test; controller, movement and production target Verilator lint are clean.
+  Against R.84D's 271 LUT4 / 23 carry / 34 flop / 298-floor / 303-placed
+  baseline, the retained target maps **324 LUT4s, 24 carries, 34 flops, 27
+  unpackable flops, one EBR and a 351-LC floor**.  Seed-1 places and routes at
+  **357 LCs / one EBR / 68.77 MHz** against 28.125 MHz.  The complete movement
+  family therefore costs 53 floor cells and 54 placed cells, leaving 2,873
+  floor cells inside R.84's 3,224-cell 6k replacement budget.
+- **R.84E decision:** retain the zero-hold address-selected movement family.
+  It validates that real record movement is cheap only when reads and writes
+  are scheduled at the actual synchronous-memory predecessors.  This remains
+  an isolated executor result: legacy macro actions, exact schedule/renders
+  and whole-PSG area are not yet proven, and the accepted full PSG still uses
+  `psg_walk` plus `psg_seq` until the atomic integration gate.
+- **R.84F next permitted hypothesis:** lower the complete flow-owned advance
+  family (`K_ADV` plus `EA0..EA6`) into explicit state-read, accumulator and
+  state-write micro-operations.  It is the smallest closed macro-arithmetic
+  family that exercises both banks' words 0..2, carry/compare flags and branch
+  decisions without requesting any named legacy working register.  Prove all
+  tcnt/fcnt/lps/lpe/play_len/sp combinations and both bank layouts against the
+  legacy transition before measuring; reject if it needs a second operand
+  register, a general register index, or exceeds the remaining tick-page and
+  6k floor budgets.
 
 ### Active task queue
 
@@ -488,8 +532,11 @@ git history; do not repeat them without the recorded changed condition.
 - [x] R.84D: implement and price the address-selected action/state datapath;
       keep legacy controllers intact until an atomic full-mode switch and do
       not rebuild their wide source/destination muxes behind action decode.
-- [ ] R.84E: lower and prove one complete record-movement family through a
+- [x] R.84E: lower and prove one complete record-movement family through a
       real synchronous state-memory transaction model before macro arithmetic.
+- [ ] R.84F: lower and prove the complete flow-owned advance family through
+      explicit state-read/accumulator/write micro-operations before any wider
+      effect or waveform action family.
 
 ## Handoff rule
 

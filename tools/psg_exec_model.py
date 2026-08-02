@@ -532,6 +532,32 @@ def reachable_to_idle(nodes: list[Node]) -> None:
     assert not missing, f"sequencer nodes cannot reach S_IDLE: {sorted(missing)}"
 
 
+def tick_movement_inventory(nodes: list[Node]) -> str:
+    """Pin the generated action/address contract consumed by psg_execmove."""
+    by_name = {node.name: node for node in nodes}
+    load_words = [3, 4, 5, 8, 9, 26, 32, 26]
+    store_words = [3, 4, 5, 9, 32]
+    for i, word in enumerate(load_words):
+        node = by_name[f"V_LD{i}"]
+        assert (node.op, node.word, node.action) == (Op.READ, word, i)
+    for i, word in enumerate(store_words):
+        node = by_name[f"V_ST{i}"]
+        assert (node.op, node.word, node.action) == (Op.WRITE, word, 8 + i)
+
+    # K_ADV drains V_LD7's repeated word 26.  P_W3 and PC3 are the two
+    # immediate V_ST0 predecessors and prime scratch word 48 after their
+    # current state_q value has been consumed; K_ROT is not adjacent.
+    assert by_name["K_ADV"].action == 0x40
+    assert by_name["P_W3"].action == 0x56
+    assert by_name["PC3"].action == 0x5A
+    assert by_name["P_W3"].successors == ["V_ST0"]
+    assert by_name["PC3"].successors == ["V_ST0"]
+    assert by_name["K_ROT"].successors == ["PC0"]
+    return ("loads 3,4,5,8,9,26,32 -> scratch 48..54; "
+            "stores scratch 48,49,50,52,54 -> 3,4,5,9,32; "
+            "0 extra hold clocks")
+
+
 def state_address_inventory(seq: str) -> list[int]:
     # This spans the literal tick load/store helpers and eng read/write cases.
     start = seq.index("function automatic logic [5:0] tick_load_word")
@@ -564,6 +590,7 @@ def main() -> int:
 
     seq_nodes = expand_sequencer(states, successors, actions)
     tick_nodes, flow_nodes = split_pages(seq_nodes)
+    movement = tick_movement_inventory(seq_nodes)
     tick_labels = layout(tick_nodes, PAGE_TICK)
     flow_labels = layout(flow_nodes, PAGE_FLOW)
     labels = {**tick_labels, **flow_labels}
@@ -597,6 +624,7 @@ def main() -> int:
         print(line)
     print("state words: " + ",".join(str(n) for n in addresses)
           + "; scratch 34..63")
+    print("tick record movement: " + movement)
     print("externally visible commits: " + ",".join(commits))
     image = "".join(f"{word:04x}\n" for word in program)
     if "--write" in sys.argv[1:]:
