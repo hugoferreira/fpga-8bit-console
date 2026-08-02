@@ -539,6 +539,44 @@ git history; do not repeat them without the recorded changed condition.
   branches and writes.  Duplicate control words across the two bank layouts
   where that removes `abank` data muxes; spend the measured 29 tick-page and
   38 flow-page spare words before introducing any named working register.
+- **R.84G-A active hypothesis:** first replace successor-order branch
+  inference with explicit ordered `(condition, sense, target)` edges, one
+  explicit default edge and explicit tick/flow page ownership.  Add a pinned
+  action-code API and a synthetic non-ordinal, negative-sense, repeated-target
+  and cross-page emission proof.  Existing unlowered legacy nodes may retain
+  their provisional ordinal conditions only through a visibly named helper;
+  the emitter itself must never invent a predicate.  The generated image must
+  remain byte-identical at 99/128 tick words and 26/64 flow words.  Scope is
+  `tools/psg_exec_model.py`, its generated-image freshness check and this
+  ledger; no RTL or whole-PSG behavior claim is permitted in this foundation.
+  Reject if the abstraction changes an existing word, loses repeated-target
+  priority, permits hard-zero condition indices 4..7, or obscures which nodes
+  are still unlowered.
+- **R.84G-A result:** accepted as a byte-identical control-model foundation.
+  `Node` now carries ordered `Branch(target, condition, sense)` tuples, one
+  explicit default, explicit tick/flow page ownership and a visible lowered
+  marker.  `emit()` consumes only those fields; the regex topology cannot
+  choose a predicate.  The provisional helper preserves all 85 unlowered
+  legacy nodes visibly, while the synthetic proof emits condition 12, a
+  false-sense edge, two ordered edges to the same target and a cross-page
+  default jump.  Pinned action allocation is checked at common action `0x71`,
+  generated branches reject hard-zero condition indices 4..7, page ownership
+  has no implicit default, and a missing default cannot silently become DONE.
+- **R.84G-A gates and decision:** the existing image is byte-identical at
+  62/64 sample, 99/128 tick and 26/64 flow words; all 85 nodes still reach
+  idle and are reported as **0 lowered / 85 visibly unlowered**.  Python
+  compilation/model, controller self-check, 327,680 common datapath pairs,
+  both five-store movement paths, full/PREVIEW production lint and strict
+  OpenSpec validation pass.  Retain this foundation.  It changes no RTL or
+  generated word and therefore inherits R.84E's physical result rather than
+  claiming a new area or behavior measurement.
+- **R.84G-B next permitted hypothesis:** define only the field projection and
+  result-packing actions required to drive rollover, length and row work
+  through R.84D's existing `wide` expression.  Synthesize each selected-ALU
+  spelling before program expansion; reject any variant with a second carry
+  chain or source-level free-variable arithmetic outside `wide`.  Cheap
+  equality/bitfield packing may remain owner actions, but `<`, `>=`, increment
+  and decrement must be serialized through the common chain.
 
 ### Active task queue
 
@@ -568,6 +606,10 @@ git history; do not repeat them without the recorded changed condition.
       proof and mapped attribution show 190 LUT4s / 77 duplicated carries.
 - [ ] R.84G: lower the same exact family as explicit condition-indexed,
       synchronous address-state micro-operations through the common chain.
+- [x] R.84G-A: make explicit branch/default/page/action metadata a
+      byte-identical generated-control foundation before lowering the family.
+- [ ] R.84G-B: price field-selected operations through the existing common
+      chain before spending program words on the complete advance sequence.
 
 ## Handoff rule
 

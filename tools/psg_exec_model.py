@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
@@ -49,6 +49,11 @@ class Op(IntEnum):
     OWNER = 5
     DONE = 6
     EXEC = 7
+
+
+class Page(IntEnum):
+    TICK = 0
+    FLOW = 1
 
 
 @dataclass(frozen=True)
@@ -119,16 +124,24 @@ class Actions:
         self.next_sub: dict[tuple[str, int], int] = {}
 
     def add(self, owner: str, family: int, name: str,
-            *, consumes: int | None = None, wait: int = 0) -> int:
+            *, subop: int | None = None, consumes: int | None = None,
+            wait: int = 0) -> int:
         key = (owner, family)
-        subop = self.next_sub.get(key, 0)
-        assert 0 <= family < 8 and subop < 16, \
+        if subop is None:
+            subop = self.next_sub.get(key, 0)
+        assert 0 <= family < 8 and 0 <= subop < 16, \
             f"{owner} action family {family} exceeds sixteen subops"
         action = Action(owner, family, subop, name, consumes, wait)
         assert action.code not in self.by_owner[owner]
         self.by_owner[owner][action.code] = action
-        self.next_sub[key] = subop + 1
+        self.next_sub[key] = max(self.next_sub.get(key, 0), subop + 1)
         return action.code
+
+    def pin(self, owner: str, code: int, name: str,
+            *, consumes: int | None = None, wait: int = 0) -> int:
+        assert 0 <= code < 128
+        return self.add(owner, code >> 4, name, subop=code & 15,
+                        consumes=consumes, wait=wait)
 
     def get(self, owner: str, code: int) -> Action | None:
         return self.by_owner[owner].get(code)
@@ -136,21 +149,50 @@ class Actions:
     def report(self) -> list[str]:
         out = []
         for owner in ("sample", "tick"):
-            counts = [self.next_sub.get((owner, family), 0)
+            counts = [sum(action.family == family
+                          for action in self.by_owner[owner].values())
                       for family in range(8)]
             out.append(f"{owner} actions {sum(counts)}; family occupancy "
                        + "/".join(str(n) for n in counts))
         return out
 
 
-@dataclass
+@dataclass(frozen=True)
+class Branch:
+    target: str
+    cond: int
+    sense: int = 1
+
+    def __post_init__(self) -> None:
+        assert 0 <= self.cond < 16 and self.cond not in range(4, 8)
+        assert self.sense in (0, 1)
+
+
+@dataclass(kw_only=True)
 class Node:
     name: str
     base: str
-    successors: list[str] = field(default_factory=list)
+    page: Page
     op: Op = Op.EXEC
     word: int = 0
     action: int = 0
+    branches: tuple[Branch, ...] = ()
+    default: str | None = None
+    terminal: bool = False
+    lowered: bool = False
+
+    def __post_init__(self) -> None:
+        assert self.terminal != (self.default is not None), \
+            f"{self.name}: require exactly one explicit default or terminal"
+        assert not self.branches or self.default is not None, \
+            f"{self.name}: conditional node has no default edge"
+
+    @property
+    def successors(self) -> list[str]:
+        return list(dict.fromkeys(
+            [branch.target for branch in self.branches]
+            + ([self.default] if self.default is not None else [])
+        ))
 
 
 def localparam(src: str, name: str) -> int:
@@ -233,6 +275,34 @@ def action_family(name: str) -> int:
     return 7
 
 
+FLOW_BASE = {"S_IDLE", "W_MUS", "ML_STOP", "ML_RD0", "ML_L0",
+             "ML_L1", "ML_L2", "ML_L3", "MS_RD", "MS_CK",
+             "T_FL", "T_SP", "T_LS", "T_LE", "T_NL", "T_NH",
+             "T_LD"}
+
+
+def legacy_page(base: str) -> Page:
+    return Page.FLOW if base in FLOW_BASE else Page.TICK
+
+
+def legacy_node(name: str, base: str, successors: list[str],
+                *, op: Op = Op.EXEC, word: int = 0,
+                action: int = 0) -> Node:
+    """Keep an unlowered legacy edge manifest explicit and visibly provisional.
+
+    Regex extraction proves only target topology.  Until a family is lowered,
+    this helper pins the old ordinal condition spelling so emit() itself never
+    invents predicates.  Lowered nodes must name their real Branch conditions.
+    """
+    targets = list(dict.fromkeys(successors))
+    branches = tuple(Branch(target, cond)
+                     for cond, target in enumerate(targets[:-1]))
+    default = targets[-1] if targets else None
+    return Node(name=name, base=base, op=op, word=word, action=action,
+                branches=branches, default=default,
+                page=legacy_page(base), lowered=False)
+
+
 def expand_sequencer(states: list[str], succ: dict[str, list[str]],
                      actions: Actions) -> list[Node]:
     def entry(name: str) -> str:
@@ -249,7 +319,8 @@ def expand_sequencer(states: list[str], succ: dict[str, list[str]],
                 nxt = [f"V_LD{i + 1}"] if i + 1 < len(vld_words) \
                     else [entry(s) for s in succ[state]]
                 code = actions.add("tick", 0, name)
-                nodes.append(Node(name, state, nxt, Op.READ, word, code))
+                nodes.append(legacy_node(name, state, nxt, op=Op.READ,
+                                         word=word, action=code))
             continue
         if state == "V_ST":
             for i, word in enumerate(vst_words):
@@ -257,7 +328,8 @@ def expand_sequencer(states: list[str], succ: dict[str, list[str]],
                 nxt = [f"V_ST{i + 1}"] if i + 1 < len(vst_words) \
                     else [entry(s) for s in succ[state]]
                 code = actions.add("tick", 0, name)
-                nodes.append(Node(name, state, nxt, Op.WRITE, word, code))
+                nodes.append(legacy_node(name, state, nxt, op=Op.WRITE,
+                                         word=word, action=code))
             continue
         if state == "K_FX":
             edges = {
@@ -270,7 +342,8 @@ def expand_sequencer(states: list[str], succ: dict[str, list[str]],
             for i in range(12):
                 name = f"K_FX{i}"
                 code = actions.add("tick", 1, name)
-                nodes.append(Node(name, state, edges[i], Op.EXEC, 0, code))
+                nodes.append(legacy_node(name, state, edges[i], op=Op.EXEC,
+                                         action=code))
             continue
 
         nexts = [entry(s) for s in succ[state]]
@@ -282,29 +355,25 @@ def expand_sequencer(states: list[str], succ: dict[str, list[str]],
         elif state.startswith("PC"):
             op, word = Op.READ, 24 + int(state[-1])
         code = actions.add("tick", action_family(state), state)
-        nodes.append(Node(state, state, nexts, op, word, code))
+        nodes.append(legacy_node(state, state, nexts, op=op, word=word,
+                                 action=code))
     assert len({n.name for n in nodes}) == len(nodes)
     return nodes
 
 
 def split_pages(nodes: list[Node]) -> tuple[list[Node], list[Node]]:
-    flow_base = {"S_IDLE", "W_MUS", "ML_STOP", "ML_RD0", "ML_L0",
-                 "ML_L1", "ML_L2", "ML_L3", "MS_RD", "MS_CK",
-                 "T_FL", "T_SP", "T_LS", "T_LE", "T_NL", "T_NH",
-                 "T_LD"}
-    tick = [n for n in nodes if n.base not in flow_base]
-    flow = [n for n in nodes if n.base in flow_base]
+    tick = [node for node in nodes if node.page == Page.TICK]
+    flow = [node for node in nodes if node.page == Page.FLOW]
+    assert len(tick) + len(flow) == len(nodes)
+    assert set(map(id, tick)).isdisjoint(map(id, flow))
     return tick, flow
 
 
 def block_size(node: Node, next_name: str | None) -> int:
-    successors = list(dict.fromkeys(node.successors))
-    if not successors:
+    if node.terminal:
         return 2
-    if len(successors) == 1:
-        return 1 if successors[0] == next_name else 2
-    default = successors[-1]
-    return 1 + len(successors) - 1 + (default != next_name)
+    assert node.default is not None
+    return 1 + len(node.branches) + (node.default != next_name)
 
 
 def layout(nodes: list[Node], page: range) -> dict[str, int]:
@@ -327,24 +396,20 @@ def emit(nodes: list[Node], page: range, labels: dict[str, int],
         program[pc] = Instruction(node.op, action=node.action,
                                   word=node.word).encode()
         pc += 1
-        successors = list(dict.fromkeys(node.successors))
         nxt = nodes[i + 1].name if i + 1 < len(nodes) else None
-        if not successors:
+        if node.terminal:
             program[pc] = Instruction(Op.DONE).encode()
             pc += 1
-        elif len(successors) == 1:
-            if successors[0] != nxt:
-                program[pc] = Instruction(Op.JUMP,
-                                          target=labels[successors[0]]).encode()
-                pc += 1
         else:
-            for cond, target in enumerate(successors[:-1]):
-                program[pc] = Instruction(Op.BRANCH, cond=cond,
-                                          target=labels[target]).encode()
+            assert node.default is not None
+            for branch in node.branches:
+                program[pc] = Instruction(
+                    Op.BRANCH, cond=branch.cond, sense=branch.sense,
+                    target=labels[branch.target]).encode()
                 pc += 1
-            if successors[-1] != nxt:
-                program[pc] = Instruction(Op.JUMP,
-                                          target=labels[successors[-1]]).encode()
+            if node.default != nxt:
+                program[pc] = Instruction(
+                    Op.JUMP, target=labels[node.default]).encode()
                 pc += 1
     return pc - page.start
 
@@ -449,6 +514,59 @@ def validate_instruction_codec(program: list[int]) -> None:
             assert Instruction.decode(insn.encode()) == insn
     assert Instruction.decode(Instruction(Op.DONE).encode()) \
         == Instruction(Op.DONE)
+
+
+def validate_explicit_emission() -> None:
+    """Prove predicate identity, sense, priority and cross-page targets."""
+    actions = Actions()
+    assert actions.pin("tick", 0x71, "COMMON_LOAD") == 0x71
+    pinned = actions.get("tick", 0x71)
+    assert pinned is not None and (pinned.family, pinned.subop, pinned.name) \
+        == (7, 1, "COMMON_LOAD")
+    try:
+        actions.add("tick", 7, "BAD_NEGATIVE", subop=-1)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("negative action subop was accepted")
+    try:
+        Branch("bad", 4)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("hard-zero branch condition was accepted")
+
+    probe = Node(
+        name="probe", base="probe", page=Page.TICK, op=Op.EXEC,
+        word=5, action=0x71,
+        branches=(Branch("shared", 12, 0), Branch("shared", 9, 1)),
+        default="fallthrough", lowered=True)
+    labels = {"probe": 0, "fallthrough": 0x40, "shared": 0xC4}
+    program = [0] * 256
+    assert block_size(probe, None) == 4
+    assert emit([probe], range(0, 4), labels, program) == 4
+    assert Instruction.decode(program[0]) == Instruction(
+        Op.EXEC, action=0x71, word=5)
+    assert Instruction.decode(program[1]) == Instruction(
+        Op.BRANCH, cond=12, sense=0, target=0xC4)
+    assert Instruction.decode(program[2]) == Instruction(
+        Op.BRANCH, cond=9, sense=1, target=0xC4)
+    assert Instruction.decode(program[3]) == Instruction(
+        Op.JUMP, target=0x40)
+
+
+def validate_node_contract(nodes: list[Node], program: list[int]) -> None:
+    for node in nodes:
+        assert node.default is not None, \
+            f"{node.name}: sequencer nodes must name a default edge"
+        assert not node.terminal
+        for branch in node.branches:
+            assert branch.cond not in range(4, 8)
+    for word in program:
+        insn = Instruction.decode(word)
+        if insn.op == Op.BRANCH:
+            assert insn.cond not in range(4, 8), \
+                f"emitted branch consumes hard-zero condition {insn.cond}"
 
 
 def validate_sample(program: list[int], actions: Actions,
@@ -598,6 +716,8 @@ def main() -> int:
     flow_used = emit(flow_nodes, PAGE_FLOW, labels, program)
 
     validate_instruction_codec(program)
+    validate_explicit_emission()
+    validate_node_contract(seq_nodes, program)
     sample_cycles, sample_spare, sample_used = validate_sample(
         program, actions, sample_labels)
     reachable_to_idle(seq_nodes)
@@ -620,6 +740,9 @@ def main() -> int:
           f"trigger/music page: {flow_used}/64 words")
     print(f"legacy sequencer: {len(states)} states -> {len(seq_nodes)} PC nodes; "
           "all nodes can reach S_IDLE")
+    lowered = sum(node.lowered for node in seq_nodes)
+    print(f"explicit branch IR: {lowered} lowered / "
+          f"{len(seq_nodes) - lowered} visibly unlowered nodes")
     for line in actions.report():
         print(line)
     print("state words: " + ",".join(str(n) for n in addresses)
