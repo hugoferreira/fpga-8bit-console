@@ -755,6 +755,52 @@ git history; do not repeat them without the recorded changed condition.
   exceeds 256 words, or atomic integration fails to retire both legacy control
   EBRs.  Do not retry a larger flat PC or wider instruction for this capacity
   problem.
+- **R.84G-E hypothesis:** re-derive the complete advance-family program as an
+  executable generated manifest before adding any normalization RTL.  The
+  223-word G-D figure deliberately omitted `ins_use` and skip/stop effects;
+  the owner-one bank has 33 apparent spare words, so exact K_ADV priority,
+  previous-value updates, length/loop/end priority and all exit side effects
+  must be represented and counted rather than assumed to fit.
+- **R.84G-E result:** accepted as the exact generated-control foundation.  The
+  independent legacy audit found no EA6: K_ADV plus EA0..EA5 lower to a
+  **68-word voice path** and a **49-word instrument path**.  The three words
+  missing from G-D's optimistic voice bound are the `ins_use` edge, the
+  converged voice-stop effect and the skip-path `cpz := !playing` effect.
+  Replacing the old 16 words therefore yields
+  `(125 - 16) + 68 + 49 = 226/256`, leaving **30 owner-one words**.
+  `tools/psg_exec_model.py` now constructs all 117 instructions, repacks the
+  83 remaining tick and 26 flow words around them, resolves every branch and
+  jump inside the bank, and emits that exact 226-word image instead of merely
+  asserting a capacity estimate.  Owner-zero's 256 words remain byte-identical
+  to G-D.
+- **R.84G-E semantic result:** **15,534,336 decomposed cases** exhaust the
+  counter rollover, modulo tick count, six-bit foreground length, all raw
+  loop-start/loop-end bytes, every row/released combination, exact end-bound
+  construction and fixed unrelated-bit-preserving merges.  The manifest keeps
+  trigger before advance-skip, commits both counters before later decisions,
+  updates previous pitch/volume only on rollover, gives foreground length
+  priority over loop/end, gives valid unsuppressed loop priority over end, and
+  sends instrument no-roll/loop/end paths to I_NL.  Image freshness and the
+  bank/hold controller self-check pass.  The program-only image change is
+  physically identical to G-D: canonical Yosys maps **328 LUT4s, 24 carries,
+  34 flops, 27 unpackable flops and exactly two EBRs** for a **355-LC floor**;
+  seed-1 HX8K router2 places **361 LCs** at **61.85 MHz**.  This remains a
+  control/semantic model:
+  the fixed movement/merge decoder, owner predicates and side effects are not
+  RTL yet, so no full transaction or whole-PSG equivalence claim is made.
+- **R.84G-E integration guards:** V_LD0 must initialize scratch 34 to one and
+  K_ADV scratch 35 to 32; scratch 36..45 have the recorded normalized fields
+  and 48..54 retain the raw record stream.  The current placeholder hardcodes
+  active parameter word 26, while legacy selects 26 or 30 from `spar_bank`;
+  P/PC publication addresses have the same active/inactive-bank dependency.
+  Also, `pend_stop` and `cpz` effects must remain in the sequencer's existing
+  arbitrated sequential block so same-edge clears/releases preserve legacy
+  nonblocking-assignment priority.  R.84G-F must prove those hazards in a real
+  synchronous transaction harness before atomic integration.
+- **Repeat only if:** the state-word layout, synchronous read latency, branch
+  predicates, effect priority or K_ADV/EA transition graph changes.  Do not
+  return to the unreproducible 65/49 prose bound or treat the 30 spare words as
+  proof that the missing RTL decoder is behaviorally complete.
 
 ### Active task queue
 
@@ -795,6 +841,12 @@ git history; do not repeat them without the recorded changed condition.
 - [x] R.84G-D: prove an owner-banked two-EBR control store whose complete
       resource exchange preserves the whole-PSG EBR count before restoring
       normalization or lowering the advance family.
+- [x] R.84G-E: independently re-derive and generate the complete 68+49-word
+      normalized advance manifest; prove its exact branch algebra and fit the
+      complete owner-one image at 226/256 words.
+- [ ] R.84G-F: implement the fixed normalization/merge actions, dynamic
+      parameter-bank addresses and arbitrated stop/cpz effects; prove the
+      complete synchronous advance transaction before generic integration.
 
 ## Handoff rule
 
