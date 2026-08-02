@@ -24,7 +24,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H014.
+- Next hypothesis ID: H015.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
@@ -35,9 +35,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   reductions are deterministic; the 57-LC placed improvement is positive but
   remains just inside the known roughly 60-LC placement-sensitivity band and
   is not claimed as robust.
-- Latest rejected variant: H013 proves the internal multiplier recurrence fits
-  29 bits, but both the two-service and target-only forms add 24 LUT4s/three
-  carries and 26 placed LCs while removing two flops. H012 proves the true-
+- Latest rejected variant: H014 proves all detune corrections fit eight bits,
+  but the complete registered detune cone maps identically at 189 LUT4s, 73
+  carries, and 14 flops: Yosys already removes the unreachable ninth bit.
+  H013 proves the internal multiplier recurrence fits 29 bits, but both the
+  two-service and target-only forms add 24 LUT4s/three carries and 26 placed
+  LCs while removing two flops. H012 proves the true-
   busy OR is invariant-redundant and locally saves one LUT4, but whole-PSG
   mapping adds 48 LUT4s/five carries and seed-1 placement regresses by 50 LCs.
   H011 proves the reflected ramp is a bitwise complement, but both spellings
@@ -53,9 +56,10 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H014 resume audit and record one new,
-  bounded, source-exact generic-RTL hypothesis outside multiplier widths.
-- Required verification for any accepted H014: focused algebraic or exhaustive
+- Next permitted experiment: perform the H015 resume audit and record one new,
+  bounded, source-exact generic-RTL hypothesis outside the closed width and
+  R.84 families.
+- Required verification for any accepted H015: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -82,6 +86,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H011 | rejected | Keep the subtract spelling: Yosys already maps `16'hffff - wx` exactly as `~wx`, with identical registered-use resources. |
 | H012 | rejected | Keep the defensive true-busy OR: removing it is exact in-contract and locally smaller but adds 48 LUT4s, five carries, and 50 placed LCs globally. |
 | H013 | rejected | Keep the 34-bit internal service form: the proved 29-bit recurrence removes two flops but adds 24 LUT4s, three carries, and 26 placed LCs. |
+| H014 | rejected | Keep the nine-bit source contract: all values fit eight bits, but Yosys already prunes the unreachable position and both forms map identically. |
 
 ## Hypothesis H001
 
@@ -565,6 +570,39 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   live A/B bounds, iteration counts, landing offsets, radix recurrence,
   mapper sequential-width inference, or result consumers change materially.
 
+## Hypothesis H014
+
+- **ID:** H014.
+- **Hypothesis:** the widest detune correction is `ceil(6*dp/256)`, which
+  reaches only 192 over all 8,192 `dp13` values; the `/64`, `/128`, and `/256`
+  corrections reach 128, 64, and 32. Narrowing `dq_ceil6_256` and the shared
+  `dq_corr` mux from nine bits to eight should remove one adder, mux, and final
+  subtract position without changing any value.
+- **Scope:** `rtl/psg_wave.sv`, exhaustive correction-range/equivalence proof
+  in `tools/psg_hw_forms.py`, isolated registered-use synthesis, whole-PSG
+  mapping, and the complete H007 acceptance battery if mapping improves. No
+  schedule, state, interface, EBR, R.84, or tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H013 through
+  `f1f127e`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1 7,392
+  LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Change:** narrow `dq_ceil6_256`, the shared correction mux, every extension
+  arm, and the final subtract operand by one bit; add an exhaustive proof of
+  all four correction maxima. Compare both forms in one registered full-detune
+  harness containing every producer, selection arm, subtract, and output flop.
+- **Result:** the exhaustive proof passes all 8,192 `dp13` values and reports
+  maxima 192, 128, 64, and 32. The complete registered-use cone maps both the
+  nine-bit baseline and eight-bit candidate identically to 189 LUT4s, 73
+  carries, and 14 flops. Yosys already propagates the range and deletes the
+  unreachable ninth bit through the existing source spelling. Production RTL
+  and the conditional permanent proof are reverted byte-for-byte; whole-PSG
+  synthesis and the fidelity battery are correctly skipped.
+- **Decision:** rejected before production RTL. The source-visible width is
+  redundant, but narrowing it does not improve any deterministic mapped
+  resource and therefore cannot satisfy the acceptance gate.
+- **Repeat only if:** a rejected correction-width form may be retried only
+  after the detune coefficients, `dp13` range, correction mux, mapper width
+  inference, or downstream subtract changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -597,11 +635,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h012/candidate.{synth,pnr}.log` | canonical synthesis with the rejected sequencer-busy output | CDC proofs pass, but whole-PSG mapped and placed area regress. |
 | `build/experiments/h013/candidate.{synth,pnr}.log` | canonical synthesis with both services narrowed | Exact width proof, but whole-PSG mapped and placed area regress. |
 | `build/experiments/h013/candidate-v2.{synth,pnr}.log` | canonical synthesis with only the multipumped service narrowed | Mapping-identical attribution variant; rejected. |
+| `build/experiments/h014/isolated-{baseline,candidate}.log` | registered full-detune `synth_ice40` comparison | Both forms map identically; production patch rejected. |
 
 ## Handoff
 
-- Next allowed experiment: H014 only after its hypothesis row and baseline are
-  recorded; it must use a new generic-RTL mechanism outside R.84 ownership.
+- Next allowed experiment: H015 only after its resume audit and hypothesis row
+  are recorded; it must use a new generic-RTL mechanism outside closed width
+  families and R.84 ownership.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -614,5 +654,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H012 CDC proofs pass, but its global map regresses and production RTL is
   reverted. H013's two width variants are exact but physically worse; all
   production/proof changes are reverted and the multiplier-width family closes.
+  H014's correction bound is exact but mapping-identical; its production/proof
+  patches are reverted and no behavior or physical gate remains.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
