@@ -29,6 +29,7 @@ import hashlib
 import json
 import re
 import runpy
+import subprocess
 from collections import Counter
 from dataclasses import dataclass, replace
 from enum import IntEnum
@@ -42,6 +43,120 @@ COMMON = ROOT / "rtl" / "psg_common.svh"
 IMAGE = ROOT / "rtl" / "psg_exec.hex"
 MOVE = ROOT / "rtl" / "psg_execmove.sv"
 CTRL_GEN = ROOT / "tools" / "gen_psg_ctrl.py"
+
+H095_RTL_REVISION = \
+    "3d7a2e2ea1ed6a59cf868570755210e8b9ef81e8"
+H095_SOURCE_SHA256 = {
+    "rtl/psg_aram.sv":
+        "a1f8c668aacd5c946d8497c42d3f718906efcab1e00c964be0d26be5a126549e",
+    "rtl/psg_common.svh":
+        "da29f84e538c07c4e74ae82be45c0d297fcc23223cae6bbf81d30058623886b6",
+    "rtl/psg_dqsvc.sv":
+        "06d26dd2760b6a450bdcad8a7e01c72a14a3436de6b41e5e3b695cb1f6ffe95b",
+    "rtl/psg_mulmp.sv":
+        "8df7c9f737d6b414d0342fa25a622e176514fb4d26f238bc6e31b2bde9cf0876",
+    "rtl/psg_seq.sv":
+        "6b2e688ff523559b221e440911b591c25a8399ba0fa7dcab57d969c2aeda2564",
+    "rtl/psg_timing.sv":
+        "838f5ce103dc3056fbe96444f183acb812749e78fa9b3444a5a1e8c8a0f11bfc",
+    "rtl/psg_walk.sv":
+        "33554a88b3ff68d12a8b592a82e0d69927a7266e87ff90304f09c492d40443a8",
+    "rtl/psg_wave.sv":
+        "687dbeb6949d46a1ccc2d59a7430e3c5af71eb28bb43938f4cee5d1b5ae75406",
+    "rtl/target_psg.sv":
+        "16bd4aaac4f8b2a4a20a0735d69c213a623de9b777291101898f0b5a18f9cc7f",
+    "tools/psg_hw_forms.py":
+        "3eb0f3f15fad04b42ec2bec1037513ebc24cb94cc14b9392d3fa1d4e321284d1",
+}
+R84_PREREQUISITE_SHA256 = {
+    "rtl/psg_aram.sv":
+        "bc63e872b2d837fa055b683aa64b0b0be03817221b7ed3c5a5a09b223ad61f71",
+    "rtl/psg_exec.hex":
+        "59b6f86e1917c069762c2c67c3cfc33d3d1a7652c518e99f9f8437e019d4ebcf",
+    "rtl/psg_execmove.sv":
+        "3bf543a849a77a652ef043b7be2ca2dd798ad4c0bb3fd630c2d3547b6beae133",
+    "rtl/psg_mulmp.sv":
+        "501212cc205d43bbcc0e2026dec3b210dfa04cf4afa79da8c6f2c2d54a4650b3",
+    "rtl/target_psg.sv":
+        "16bd4aaac4f8b2a4a20a0735d69c213a623de9b777291101898f0b5a18f9cc7f",
+}
+LIVE_RTL_REVISION: str | None = None
+
+
+def git_blob(revision: str, relative: str) -> bytes:
+    result = subprocess.run(
+        ("git", "show", f"{revision}:{relative}"), cwd=ROOT,
+        check=True, stdout=subprocess.PIPE)
+    return result.stdout
+
+
+def live_source_bytes(path: Path) -> bytes:
+    if LIVE_RTL_REVISION is None:
+        return path.read_bytes()
+    relative = path.relative_to(ROOT).as_posix()
+    return git_blob(LIVE_RTL_REVISION, relative)
+
+
+def live_source_text(path: Path) -> str:
+    return live_source_bytes(path).decode()
+
+
+def configure_live_rtl(revision: str | None) -> dict[str, str]:
+    global LIVE_RTL_REVISION
+    if revision is None:
+        LIVE_RTL_REVISION = None
+        return {}
+    full = subprocess.run(
+        ("git", "rev-parse", "--verify", f"{revision}^{{commit}}"),
+        cwd=ROOT, check=True, stdout=subprocess.PIPE, text=True,
+    ).stdout.strip()
+    assert full == H095_RTL_REVISION, \
+        f"expected canonical H095 {H095_RTL_REVISION}, got {full}"
+    observed = {
+        relative: hashlib.sha256(git_blob(full, relative)).hexdigest()
+        for relative in H095_SOURCE_SHA256
+    }
+    assert observed == H095_SOURCE_SHA256, "canonical H095 source hash drift"
+    LIVE_RTL_REVISION = full
+    return observed
+
+
+def write_h095_source_contract(path: Path, source_hashes: dict[str, str],
+                               state_count: int, node_count: int) -> str:
+    assert LIVE_RTL_REVISION == H095_RTL_REVISION
+    prereqs = {
+        relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+        for relative in R84_PREREQUISITE_SHA256
+    }
+    assert prereqs == R84_PREREQUISITE_SHA256, \
+        "accepted R.84 prerequisite hash drift"
+    contract = {
+        "schema": "psg_exec_h095_source_contract_v1",
+        "revision": H095_RTL_REVISION,
+        "generic_source_sha256": source_hashes,
+        "model_live_sources": [
+            "rtl/psg_common.svh", "rtl/psg_seq.sv", "rtl/psg_walk.sv",
+        ],
+        "r84_prerequisite_sha256": prereqs,
+        "counts": {
+            "legacy_states": state_count,
+            "expanded_pc_nodes": node_count,
+            "normalized_formula_cases": 19_728_640,
+            "normalized_transactions": 131_087,
+        },
+        "boundary": [
+            "H095 generic live-source algebra only",
+            "R.84 freeze-enabled ARAM/multiplier and executor remain local",
+            "no combined RTL, integration, synthesis, render or area claim",
+        ],
+    }
+    output = path.resolve()
+    assert output != IMAGE.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n")
+    digest = hashlib.sha256(output.read_bytes()).hexdigest()
+    return f"{output}: H095 {len(source_hashes)} generic sources / " \
+           f"{len(prereqs)} R.84 prerequisites; sha256 {digest}"
 
 PAGE_SAMPLE = range(0x00, 0x100)
 PAGE_TICK = range(0x40, 0xC0)
@@ -580,9 +695,9 @@ def localparam(src: str, name: str) -> int:
 
 
 def legacy_contract() -> tuple[str, str, str]:
-    seq = SEQ.read_text()
-    walk = WALK.read_text()
-    common = COMMON.read_text()
+    seq = live_source_text(SEQ)
+    walk = live_source_text(WALK)
+    common = live_source_text(COMMON)
     assert localparam(common, "PSG_VSTR") == 64
     assert localparam(common, "PSG_V_OSC") == 10
     assert localparam(common, "PSG_V_PAR0") == 24
@@ -2437,7 +2552,7 @@ def validate_sample_b3b2a_slice_map(program: list[int], d2fa: list[int],
     # W2's adjacent byte is the pre-edge seq_q; wt_p1 cannot be consumed until
     # the following edge.  The magnitude-only service retains neither sign nor
     # the signed base used by wt_z.
-    walk = WALK.read_text()
+    walk = live_source_text(WALK)
     mulmp = (ROOT / "rtl" / "psg_mulmp.sv").read_text()
     for spelling in (
             "smp_a <= 18'($signed(seq_q));",
@@ -2448,13 +2563,23 @@ def validate_sample_b3b2a_slice_map(program: list[int], d2fa: list[int],
             "mxs_new <= wt_qd[8];"):
         assert spelling in walk
     assert "callers retain the sign" in mulmp
-    assert "wt_sum = $signed({wt_base[9:0], 10'b0}) + wt_prod" in walk
+    if LIVE_RTL_REVISION == H095_RTL_REVISION:
+        assert "wt_op = wt_mag ^ $signed({20{mxs_new}})" in walk
+        assert "wt_sum = $signed({wt_base[9:0], 10'b0})" in walk
+        assert "+ wt_op + $signed({19'b0, mxs_new})" in walk
+    else:
+        assert "wt_sum = $signed({wt_base[9:0], 10'b0}) + wt_prod" in walk
     assert "if (play_bits[pc_ch] && s_eff_a != 0) begin" in walk
     assert "wt_pf <= s_phase[9:0];" in walk
     assert "wt_qf <= q16[9:0];" in walk
     assert "(blend_restart || nz_tick_r) ? 16'(s_noise_lp) : s_old_phase" \
         in walk
-    assert "(nz_old_pre > 18'sd6143)" in walk
+    if LIVE_RTL_REVISION == H095_RTL_REVISION:
+        assert "function automatic logic signed [15:0] noise_clamp" in walk
+        assert "nz_old_next = noise_clamp(nz_old_pre)" in walk
+        assert "nz_kick_en = !nz_g[12] && !nz_kick_delta[14]" in walk
+    else:
+        assert "(nz_old_pre > 18'sd6143)" in walk
     assert "wire [12:0] g_live = g_a + {1'b0, g_a[12:1]};" in walk
 
     capacities = {"A": 18, "B": 18, "N": 17, "O": 17,
@@ -2908,14 +3033,15 @@ def validate_sample_b3b2a2a1_edge_services(
 
     aram_rtl = (ROOT / "rtl" / "psg_aram.sv").read_text()
     mul_rtl = (ROOT / "rtl" / "psg_mulmp.sv").read_text()
-    walk_rtl = WALK.read_text()
+    walk_rtl = live_source_text(WALK)
     for spelling in (
             "assign seq_frozen = syn_rd | replay;",
-            "wire aram_rd = !syn_freeze && (syn_rd | replay | !seq_hold);",
             "wire [12:0] aram_addr = syn_rd ? syn_addr : seq_addr;",
             "seq_q <= aram[aram_addr];",
             "replay <= syn_rd;"):
         assert spelling in aram_rtl
+    assert "wire aram_rd = !syn_freeze && (syn_rd | replay | !seq_hold);" \
+        in aram_rtl
     for spelling in (
             "assign m_busy     = req_tgl != ack_sync;",
             "ack_meta <= ack_tgl;",
@@ -3551,7 +3677,7 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
     # The pre-W0 LFSR byte does not need an eight-bit transient.  CAP_W0's
     # exact full-mode shift makes old[7:0] equal new[8:1], and there is no
     # second visit advance before the typed q11 commit.
-    walk = WALK.read_text()
+    walk = live_source_text(WALK)
     assert "lfsr  <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};" in walk
     for old_lfsr in range(1 << 15):
         new_lfsr = ((old_lfsr << 1) & 0x7fff) \
@@ -4531,7 +4657,7 @@ def validate_sample_action_inventory(actions: Actions,
     expected_caps = {offset: n
                      for n, (_, offset) in enumerate(SAMPLE_CAP_SCHEDULE)}
     assert ctrl["PWORK"] == 29 and ctrl["CAPS"] == expected_caps
-    walk = WALK.read_text()
+    walk = live_source_text(WALK)
     assert re.search(r"localparam int PNZ_OLD\s*=\s*19;", walk)
     assert re.search(r"localparam int PNZ_LIVE\s*=\s*24;", walk)
 
@@ -7763,6 +7889,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--d1-binding-manifest-in", type=Path,
         help="accepted C2-C-C manifest used by the event dictionary")
+    parser.add_argument(
+        "--rtl-revision",
+        help="read generic live-source RTL from this exact git revision")
+    parser.add_argument(
+        "--rtl-source-contract-out", type=Path,
+        help="write the exact H095 generic/R.84 prerequisite source boundary")
     args = parser.parse_args()
     event_inputs = (args.d1_controller_edges_in, args.d1_requirements_in,
                     args.d1_binding_manifest_in)
@@ -7770,11 +7902,16 @@ def parse_args() -> argparse.Namespace:
         parser.error("--d1-event-dictionary-out requires all three D1 inputs")
     if not args.d1_event_dictionary_out and any(event_inputs):
         parser.error("D1 event inputs require --d1-event-dictionary-out")
+    if args.rtl_source_contract_out and not args.rtl_revision:
+        parser.error("--rtl-source-contract-out requires --rtl-revision")
+    if args.write and args.rtl_revision:
+        parser.error("--write cannot update the local image from external RTL")
     if args.write and (args.candidate_out or args.binding_out
                        or args.binding_control_out
                        or args.d1_requirements_out
                        or args.d1_controller_edges_out
-                       or args.d1_event_dictionary_out):
+                       or args.d1_event_dictionary_out
+                       or args.rtl_source_contract_out):
         parser.error("--write is mutually exclusive with proof outputs")
     if args.binding_control_out and not args.binding_out:
         parser.error("--binding-control-out requires --binding-out")
@@ -7786,6 +7923,7 @@ def parse_args() -> argparse.Namespace:
             ("D1 requirements", args.d1_requirements_out),
             ("D1 controller edges", args.d1_controller_edges_out),
             ("D1 event dictionary", args.d1_event_dictionary_out),
+            ("RTL source contract", args.rtl_source_contract_out),
         ) if path is not None
     ]
     for index, (left_name, left_path) in enumerate(proof_outputs):
@@ -7800,6 +7938,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    source_hashes = configure_live_rtl(args.rtl_revision)
     seq, walk, _ = legacy_contract()
     states = sequencer_states(seq)
     successors = state_successors(seq, states)
@@ -7976,6 +8115,10 @@ def main() -> int:
             args.d1_event_dictionary_out, args.d1_controller_edges_in,
             args.d1_requirements_in, args.d1_binding_manifest_in,
             sample_b3b2a_candidate + tick_program))
+    if args.rtl_source_contract_out:
+        print("RTL source contract: " + write_h095_source_contract(
+            args.rtl_source_contract_out, source_hashes,
+            len(states), len(seq_nodes)))
     print("warning: owner-zero actions and remaining owner-one actions are "
           "manifests, not semantic RTL; whole-PSG schedule/render/area "
           "equivalence remain atomic integration gates")
