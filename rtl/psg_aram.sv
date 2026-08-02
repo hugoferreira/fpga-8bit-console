@@ -46,8 +46,14 @@ module psg_aram (input  bit          clk,
     end
   end
 
-  // CPU writes use PICO-8 addresses; the memory itself is zero-based.
-  wire [15:0] up_idx = wraddr - 16'h3100;
+  // CPU writes use PICO-8 addresses; the memory itself is zero-based.  The
+  // upload base is page-aligned, so only the five-bit page number subtracts.
+  wire [4:0]  up_page = wraddr[12:8] - 5'd17;
+  wire [12:0] up_idx = {up_page, wraddr[7:0]};
+  wire        up_valid =
+      (wraddr[15:12] == 4'h3 && |wraddr[11:8]) ||
+      (wraddr[15:12] == 4'h4 && !(|wraddr[11:10]) &&
+       wraddr[9:8] != 2'b11);
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -57,8 +63,8 @@ module psg_aram (input  bit          clk,
         8'h00: wraddr[7:0] <= di;
         8'h01: wraddr[15:8] <= di;
         8'h02: begin
-          if (up_idx < 16'd4608)
-            aram[up_idx[12:0]] <= di;
+          if (up_valid)
+            aram[up_idx] <= di;
           wraddr <= wraddr + 1;
         end
         default: ;

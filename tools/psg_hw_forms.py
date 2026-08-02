@@ -20,6 +20,7 @@ Sections:
   blend - the crossfade as one multiply instead of two
   dq    - the seven per-wave dq constants as add/ceil forms
   amp   - G, the detune boost and vibrato as pure shift-adds
+  aram  - page-local audio-upload address and range decode
   bound - exact worst-case interval propagation through the whole
           pipeline (comb feedback to its fixpoint), and the int16 verdict
           for the mix bus (buffer SIZES live in tools/psg_buffers.py)
@@ -647,9 +648,43 @@ def sec_rom() -> None:
           "24 bits total")
 
 
+# --- aram: page-local CPU upload decode ------------------------------------
+
+def sec_aram() -> None:
+    print("aram: page-local PICO-8 audio-upload decode")
+
+    def candidate(addr: int) -> tuple[bool, int]:
+        page = addr >> 8
+        page_lo = page & 0x0f
+        valid = ((page >> 4 == 3 and page_lo != 0)
+                 or (page >> 4 == 4 and page_lo >> 2 == 0
+                     and page_lo & 3 != 3))
+        index = ((((addr >> 8) & 0x1f) - 17) & 0x1f) << 8
+        return valid, index | (addr & 0xff)
+
+    valid_ok = True
+    index_ok = True
+    valid_count = 0
+    for addr in range(1 << 16):
+        reference = (addr - 0x3100) & 0xffff
+        reference_valid = reference < 4608
+        valid, index = candidate(addr)
+        valid_ok &= valid == reference_valid
+        if valid:
+            valid_count += 1
+            index_ok &= index == reference
+
+    report("aram.upload_window", valid_ok and valid_count == 4608,
+           f"page prefixes select exactly {valid_count:,d} addresses in "
+           "$3100..$42ff, all 65,536 addresses checked")
+    report("aram.upload_index", index_ok,
+           "{page-17, byte} == address-$3100 for every valid upload")
+
+
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
             "svc": sec_svc, "tzpow": sec_tzpow, "blend": sec_blend,
-            "dq": sec_dq, "amp": sec_amp, "bound": sec_bound,
+            "dq": sec_dq, "amp": sec_amp, "aram": sec_aram,
+            "bound": sec_bound,
             "csd": sec_csd, "rom": sec_rom}
 
 

@@ -23,25 +23,27 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: none; H001--H003 accepted.
-- Next hypothesis ID: H005.
+- Active hypothesis: none; H001--H003 and H005 accepted.
+- Next hypothesis ID: H006.
 - Current evidence: `build/experiments/h001/` and
-  `build/experiments/h002/` and `build/experiments/h003/` synthesis,
-  placement, click, and smoke artifacts.
-- Latest decision: H003 accepted. Its 19-LUT4 and two-carry mapped reductions
-  are deterministic; its 25-LC placed improvement is positive but below the
+  `build/experiments/h002/`, `build/experiments/h003/`, and
+  `build/experiments/h005/` synthesis, placement, click, recovery, and smoke
+  artifacts.
+- Latest decision: H005 accepted. Its nine-carry mapped reduction is
+  deterministic; the four-LC placed improvement is positive but below the
   known roughly 60-LC placement-sensitivity band and is not claimed as robust.
-- Latest rejected experiment: H004; narrowing the square/pulse threshold
-  comparison to its five significant high bits maps identically in isolation.
-- Best accepted result: 6,565 LUT4s, 1,575 carries, 1,478 flops, 14 EBRs;
-  seed-1 7,453/7,680 LCs; 131.72 MHz fast and 30.51 MHz PSG.
+- Latest rejected variant: H005's `< 3` page suffix maps smaller but fails the
+  routed 112.5-MHz fast-clock constraint at 109.12 MHz. H004 remains the last
+  rejected hypothesis family.
+- Best accepted result: 6,568 LUT4s, 1,566 carries, 1,478 flops, 14 EBRs;
+  seed-1 7,449/7,680 LCs; 137.65 MHz fast and 31.16 MHz PSG.
 - Last updated: 2026-08-02.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H005 resume audit and record one new,
+- Next permitted experiment: perform the H006 resume audit and record one new,
   bounded, source-exact generic-RTL hypothesis before editing RTL.
-- Required verification for any accepted H005: focused algebraic or exhaustive
+- Required verification for any accepted H006: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -59,6 +61,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H002 | accepted | Keep the four-interval Boolean decode for `ceil(3*r/128)`; the deterministic result is 18 fewer LUT4s. |
 | H003 | accepted | Keep the exact high-bit prefix test; the deterministic result is 19 fewer LUT4s and two fewer carries. |
 | H004 | rejected | Do not narrow the square/pulse threshold comparator: Yosys already removes the aligned low bits. |
+| H005 | accepted | Keep the five-bit page subtract and explicit upload-page decode; the durable result is nine fewer carries with no placed regression. |
 
 ## Hypothesis H001
 
@@ -209,6 +212,57 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   lowering changes, or a surrounding consumer prevents the current low-bit
   pruning.
 
+## Hypothesis H005
+
+- **ID:** H005.
+- **Hypothesis:** the audio upload base `$3100` is byte-aligned, so its RAM
+  address is exactly `{wraddr[12:8] - 17, wraddr[7:0]}`. The valid
+  `$3100..$42ff` window is exactly pages `3:1..f` or `4:0..2`; spelling those
+  two page prefixes directly should remove the current wide subtract/compare
+  while making the port's address contract explicit.
+- **Scope:** `rtl/psg_aram.sv`, an exhaustive all-65,536-address proof,
+  isolated and whole-PSG iCE40 mapping, the complete H003 acceptance battery
+  if the mapped result improves, and this ledger. No sequencer, walker,
+  schedule, interface, EBR, R.84, or tolerance change.
+- **Baseline:** production RTL remains accepted H003 commit `68f9a35` (plus
+  docs-only H004 commit `d1373e8`): 6,565 LUT4s, 1,575 carries, 1,478 flops,
+  14 EBRs; seed-1 7,453 LCs; 131.72 MHz fast and 30.51 MHz PSG.
+- **Change:** replace the 16-bit base subtraction and 4,608-byte comparison
+  with a five-bit page subtraction, retain the byte offset unchanged, and
+  decode valid pages as `$31..$3f` or `$40..$42`. Add this full address-space
+  equivalence to the permanent hardware-forms gate.
+- **Result:** `tools/psg_hw_forms.py` exhausts all 65,536 addresses, selects
+  exactly 4,608, and proves every valid index. Full and PREVIEW Verilator
+  lint passed. `make test-psg` passed 93 analysis tests and the complete
+  structural suite at 524/850 sample clocks and 4,008/5,103 tick clocks, with
+  zero late flips. The 59-case 18.75-MHz regression was byte-exact. `/4`,
+  `/5`, and `/6` budget runs passed at 572/1,275 and 5,757/7,654,
+  572/1,020 and 4,737/6,123, and 524/850 and 4,008/5,103 sample/tick clocks.
+  `make test-clocks` passed. All eight canonical PREVIEW checks at 1,275 and
+  159 clocks/sample passed at 36/38 voiced windows, rounded 95%, for masks
+  7/1/2/4. Synthetic and reconstructed-Celeste recovery probes passed with
+  no coalesced, delayed, or dropped samples. Exact hardware/PREVIEW SFX-10
+  renders were active and `click-v1` found zero clicks. A five-frame Celeste
+  smoke again had 2,179/3,668 off-centre samples, range -22,013..9,151, and
+  1,068 distinct levels. Strict OpenSpec validation and `git diff --check`
+  passed.
+- **Rejected spelling:** writing the `$40..$42` suffix as `< 3` maps to 6,548
+  LUT4s, 1,562 carries, 1,478 flops, 14 EBRs, and 7,417 placed LCs, but final
+  routing reaches only 109.12 MHz on the 112.5-MHz fast clock. It is rejected
+  despite its area win; evidence is `candidate-v1.{synth,pnr}.log`.
+- **Physical result:** the retained `!= 3` spelling maps 6,568 LUT4s, 1,566
+  carries, 1,478 flops, and 14 EBRs; seed-1 place-and-route uses 7,449 LCs and
+  routes at 137.65 MHz fast / 31.16 MHz PSG. Relative to H003 this is +3
+  LUT4s, -9 carries, and -4 placed LCs. The mapped carry reduction is durable;
+  the placed delta remains inside sensitivity and is not overclaimed.
+- **Decision:** accepted. The change makes the page-aligned port contract
+  explicit, removes the wide subtract/compare, improves a deterministic mapped
+  resource, does not regress placement, preserves every fidelity gate, and
+  retains 14 EBRs with both routed clocks above constraint.
+- **Repeat only if:** a rejected page-local decode may be retried only after
+  the upload base/window, address width, or mapper constant-subtract lowering
+  changes materially.
+
 ## Active DNR Index
 
 - Selected arithmetic and service families: R.63, R.64, R.80, R.83.
@@ -234,14 +288,21 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h003/candidate.pnr.log` | same | H003 accepted seed-1 placement and timing. |
 | `build/experiments/h003/clicks/{hardware,preview}.wav` | exact SFX-10 renders at 22,050 Hz | `click-v1` zero-click evidence. |
 | `build/experiments/h003/celeste-smoke.ppm` | five-frame headless Celeste run | Boot and active/nonconstant audio smoke. |
+| `build/experiments/h005/candidate-v1.{synth,pnr}.log` | canonical synthesis with the rejected `< 3` spelling | Smaller map and placement, but routed fast-clock timing failure. |
+| `build/experiments/h005/candidate.{synth,pnr}.log` | `PATH=/opt/homebrew/bin:$PATH make synth-psg` with retained H005 | Accepted mapping, seed-1 placement, and final routed timing. |
+| `build/experiments/h005/candidate-v2.{synth,pnr}.log` | retained-spelling synthesis checkpoint | Pre-canonical retained mapping and placement evidence. |
+| `build/experiments/h005/celeste-audio.{hex,bin}` | reconstructed from `src/celeste/audio.inlay.asm` | 4,608-byte recovery-probe audio image. |
+| `build/experiments/h005/clicks/{hardware,preview}.wav` | exact SFX-10 renders at 22,050 Hz | `click-v1` zero-click evidence. |
+| `build/experiments/h005/celeste-smoke.ppm` | five-frame headless Celeste run | Boot and active/nonconstant audio smoke. |
 
 ## Handoff
 
-- Next allowed experiment: H005 only after its hypothesis row and baseline are
+- Next allowed experiment: H006 only after its hypothesis row and baseline are
   recorded; it must be a new generic-RTL mechanism outside R.84 ownership.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
-- Verification still missing: none for accepted H001--H003; H004 was rejected
-  before production RTL.
+- Verification still missing: none for accepted H001--H003 or H005. H004 was
+  rejected before production RTL; H005's timing-failing spelling remains
+  rejected.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
