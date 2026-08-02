@@ -486,6 +486,20 @@ def sec_dq() -> None:
              == (6 * dp + 255) >> 8 for dp in range(1 << 13))
     report("dq.k250_split", ok,
            "3q + threshold(r) == ceil(6dp/256), all 8192 dp13 values")
+
+    count_map = {0: 0, 1: 1, 2: 4, 3: 2, 4: 5, 5: 6}
+
+    def count_step(state: int) -> int:
+        return ((state & 3) << 1) | (((state >> 2) ^ state) & 1)
+
+    sequence = [6]
+    for _ in range(4):
+        sequence.append(count_step(sequence[-1]))
+    transitions_ok = sequence == [6, 5, 2, 4, 1]
+    for count in range(2, 6):
+        transitions_ok &= count_step(count_map[count]) == count_map[count - 1]
+    report("dq.count_lfsr", transitions_ok,
+           "6->5->2->4->1 preserves five binary-countdown iterations")
     print("  note   every dq is at most two adds and one shift - the "
           "109/110 serial chain has no successor")
 

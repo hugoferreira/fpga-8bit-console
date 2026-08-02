@@ -43,9 +43,13 @@ module psg_dqsvc (
                           + {1'b0, step_a, 1'b0});
   wire [15:0] sum = {2'b0, acc} + {1'b0, addend};
   wire [26:0] step_next = {p[26], 2'b0, sum, p[9:2]};
+  // Five active clocks use a segment of x^3+x+1: 6 -> 5 -> 2 -> 4 -> 1.
+  // Zero stays idle and one stays terminal, while the shift/XOR recurrence
+  // avoids a binary-countdown carry chain.
+  wire [2:0] count_next = {count[1:0], count[2] ^ count[0]};
 
   assign busy = count != 0;
-  assign start_ready = count == 0 || count == 1;
+  assign start_ready = count[2:1] == 0;
   // The walker already owns the destination registers.  Present the terminal
   // recurrence directly so it can capture on this edge instead of registering
   // an otherwise unconsumed result and copying it one clock later.
@@ -60,18 +64,18 @@ module psg_dqsvc (
         if (count == 1) begin
           if (start) begin
             p     <= {start_old, 16'b0, 1'b0, start_k};
-            count <= 3'd5;
+            count <= 3'd6;
           end else begin
             p     <= step_next;
             count <= 3'd0;
           end
         end else begin
           p     <= step_next;
-          count <= count - 1'b1;
+          count <= count_next;
         end
       end else if (start) begin
         p     <= {start_old, 16'b0, 1'b0, start_k};
-        count <= 3'd5;
+        count <= 3'd6;
       end
     end
   end
