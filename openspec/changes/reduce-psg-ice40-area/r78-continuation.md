@@ -1496,6 +1496,16 @@ git history; do not repeat them without the recorded changed condition.
   a non-noise built-in arm, and W6 applies live DQ only while running.  Accept
   this substitution/writeback law; multiplier/noise/blend value semantics,
   semantic RTL and physical cost remain unproved.
+- **Sample-arithmetic model result:** **4,784,128** bounded formula cases now
+  prove the seven exact DQ coefficients, radix-4 positional reconstruction,
+  signed noise-product floor correction with maximum step 33,324, both noise
+  scale constants, amplitude boost and gain formation, and the comb, blend
+  and dampen truncation-toward-zero laws.  The independent retained-service
+  gates also pass all 524,288 DQ formula cases, 57,344 chained DQ transactions,
+  every legal radix-4 multiplier landing, all 131,071 signed-int16 fold sums
+  and all 40,961 reachable `/5` excesses.  Accept this arithmetic foundation;
+  production-image service transactions, semantic RTL and physical cost remain
+  unproved.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

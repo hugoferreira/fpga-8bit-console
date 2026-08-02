@@ -1999,6 +1999,151 @@ def validate_phase_substitution_contract() -> str:
             "noise-seed priority and old/live DQ association exact")
 
 
+def trunc_zero(value: int, divisor: int) -> int:
+    quotient = abs(value) // divisor
+    return -quotient if value < 0 else quotient
+
+
+def validate_sample_arithmetic_contract() -> str:
+    """Prove the bounded arithmetic identities used around retained services."""
+    dq_cases = 0
+    coefficients = {193, 250, 254, 255, 256, 384, 508}
+    for wt in (False, True):
+        for wave in range(8):
+            for mode in range(3):
+                if wt:
+                    coefficient = 256
+                elif wave == 0:
+                    coefficient = (256, 193, 384)[mode]
+                elif wave == 7:
+                    coefficient = (254, 250, 508)[mode]
+                else:
+                    coefficient = 256 if mode == 0 else 255
+                assert coefficient in coefficients
+                for dp in range(1 << 13):
+                    # Five radix-4 coefficient digits are the exact service
+                    # recurrence expressed as a positional sum.
+                    product = 0
+                    for shift in range(0, 10, 2):
+                        product += dp * ((coefficient >> shift) & 3) << shift
+                    assert product == dp * coefficient
+                    assert product >> 8 == (dp * coefficient) // 256
+                    dq_cases += 1
+
+    # Noise multiply: the service uses magnitude and then restores the sign
+    # with floor semantics for a negative arithmetic right shift.
+    noise_mul_cases = 0
+    max_noise_step = 0
+    for dp in range(1 << 13):
+        jitter = (dp << 3) + 1120
+        for random_step in range(-128, 128):
+            product = jitter * abs(random_step)
+            magnitude = product >> 8
+            restored = (-magnitude - bool(product & 0xff)
+                        if random_step < 0 else magnitude)
+            reference = (jitter * random_step) // 256
+            assert restored == reference
+            max_noise_step = max(max_noise_step, abs(restored))
+            noise_mul_cases += 1
+    assert max_noise_step == 33_324
+
+    # The old/live noise output shifts are exact small-constant multiplies.
+    noise_scale_cases = 0
+    for raw in range(1 << 18):
+        signed = raw - (1 << 18) if raw & (1 << 17) else raw
+        coarse = signed >> 6
+        assert (coarse << 6) + (coarse << 2) == coarse * 68
+        assert (coarse << 6) + (coarse << 4) == coarse * 80
+        noise_scale_cases += 2
+
+    # Positive amplitude boost and G formation are nested floor operations.
+    gain_cases = 0
+    for amplitude in range(1 << 12):
+        for wt in (False, True):
+            for wave in range(8):
+                for mode in range(3):
+                    boost = mode != 0 and not wt and not (
+                        (wave & 4) and (wave & 2))
+                    gain_a = amplitude + (amplitude >> 2) \
+                        if boost else amplitude
+                    gain = gain_a + (gain_a >> 1)
+                    reference_a = (5 * amplitude) // 4 \
+                        if boost else amplitude
+                    assert gain_a == reference_a
+                    assert gain == (3 * reference_a) // 2
+                    gain_cases += 1
+
+    def comb(value: int, history: int, enabled: bool) -> int:
+        if not enabled:
+            return value
+        acc = 2 * value + history
+        return (acc + (1 if acc < 0 else 0)) >> 1
+
+    def blend(new: int, old: int, count: int) -> int:
+        if count == 64:
+            return new
+        diff = new - old
+        product = abs(diff) * count
+        signed_product = -product if diff < 0 else product
+        acc = old * 64 + signed_product
+        return (acc + (63 if acc < 0 else 0)) >> 6
+
+    def damp(value: int, previous: int, level: int) -> int:
+        if level == 0:
+            return value
+        factor = 1 if level == 1 else 3
+        divisor = 2 if level == 1 else 4
+        acc = value + factor * previous
+        correction = divisor - 1 if acc < 0 else 0
+        return (acc + correction) >> (1 if level == 1 else 2)
+
+    # Boundary vectors plus a deterministic full-width stream convict signed
+    # truncation, bypass, count-64 and both dampen levels.
+    arithmetic_cases = 0
+    boundaries = (-(1 << 16), -32_768, -1, 0, 1,
+                  32_767, (1 << 16) - 1)
+    vectors = []
+    for new in boundaries:
+        for old in boundaries:
+            for history in (-32_768, -1, 0, 1, 32_767):
+                for count in range(65):
+                    vectors.append((new, old, history, count))
+    state = 0x5a17_3c29
+    while len(vectors) < 262_144:
+        state = (state * 1_664_525 + 1_013_904_223) & 0xffff_ffff
+        new = (state & 0x1ffff) - 0x10000
+        state = (state * 1_664_525 + 1_013_904_223) & 0xffff_ffff
+        old = (state & 0x1ffff) - 0x10000
+        history = ((state >> 16) & 0xffff) - 0x8000
+        count = state % 65
+        vectors.append((new, old, history, count))
+
+    for new, old, history, count in vectors:
+        for enabled in (False, True):
+            got = comb(new, history, enabled)
+            want = (trunc_zero(2 * new + history, 2)
+                    if enabled else new)
+            assert got == want
+            arithmetic_cases += 1
+        got_blend = blend(new, old, count)
+        want_blend = (new if count == 64 else
+                      trunc_zero(old * 64 + (new - old) * count, 64))
+        assert got_blend == want_blend
+        arithmetic_cases += 1
+        for level in range(3):
+            got_damp = damp(got_blend, old, level)
+            want_damp = (got_blend if level == 0 else
+                         trunc_zero(got_blend + (1 if level == 1 else 3)
+                                    * old, 2 if level == 1 else 4))
+            assert got_damp == want_damp
+            arithmetic_cases += 1
+
+    total = (dq_cases + noise_mul_cases + noise_scale_cases
+             + gain_cases + arithmetic_cases)
+    return (f"{total:,} DQ/noise/gain/comb/blend/dampen formulas; "
+            f"noise step <= {max_noise_step:,}; signed truncation exact")
+
+
 def remaining_owner_action_inventory(nodes: list[Node]) -> str:
     """Separate proved transactions from every owner-one placeholder site."""
     names = {node.name for node in nodes}
@@ -2120,6 +2265,7 @@ def main() -> int:
     fold_arithmetic = validate_fold_arithmetic_contract()
     sample_pool = validate_sample_pool_contract()
     phase_substitution = validate_phase_substitution_contract()
+    sample_arithmetic = validate_sample_arithmetic_contract()
     owner_inventory = remaining_owner_action_inventory(seq_nodes)
     condition_contract = validate_condition_contract(sample_program,
                                                      tick_program)
@@ -2175,6 +2321,7 @@ def main() -> int:
     print("sample stored-wait manifest: " + sample_waits)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
+    print("sample arithmetic: " + sample_arithmetic)
     print("fold word/tree contract: " + fold_contract)
     print("fold arithmetic contract: " + fold_arithmetic)
     print("remaining owner action inventory: " + owner_inventory)
