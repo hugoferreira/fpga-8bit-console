@@ -3218,7 +3218,7 @@ git history; do not repeat them without the recorded changed condition.
   C2-C-C value gates still passed, and `make test-psg` passed, but those gates
   cannot repair the missing transition relation.  No RTL/image/integration or
   physical claim changes, and no D1-derived RTL hypothesis exists.
-- **Next permitted C2-C-D1-C-A:** prove the controller edge relation before
+- **C2-C-D1-C-A active hypothesis:** prove the controller edge relation before
   returning to pool SSA.  Emit every reachable enabled transition occurrence,
   not one row per static PC: predecessor PC/slot, exact instruction, branch
   guard and successor PC/slot, effective state-read address after every
@@ -3226,6 +3226,10 @@ git history; do not repeat them without the recorded changed condition.
   `state_q` becomes available.  Derive the relation from the candidate image
   plus literal `psg_execctl`/`psg_execmove` address rules; anchor the accepted
   candidate and C2-C-C manifest rather than accepting colluding mutations.
+  The target is the future direct-core contract: instruction HOLD words select
+  their literal address/step tags, parameter OP_READs select active-bank
+  24--27/28--31, and action-qualified CAP_W51 selects q26/q30.  Do not apply
+  the current H-C compatibility wrapper's blanket HOLD-to-word10 override.
   External hold must be a separate self-edge with no controller advance,
   memory enable or service transaction.  First prove complete reachability,
   unique successor guards, all eight slot classes, exact 782-cycle execution,
