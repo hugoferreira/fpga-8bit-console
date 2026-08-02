@@ -2,7 +2,8 @@
 //
 // R.84E lowers the complete tick record load/store stream.  R.84G-F extends
 // the same fixed-address movement decoder with the normalized advance actions.
-// Each action has one fixed projection, merge or address; no general register
+// R.84H-B adds only the owner-zero active-parameter address selection.  Each
+// action has one fixed projection, merge or address; no general register
 // index, arithmetic chain or result register is introduced here.
 
 `timescale 1ns/1ps
@@ -79,6 +80,7 @@ module psg_execmove(input  logic       active,
     PC3             = 7'h5a,
     K_ROT           = 7'h5e;
 
+  wire sample = active && !hold && !owner;
   wire tick = active && !hold && owner;
   wire [2:0] family = action[6:4];
   wire [3:0] subop = action[3:0];
@@ -109,6 +111,15 @@ module psg_execmove(input  logic       active,
     voice_stop = 1'b0;
     cpz_we = 1'b0;
     cpz_next = cpz;
+
+    // The sample program encodes parameter offsets 24..27 literally.  Select
+    // the active bank by replacing only address bit two; all oscillator,
+    // scratch and fold addresses pass straight through the instruction word.
+    // No sample data is captured or selected by this movement layer.
+    if (sample && op == OP_READ && state_word[5:2] == 4'b0110) begin
+      state_ra_override = 1'b1;
+      state_ra_word = {3'b011, spar_bank, state_word[1:0]};
+    end
 
     if (tick) begin
       // V_LD0 has a free write edge and initializes the common +1 operand.

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Build and validate the R.84 address-state executor control contract.
 
-This is deliberately an executor transaction model, not an audio model.  It
-answers the questions that must be closed before replacing psg_walk/psg_seq:
+This begins with the executor transaction model and adds only the bounded
+sample-service formula/lifetime proofs needed before replacing psg_walk/psg_seq.
+It answers the questions that must be closed before that replacement:
 
 * do two owner-selected 256x16 banks hold the sample and tick/flow programs;
-* can the 64-word sample page represent every persistent read/write and the
-  ordered fold without reintroducing pph;
+* can the owner-zero 256-word bank represent every persistent read/write,
+  explicit service-latency clock and ordered fold without reintroducing pph;
 * do synchronous state reads line up with the action that consumes them;
 * do all branch/jump targets and per-slot state words stay in range;
 * can every sequencer control state still reach S_IDLE after xs/vcnt become PC;
@@ -16,18 +17,23 @@ answers the questions that must be closed before replacing psg_walk/psg_seq:
 
 The action field is structured as family[2:0]:subop[3:0].  Sample and tick
 owners interpret it independently, so neither owner gets a flat 256-way PC
-decode.  Arithmetic semantics remain in the established formula/service gates;
-this model proves only the lowered advance family and must not be cited as
-whole-PSG behavioral equivalence or as a whole-PSG area result.
+decode.  The model proves the owner-zero schedule/dependency manifest, critical
+context substitution and the lowered owner-one advance family.  It must not be
+cited as whole-PSG behavioral, render, schedule or area equivalence.
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
+import json
 import re
-import sys
-from dataclasses import dataclass
+import runpy
+from collections import Counter
+from dataclasses import dataclass, replace
 from enum import IntEnum
 from pathlib import Path
+from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 SEQ = ROOT / "rtl" / "psg_seq.sv"
@@ -35,8 +41,9 @@ WALK = ROOT / "rtl" / "psg_walk.sv"
 COMMON = ROOT / "rtl" / "psg_common.svh"
 IMAGE = ROOT / "rtl" / "psg_exec.hex"
 MOVE = ROOT / "rtl" / "psg_execmove.sv"
+CTRL_GEN = ROOT / "tools" / "gen_psg_ctrl.py"
 
-PAGE_SAMPLE = range(0x00, 0x40)
+PAGE_SAMPLE = range(0x00, 0x100)
 PAGE_TICK = range(0x40, 0xC0)
 PAGE_FLOW = range(0xC0, 0x100)
 PROGRAM_BANK_WORDS = 256
@@ -45,6 +52,21 @@ OWNER_SAMPLE = 0
 OWNER_TICK = 1
 SAMPLE_START = 0x01
 SAMPLE_CLOCK_LIMIT = 1003
+
+D1_CONTROLLER_SHA256 = \
+    "f86698f67769c1d53bc976ad4868df004755ddb46cd218cab7b9d27d8b5439b4"
+D1_REQUIREMENTS_SHA256 = \
+    "5a7b9809b74b0e9094c864597de89c42e7f269ca1169aefd88f803999792c92e"
+D1_BINDING_MANIFEST_SHA256 = \
+    "438d85a0d7ea9f212cb5ad6efeafefd7a9eb2c8950d182e44abe8895c11249c3"
+D1_CANDIDATE_SHA256 = \
+    "6f5713e22197d8c03bffeac070b3d9b9b2b2f7b20df98dbff4566d778b5e9177"
+D1_PRODUCTION_IMAGE_SHA256 = \
+    "59b6f86e1917c069762c2c67c3cfc33d3d1a7652c518e99f9f8437e019d4ebcf"
+D1_PACKING_LAYOUT_SHA256 = \
+    "242bfc8183feab4d80e81e10f04fec297bbdbffa6a358f2587aa5bd5c7f3efb0"
+D1_LIVE_LAYOUT_SHA256 = \
+    "55bb4b046212d20d8074bfcd074883c4a53e702d99e63fd91b43490b9f2c2075"
 
 
 class Op(IntEnum):
@@ -109,6 +131,45 @@ class Instruction:
         return Instruction(op)
 
 
+PackedFrame = dict[str, int]
+FrameValues = dict[str, int]
+
+
+@dataclass(frozen=True)
+class B3B2AFrameCodec:
+    """Literal A1 physical-frame encoder shared with service proofs."""
+
+    pack: Callable[[str, FrameValues], tuple[PackedFrame, FrameValues]]
+    unpack: Callable[[str, PackedFrame], FrameValues]
+    source: Callable[[int, str, int], int]
+
+
+@dataclass(frozen=True)
+class D2FPackingRow:
+    """One literal D2F-B path snapshot, without semantic source bindings."""
+
+    name: str
+    used: int
+    capacity: int
+    capacities: tuple[tuple[str, int], ...]
+    pieces: tuple[tuple[str, str, int, int, int], ...]
+    logical_widths: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
+class D2FLiveField:
+    """One literal D2F-C-A or fold lifetime requirement."""
+
+    path: str
+    name: str
+    width: int
+    pieces: tuple[tuple[str, int, int], ...]
+    born: str
+    dead: str
+    source: str
+    consumer: str
+
+
 @dataclass(frozen=True)
 class AssemblyInstruction:
     op: Op
@@ -136,7 +197,6 @@ class Action:
     subop: int
     name: str
     consumes: int | None = None
-    wait: int = 0
 
     @property
     def code(self) -> int:
@@ -151,24 +211,24 @@ class Actions:
         self.next_sub: dict[tuple[str, int], int] = {}
 
     def add(self, owner: str, family: int, name: str,
-            *, subop: int | None = None, consumes: int | None = None,
-            wait: int = 0) -> int:
+            *, subop: int | None = None,
+            consumes: int | None = None) -> int:
         key = (owner, family)
         if subop is None:
             subop = self.next_sub.get(key, 0)
         assert 0 <= family < 8 and 0 <= subop < 16, \
             f"{owner} action family {family} exceeds sixteen subops"
-        action = Action(owner, family, subop, name, consumes, wait)
+        action = Action(owner, family, subop, name, consumes)
         assert action.code not in self.by_owner[owner]
         self.by_owner[owner][action.code] = action
         self.next_sub[key] = max(self.next_sub.get(key, 0), subop + 1)
         return action.code
 
     def pin(self, owner: str, code: int, name: str,
-            *, consumes: int | None = None, wait: int = 0) -> int:
+            *, consumes: int | None = None) -> int:
         assert 0 <= code < 128
         return self.add(owner, code >> 4, name, subop=code & 15,
-                        consumes=consumes, wait=wait)
+                        consumes=consumes)
 
     def get(self, owner: str, code: int) -> Action | None:
         return self.by_owner[owner].get(code)
@@ -217,6 +277,7 @@ ADV_ACTION = {
 }
 
 COMMON_ACTION = {
+    "HOLD": 0x70,
     "LOAD": 0x71,
     "ADD": 0x72,
     "SUB": 0x74,
@@ -229,6 +290,94 @@ COND_TRIG = 8
 COND_ADVANCE = 9
 COND_INS_USE = 10
 COND_RELEASED = 11
+
+# Condition bits 0..3 are the common Z/N/C/V flags.  Owner-zero conditions
+# therefore live in the external bank at 8..15, just as owner-one's exact
+# predicates do.  The old sample sketch incorrectly used Z/N as slot-wrap and
+# fold-more.  The fold is now unrolled, so it needs no dynamic condition.
+COND_SAMPLE_SLOT_WRAP = 8
+
+# The exact ordered seven-node reduction.  Leaves and intermediate results are
+# signed 18-bit pairs in per-slot scratch words 48 (low sixteen) and 49 (top
+# two, sign extended by the fixed fold adapter).  Each node overwrites its
+# left input, so no register-resident stack or variable address is required.
+FOLD_NODES = (
+    (0, 1, 0),
+    (2, 3, 2),
+    (0, 2, 0),
+    (4, 5, 4),
+    (6, 7, 6),
+    (4, 6, 4),
+    (0, 4, 0),
+)
+
+# Exact full-mode CAP cadence from gen_psg_ctrl.py, relative to W0.  The gaps
+# are service dependencies, not disposable pph padding: W15/W26/W40/W51/W84
+# consume or relaunch multiplier/wave results that cannot be made adjacent.
+SAMPLE_CAP_SCHEDULE = (
+    ("W0", 0),
+    ("W1", 1),
+    ("W2", 2),
+    ("W3", 3),
+    ("W4", 4),
+    ("W5", 5),
+    ("W6", 6),
+    ("W15", 9),
+    ("W26", 14),
+    ("W27", 15),
+    ("W40", 20),
+    ("W51", 25),
+    ("W75", 26),
+    ("W84", 30),
+)
+
+# Candidate owner-zero commits.  This is control/address provenance only: it
+# deliberately carries no result expression or sampled semantic value.
+SAMPLE_FIXED_WRITES = (
+    (0x14, "STORE_10_20", 20, 20, "selected old/current tuple"),
+    (0x15, "STORE_11_21", 21, 21, "current increment low"),
+    (0x16, "STORE_12_22", 22, 22, "last controls/gain low"),
+    (0x17, "STORE_8_18", 18, 18, "selected old increment low"),
+    (0x19, "STORE_9_19", 19, 19, "selected old gain/inc high"),
+    (0x1b, "STORE_15_14", 14, 14, "early brown/mode/filter sign"),
+    (0x1d, "CAP_W0", 10, 23, "final noise lowpass"),
+    (0x1e, "CAP_W1", 12, 10, "final current phase"),
+    (0x27, "STORE_1_11", 11, 11, "nz hold/old-q low"),
+    (0x28, "STORE_6_16", 16, 16, "final old phase"),
+    (0x29, "STORE_7_17", 17, 17, "blend/old-q high"),
+    (0x2a, "STORE_3_13", 13, 13, "ack/gains/nz/phase2 high"),
+    (0x2d, "STORE_2_12", 12, 12, "final phase2 low"),
+    (0x39, "STORE_14_15", 15, 15, "clear-qualified filter low"),
+    (0x3c, "STORE_4_14", 14, 14, "final filter high/mode/brown"),
+    (0x3d, "STORE_5_15", 15, 15, "final filter low"),
+    (0x4c, "STORE_LEAF_LO", 0, 48,
+     "audible-gated retained filtered value low"),
+    (0x4d, "STORE_LEAF_HI", 48, 49,
+     "audible-gated retained filtered value high"),
+)
+SAMPLE_SERVICE_SCHEDULE = (
+    ("NZ_OLD_LOAD_PAR_3", -10),
+    ("NZ_LIVE", -5),
+) + tuple((f"CAP_{name}", offset) for name, offset in SAMPLE_CAP_SCHEDULE)
+
+SAMPLE_SERVICE_DEPENDENCIES = {
+    "NZ_OLD_LOAD_PAR_3": ("state", "mul", "dq"),
+    "NZ_LIVE": ("mul", "dq"),
+    "CAP_W0": ("aram", "phase", "noise"),
+    "CAP_W1": ("aram", "wave", "dq"),
+    "CAP_W2": ("aram", "wave"),
+    "CAP_W3": ("aram", "wave"),
+    "CAP_W4": ("aram", "wave", "mul"),
+    "CAP_W5": ("wave", "dq"),
+    "CAP_W6": ("dq",),
+    "CAP_W15": ("wave", "mul"),
+    "CAP_W26": ("mul",),
+    "CAP_W27": ("mul",),
+    "CAP_W40": ("mul",),
+    "CAP_W51": ("mul",),
+    "CAP_W75": ("mul", "ring"),
+    "CAP_W84": ("mul", "ring", "dampen"),
+}
 
 
 def advance_manifest() -> tuple[list[AssemblyInstruction],
@@ -1056,16 +1205,33 @@ def validate_advance_transactions(program: list[int], labels: dict[str, int]) ->
 
 def build_sample(actions: Actions, program: list[int]) -> dict[int, str]:
     labels: dict[int, str] = {}
+    pc = 0
 
-    def put(pc: int, insn: Instruction, label: str) -> None:
+    def put(insn: Instruction, label: str) -> int:
+        nonlocal pc
         assert pc in PAGE_SAMPLE and program[pc] == 0
         program[pc] = insn.encode()
         labels[pc] = label
+        old_pc = pc
+        pc += 1
+        return old_pc
+
+    def hold(count: int, label: str,
+             words: tuple[int, ...] | None = None) -> None:
+        if words is None:
+            words = (0,) * count
+        assert len(words) == count
+        for n, word in enumerate(words):
+            put(Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"],
+                            word=word),
+                f"{label}_hold_{n}")
 
     # Slot-wrap branch. start_pc is 1, so address zero is only reached after
-    # OP_SLOT has advanced the completed slot. cond0 means the 3-bit slot
-    # wrapped to zero after slot seven.
-    put(0, Instruction(Op.BRANCH, cond=0, target=54), "slot_wrap")
+    # OP_SLOT has advanced the completed slot.  Reserve its word until the
+    # exact unrolled fold entry is known.  Condition 8 is owner-zero's external
+    # slot-wrap fact; common condition 0 is Z and must never be overloaded.
+    put(Instruction(Op.BRANCH, cond=COND_SAMPLE_SLOT_WRAP, target=0),
+        "slot_wrap")
 
     reads = list(range(10, 24)) + [24, 25, 26, 27]
     consume_codes: list[int] = []
@@ -1080,53 +1246,97 @@ def build_sample(actions: Actions, program: list[int]) -> dict[int, str]:
                                          f"LOAD_PAR_{word - 24}",
                                          consumes=word))
     assert len(reads) == len(consume_codes) == 18
-    for i, (word, code) in enumerate(zip(reads, consume_codes), start=1):
-        put(i, Instruction(Op.READ, action=code, word=word),
+    for word, code in zip(reads, consume_codes):
+        put(Instruction(Op.READ, action=code, word=word),
             f"read_{word}")
 
     # The first service action also consumes the final pipelined parameter
-    # read. Four extra clocks on each noise action state the five-edge dq/noise
-    # transaction without storing those idle clocks in the program EBR.
+    # read.  Fixed service latency is represented by real common-HOLD
+    # instructions.  It is no longer Python-only Action.wait metadata.
     nz_old = actions.add("sample", 2, "NZ_OLD_LOAD_PAR_3",
-                         consumes=27, wait=4)
-    nz_live = actions.add("sample", 2, "NZ_LIVE", wait=4)
-    put(19, Instruction(Op.EXEC, action=nz_old), "nz_old")
-    put(20, Instruction(Op.EXEC, action=nz_live), "nz_live")
+                         consumes=27)
+    nz_live = actions.add("sample", 2, "NZ_LIVE")
+    put(Instruction(Op.EXEC, action=nz_old), "nz_old")
+    hold(4, "nz_old")
+    put(Instruction(Op.EXEC, action=nz_live), "nz_live")
+    # The last elapsed service edge primes current phase for W0.  Earlier H-C
+    # RTL inferred this address from action 0x70; H-D stores it in the already
+    # present word field so the blanket HOLD override can disappear.
+    hold(4, "nz_live", (0, 0, 0, 10))
 
-    caps = ["W0", "W1", "W2", "W3", "W4", "W5", "W6", "W15",
-            "W26", "W27", "W40", "W51", "W75", "W84"]
-    for i, name in enumerate(caps, start=21):
-        # Seven conservative wait credits restore the full accepted 68-phase
-        # single-clock visit when combined with the two five-edge noise waits.
-        wait = 7 if name == "W84" else 0
-        code = actions.add("sample", 2, f"CAP_{name}", wait=wait)
-        put(i, Instruction(Op.EXEC, action=code), f"cap_{name}")
+    previous_offset: int | None = None
+    for name, offset in SAMPLE_CAP_SCHEDULE:
+        if previous_offset is not None:
+            gap = offset - previous_offset - 1
+            # The four W40--W51 elapsed clocks are also the fixed ring-memory
+            # read/capture microsteps.  REVERB=0 simply ignores these tags.
+            words = tuple(range(1, 5)) if name == "W51" else None
+            hold(gap, f"cap_{name}_wait", words)
+        code = actions.add("sample", 2, f"CAP_{name}")
+        # W0 primes phase2 for W1; W1 primes old phase for W2.  These literal
+        # addresses preserve H-C's direct issue stream without action-derived
+        # state-address overrides.
+        word = {"W0": 12, "W1": 16}.get(name, 0)
+        put(Instruction(Op.EXEC, action=code, word=word), f"cap_{name}")
+        previous_offset = offset
 
     store_words = list(range(10, 24)) + [15, 14]
-    for i, word in enumerate(store_words, start=35):
-        code = actions.add("sample", 3 if i < 49 else 4,
-                           f"STORE_{i - 35}_{word}")
-        put(i, Instruction(Op.WRITE, action=code, word=word),
+    for i, word in enumerate(store_words):
+        code = actions.add("sample", 3 if i < 14 else 4,
+                           f"STORE_{i}_{word}")
+        put(Instruction(Op.WRITE, action=code, word=word),
             f"store_{word}")
-    leaf = actions.add("sample", 4, "STORE_LEAF")
-    put(51, Instruction(Op.WRITE, action=leaf, word=48), "store_leaf")
-    put(52, Instruction(Op.SLOT, slot_inc=True), "slot_inc")
-    put(53, Instruction(Op.JUMP, target=0), "slot_loop")
+    leaf_lo = actions.add("sample", 4, "STORE_LEAF_LO")
+    leaf_hi = actions.add("sample", 4, "STORE_LEAF_HI")
+    put(Instruction(Op.WRITE, action=leaf_lo, word=48), "store_leaf_lo")
+    put(Instruction(Op.WRITE, action=leaf_hi, word=49), "store_leaf_hi")
+    put(Instruction(Op.SLOT, slot_inc=True), "slot_inc")
+    put(Instruction(Op.JUMP, target=0), "slot_loop")
 
-    fold_setup = actions.add("sample", 5, "FOLD_SETUP")
-    fold_ra = actions.add("sample", 5, "FOLD_READ_A")
-    fold_rb = actions.add("sample", 5, "FOLD_READ_B")
-    fold_start = actions.add("sample", 5, "FOLD_START")
-    fold_run = actions.add("sample", 5, "FOLD_RUN", wait=8)
-    fold_write = actions.add("sample", 5, "FOLD_WRITE")
-    put(54, Instruction(Op.EXEC, action=fold_setup), "fold_setup")
-    put(55, Instruction(Op.READ, action=fold_ra, word=48), "fold_read_a")
-    put(56, Instruction(Op.READ, action=fold_rb, word=48), "fold_read_b")
-    put(57, Instruction(Op.EXEC, action=fold_start), "fold_start")
-    put(58, Instruction(Op.EXEC, action=fold_run), "fold_run")
-    put(59, Instruction(Op.WRITE, action=fold_write, word=44), "fold_write")
-    put(60, Instruction(Op.BRANCH, cond=1, target=55), "fold_more")
-    put(61, Instruction(Op.DONE), "sample_done")
+    fold_entry = pc
+    program[0] = Instruction(Op.BRANCH, cond=COND_SAMPLE_SLOT_WRAP,
+                             target=fold_entry).encode()
+
+    # Unroll the seven-node tree.  The controller's literal OP_SLOT and word
+    # fields are the address schedule; no fold selector, loop counter or
+    # register-resident stack is hidden in an action decoder.
+    fold_prime = actions.add("sample", 5, "FOLD_PRIME")
+    fold_a_lo = actions.add("sample", 5, "FOLD_A_LO", consumes=48)
+    fold_a_hi = actions.add("sample", 5, "FOLD_A_HI", consumes=49)
+    fold_b_lo = actions.add("sample", 5, "FOLD_B_LO", consumes=48)
+    fold_start = actions.add("sample", 5, "FOLD_START", consumes=49)
+    fold_run = actions.add("sample", 5, "FOLD_RUN")
+    fold_write_lo = actions.add("sample", 5, "FOLD_WRITE_LO")
+    fold_write_hi = actions.add("sample", 5, "FOLD_WRITE_HI")
+    fold_finish = actions.add("sample", 5, "FOLD_FINISH")
+    for n, (a_slot, b_slot, dst_slot) in enumerate(FOLD_NODES):
+        put(Instruction(Op.SLOT, slot_value=a_slot), f"fold_{n}_slot_a")
+        put(Instruction(Op.READ, action=fold_prime, word=48),
+            f"fold_{n}_read_a_lo")
+        put(Instruction(Op.READ, action=fold_a_lo, word=49),
+            f"fold_{n}_read_a_hi")
+        put(Instruction(Op.EXEC, action=fold_a_hi),
+            f"fold_{n}_take_a_hi")
+        put(Instruction(Op.SLOT, slot_value=b_slot), f"fold_{n}_slot_b")
+        put(Instruction(Op.READ, action=fold_prime, word=48),
+            f"fold_{n}_read_b_lo")
+        put(Instruction(Op.READ, action=fold_b_lo, word=49),
+            f"fold_{n}_read_b_hi")
+        put(Instruction(Op.EXEC, action=fold_start), f"fold_{n}_start")
+        put(Instruction(Op.EXEC, action=fold_run), f"fold_{n}_run")
+        # The worst-case fold padding is executable microcode: its word fields
+        # select the eight arithmetic steps, so no fold counter is required.
+        hold(8, f"fold_{n}", tuple(range(1, 9)))
+        put(Instruction(Op.SLOT, slot_value=dst_slot),
+            f"fold_{n}_slot_dst")
+        put(Instruction(Op.WRITE, action=fold_write_lo, word=48),
+            f"fold_{n}_write_lo")
+        put(Instruction(Op.WRITE, action=fold_write_hi, word=49),
+            f"fold_{n}_write_hi")
+
+    put(Instruction(Op.EXEC, action=fold_finish), "fold_finish")
+    put(Instruction(Op.DONE), "sample_done")
+    assert pc <= PROGRAM_BANK_WORDS
     return labels
 
 
@@ -1212,45 +1422,50 @@ def validate_node_contract(nodes: list[Node], program: list[int]) -> None:
 def validate_sample(program: list[int], actions: Actions,
                     labels: dict[int, str]) -> tuple[int, int, int]:
     pc, slot, pending = SAMPLE_START, 0, None
-    fold_remaining = 0
     cycles = 0
-    writes: list[tuple[int, int]] = []
+    writes: list[tuple[int, int, str]] = []
+    fold_reads: list[tuple[str, int, int]] = []
+    service_cycles: dict[int, list[tuple[str, int]]] = {}
     visits = 0
+    hold_clocks = 0
     for _ in range(4000):
         insn = Instruction.decode(program[pc])
         action = actions.get("sample", insn.action) \
             if insn.op in (Op.READ, Op.WRITE, Op.EXEC) else None
         if action and action.consumes is not None:
-            assert pending == action.consumes, \
+            assert pending is not None and pending[1] == action.consumes, \
                 f"pc {pc}: {action.name} consumes {pending}, expected " \
                 f"{action.consumes}"
+            if action.name.startswith("FOLD_"):
+                fold_reads.append((action.name, pending[0], pending[1]))
             pending = None
-        if action:
-            cycles += action.wait
-            if action.name == "FOLD_SETUP":
-                fold_remaining = 7
-            elif action.name == "FOLD_WRITE":
-                assert fold_remaining > 0
-                fold_remaining -= 1
+        if action and (action.name.startswith("NZ_")
+                       or action.name.startswith("CAP_")):
+            service_cycles.setdefault(visits, []).append((action.name,
+                                                          cycles))
+        if insn.op == Op.EXEC and insn.action == COMMON_ACTION["HOLD"]:
+            hold_clocks += 1
 
         cycles += 1
         if insn.op == Op.READ:
-            pending = insn.word
+            pending = (slot, insn.word)
             pc = (pc + 1) & 0xFF
         elif insn.op == Op.WRITE:
-            writes.append((slot, insn.word))
+            writes.append((slot, insn.word,
+                           action.name if action else "COMMON"))
             pc = (pc + 1) & 0xFF
         elif insn.op == Op.EXEC:
             pc = (pc + 1) & 0xFF
         elif insn.op == Op.SLOT:
             slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
-            visits += 1
+            if insn.slot_inc:
+                visits += 1
             pc = (pc + 1) & 0xFF
         elif insn.op == Op.JUMP:
             pc = insn.target
         elif insn.op == Op.BRANCH:
-            take = (insn.cond == 0 and slot == 0) \
-                or (insn.cond == 1 and fold_remaining > 0)
+            assert insn.cond == COND_SAMPLE_SLOT_WRAP
+            take = slot == 0
             pc = insn.target if take == bool(insn.sense) else (pc + 1) & 0xFF
         elif insn.op == Op.DONE:
             break
@@ -1259,16 +1474,2936 @@ def validate_sample(program: list[int], actions: Actions,
     else:
         raise AssertionError("sample program did not terminate")
 
-    assert visits == 8 and slot == 0 and fold_remaining == 0
-    expected = list(range(10, 24)) + [15, 14, 48]
+    assert visits == 8 and slot == 0 and pending is None
+    expected = list(range(10, 24)) + [15, 14, 48, 49]
     for voice in range(8):
-        actual = [word for owner, word in writes
-                  if owner == voice and word != 44]
+        actual = [word for owner, word, name in writes
+                  if owner == voice and name.startswith("STORE_")]
         assert actual == expected, (voice, actual, expected)
-    assert [(owner, word) for owner, word in writes if word == 44] \
-        == [(0, 44)] * 7
+        service = service_cycles[voice]
+        w0_cycle = dict(service)["CAP_W0"]
+        relative = [(name, cycle - w0_cycle) for name, cycle in service]
+        assert relative == list(SAMPLE_SERVICE_SCHEDULE), \
+            (voice, relative, SAMPLE_SERVICE_SCHEDULE)
+
+    expected_fold_reads: list[tuple[str, int, int]] = []
+    expected_fold_writes: list[tuple[int, int, str]] = []
+    for a_slot, b_slot, dst_slot in FOLD_NODES:
+        expected_fold_reads.extend((
+            ("FOLD_A_LO", a_slot, 48),
+            ("FOLD_A_HI", a_slot, 49),
+            ("FOLD_B_LO", b_slot, 48),
+            ("FOLD_START", b_slot, 49),
+        ))
+        expected_fold_writes.extend((
+            (dst_slot, 48, "FOLD_WRITE_LO"),
+            (dst_slot, 49, "FOLD_WRITE_HI"),
+        ))
+    assert fold_reads == expected_fold_reads
+    assert [write for write in writes if write[2].startswith("FOLD_WRITE")] \
+        == expected_fold_writes
+
+    # Per visit: four old-noise and four live-noise clocks, plus the exact
+    # seventeen holes in the accepted W0..W84 service cadence.
+    # Per fold node: eight clocks after the explicit FOLD_RUN instruction.
+    cap_holds = SAMPLE_CAP_SCHEDULE[-1][1] - (len(SAMPLE_CAP_SCHEDULE) - 1)
+    assert cap_holds == 17
+    assert hold_clocks == 8 * (4 + 4 + cap_holds) \
+        + len(FOLD_NODES) * 8
     assert cycles < SAMPLE_CLOCK_LIMIT
     return cycles, SAMPLE_CLOCK_LIMIT - cycles, len(labels)
+
+
+def validate_sample_wait_manifest(program: list[int],
+                                  labels: dict[int, str]) -> str:
+    """Prove every stored wait's physical-address/microstep word field."""
+    by_label = {label: Instruction.decode(program[pc])
+                for pc, label in labels.items()}
+
+    expected_nonzero = {
+        "nz_live_hold_3": 10,
+        "cap_W0": 12,
+        "cap_W1": 16,
+    }
+    expected_nonzero.update({f"cap_W51_wait_hold_{n}": n + 1
+                             for n in range(4)})
+    for node in range(len(FOLD_NODES)):
+        expected_nonzero.update({f"fold_{node}_hold_{n}": n + 1
+                                 for n in range(8)})
+
+    stored_holds = 0
+    nonzero_holds = 0
+    for label, insn in by_label.items():
+        expected_word = expected_nonzero.get(label, 0)
+        if label in expected_nonzero:
+            assert insn.word == expected_word, (label, insn.word,
+                                                 expected_word)
+        if insn.op == Op.EXEC and insn.action == COMMON_ACTION["HOLD"]:
+            stored_holds += 1
+            nonzero_holds += insn.word != 0
+            assert insn.word == expected_word, (label, insn.word,
+                                                 expected_word)
+
+    assert stored_holds == 81
+    assert nonzero_holds == 61  # final W0 prime + four ring + 7*8 fold
+    assert by_label["cap_W0"].word == 12
+    assert by_label["cap_W1"].word == 16
+    assert len(expected_nonzero) == 63
+    return ("81 stored HOLDs: 61 nonzero physical/step words; W0/W1 "
+            "prime words 12/16; 63 owner-zero image words changed")
+
+
+def validate_sample_fixed_tail_gap(program: list[int], actions: Actions,
+                                   labels: dict[int, str]) -> str:
+    """Prove why the current persistent STORE tail is not implementable.
+
+    The composed semantic oracle below used to make the late writes look
+    physical by selecting ``SampleTrace.final_words``.  In the real executor,
+    however, state_q is the registered output of the *preceding* instruction's
+    state read.  Record that exact stream here before any semantic RTL is
+    allowed to depend on it.
+
+    This is a rejection proof for the unchanged tail, not a claim that every
+    mirror-free schedule is impossible.  A later image may relocate the same
+    fixed writes onto the edges where their values become final.
+    """
+    by_pc = {pc: (labels[pc], Instruction.decode(program[pc]))
+             for pc in labels}
+    q_word: int | None = None
+    stores: list[tuple[str, int, int | None]] = []
+    for pc in range(SAMPLE_START, 0x4e):
+        label, insn = by_pc[pc]
+        action = actions.get("sample", insn.action) \
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC) else None
+        if action is not None and action.name.startswith("STORE_"):
+            stores.append((action.name, insn.word, q_word))
+        # psg_execctl clocks the state EBR on every active READ/WRITE/EXEC,
+        # not only on semantic READ instructions.
+        if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+            q_word = insn.word
+
+    expected = [
+        (f"STORE_{index}_{10 + index}", 10 + index,
+         0 if index == 0 else 9 + index)
+        for index in range(14)
+    ]
+    expected.extend((
+        ("STORE_14_15", 15, 23),
+        ("STORE_15_14", 14, 15),
+        ("STORE_LEAF_LO", 48, 14),
+        ("STORE_LEAF_HI", 49, 48),
+    ))
+    assert stores == expected, (stores, expected)
+
+    # Decoding these inputs wholesale is exactly the forbidden record mirror:
+    # 202 meaningful oscillator bits plus 42 meaningful parameter bits, before
+    # Python's padded 14+4 word lists or the much larger derived SampleTrace.
+    record_bits = sum((16, 8, 17, 17, 1, 13, 13, 4, 2, 13, 17, 16,
+                       7, 14, 2, 2, 3, 14, 1, 1, 2, 3, 16))
+    parameter_bits = sum((14, 3, 1, 3, 2, 2, 2, 1, 1, 12, 1))
+    assert record_bits == 202 and parameter_bits == 42
+    assert record_bits + parameter_bits > 70
+
+    source = Path(__file__).read_text()
+    machine = source[source.index("\nclass SampleImageMachine:"):
+                     source.index("\ndef make_sample_case(")]
+    assert "self.loaded_words: list[int]" in machine
+    assert "self.params_words: list[int]" in machine
+    assert "self.trace: SampleTrace | None" in machine
+    assert "self.trace.final_words" in machine
+
+    first = stores[0]
+    assert first == ("STORE_0_10", 10, 0)
+    return ("fixed persistent STORE tail rejected: 16 writes consume the "
+            "previous destination stream; PC 3c word10 sees q=word0; "
+            "oracle mirror is 202 record + 42 parameter bits before Trace")
+
+
+@dataclass(frozen=True)
+class SampleCommitSite:
+    pc: int
+    action: str
+    destination: int
+    q_source: int | None
+    final_after: str
+
+
+def validate_sample_relocated_commit_manifest(
+        program: list[int], actions: Actions,
+        labels: dict[int, str]) -> tuple[str, list[int]]:
+    """Build the H-D2 mirror-free fixed-edge commit candidate.
+
+    This deliberately does not replace the accepted image yet.  It proves a
+    complete alternative instruction/address manifest first: every relocated
+    commit remains an OP_WRITE, its action owns one literal destination, and
+    the instruction word primes the following fixed state_q source.  No
+    action-side extra write is counted.
+    """
+    candidate = list(program)
+    pc_of = {label: pc for pc, label in labels.items()}
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+
+    def set_insn(pc: int, insn: Instruction) -> None:
+        candidate[pc] = insn.encode()
+
+    def set_word(label: str, word: int) -> None:
+        pc = pc_of[label]
+        insn = Instruction.decode(candidate[pc])
+        assert insn.op in (Op.READ, Op.WRITE, Op.EXEC)
+        set_insn(pc, Instruction(insn.op, action=insn.action, word=word))
+
+    # The twelve old unique tail writes displaced onto finalization waits
+    # become elapsed service clocks.  Word14/15 stay immediately after W84;
+    # the two deliberate lowpass repeats at PCs 4a/4b remain writes.
+    for pc in range(0x3c, 0x4a):
+        set_insn(pc, Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"]))
+
+    sites = (
+        SampleCommitSite(0x14, "STORE_10_20", 20, 20, "restart select"),
+        SampleCommitSite(0x15, "STORE_11_21", 21, 21, "restart select"),
+        SampleCommitSite(0x16, "STORE_12_22", 22, 22, "restart select"),
+        SampleCommitSite(0x17, "STORE_8_18", 18, 18, "restart select"),
+        SampleCommitSite(0x19, "STORE_9_19", 19, 19, "restart select"),
+        SampleCommitSite(0x1d, "CAP_W0", 23, 10, "W0"),
+        SampleCommitSite(0x1e, "CAP_W1", 10, 12, "W1"),
+        SampleCommitSite(0x27, "STORE_1_11", 11, 11, "W5"),
+        SampleCommitSite(0x28, "STORE_6_16", 16, 16, "W5"),
+        SampleCommitSite(0x29, "STORE_7_17", 17, 17, "W5"),
+        SampleCommitSite(0x2a, "STORE_3_13", 13, 13, "W6"),
+        SampleCommitSite(0x2d, "STORE_2_12", 12, 12, "W6"),
+        SampleCommitSite(0x3c, "STORE_4_14", 14, 14, "W84"),
+        SampleCommitSite(0x3d, "STORE_5_15", 15, 15, "W84"),
+        SampleCommitSite(0x4a, "STORE_14_15", 15, None, "W84 repeat"),
+        SampleCommitSite(0x4b, "STORE_15_14", 14, None, "W84 repeat"),
+    )
+    next_prefetch = {
+        0x13: 20, 0x14: 21, 0x15: 22, 0x16: 18,
+        0x18: 19, 0x19: 23,
+        0x26: 11, 0x27: 16, 0x28: 17, 0x29: 13,
+        0x2c: 12, 0x2d: 17,
+        0x3b: 14, 0x3c: 15,
+    }
+    for pc, word in next_prefetch.items():
+        insn = Instruction.decode(candidate[pc])
+        assert insn.op in (Op.READ, Op.WRITE, Op.EXEC)
+        set_insn(pc, Instruction(insn.op, action=insn.action, word=word))
+    for site in sites:
+        old = Instruction.decode(candidate[site.pc])
+        word = old.word
+        set_insn(site.pc, Instruction(
+            Op.WRITE, action=action_by_name[site.action], word=word))
+
+    # Non-writing prefetch/capture edges.  H-C's retained old-q/tuple and the
+    # 70-bit pool consume these words; none is a hidden semantic READ.
+    set_word("nz_live_hold_1", 14)  # brown + lowpass sign
+    set_word("nz_live_hold_2", 13)  # phase2 high + ack/nz phase/gain high
+    set_word("nz_live_hold_3", 10)  # W0 current phase
+    set_word("cap_W2", 18)          # selected old-inc low for W3/W4
+    set_word("cap_W3", 19)          # selected old-inc high for W4/W5
+    set_word("cap_W26_wait_hold_3", 19)  # old-gain low at W26
+    set_word("cap_W40_wait_hold_1", 20)  # selected old reverb
+    set_word("cap_W51", 26)         # damp/current reverb at W75
+    set_word("cap_W75", 14)         # original filter high before W84
+    set_word("cap_W84_wait_hold_0", 15)  # original filter low
+
+    # Every fixed write action appears exactly once, and its destination stays
+    # the one named by that action even when ir.word is a next-read prefetch.
+    # W0/W1 retain their CAP action codes and gain literal destinations.  This
+    # is a 16-entry fixed decoder, not an index mux.
+    action_destination = {
+        action_by_name[f"STORE_{index}_{10 + index}"]: 10 + index
+        for index in range(1, 13)
+    }
+    action_destination.update({
+        action_by_name["CAP_W0"]: 23,
+        action_by_name["CAP_W1"]: 10,
+        action_by_name["STORE_14_15"]: 15,
+        action_by_name["STORE_15_14"]: 14,
+    })
+    seen: list[tuple[int, int, int | None]] = []
+    q_word: int | None = None
+    for pc in range(SAMPLE_START, 0x4e):
+        insn = Instruction.decode(candidate[pc])
+        if insn.op == Op.WRITE and insn.action in action_destination:
+            seen.append((pc, action_destination[insn.action], q_word))
+        if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+            q_word = insn.word
+    assert [pc for pc, _, _ in seen] == [site.pc for site in sites]
+    assert [dst for _, dst, _ in seen] == [site.destination for site in sites]
+    for actual, site in zip(seen, sites):
+        if site.q_source is not None:
+            assert actual[2] == site.q_source, (actual, site)
+    assert len({Instruction.decode(candidate[site.pc]).action
+                for site in sites}) == 16
+
+    # Control flow and operation counts are unchanged: twelve writes moved
+    # onto twelve HOLDs.  Owner one is not part of this candidate at all.
+    def execute_counts(image: list[int]) -> tuple[int, ...]:
+        pc, slot = SAMPLE_START, 0
+        counts = [0] * 8
+        for _ in range(2_000):
+            insn = Instruction.decode(image[pc])
+            counts[int(insn.op)] += 1
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = slot == 0
+                pc = insn.target if take == bool(insn.sense) \
+                    else (pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                break
+            else:
+                raise AssertionError(insn)
+        else:
+            raise AssertionError("relocated sample candidate did not finish")
+        return tuple(counts)
+
+    base_counts = execute_counts(program)
+    candidate_counts = execute_counts(candidate)
+    assert candidate_counts == base_counts
+    assert sum(candidate_counts) == 782
+    assert candidate_counts[int(Op.READ)] == 172
+    assert candidate_counts[int(Op.WRITE)] == 158
+    assert sum(word != 0 for word in candidate) == 222
+    changed = sum(a != b for a, b in zip(program, candidate))
+    assert changed == 39, changed
+    result = ("H-D2A candidate: 16 fixed write actions at numbered "
+              "finalization edges; 39 image words change; counts remain 222 "
+              "words / 782 clocks / 172 reads / 158 writes; accepted image "
+              "untouched")
+    return result, candidate
+
+
+def validate_sample_relocated_value_gap(candidate: list[int]) -> str:
+    """Reject H-D2B at its first information and provenance failures.
+
+    This is the corrected D2A instruction stream, before any accepted-image
+    change.  Prove the strongest built-in allocation: even reusing every H-C
+    field dead on that path cannot carry the independent values required at
+    PC 1b.  Also convict two later values whose read arrives on an anonymous
+    HOLD edge and therefore has no fixed consumer in a mirror-free adapter.
+    """
+    hold = COMMON_ACTION["HOLD"]
+
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(candidate[pc])
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    # Worst built-in case: updated brown remains uncommitted, a wave0/7 mode-2
+    # live coefficient needs fourteen DQ bits, and selected old wave6/non-alt
+    # retains its old-noise step through W1.  At PC 1b the q stream presents
+    # word14 and the IR primes word13.
+    assert q_word(0x1b) == 14
+    assert decoded(0x1b) == Instruction(Op.EXEC, action=hold, word=13)
+    # Old-noise continuation and the old DQ update are mutually exclusive at
+    # W5: CAP_W5 applies DQ only under !old_nz_r_on.  q13's old noise-phase
+    # nibble is independently required until q10 supplies the current phase
+    # nibble at W0.  Old q is unchanged on this path and is recovered from its
+    # later typed q17 source rather than retained in the transient pool.
+    old_noise_active = True
+    old_dq_result_live = not old_noise_active
+    assert old_noise_active and not old_dq_result_live
+    payload = {
+        "dq_live": 14,
+        "old_noise_step": 17,
+        "live_phase_delta": 13,
+        "live_amplitude": 12,
+        "noise_lowpass": 16,
+        "updated_brown": 13,
+        "phase2_msb": 1,
+        "old_nz_phase": 4,
+        "restart": 1,
+        "clear": 1,
+    }
+    assert sum(payload.values()) == 92
+    # A/B/N/O provide 70.  On a built-in path only H-C's ARAM phase index
+    # (6) and snd_id (3) are dead; all live/old wave controls and old_q remain
+    # required by W0--W5.  The strongest possible overlay is still short.
+    available = 70 + 6 + 3
+    assert sum(payload.values()) > available
+    shortfall = sum(payload.values()) - available
+    assert shortfall == 13
+
+    # Updated word20 is presented at PC 2f, but PC 2f is one of many generic
+    # HOLD/word-zero instructions.  Nothing fixed can capture selected
+    # old_rev there before the stream moves on.
+    assert decoded(0x2e).word == 20
+    assert q_word(0x2f) == 20
+    assert decoded(0x2f) == Instruction(Op.EXEC, action=hold, word=0)
+    anonymous_zero_holds = sum(
+        decoded(pc) == Instruction(Op.EXEC, action=hold, word=0)
+        for pc in range(SAMPLE_START, 0x4e))
+    assert anonymous_zero_holds > 1
+
+    # Likewise PC 38 consumes q14 and primes word15; q15 arrives at another
+    # anonymous HOLD at PC 39 and is overwritten before W84 can use it.
+    assert q_word(0x38) == 14 and decoded(0x38).word == 15
+    assert q_word(0x39) == 15
+    assert decoded(0x39) == Instruction(Op.EXEC, action=hold, word=0)
+    return ("H-D2B rejected: live old-noise PC 1b/1c needs 92 independent "
+            "bits after excluding the mutually dead old-DQ delta, against the "
+            f"strongest 79-bit pool/H-C overlay ({shortfall}-bit shortfall); "
+            "q20 at PC 2f and q15 at PC 39 have no fixed consumer")
+
+
+def validate_sample_relocated_stream_correction(
+        program: list[int], d2a: list[int], actions: Actions) \
+        -> tuple[str, list[int]]:
+    """Build and prove the bounded D2C correction to the rejected D2A stream."""
+    candidate = list(d2a)
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(candidate[pc])
+
+    def set_insn(pc: int, insn: Instruction) -> None:
+        candidate[pc] = insn.encode()
+
+    def set_word(pc: int, word: int) -> None:
+        insn = decoded(pc)
+        assert insn.op in (Op.READ, Op.WRITE, Op.EXEC)
+        set_insn(pc, Instruction(insn.op, action=insn.action, word=word))
+
+    # Spend the two already-counted duplicate tail writes as typed q edges.
+    # PC 1b commits updated brown/selected old mode while q14 is present; the
+    # final post-W84 STORE_4_14 still replaces its filter-sign bit.  PC 39
+    # performs a harmless same-word filter-low write while making q15 visible
+    # to a unique action; STORE_5_15 still commits the final filtered value.
+    set_insn(0x4b, Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"]))
+    set_insn(0x1b, Instruction(
+        Op.WRITE, action=action_by_name["STORE_15_14"], word=13))
+    set_insn(0x4a, Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"]))
+    set_insn(0x39, Instruction(
+        Op.WRITE, action=action_by_name["STORE_14_15"], word=0))
+
+    # Read the stored updated brown on the uniquely named W4 edge.  Move the
+    # selected-old-reverb prime to the final pre-W40 wait so CAP_W40 consumes
+    # q20 directly, with no previous-word tag or anonymous-HOLD capture.
+    set_word(0x20, 14)  # CAP_W3 primes updated word14 for CAP_W4.
+    set_word(0x2e, 0)
+    set_word(0x30, 20)  # Final pre-W40 HOLD primes word20 for CAP_W40.
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    sites = (
+        SampleCommitSite(0x14, "STORE_10_20", 20, 20, "restart select"),
+        SampleCommitSite(0x15, "STORE_11_21", 21, 21, "restart select"),
+        SampleCommitSite(0x16, "STORE_12_22", 22, 22, "restart select"),
+        SampleCommitSite(0x17, "STORE_8_18", 18, 18, "restart select"),
+        SampleCommitSite(0x19, "STORE_9_19", 19, 19, "restart select"),
+        SampleCommitSite(0x1b, "STORE_15_14", 14, 14, "brown update"),
+        SampleCommitSite(0x1d, "CAP_W0", 23, 10, "W0"),
+        SampleCommitSite(0x1e, "CAP_W1", 10, 12, "W1"),
+        SampleCommitSite(0x27, "STORE_1_11", 11, 11, "W5"),
+        SampleCommitSite(0x28, "STORE_6_16", 16, 16, "W5"),
+        SampleCommitSite(0x29, "STORE_7_17", 17, 17, "W5"),
+        SampleCommitSite(0x2a, "STORE_3_13", 13, 13, "W6"),
+        SampleCommitSite(0x2d, "STORE_2_12", 12, 12, "W6"),
+        SampleCommitSite(0x39, "STORE_14_15", 15, 15, "filter-low capture"),
+        SampleCommitSite(0x3c, "STORE_4_14", 14, 14, "W84"),
+        SampleCommitSite(0x3d, "STORE_5_15", 15, 15, "W84"),
+    )
+    fixed_destination = {
+        action_by_name[f"STORE_{index}_{10 + index}"]: 10 + index
+        for index in range(1, 13)
+    }
+    fixed_destination.update({
+        action_by_name["CAP_W0"]: 23,
+        action_by_name["CAP_W1"]: 10,
+        action_by_name["STORE_14_15"]: 15,
+        action_by_name["STORE_15_14"]: 14,
+    })
+    seen: list[tuple[int, int, int | None]] = []
+    for pc in range(SAMPLE_START, 0x4e):
+        insn = decoded(pc)
+        if insn.op == Op.WRITE and insn.action in fixed_destination:
+            seen.append((pc, fixed_destination[insn.action], q_word(pc)))
+    assert [pc for pc, _, _ in seen] == [site.pc for site in sites]
+    assert [dst for _, dst, _ in seen] == [site.destination for site in sites]
+    assert [source for _, _, source in seen] == \
+        [site.q_source for site in sites]
+    assert len({decoded(site.pc).action for site in sites}) == 16
+    assert q_word(0x21) == 14  # Updated brown reaches CAP_W4.
+    assert q_word(0x31) == 20  # Selected old reverb reaches CAP_W40.
+    assert decoded(0x4a) == Instruction(
+        Op.EXEC, action=COMMON_ACTION["HOLD"])
+    assert decoded(0x4b) == Instruction(
+        Op.EXEC, action=COMMON_ACTION["HOLD"])
+    d2b_payload = {
+        "dq_live": 14,
+        "old_noise_step": 17,
+        "live_phase_delta": 13,
+        "live_amplitude": 12,
+        "noise_lowpass": 16,
+        "updated_brown": 13,
+        "phase2_msb": 1,
+        "old_nz_phase": 4,
+        "restart": 1,
+        "clear": 1,
+    }
+    assert sum(d2b_payload.values()) == 92
+    # The typed q14 transaction stores the only 13-bit resident whose next
+    # use is after W0.  It is fetched back as q14 at CAP_W4, reducing the
+    # pre-W0 payload.  On this old-noise path CAP_W5 suppresses the old DQ
+    # update, so its thirteen-bit delta is not simultaneously live.
+    corrected_payload = sum(d2b_payload.values()) \
+        - d2b_payload["updated_brown"]
+    assert corrected_payload == 79
+
+    def counts(image: list[int]) -> tuple[int, ...]:
+        pc, slot = SAMPLE_START, 0
+        result = [0] * 8
+        for _ in range(2_000):
+            insn = Instruction.decode(image[pc])
+            result[int(insn.op)] += 1
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = slot == 0
+                pc = insn.target if take == bool(insn.sense) \
+                    else (pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                break
+            else:
+                raise AssertionError(insn)
+        else:
+            raise AssertionError("D2C sample candidate did not finish")
+        return tuple(result)
+
+    base_counts = counts(program)
+    assert counts(candidate) == base_counts
+    assert sum(base_counts) == 782
+    assert base_counts[int(Op.READ)] == 172
+    assert base_counts[int(Op.WRITE)] == 158
+    assert sum(word != 0 for word in candidate) == 222
+    changed = sum(a != b for a, b in zip(program, candidate))
+    return (f"H-D2C candidate: typed q14/q15 and CAP_W40 q20; live "
+            f"old-noise payload 92 -> {corrected_payload} bits at the exact "
+            f"fixed 79-bit H-C overlay; {changed} image words "
+            "change; 16 fixed writes and 222/782/172/158 invariants; "
+            "accepted image untouched", candidate)
+
+
+def validate_sample_d2c_blend_gap(d2c: list[int]) -> str:
+    """Reject D2C's anonymous final blend-count arrival at PC 2e."""
+    hold_zero = Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"], word=0)
+    assert Instruction.decode(d2c[0x2d]).word == 17
+    assert Instruction.decode(d2c[0x2e]) == hold_zero
+    # PC 2d primes updated word17, so q17 arrives on PC 2e.  HOLD/word-zero
+    # occurs repeatedly and cannot identify the fixed capture edge.
+    anonymous = sum(Instruction.decode(d2c[pc]) == hold_zero
+                    for pc in range(SAMPLE_START, 0x4e))
+    assert anonymous > 1
+    return ("H-D2C rejected: final q17/blend_count arrives at anonymous "
+            "HOLD/word-zero PC 2e after the q20 prime moved")
+
+
+def validate_sample_typed_blend_correction(
+        program: list[int], d2c: list[int]) -> tuple[str, list[int]]:
+    """Type the D2C q17 arrival using the existing stored HOLD word field."""
+    candidate = list(d2c)
+    hold = COMMON_ACTION["HOLD"]
+    candidate[0x2e] = Instruction(Op.EXEC, action=hold, word=17).encode()
+
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(candidate[pc])
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    assert q_word(0x2e) == 17
+    assert decoded(0x2e) == Instruction(Op.EXEC, action=hold, word=17)
+    typed = sum(decoded(pc) == decoded(0x2e)
+                for pc in range(SAMPLE_START, 0x4e))
+    assert typed == 1
+    # The redundant word17 prime changes only q on the following anonymous
+    # wait.  PC 30 still primes word20 and CAP_W40 still consumes it.
+    assert q_word(0x2f) == 17
+    assert decoded(0x30).word == 20 and q_word(0x31) == 20
+
+    def counts(image: list[int]) -> tuple[int, ...]:
+        pc, slot = SAMPLE_START, 0
+        result = [0] * 8
+        for _ in range(2_000):
+            insn = Instruction.decode(image[pc])
+            result[int(insn.op)] += 1
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = slot == 0
+                pc = insn.target if take == bool(insn.sense) \
+                    else (pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                break
+            else:
+                raise AssertionError(insn)
+        else:
+            raise AssertionError("D2D sample candidate did not finish")
+        return tuple(result)
+
+    base_counts = counts(program)
+    assert counts(candidate) == base_counts
+    assert sum(base_counts) == 782
+    assert base_counts[int(Op.READ)] == 172
+    assert base_counts[int(Op.WRITE)] == 158
+    assert sum(word != 0 for word in candidate) == 222
+    changed = sum(a != b for a, b in zip(program, candidate))
+    return (f"H-D2D candidate: unique HOLD/word17 consumes final q17; "
+            f"{changed} image words change; 222/782/172/158 unchanged; "
+            "accepted image untouched", candidate)
+
+
+def validate_sample_context_path_bound(d2d: list[int]) -> str:
+    """Exhaust every pre-W0 semantic class at the q13/q10 boundary.
+
+    The old four-bit noise-phase value is presented in q13 at PC 1c, but the
+    current phase nibble needed for its equality test does not arrive until
+    q10 at W0.  This is the one-way equality problem: the earlier value needs
+    four bits because every one of its sixteen values has a distinct response
+    over the sixteen possible later values.
+    """
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(d2d[pc])
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    assert decoded(0x1b).word == 13 and q_word(0x1c) == 13
+    assert decoded(0x1c).word == 10 and q_word(0x1d) == 10
+
+    equality_signatures = {
+        tuple(old_nz_phase == later_phase for later_phase in range(16))
+        for old_nz_phase in range(16)
+    }
+    assert len(equality_signatures) == 16
+    nz_phase_bits = (len(equality_signatures) - 1).bit_length()
+    assert nz_phase_bits == 4
+
+    def coefficient(wt: bool, wave: int, mode: int) -> int:
+        if wt:
+            return 256
+        if wave == 0:
+            return 193 if mode == 1 else 384 if mode == 2 else 256
+        if wave == 7:
+            return 250 if mode == 1 else 508 if mode == 2 else 254
+        return 256 if mode == 0 else 255
+
+    class_max: dict[tuple[bool, bool, bool, bool], int] = {}
+    maxima = {False: 0, True: 0}
+    cases = 0
+    for wt in (False, True):
+        for wave in range(8):
+            for mode in range(4):
+                dq_max = (8191 * coefficient(wt, wave, mode)) >> 8
+                dq_bits = max(1, dq_max.bit_length())
+                for noise in (False, True):
+                    for buzz in (False, True):
+                        for old_wave in range(8):
+                            for old_mode in range(4):
+                                for old_alt in (False, True):
+                                    for control in range(4):
+                                        restart = bool(control & 1)
+                                        clear = bool(control & 2)
+                                        cases += 1
+                                        old_noise = old_wave == 6 \
+                                            and not old_alt
+                                        old_dq = not wt and not old_noise
+                                        assert not (old_noise and old_dq)
+
+                                        payload = {
+                                            "dq_live": dq_bits,
+                                            "live_phase_delta": 13,
+                                            "live_amplitude": 12,
+                                            "noise_lowpass": 16,
+                                            "phase2_msb": 1,
+                                            "restart": 1,
+                                            "clear": 1,
+                                        }
+                                        if not noise:
+                                            payload["old_nz_phase"] = \
+                                                nz_phase_bits
+                                        if old_noise:
+                                            payload["old_noise_step"] = 17
+                                        if old_dq:
+                                            payload["old_phase_delta"] = 13
+                                        if old_dq and not restart:
+                                            payload["old_q_msb"] = 1
+                                        required = sum(payload.values())
+
+                                        # Built-in paths do not use ARAM index
+                                        # or sound ID.  Wavetable uses both,
+                                        # but its W2/W3 addresses ignore H-C
+                                        # old-q and old tuple state after
+                                        # classification.
+                                        capacity = 70 + (22 if wt else 9)
+                                        assert required <= capacity, (
+                                            wt, wave, mode, noise, buzz,
+                                            old_wave, old_mode, old_alt,
+                                            restart, clear, payload, capacity)
+                                        maxima[wt] = max(maxima[wt], required)
+                                        key = (wt, wave == 6, noise,
+                                               old_noise)
+                                        class_max[key] = max(
+                                            class_max.get(key, 0), required)
+
+    assert cases == 65_536
+    assert maxima == {False: 79, True: 78}
+    assert class_max[(False, True, False, True)] == 78
+    assert class_max[(False, True, False, False)] == 75
+    assert class_max[(False, False, False, True)] == 79
+    return ("H-D2E-A PC1c bound: 65,536 current/old "
+            "wave-mode-noise-buzz-restart-clear "
+            "classes; old-noise17 and old-DQ13 are W5-exclusive; built-in "
+            "maximum 79/79, wavetable maximum 78/92, named brown+old-noise "
+            "78/79; later W0-W6 physical packing remains unproved")
+
+
+def validate_sample_physical_w2_gap(d2d: list[int], actions: Actions) -> str:
+    """Reject D2F on the unchanged stream's no-restart old-DQ path.
+
+    D2E-A proves an information bound at PC 1c.  This proof advances the
+    literal D2D q stream through W2 and counts only values that are still
+    independently observable on the named path.  One counterexample is
+    sufficient to reject a physical allocation of the unchanged stream.
+    """
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(d2d[pc])
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+    assert decoded(0x1f).action == action_by_name["CAP_W2"]
+    assert decoded(0x21).action == action_by_name["CAP_W4"]
+    assert decoded(0x22).action == action_by_name["CAP_W5"]
+    # D2D still primes word zero on CAP_W4, so W5 cannot recover word16's
+    # original selected-old phase from the synchronous state output.
+    assert decoded(0x21).word == 0 and q_word(0x22) == 0
+
+    wt = False
+    old_noise = False
+    restart = False
+    ordinary_old_dq = not wt and not old_noise
+    assert ordinary_old_dq and not restart
+
+    post_w2 = {
+        "current_primary": 18,
+        "selected_old_phase": 16,
+        "live_dq": 14,
+        "phase2": 17,
+        "amplitude": 12,
+        "old_phase_delta": 13,
+        "old_q_msb": 1,
+    }
+    required = sum(post_w2.values())
+    assert required == 91
+
+    # H-C owns 38 bits.  The no-restart ordinary-old-DQ path must retain the
+    # old-q low word and old wave/mode/alternate tuple until W5, leaving only
+    # sixteen H-C bits for transient overlay beside A18+B18+N17+O17.
+    pool = 18 + 18 + 17 + 17
+    hc_total = 38
+    hc_retained = 16 + (3 + 2 + 1)
+    hc_overlay = hc_total - hc_retained
+    available = pool + hc_overlay
+    assert pool == 70 and hc_retained == 22 and hc_overlay == 16
+    assert available == 86 and required > available
+    deficit = required - available
+    assert deficit == 5
+
+    return ("H-D2F rejected: unchanged CAP_W4 primes word0, so no-restart "
+            "ordinary old-DQ retains selected-old-phase16 through W5; "
+            f"post-W2 payload {required} exceeds 70-bit pool + "
+            f"{hc_overlay}-bit H-C overlay = {available} by {deficit} bits")
+
+
+def build_sample_w5_q16_candidate(program: list[int], d2d: list[int],
+                                  actions: Actions) \
+        -> tuple[str, list[int]]:
+    """Build the bounded D2F-A q16 prefetch candidate in memory only."""
+    candidate = list(d2d)
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+
+    def decoded(image: list[int], pc: int) -> Instruction:
+        return Instruction.decode(image[pc])
+
+    def q_word(image: list[int], pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(image, prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    cap_w4 = decoded(candidate, 0x21)
+    assert cap_w4 == Instruction(
+        Op.EXEC, action=action_by_name["CAP_W4"], word=0)
+    assert q_word(candidate, 0x21) == 14
+    candidate[0x21] = Instruction(
+        cap_w4.op, action=cap_w4.action, word=16).encode()
+    assert q_word(candidate, 0x21) == 14
+    assert q_word(candidate, 0x22) == 16
+    assert decoded(candidate, 0x22).action == action_by_name["CAP_W5"]
+    assert [pc for pc, (before, after) in enumerate(zip(d2d, candidate))
+            if before != after] == [0x21]
+
+    # The new q word matters only for the ordinary old-DQ W5 update.  On a
+    # no-restart path it is the original selected old phase.  Restart instead
+    # selects the q10 phase snapshot and aliases selected old-q to phase2;
+    # old-noise and wavetable paths suppress the W5 old-DQ update entirely.
+    classes = 0
+    consumers = {"q16": 0, "q10": 0, "none": 0}
+    for wt in (False, True):
+        for wave in range(8):
+            for mode in range(4):
+                for noise in (False, True):
+                    for buzz in (False, True):
+                        for old_wave in range(8):
+                            for old_mode in range(4):
+                                for old_alt in (False, True):
+                                    for control in range(4):
+                                        restart = bool(control & 1)
+                                        classes += 1
+                                        old_noise = old_wave == 6 \
+                                            and not old_alt
+                                        old_dq = not wt and not old_noise
+                                        if old_dq and restart:
+                                            consumers["q10"] += 1
+                                        elif old_dq:
+                                            consumers["q16"] += 1
+                                        else:
+                                            consumers["none"] += 1
+    assert classes == 65_536
+    assert sum(consumers.values()) == classes
+    assert all(count for count in consumers.values())
+
+    def counts(image: list[int]) -> tuple[int, ...]:
+        pc, slot = SAMPLE_START, 0
+        result = [0] * 8
+        for _ in range(2_000):
+            insn = decoded(image, pc)
+            result[int(insn.op)] += 1
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = slot == 0
+                pc = insn.target if take == bool(insn.sense) \
+                    else (pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                break
+            else:
+                raise AssertionError(insn)
+        else:
+            raise AssertionError("D2F-A sample candidate did not finish")
+        return tuple(result)
+
+    base_counts = counts(program)
+    assert counts(candidate) == base_counts
+    assert sum(base_counts) == 782
+    assert base_counts[int(Op.READ)] == 172
+    assert base_counts[int(Op.WRITE)] == 158
+    assert sum(word != 0 for word in candidate) == 222
+    changed = sum(a != b for a, b in zip(program, candidate))
+    assert changed == 44
+    return (f"H-D2F-A candidate: CAP_W4 word0 -> word16; q14 still consumed "
+            f"at W4 and q16 reaches W5; {classes:,} paths select q16/q10/none "
+            f"as {consumers['q16']}/{consumers['q10']}/{consumers['none']}; "
+            f"{changed} image words change; 222/782/172/158 unchanged; "
+            "accepted image untouched", candidate)
+
+
+def validate_sample_b3b2a_slice_map(program: list[int], d2fa: list[int],
+                                    actions: Actions) \
+        -> tuple[str, list[int], B3B2AFrameCodec]:
+    """Bind the active wavetable/old-noise repair to literal physical bits.
+
+    This is deliberately narrower than a service executor.  It proves the
+    corrected q stream and the complete W1/W2/W3/PRE_W15/W15 ownership map,
+    including both interpolation base/sign lifetimes.  ARAM hold, stopped
+    wavetable service state and composed multiplier freeze remain later gates.
+    """
+    candidate = list(d2fa)
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+
+    def decoded(image: list[int], pc: int) -> Instruction:
+        return Instruction.decode(image[pc])
+
+    def q_word(image: list[int], pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(image, prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    cap_w2 = decoded(candidate, 0x1f)
+    assert cap_w2 == Instruction(
+        Op.EXEC, action=action_by_name["CAP_W2"], word=18)
+    candidate[0x1f] = Instruction(
+        cap_w2.op, action=cap_w2.action, word=19).encode()
+    assert [q_word(candidate, pc) for pc in range(0x1d, 0x23)] \
+        == [10, 12, 16, 19, 14, 16]
+    assert [pc for pc, (before, after) in enumerate(zip(d2fa, candidate))
+            if before != after] == [0x1f]
+    changed = sum(before != after
+                  for before, after in zip(program, candidate))
+    assert changed == 44
+    assert sum(word != 0 for word in candidate) == 222
+
+    def counts(image: list[int]) -> tuple[int, ...]:
+        pc, slot = SAMPLE_START, 0
+        result = [0] * 8
+        for _ in range(2_000):
+            insn = decoded(image, pc)
+            result[int(insn.op)] += 1
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = slot == 0
+                pc = insn.target if take == bool(insn.sense) \
+                    else (pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                break
+            else:
+                raise AssertionError(insn)
+        else:
+            raise AssertionError("B3-B2-A candidate did not terminate")
+        return tuple(result)
+
+    base_counts = counts(program)
+    assert counts(candidate) == base_counts
+    assert (sum(base_counts), base_counts[int(Op.READ)],
+            base_counts[int(Op.WRITE)]) == (782, 172, 158)
+
+    # Source facts that force the two explicit interpolation sideband tokens.
+    # W2's adjacent byte is the pre-edge seq_q; wt_p1 cannot be consumed until
+    # the following edge.  The magnitude-only service retains neither sign nor
+    # the signed base used by wt_z.
+    walk = WALK.read_text()
+    mulmp = (ROOT / "rtl" / "psg_mulmp.sv").read_text()
+    for spelling in (
+            "smp_a <= 18'($signed(seq_q));",
+            "wt_p1 <= $signed(seq_q);",
+            "smp_b <= 18'($signed(seq_q));",
+            "wt_q1 <= $signed(seq_q);",
+            "mxs_new <= wt_pd[8];",
+            "mxs_new <= wt_qd[8];"):
+        assert spelling in walk
+    assert "callers retain the sign" in mulmp
+    assert "wt_op = wt_mag ^ $signed({20{mxs_new}})" in walk
+    assert "wt_sum = $signed({wt_base[9:0], 10'b0})" in walk
+    assert "+ wt_op + $signed({19'b0, mxs_new})" in walk
+    assert "if (play_bits[pc_ch] && s_eff_a != 0) begin" in walk
+    assert "wt_pf <= s_phase[9:0];" in walk
+    assert "wt_qf <= q16[9:0];" in walk
+    assert "(blend_restart || nz_tick_r) ? 16'(s_noise_lp) : s_old_phase" \
+        in walk
+    assert "nz_old_next = noise_clamp(nz_old_pre)" in walk
+    assert "under = value[17]" in walk
+    assert "wire [12:0] g_live = g_a + {1'b0, g_a[12:1]};" in walk
+
+    capacities = {"A": 18, "B": 18, "N": 17, "O": 17,
+                  "Q": 16, "T": 6, "C": 7, "I": 6, "D": 3}
+    assert sum(capacities.values()) == 108
+
+    @dataclass(frozen=True)
+    class Field:
+        name: str
+        width: int
+        pieces: tuple[tuple[str, int, int], ...]
+        source: str
+
+    def field(name: str, width: int,
+              pieces: tuple[tuple[str, int, int], ...],
+              source: str) -> Field:
+        assert sum(part for _, _, part in pieces) == width
+        assert source
+        return Field(name, width, pieces, source)
+
+    controls_w1 = (
+        field("amplitude", 12, (("Q", 0, 12),), "typed amplitude"),
+        field("restart", 1, (("Q", 12, 1),), "restart predicate"),
+        field("clear", 1, (("Q", 13, 1),), "clear toggle"),
+        field("nz_phase", 4, (("Q", 14, 2), ("T", 0, 2)),
+              "noise phase"),
+        field("refresh", 1, (("T", 2, 1),), "refresh predicate"),
+    )
+    fixed_w1 = (
+        field("snd_wt", 1, (("C", 6, 1),), "live wavetable context"),
+        field("live_is_wave6", 1, (("C", 3, 1),),
+              "live wave-six predicate"),
+        field("secondary_index", 6, (("I", 0, 6),),
+              "H-C phase index"),
+        field("snd_id", 3, (("D", 0, 3),), "H-C sounding id"),
+    )
+    w1 = (
+        field("primary_fraction", 10, (("A", 0, 10),),
+              "W0 phase fraction"),
+        field("primary_base", 8, (("A", 10, 8),),
+              "CAP_W1 ARAM base"),
+        field("secondary_fraction", 10, (("B", 0, 10),),
+              "old phase fraction"),
+        field("seed_union", 16,
+              (("B", 10, 8), ("T", 3, 3), ("C", 0, 1),
+               ("C", 4, 2), ("C", 1, 2)),
+              "exclusive wrapped seed or signed kick"),
+        field("original_phase2", 17, (("N", 0, 17),), "typed q12"),
+        field("old_noise_step", 17, (("O", 0, 17),),
+              "old-noise multiplier result"),
+        *controls_w1, *fixed_w1,
+    )
+    w2 = (
+        field("primary_base", 8, (("A", 10, 8),),
+              "retained CAP_W1 base"),
+        field("primary_delta_sign", 1, (("A", 9, 1),),
+              "sign(pre-edge seq_q - primary base)"),
+        field("secondary_fraction", 10, (("B", 0, 10),),
+              "old phase fraction"),
+        field("original_phase2", 17, (("N", 0, 17),), "typed q12"),
+        field("final_old_phase", 14, (("O", 0, 14),),
+              "clamp14(wrapped seed plus old-noise step)"),
+        *controls_w1, *fixed_w1,
+    )
+    w3 = (
+        field("primary_base", 8, (("A", 10, 8),),
+              "retained CAP_W1 base"),
+        field("primary_delta_sign", 1, (("A", 9, 1),),
+              "retained W2 delta sign"),
+        field("secondary_fraction", 10, (("B", 0, 10),),
+              "old phase fraction"),
+        field("secondary_base", 8, (("B", 10, 8),),
+              "CAP_W3 ARAM base"),
+        field("original_phase2", 17, (("N", 0, 17),), "typed q12"),
+        field("final_old_phase", 14, (("O", 0, 14),),
+              "retained clamp14 result"),
+        *controls_w1,
+        field("snd_wt", 1, (("C", 6, 1),), "live wavetable context"),
+        field("live_is_wave6", 1, (("C", 3, 1),),
+              "live wave-six predicate"),
+    )
+    pre_w15 = (
+        field("secondary_adjacent", 8, (("A", 0, 8),),
+              "CAP_W4 ARAM adjacent"),
+        field("live_gain", 13,
+              (("A", 8, 7), ("A", 17, 1), ("C", 0, 5)),
+              "amplitude-to-gain transform"),
+        field("snd_wt", 1, (("A", 15, 1),), "relocated live context"),
+        field("live_is_wave6", 1, (("A", 16, 1),),
+              "relocated wave-six predicate"),
+        field("secondary_fraction", 10, (("B", 0, 10),),
+              "retained old fraction"),
+        field("secondary_base", 8, (("B", 10, 8),),
+              "retained CAP_W3 base"),
+        field("final_phase2", 17, (("N", 0, 17),), "W6 DQ update"),
+        field("final_old_q", 17, (("O", 0, 17),),
+              "restart original phase2 or don't-care old q"),
+        field("final_old_phase", 14, (("Q", 0, 14),),
+              "relocated clamp14 result"),
+        field("primary_base", 8,
+              (("Q", 14, 2), ("T", 4, 2), ("I", 3, 3),
+               ("D", 0, 1)), "W4 relocation of CAP_W1 base"),
+        field("primary_delta_sign", 1, (("D", 1, 1),),
+              "W4 relocation of W2 sign"),
+        field("restart", 1, (("T", 0, 1),), "restart predicate"),
+        field("clear", 1, (("T", 1, 1),), "clear toggle"),
+        field("last_gain_we", 1, (("T", 2, 1),),
+              "play/music predicate"),
+        field("old_q_replace", 1, (("T", 3, 1),),
+              "restart or old-DQ update"),
+        field("nz_phase", 4, (("C", 5, 2), ("I", 0, 2)),
+              "relocated noise phase"),
+        field("refresh", 1, (("I", 2, 1),), "relocated refresh"),
+    )
+    post_w15 = (
+        field("primary_interp", 15, (("A", 0, 15),),
+              "base plus signed primary multiplier result"),
+        field("snd_wt", 1, (("A", 15, 1),), "live context"),
+        field("live_is_wave6", 1, (("A", 16, 1),),
+              "wave-six predicate"),
+        field("live_gain", 13, (("B", 0, 13),), "W15 relocation"),
+        field("nz_phase", 4, (("B", 13, 4),), "W15 relocation"),
+        field("refresh", 1, (("B", 17, 1),), "W15 relocation"),
+        field("final_phase2", 17, (("N", 0, 17),), "retained W6 result"),
+        field("final_old_q", 17, (("O", 0, 17),), "retained old q"),
+        field("final_old_phase", 14, (("Q", 0, 14),),
+              "retained clamp14 result"),
+        field("secondary_base", 8,
+              (("C", 0, 7), ("T", 4, 1)),
+              "retained CAP_W3 base"),
+        field("secondary_delta_sign", 1, (("T", 5, 1),),
+              "sign(CAP_W4 adjacent - secondary base)"),
+        field("restart", 1, (("T", 0, 1),), "restart predicate"),
+        field("clear", 1, (("T", 1, 1),), "clear toggle"),
+        field("last_gain_we", 1, (("T", 2, 1),),
+              "play/music predicate"),
+        field("old_q_replace", 1, (("T", 3, 1),),
+              "restart or old-DQ update"),
+    )
+    post_pc27 = tuple(item for item in post_w15
+                      if item.name != "refresh")
+    post_pc28 = tuple(item for item in post_pc27
+                      if item.name != "final_old_phase")
+    post_pc29 = tuple(item for item in post_pc28
+                      if item.name not in {"final_old_q", "old_q_replace"})
+    post_pc2a = tuple(item for item in post_pc29
+                      if item.name not in {"nz_phase", "restart",
+                                           "last_gain_we"}) + (
+        field("selected_old_gain_hi", 5, (("Q", 0, 5),),
+              "typed q13 at PC2A"),
+    )
+    post_w26 = tuple(item for item in post_pc2a
+                     if item.name not in {"secondary_base",
+                                          "secondary_delta_sign",
+                                          "selected_old_gain_hi"}) + (
+        field("old_interp", 15, (("O", 0, 15),),
+              "base plus signed secondary multiplier result"),
+        field("old_gain_nonzero", 1, (("Q", 0, 1),),
+              "typed q13 high plus q19 low"),
+    )
+
+    snapshots = (("W1", w1, 108), ("W2", w2, 80), ("W3", w3, 79),
+                 ("PRE_W15", pre_w15, 107),
+                 ("POST_W15", post_w15, 96),
+                 ("POST_PC27", post_pc27, 95),
+                 ("POST_PC28", post_pc28, 81),
+                 ("POST_PC29", post_pc29, 63),
+                 ("POST_PC2A", post_pc2a, 62),
+                 ("POST_W26", post_w26, 64))
+    snapshot_fields: dict[str, tuple[Field, ...]] = {}
+    physical_used: dict[str, int] = {}
+    for snapshot_name, fields, expected_used in snapshots:
+        owned: set[tuple[str, int]] = set()
+        names: set[str] = set()
+        for item in fields:
+            assert item.name not in names, (snapshot_name, item.name)
+            names.add(item.name)
+            for container, lsb, width in item.pieces:
+                assert container in capacities
+                assert 0 <= lsb and lsb + width <= capacities[container]
+                for bit in range(lsb, lsb + width):
+                    key = (container, bit)
+                    assert key not in owned, (snapshot_name, key, item.name)
+                    owned.add(key)
+        assert len(owned) == expected_used, \
+            (snapshot_name, len(owned), expected_used)
+        snapshot_fields[snapshot_name] = fields
+        physical_used[snapshot_name] = len(owned)
+    overlay_used = (physical_used["W1"] - 11,
+                    physical_used["W2"] - 11,
+                    physical_used["W3"] - 2)
+    assert overlay_used == (97, 69, 77)
+
+    def unpack(snapshot_name: str, packed: PackedFrame) -> FrameValues:
+        fields = snapshot_fields[snapshot_name]
+        assert set(packed) == set(capacities)
+        for container, width in capacities.items():
+            assert 0 <= packed[container] < (1 << width)
+        recovered: FrameValues = {}
+        for item in fields:
+            value = 0
+            field_lsb = 0
+            for container, lsb, width in item.pieces:
+                mask = (1 << width) - 1
+                value |= ((packed[container] >> lsb) & mask) << field_lsb
+                field_lsb += width
+            recovered[item.name] = value
+        return recovered
+
+    def pack(snapshot_name: str, values: FrameValues) \
+            -> tuple[PackedFrame, FrameValues]:
+        fields = snapshot_fields[snapshot_name]
+        assert set(values) == {item.name for item in fields}, \
+            (snapshot_name, set(values) ^ {item.name for item in fields})
+        packed = {container: 0 for container in capacities}
+        for item in fields:
+            field_lsb = 0
+            for container, lsb, width in item.pieces:
+                mask = (1 << width) - 1
+                assert 0 <= values[item.name] < (1 << item.width)
+                packed[container] |= \
+                    ((values[item.name] >> field_lsb) & mask) << lsb
+                field_lsb += width
+        recovered = unpack(snapshot_name, packed)
+        assert recovered == values, (snapshot_name, recovered, values)
+        return packed, recovered
+
+    def source(case: int, name: str, width: int) -> int:
+        return ((case * 0x5a17 + sum(ord(ch) for ch in name) * 0x9e37
+                 + width * 0x45) & ((1 << width) - 1))
+
+    def carry(prior: dict[str, int], *names: str) -> dict[str, int]:
+        return {name: prior[name] for name in names}
+
+    # Execute every replacement from the decoded previous physical frame.
+    # New values enter only at the named q/input/service edge.  In particular,
+    # no later frame is independently filled from a synthetic field table.
+    for case in range(256):
+        nz_tick = bool(case & 1)
+        restart = bool(case & 2)
+        restart_or_nz_tick = restart or nz_tick
+        wrapped_seed = source(case, "wrapped_seed", 16)
+        kick14 = source(case, "kick14", 14)
+        kick16 = kick14 | (0xc000 if kick14 & 0x2000 else 0)
+        seed_union = wrapped_seed if restart_or_nz_tick else kick16
+        w1_values = {
+            "primary_fraction": source(case, "primary_fraction", 10),
+            "primary_base": source(case, "primary_base", 8),
+            "secondary_fraction": source(case, "secondary_fraction", 10),
+            "seed_union": seed_union,
+            "original_phase2": source(case, "original_phase2", 17),
+            "old_noise_step": source(case, "old_noise_step", 17),
+            "amplitude": source(case, "amplitude", 12) or 1,
+            "restart": int(restart),
+            "clear": int(bool(case & 4)),
+            "nz_phase": source(case, "nz_phase", 4),
+            "refresh": int(bool(case & 8)),
+            "snd_wt": 1,
+            "live_is_wave6": int((case & 7) == 6),
+            "secondary_index": source(case, "secondary_index", 6),
+            "snd_id": source(case, "snd_id", 3),
+        }
+        _, w1_decoded = pack("W1", w1_values)
+
+        # CAP_W2 consumes q16 and the arriving ARAM byte.  The adjacent byte
+        # is explicitly pre-edge input, never the just-assigned wt_p1 value.
+        primary_adjacent = source(case, "primary_adjacent", 8)
+        primary_delta = signed(primary_adjacent, 8) \
+            - signed(w1_decoded["primary_base"], 8)
+        q16_old_phase = source(case, "q16_old_phase", 16)
+        selected_seed = w1_decoded["seed_union"] \
+            if restart_or_nz_tick else \
+            (q16_old_phase + signed(w1_decoded["seed_union"], 16)) & 0xffff
+        pre_sum = signed(selected_seed, 16) \
+            + signed(w1_decoded["old_noise_step"], 17)
+        final_old_phase = max(-6_143, min(6_143, pre_sum))
+        w2_values = carry(
+            w1_decoded, "primary_base", "secondary_fraction",
+            "original_phase2", "amplitude", "restart", "clear",
+            "nz_phase", "refresh", "snd_wt", "live_is_wave6",
+            "secondary_index", "snd_id")
+        w2_values.update({
+            "primary_delta_sign": int(primary_delta < 0),
+            "final_old_phase": final_old_phase & 0x3fff,
+        })
+        _, w2_decoded = pack("W2", w2_values)
+        primary_token = {
+            "kind": "primary_interp",
+            "magnitude": abs(primary_delta)
+                         * w1_decoded["primary_fraction"],
+            "base": w2_decoded["primary_base"],
+            "sign": w2_decoded["primary_delta_sign"],
+        }
+
+        # CAP_W3 consumes the next returned base, after which the phase index
+        # and sounding id are dead.  All retained values come from W2 bits.
+        w3_values = carry(
+            w2_decoded, "primary_base", "primary_delta_sign",
+            "secondary_fraction", "original_phase2", "final_old_phase",
+            "amplitude", "restart", "clear", "nz_phase", "refresh",
+            "snd_wt", "live_is_wave6")
+        w3_values["secondary_base"] = source(case, "secondary_base", 8)
+        _, w3_decoded = pack("W3", w3_values)
+
+        # W4 supplies secondary adjacent and relocates primary base/sign.  W6
+        # copies old N into O on restart before updating N; without restart O
+        # is don't-care because old_q_replace stays clear.
+        secondary_adjacent = source(case, "secondary_adjacent", 8)
+        dq_visit = source(case, "dq_visit", 17)
+        final_phase2 = (w3_decoded["original_phase2"] + dq_visit) & 0x1ffff
+        old_q_replace = w3_decoded["restart"]
+        final_old_q = w3_decoded["original_phase2"] \
+            if old_q_replace else 0
+        pre_values = carry(
+            w3_decoded, "primary_base", "primary_delta_sign",
+            "secondary_fraction", "secondary_base", "final_old_phase",
+            "restart", "clear", "nz_phase", "refresh", "snd_wt",
+            "live_is_wave6")
+        pre_values.update({
+            "secondary_adjacent": secondary_adjacent,
+            "live_gain": (w3_decoded["amplitude"]
+                          + (w3_decoded["amplitude"] >> 1)) & 0x1fff,
+            "final_phase2": final_phase2,
+            "final_old_q": final_old_q,
+            "last_gain_we": int(bool(case & 16)),
+            "old_q_replace": old_q_replace,
+        })
+        pre_packed, pre_decoded = pack("PRE_W15", pre_values)
+
+        # CAP_W15 consumes the ready primary token and atomically launches the
+        # secondary one.  Its base/sign are then read back unchanged at W26.
+        assert primary_token["kind"] == "primary_interp"
+        assert primary_token["base"] == pre_decoded["primary_base"]
+        assert primary_token["sign"] == pre_decoded["primary_delta_sign"]
+        primary_product = int(primary_token["magnitude"])
+        if primary_token["sign"]:
+            primary_product = -primary_product
+        primary_interp = ((signed(pre_decoded["primary_base"], 8) << 10)
+                          + primary_product) >> 3
+        assert -(1 << 14) <= primary_interp < (1 << 14)
+        secondary_delta = signed(pre_decoded["secondary_adjacent"], 8) \
+            - signed(pre_decoded["secondary_base"], 8)
+        secondary_token = {
+            "kind": "secondary_interp",
+            "magnitude": abs(secondary_delta)
+                         * pre_decoded["secondary_fraction"],
+            "base": pre_decoded["secondary_base"],
+            "sign": int(secondary_delta < 0),
+        }
+        post_values = carry(
+            pre_decoded, "snd_wt", "live_is_wave6", "live_gain",
+            "final_phase2", "final_old_q", "final_old_phase",
+            "secondary_base", "restart", "clear", "last_gain_we",
+            "old_q_replace", "nz_phase", "refresh")
+        post_values.update({
+            "primary_interp": primary_interp & 0x7fff,
+            "secondary_delta_sign": int(secondary_delta < 0),
+        })
+        _, post_decoded = pack("POST_W15", post_values)
+        held_base = post_decoded["secondary_base"]
+        held_sign = post_decoded["secondary_delta_sign"]
+
+        # Execute each intervening fixed edge.  The two sideband fields are
+        # decoded from and re-packed into every successor frame; they are not
+        # reintroduced from locals at W26.
+        pc27_values = {name: value for name, value in post_decoded.items()
+                       if name != "refresh"}
+        _, pc27_decoded = pack("POST_PC27", pc27_values)
+        pc28_values = {name: value for name, value in pc27_decoded.items()
+                       if name != "final_old_phase"}
+        _, pc28_decoded = pack("POST_PC28", pc28_values)
+        pc29_values = {name: value for name, value in pc28_decoded.items()
+                       if name not in {"final_old_q", "old_q_replace"}}
+        _, pc29_decoded = pack("POST_PC29", pc29_values)
+        pc2a_values = {
+            name: value for name, value in pc29_decoded.items()
+            if name not in {"nz_phase", "restart", "last_gain_we"}
+        }
+        pc2a_values["selected_old_gain_hi"] = \
+            source(case, "selected_old_gain_hi", 5)
+        _, pc2a_decoded = pack("POST_PC2A", pc2a_values)
+        for decoded_frame in (post_decoded, pc27_decoded, pc28_decoded,
+                              pc29_decoded, pc2a_decoded):
+            assert decoded_frame["secondary_base"] == held_base
+            assert decoded_frame["secondary_delta_sign"] == held_sign
+
+        assert held_base == pre_decoded["secondary_base"]
+        assert held_sign == int(secondary_delta < 0)
+        assert secondary_token["base"] == held_base
+        assert secondary_token["sign"] == held_sign
+        secondary_product = int(secondary_token["magnitude"])
+        if secondary_token["sign"]:
+            secondary_product = -secondary_product
+        secondary_interp = ((signed(held_base, 8) << 10)
+                            + secondary_product) >> 3
+        assert -(1 << 14) <= secondary_interp < (1 << 14)
+        old_gain_nonzero = int(
+            (pc2a_decoded["selected_old_gain_hi"] << 8)
+            | source(case, "selected_old_gain_low", 8) != 0)
+        w26_values = {
+            name: value for name, value in pc2a_decoded.items()
+            if name not in {"secondary_base", "secondary_delta_sign",
+                            "selected_old_gain_hi"}
+        }
+        w26_values.update({
+            "old_interp": secondary_interp & 0x7fff,
+            "old_gain_nonzero": old_gain_nonzero,
+        })
+        _, w26_decoded = pack("POST_W26", w26_values)
+        assert w26_decoded["old_interp"] == (secondary_interp & 0x7fff)
+
+    # W2 consumes the arriving byte combinationally.  The signed base and sign
+    # are the only primary-interpolation payload retained through W15.  The
+    # secondary request repeats the same contract from W15 through W26.
+    for base in range(-128, 128):
+        for adjacent in (-128, -1, 0, 1, 127):
+            delta = adjacent - base
+            sign_bit = int(delta < 0)
+            assert sign_bit == int((-delta if sign_bit else delta) != delta)
+            assert -255 <= delta <= 255
+    assert dict(SAMPLE_CAP_SCHEDULE)["W15"] \
+        - dict(SAMPLE_CAP_SCHEDULE)["W2"] == 7
+    assert dict(SAMPLE_CAP_SCHEDULE)["W26"] \
+        - dict(SAMPLE_CAP_SCHEDULE)["W15"] == 5
+
+    summary = ("H-D2F-C-B3-B2-A1 active play&&amplitude!=0 wavetable/"
+            "selected-old-noise path map: "
+            "q W0..W5="
+            "10/12/16/19/14/16; physical W1/W2/W3/PRE_W15/POST_W15/W26 "
+            f"{physical_used['W1']}/{physical_used['W2']}/"
+            f"{physical_used['W3']}/{physical_used['PRE_W15']}/"
+            f"{physical_used['POST_W15']}/{physical_used['POST_W26']} "
+            "of 108 (overlay "
+            f"{overlay_used[0]}/{overlay_used[1]}/{overlay_used[2]}); "
+            "primary base/sign "
+            "W2->W15 and secondary base/sign W15->W26 literal and "
+            f"overlap-free; {changed} image words and 222/782/172/158 "
+            "unchanged; stopped/hold/service execution and accepted image/RTL "
+            "untouched")
+    return summary, candidate, B3B2AFrameCodec(pack, unpack, source)
+
+
+def validate_sample_b3b2a2a1_edge_services(
+        candidate: list[int], actions: Actions,
+        codec: B3B2AFrameCodec) -> str:
+    """Sample a CE-selected W1--POST_W26 frame/service transducer."""
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+    assert Instruction.decode(candidate[0x1f]) == Instruction(
+        Op.EXEC, action=action_by_name["CAP_W2"], word=19)
+
+    aram_rtl = (ROOT / "rtl" / "psg_aram.sv").read_text()
+    mul_rtl = (ROOT / "rtl" / "psg_mulmp.sv").read_text()
+    walk_rtl = WALK.read_text()
+    for spelling in (
+            "assign seq_frozen = syn_rd | replay;",
+            "wire aram_rd = !syn_freeze && (syn_rd | replay | !seq_hold);",
+            "wire [12:0] aram_addr = syn_rd ? syn_addr : seq_addr;",
+            "seq_q <= aram[aram_addr];",
+            "replay <= syn_rd;"):
+        assert spelling in aram_rtl
+    for spelling in (
+            "assign m_busy     = req_tgl != ack_sync;",
+            "ack_meta <= ack_tgl;",
+            "ack_sync <= ack_meta;",
+            "req_meta <= req_tgl;",
+            "req_sync <= req_meta;",
+            "m_p   <= {21'b0, req_b};",
+            "m_cnt <= req_steps;",
+            "else if (!freeze) begin"):
+        assert spelling in mul_rtl
+    assert "if (prun && !ctrl_stall && s_snd_wt && play_bits[pc_ch])" \
+        in walk_rtl
+    assert "if (play_bits[pc_ch] && s_eff_a != 0) begin" in walk_rtl
+    assert "wire [12:0] g_live = g_a + {1'b0, g_a[12:1]};" in walk_rtl
+    assert "s_snd_wt ? ((s_old_G == 13'd0) ? 17'sd0 : mx_new)" \
+        in walk_rtl
+    assert "mx_aud  <= play_bits[pc_ch]" in walk_rtl
+    assert "wmul_mode = 2'd1;" in walk_rtl
+
+    @dataclass(frozen=True)
+    class Aram:
+        memory: tuple[int, ...]
+        wraddr: int = 0x3100
+        seq_q: int = 0
+        replay: bool = False
+        # Proof witness only: the inferred RTL stores the byte, not its tag.
+        q_origin: int | None = None
+
+    def aram_edge(state: Aram, *, seq_addr: int, syn_rd: bool,
+                  syn_addr: int = 0, syn_freeze: bool,
+                  seq_hold: bool, reset: bool = False,
+                  cpu: tuple[int, int] | None = None) -> Aram:
+        assert len(state.memory) == 4608
+        assert 0 <= seq_addr < 4608 and 0 <= syn_addr < 8192
+        memory = state.memory
+        aram_rd = (not syn_freeze) \
+            and (syn_rd or state.replay or not seq_hold)
+        aram_addr = syn_addr if syn_rd else seq_addr
+        seq_q = state.seq_q
+        q_origin = state.q_origin
+        if aram_rd:
+            assert aram_addr < 4608
+            seq_q = memory[aram_addr]
+            q_origin = aram_addr
+
+        replay = False if reset else (
+            state.replay if syn_freeze else syn_rd)
+        wraddr = 0x3100 if reset else state.wraddr
+        if not reset and cpu is not None:
+            addr, data = cpu
+            assert 0 <= addr < 256 and 0 <= data < 256
+            if addr == 0:
+                wraddr = (state.wraddr & 0xff00) | data
+            elif addr == 1:
+                wraddr = (state.wraddr & 0x00ff) | (data << 8)
+            elif addr == 2:
+                up_idx = state.wraddr - 0x3100
+                if 0 <= up_idx < 4608:
+                    image = list(memory)
+                    image[up_idx] = data
+                    memory = tuple(image)
+                wraddr = (state.wraddr + 1) & 0xffff
+        return Aram(memory, wraddr, seq_q, replay, q_origin)
+
+    @dataclass(frozen=True)
+    class Mul:
+        req_a: int = 0
+        req_b: int = 0
+        req_steps: int = 0
+        req_tgl: int = 0
+        seq_pad: int = 0
+        ack_tgl: int = 0
+        ack_meta: int = 0
+        ack_sync: int = 0
+        req_meta: int = 0
+        req_sync: int = 0
+        m_p: int = 0
+        m_cnt: int = 0
+
+        @property
+        def busy(self) -> bool:
+            return bool(self.req_tgl != self.ack_sync)
+
+    def mul_slow(state: Mul, *, start: bool = False, a: int = 0,
+                 b: int = 0, enable: bool) -> Mul:
+        if not enable:
+            return state
+        nxt = replace(
+            state, ack_meta=state.ack_tgl, ack_sync=state.ack_meta,
+            seq_pad=max(0, state.seq_pad - 1))
+        if start:
+            assert not state.busy
+            assert -(1 << 17) <= a < (1 << 17)
+            assert 0 <= b < (1 << 10)
+            nxt = replace(
+                nxt, req_a=abs(a), req_b=b, req_steps=10,
+                req_tgl=state.req_tgl ^ 1, seq_pad=5)
+        return nxt
+
+    def mul_fast(state: Mul, *, enable: bool) -> Mul:
+        if not enable:
+            return state
+        nxt = replace(state, req_meta=state.req_tgl,
+                      req_sync=state.req_meta)
+        if state.m_cnt != 0:
+            acc = (state.m_p >> 12) & ((1 << 19) - 1)
+            total = acc + (state.req_a if state.m_p & 1 else 0)
+            product = ((total & ((1 << 20) - 1)) << 11) \
+                | ((state.m_p >> 1) & 0x7ff)
+            nxt = replace(nxt, m_p=product,
+                          m_cnt=state.m_cnt - 1)
+            if state.m_cnt == 1:
+                nxt = replace(nxt, ack_tgl=state.req_sync)
+        elif state.req_sync != state.ack_tgl:
+            nxt = replace(nxt, m_p=state.req_b,
+                          m_cnt=state.req_steps)
+        return nxt
+
+    def mul_edge(state: Mul, *, start: bool = False, a: int = 0,
+                 b: int = 0, enable: bool) -> Mul:
+        # clocks.sv and psg_mulmp_tb place the PSG rising edge on a fast-clock
+        # falling edge, followed by exactly six fast rising edges.
+        nxt = mul_slow(state, start=start, a=a, b=b, enable=enable)
+        for _ in range(6):
+            nxt = mul_fast(nxt, enable=enable)
+        return nxt
+
+    def mul_value(state: Mul) -> int:
+        assert not state.busy and state.m_cnt == 0
+        return state.m_p >> 2
+
+    def sample_addr(snd_id: int, index: int, adjacent: bool) -> int:
+        assert 0 <= snd_id < 8 and 0 <= index < 64
+        point = (index + int(adjacent)) & 0x3f
+        return 256 + (snd_id << 6) + (snd_id << 2) + point
+
+    def frame_tuple(frame: PackedFrame) -> tuple[tuple[str, int], ...]:
+        return tuple(sorted(frame.items()))
+
+    def frame_dict(frame: tuple[tuple[str, int], ...]) -> PackedFrame:
+        return dict(frame)
+
+    def carry(prior: FrameValues, *names: str) -> FrameValues:
+        return {name: prior[name] for name in names}
+
+    @dataclass(frozen=True)
+    class Scenario:
+        case: int
+        play: bool
+        amplitude_nonzero: bool
+        primary_phase: int
+        secondary_phase: int
+        primary_fraction: int
+        secondary_fraction: int
+        seq_addr: int
+
+    @dataclass(frozen=True)
+    class EdgeState:
+        offset: int
+        frame_name: str
+        frame: tuple[tuple[str, int], ...]
+        aram: Aram
+        mul: Mul
+        aram_issues: int = 0
+        aram_takes: int = 0
+        mul_issues: int = 0
+        mul_takes: int = 0
+
+    def initial_state(scenario: Scenario, aram: Aram, mul: Mul) -> EdgeState:
+        case = scenario.case
+        nz_tick = bool(case & 1)
+        restart = bool(case & 2)
+        restart_or_nz_tick = restart or nz_tick
+        wrapped_seed = codec.source(case, "wrapped_seed", 16)
+        kick14 = codec.source(case, "kick14", 14)
+        kick16 = kick14 | (0xc000 if kick14 & 0x2000 else 0)
+        seed_union = wrapped_seed if restart_or_nz_tick else kick16
+        amplitude = (codec.source(case, "amplitude", 12) or 1) \
+            if scenario.amplitude_nonzero else 0
+        values = {
+            "primary_fraction": scenario.primary_fraction,
+            "primary_base": 0,
+            "secondary_fraction": scenario.secondary_fraction,
+            "seed_union": seed_union,
+            "original_phase2": codec.source(case, "original_phase2", 17),
+            "old_noise_step": codec.source(case, "old_noise_step", 17),
+            "amplitude": amplitude,
+            "restart": int(restart),
+            "clear": int(bool(case & 4)),
+            "nz_phase": codec.source(case, "nz_phase", 4),
+            "refresh": int(bool(case & 8)),
+            "snd_wt": 1,
+            "live_is_wave6": int((case & 7) == 6),
+            "secondary_index": scenario.secondary_phase >> 10,
+            "snd_id": codec.source(case, "snd_id", 3),
+        }
+        packed = codec.pack("W1", values)[0]
+        return EdgeState(0, "W1", frame_tuple(packed), aram, mul)
+
+    def enabled_successor(state: EdgeState,
+                          scenario: Scenario) -> EdgeState:
+        assert 0 <= state.offset < 15
+        frame = frame_dict(state.frame)
+        pre_q = state.aram.seq_q
+        pre_origin = state.aram.q_origin
+        aram_req = False
+        aram_addr = 0
+        mul_start = False
+        mul_a = 0
+        mul_b = 0
+        frame_name = state.frame_name
+        aram_takes = state.aram_takes
+        mul_takes = state.mul_takes
+
+        snd_id = codec.unpack(frame_name, frame).get(
+            "snd_id", codec.source(scenario.case, "snd_id", 3))
+        pindex = scenario.primary_phase >> 10
+        sindex = scenario.secondary_phase >> 10
+        addresses = (
+            sample_addr(snd_id, pindex, False),
+            sample_addr(snd_id, pindex, True),
+            sample_addr(snd_id, sindex, False),
+            sample_addr(snd_id, sindex, True),
+        )
+
+        if state.offset == 0:
+            if scenario.play:
+                aram_req, aram_addr = True, addresses[0]
+        elif state.offset == 1:
+            values = codec.unpack("W1", frame)
+            if scenario.play:
+                assert pre_origin == addresses[0]
+                aram_takes += 1
+                aram_req, aram_addr = True, addresses[1]
+            else:
+                assert pre_origin == scenario.seq_addr
+            values["primary_base"] = pre_q
+            frame = codec.pack("W1", values)[0]
+        elif state.offset == 2:
+            w1 = codec.unpack("W1", frame)
+            if scenario.play:
+                assert pre_origin == addresses[1]
+                aram_takes += 1
+                aram_req, aram_addr = True, addresses[2]
+            else:
+                assert pre_q == w1["primary_base"]
+            delta = signed(pre_q, 8) - signed(w1["primary_base"], 8)
+            restart_or_nz_tick = bool(w1["restart"] or (scenario.case & 1))
+            q16_old_phase = codec.source(
+                scenario.case, "q16_old_phase", 16)
+            selected_seed = w1["seed_union"] if restart_or_nz_tick else \
+                (q16_old_phase + signed(w1["seed_union"], 16)) & 0xffff
+            pre_sum = signed(selected_seed, 16) \
+                + signed(w1["old_noise_step"], 17)
+            final_old_phase = max(-6_143, min(6_143, pre_sum))
+            w2 = carry(
+                w1, "primary_base", "secondary_fraction",
+                "original_phase2", "amplitude", "restart", "clear",
+                "nz_phase", "refresh", "snd_wt", "live_is_wave6",
+                "secondary_index", "snd_id")
+            w2.update({"primary_delta_sign": int(delta < 0),
+                       "final_old_phase": final_old_phase & 0x3fff})
+            frame = codec.pack("W2", w2)[0]
+            frame_name = "W2"
+            assert not state.mul.busy
+            mul_start, mul_a, mul_b = True, delta, w1["primary_fraction"]
+        elif state.offset == 3:
+            w2 = codec.unpack("W2", frame)
+            if scenario.play:
+                assert pre_origin == addresses[2]
+                aram_takes += 1
+                aram_req, aram_addr = True, addresses[3]
+            w3 = carry(
+                w2, "primary_base", "primary_delta_sign",
+                "secondary_fraction", "original_phase2",
+                "final_old_phase", "amplitude", "restart", "clear",
+                "nz_phase", "refresh", "snd_wt", "live_is_wave6")
+            w3["secondary_base"] = pre_q
+            frame = codec.pack("W3", w3)[0]
+            frame_name = "W3"
+        elif state.offset == 4:
+            w3 = codec.unpack("W3", frame)
+            if scenario.play:
+                assert pre_origin == addresses[3]
+                aram_takes += 1
+            else:
+                assert pre_q == w3["secondary_base"]
+            dq_visit = codec.source(scenario.case, "dq_visit", 17)
+            final_phase2 = (w3["original_phase2"] + dq_visit) & 0x1ffff
+            pre = carry(
+                w3, "primary_base", "primary_delta_sign",
+                "secondary_fraction", "secondary_base",
+                "final_old_phase", "restart", "clear", "nz_phase",
+                "refresh", "snd_wt", "live_is_wave6")
+            pre.update({
+                "secondary_adjacent": pre_q,
+                "live_gain": (w3["amplitude"]
+                              + (w3["amplitude"] >> 1)) & 0x1fff,
+                "final_phase2": final_phase2,
+                "final_old_q": (w3["original_phase2"]
+                                if w3["restart"] else 0),
+                "last_gain_we": int(bool(scenario.case & 16)),
+                "old_q_replace": w3["restart"],
+            })
+            frame = codec.pack("PRE_W15", pre)[0]
+            frame_name = "PRE_W15"
+        elif state.offset == 9:
+            pre = codec.unpack("PRE_W15", frame)
+            magnitude = mul_value(state.mul)
+            assert magnitude == state.mul.req_a * state.mul.req_b
+            product = -magnitude if pre["primary_delta_sign"] else magnitude
+            interp = ((signed(pre["primary_base"], 8) << 10)
+                      + product) >> 3
+            delta = signed(pre["secondary_adjacent"], 8) \
+                - signed(pre["secondary_base"], 8)
+            post = carry(
+                pre, "snd_wt", "live_is_wave6", "live_gain",
+                "final_phase2", "final_old_q", "final_old_phase",
+                "secondary_base", "restart", "clear", "last_gain_we",
+                "old_q_replace", "nz_phase", "refresh")
+            post.update({"primary_interp": interp & 0x7fff,
+                         "secondary_delta_sign": int(delta < 0)})
+            frame = codec.pack("POST_W15", post)[0]
+            frame_name = "POST_W15"
+            mul_start, mul_a, mul_b = True, delta, pre["secondary_fraction"]
+            mul_takes += 1
+        elif state.offset == 10:
+            post = codec.unpack("POST_W15", frame)
+            frame = codec.pack("POST_PC27", {
+                name: value for name, value in post.items()
+                if name != "refresh"})[0]
+            frame_name = "POST_PC27"
+        elif state.offset == 11:
+            post = codec.unpack("POST_PC27", frame)
+            frame = codec.pack("POST_PC28", {
+                name: value for name, value in post.items()
+                if name != "final_old_phase"})[0]
+            frame_name = "POST_PC28"
+        elif state.offset == 12:
+            post = codec.unpack("POST_PC28", frame)
+            frame = codec.pack("POST_PC29", {
+                name: value for name, value in post.items()
+                if name not in {"final_old_q", "old_q_replace"}})[0]
+            frame_name = "POST_PC29"
+        elif state.offset == 13:
+            post = codec.unpack("POST_PC29", frame)
+            values = {name: value for name, value in post.items()
+                      if name not in {"nz_phase", "restart",
+                                      "last_gain_we"}}
+            values["selected_old_gain_hi"] = codec.source(
+                scenario.case, "selected_old_gain_hi", 5)
+            frame = codec.pack("POST_PC2A", values)[0]
+            frame_name = "POST_PC2A"
+        elif state.offset == 14:
+            post = codec.unpack("POST_PC2A", frame)
+            magnitude = mul_value(state.mul)
+            assert magnitude == state.mul.req_a * state.mul.req_b
+            product = -magnitude \
+                if post["secondary_delta_sign"] else magnitude
+            interp = ((signed(post["secondary_base"], 8) << 10)
+                      + product) >> 3
+            old_gain = (post["selected_old_gain_hi"] << 8) \
+                | codec.source(scenario.case, "selected_old_gain_low", 8)
+            values = {name: value for name, value in post.items()
+                      if name not in {"secondary_base",
+                                      "secondary_delta_sign",
+                                      "selected_old_gain_hi"}}
+            values.update({"old_interp": interp & 0x7fff,
+                           "old_gain_nonzero": int(old_gain != 0)})
+            frame = codec.pack("POST_W26", values)[0]
+            frame_name = "POST_W26"
+            mul_takes += 1
+
+        aram = aram_edge(
+            state.aram, seq_addr=scenario.seq_addr, syn_rd=aram_req,
+            syn_addr=aram_addr, syn_freeze=False, seq_hold=True)
+        mul = mul_edge(state.mul, start=mul_start, a=mul_a, b=mul_b,
+                       enable=True)
+        return EdgeState(
+            state.offset + 1, frame_name, frame_tuple(frame), aram, mul,
+            state.aram_issues + int(aram_req), aram_takes,
+            state.mul_issues + int(mul_start), mul_takes)
+
+    def edge(state: EdgeState, scenario: Scenario, *, enable: bool) \
+            -> EdgeState:
+        # Deliberately compute the complete enabled successor first.  The
+        # service CE then chooses that successor or the bit-identical prestate
+        # as one atomic boundary, including schedule offset and packed frame.
+        # The offset is not a production PC/IR/action/state_q controller proof.
+        successor = enabled_successor(state, scenario)
+        return successor if enable else state
+
+    def run(scenario: Scenario, aram: Aram, mul: Mul) \
+            -> tuple[EdgeState, int]:
+        state = initial_state(scenario, aram, mul)
+        holds = 0
+        for offset in range(15):
+            assert state.offset == offset
+            successor = edge(state, scenario, enable=True)
+            assert successor != state
+            assert edge(state, scenario, enable=False) == state
+            state = successor
+            holds += 1
+        assert state.offset == 15 and state.frame_name == "POST_W26"
+        assert not state.mul.busy
+        return state, holds
+
+    def interp(base: int, adjacent: int, fraction: int) -> int:
+        delta = signed(adjacent, 8) - signed(base, 8)
+        product = abs(delta) * fraction
+        if delta < 0:
+            product = -product
+        return ((signed(base, 8) << 10) + product) >> 3
+
+    def fraction_gain_witness(values: FrameValues, play: bool) -> int:
+        if not play:
+            return 0
+        # Exact candidate gain starts at amplitude + amplitude/2.  A zero
+        # amplitude therefore convicts every later gain/blend arm to zero,
+        # independent of both interpolation results.
+        gain = values["live_gain"]
+        combined = signed(values["primary_interp"], 15) \
+            + (signed(values["old_interp"], 15) >> 1)
+        return combined * gain
+
+    quotient_cases = 0
+    for raw in range(256):
+        for fraction in range(1024):
+            assert interp(raw, raw, fraction) == signed(raw, 8) << 7
+            quotient_cases += 1
+    for combined in range(-(1 << 17), 1 << 17):
+        assert combined * 0 == 0
+
+    # Freeze every recurrence count and the returned acknowledge using the
+    # exact CE-selected pure functions, not an elapsed-age abstraction.
+    mul_freezes = 0
+    for target in range(10, 0, -1):
+        mul = mul_slow(Mul(), start=True, a=-255, b=1023, enable=True)
+        for _ in range(64):
+            if mul.m_cnt == target:
+                break
+            mul = mul_fast(mul, enable=True)
+        else:
+            raise AssertionError(("unreached multiplier count", target))
+        assert mul_slow(mul, enable=False) == mul
+        assert mul_fast(mul, enable=False) == mul
+        while mul.busy:
+            mul = mul_edge(mul, enable=True)
+        assert mul_value(mul) == 255 * 1023
+        mul_freezes += 1
+    mul = mul_slow(Mul(), start=True, a=127, b=777, enable=True)
+    for _ in range(64):
+        mul = mul_fast(mul, enable=True)
+        if mul.m_cnt == 0 and mul.ack_tgl != mul.ack_sync:
+            break
+    else:
+        raise AssertionError("unreached multiplier acknowledge crossing")
+    assert mul_slow(mul, enable=False) == mul
+    assert mul_fast(mul, enable=False) == mul
+    while mul.busy:
+        mul = mul_edge(mul, enable=True)
+    assert mul_value(mul) == 127 * 777
+    mul_freezes += 1
+
+    # CPU upload is intentionally outside the executor CE.  It may update RAM
+    # while synthesis output/replay are frozen, and resume must read the same
+    # address rather than an injected request value.
+    memory = tuple((i ^ (i >> 5) ^ 0xa5) & 0xff for i in range(4608))
+    aram = Aram(memory)
+    seq_addr, borrow_addr = 0x101, 0x020
+    aram = aram_edge(aram, seq_addr=seq_addr, syn_rd=False,
+                     syn_freeze=False, seq_hold=False)
+    aram = aram_edge(aram, seq_addr=seq_addr, syn_rd=True,
+                     syn_addr=borrow_addr, syn_freeze=False, seq_hold=True)
+    held_q = aram.seq_q
+    pico_addr = 0x3100 + seq_addr
+    for cpu in ((0, pico_addr & 0xff), (1, pico_addr >> 8), (2, 0xd4)):
+        aram = aram_edge(aram, seq_addr=seq_addr, syn_rd=False,
+                         syn_freeze=True, seq_hold=True, cpu=cpu)
+        assert aram.seq_q == held_q and aram.replay
+    assert aram.memory[seq_addr] == 0xd4
+    aram = aram_edge(aram, seq_addr=seq_addr, syn_rd=False,
+                     syn_freeze=False, seq_hold=True)
+    assert (aram.seq_q, aram.q_origin, aram.replay) \
+        == (0xd4, seq_addr, False)
+
+    class_counts = {"audible": 0, "silent": 0, "stopped": 0}
+    hold_checks = 0
+    convergence = 0
+    for case in range(64):
+        memory = tuple((((i * 0x59) ^ (i >> 4)
+                         ^ (case * 0x6d) ^ 0xa5) & 0xff)
+                       for i in range(4608))
+        seq_addr = (0x700 + case) % 4608
+        aram0 = aram_edge(Aram(memory), seq_addr=seq_addr, syn_rd=False,
+                          syn_freeze=False, seq_hold=False)
+        primary = codec.source(case, "a2a1_primary_phase", 16)
+        secondary = codec.source(case, "a2a1_secondary_phase", 16)
+        audible = Scenario(case, True, True, primary, secondary,
+                           primary & 0x3ff, secondary & 0x3ff, seq_addr)
+        live, held = run(audible, aram0, Mul())
+        hold_checks += held
+        class_counts["audible"] += 1
+        live_values = codec.unpack("POST_W26", frame_dict(live.frame))
+        snd_id = codec.source(case, "snd_id", 3)
+        assert signed(live_values["primary_interp"], 15) == interp(
+            memory[sample_addr(snd_id, primary >> 10, False)],
+            memory[sample_addr(snd_id, primary >> 10, True)],
+            primary & 0x3ff)
+        assert signed(live_values["old_interp"], 15) == interp(
+            memory[sample_addr(snd_id, secondary >> 10, False)],
+            memory[sample_addr(snd_id, secondary >> 10, True)],
+            secondary & 0x3ff)
+        assert (live.aram_issues, live.aram_takes,
+                live.mul_issues, live.mul_takes) == (4, 4, 2, 2)
+        assert (live.aram.seq_q, live.aram.q_origin, live.aram.replay) \
+            == (aram0.seq_q, seq_addr, False)
+
+        # A playing zero-amplitude slot performs the four reads but retains
+        # the preceding audible fractions in legacy RTL.  Execute both that
+        # literal state and the canonical-zero candidate, then compare the
+        # first public leaf and a following audible transaction.
+        silent_legacy = Scenario(
+            case, True, False, primary ^ 0x5a5a, secondary ^ 0xa5a5,
+            primary & 0x3ff, secondary & 0x3ff, seq_addr)
+        silent_zero = replace(silent_legacy,
+                              primary_fraction=0,
+                              secondary_fraction=0)
+        legacy_silent, held = run(silent_legacy, live.aram, live.mul)
+        zero_silent, held_zero = run(silent_zero, live.aram, live.mul)
+        hold_checks += held + held_zero
+        class_counts["silent"] += 1
+        lv = codec.unpack("POST_W26", frame_dict(legacy_silent.frame))
+        zv = codec.unpack("POST_W26", frame_dict(zero_silent.frame))
+        assert fraction_gain_witness(lv, True) \
+            == fraction_gain_witness(zv, True) == 0
+        assert (legacy_silent.aram, legacy_silent.mul.req_tgl,
+                legacy_silent.mul.ack_tgl) \
+            == (zero_silent.aram, zero_silent.mul.req_tgl,
+                zero_silent.mul.ack_tgl)
+        assert replace(legacy_silent.mul,
+                       req_b=zero_silent.mul.req_b,
+                       m_p=zero_silent.mul.m_p) == zero_silent.mul
+        assert legacy_silent.mul.m_p != zero_silent.mul.m_p \
+            or (lv["primary_interp"], lv["old_interp"]) \
+            == (zv["primary_interp"], zv["old_interp"])
+
+        following = Scenario(
+            case, True, True, primary ^ 0x33cc, secondary ^ 0xcc33,
+            (primary ^ 0x33cc) & 0x3ff,
+            (secondary ^ 0xcc33) & 0x3ff, seq_addr)
+        after_legacy, held = run(
+            following, legacy_silent.aram, legacy_silent.mul)
+        after_zero, held_zero = run(
+            following, zero_silent.aram, zero_silent.mul)
+        hold_checks += held + held_zero
+        assert after_legacy == after_zero
+        convergence += 1
+
+        stopped_legacy = Scenario(
+            case, False, True, primary, secondary,
+            primary & 0x3ff, secondary & 0x3ff, seq_addr)
+        stopped_zero = replace(stopped_legacy,
+                               primary_fraction=0,
+                               secondary_fraction=0)
+        legacy_stop, held = run(stopped_legacy, after_zero.aram,
+                                after_zero.mul)
+        zero_stop, held_zero = run(stopped_zero, after_zero.aram,
+                                   after_zero.mul)
+        hold_checks += held + held_zero
+        class_counts["stopped"] += 1
+        lsv = codec.unpack("POST_W26", frame_dict(legacy_stop.frame))
+        zsv = codec.unpack("POST_W26", frame_dict(zero_stop.frame))
+        assert fraction_gain_witness(lsv, False) \
+            == fraction_gain_witness(zsv, False) == 0
+        assert (legacy_stop.aram, legacy_stop.mul.m_p,
+                legacy_stop.mul.req_tgl, legacy_stop.mul.ack_tgl) \
+            == (zero_stop.aram, zero_stop.mul.m_p,
+                zero_stop.mul.req_tgl, zero_stop.mul.ack_tgl)
+        assert replace(legacy_stop.mul,
+                       req_b=zero_stop.mul.req_b) == zero_stop.mul
+        assert (legacy_stop.aram_issues, legacy_stop.aram_takes,
+                legacy_stop.mul_issues, legacy_stop.mul_takes) \
+            == (0, 0, 2, 2)
+        after_legacy_stop, held = run(
+            following, legacy_stop.aram, legacy_stop.mul)
+        after_zero_stop, held_zero = run(
+            following, zero_stop.aram, zero_stop.mul)
+        hold_checks += held + held_zero
+        assert after_legacy_stop == after_zero_stop
+        convergence += 1
+
+    assert class_counts == {"audible": 64, "silent": 64, "stopped": 64}
+    assert hold_checks == 64 * 9 * 15
+    return ("H-D2F-C-B3-B2-A2-A1 sampled W1-POST_W26 wave-service lemma: "
+            "64 audible + 64 playing-zero-amplitude + 64 stopped slots; "
+            f"{hold_checks} attempted offset/frame/service freezes; "
+            f"{mul_freezes} exact multiplier count/ack freezes; "
+            "four-read silent ARAM/replay retained-fraction quotient and "
+            f"{convergence} following-audible convergences; stopped "
+            f"equal-endpoint quotient {quotient_cases:,}; accepted "
+            "image/RTL untouched; PC/IR/state_q and fold/public suffix "
+            "unproved")
+
+
+def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
+        -> tuple[str, tuple[D2FPackingRow, ...]]:
+    """Prove the tight D2F-B physical rows after the q16 prefetch.
+
+    Each row assigns named value pieces to literal physical containers.  The
+    checker rejects a container overflow, a missing/split field bit, or a
+    round-trip alias.  H-C fields still needed by the wave cadence are not
+    listed as capacity; only path-dead slices appear beside A/B/N/O.
+    """
+    action_by_name = {action.name: code
+                      for code, action in actions.by_owner["sample"].items()}
+
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(candidate[pc])
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    assert decoded(0x21) == Instruction(
+        Op.EXEC, action=action_by_name["CAP_W4"], word=16)
+    assert q_word(0x21) == 14 and q_word(0x22) == 16
+
+    # The pre-W0 LFSR byte does not need an eight-bit transient.  CAP_W0's
+    # exact full-mode shift makes old[7:0] equal new[8:1], and there is no
+    # second visit advance before the typed q11 commit.
+    walk = WALK.read_text()
+    assert "lfsr  <= {lfsr[13:0], lfsr[14] ^ lfsr[13]};" in walk
+    for old_lfsr in range(1 << 15):
+        new_lfsr = ((old_lfsr << 1) & 0x7fff) \
+            | (((old_lfsr >> 14) ^ (old_lfsr >> 13)) & 1)
+        assert ((new_lfsr >> 1) & 0xff) == (old_lfsr & 0xff)
+
+    def row(name: str, capacities: dict[str, int],
+            assignments: dict[str, tuple[tuple[str, int], ...]],
+            expected_used: int) -> D2FPackingRow:
+        field_widths: dict[str, int] = {}
+        pieces: list[tuple[str, str, int, int, int]] = []
+        container_offsets: dict[str, int] = {}
+        for container, fields in assignments.items():
+            assert container in capacities, (name, container)
+            offset = 0
+            for field, width in fields:
+                assert width > 0
+                field_lsb = field_widths.get(field, 0)
+                pieces.append((container, field, offset, field_lsb, width))
+                field_widths[field] = field_lsb + width
+                offset += width
+            assert offset <= capacities[container], \
+                (name, container, offset, capacities[container])
+            container_offsets[container] = offset
+        used = sum(container_offsets.values())
+        assert used == expected_used, (name, used, expected_used)
+
+        # Give every logical field an independent deterministic value, pack
+        # all pieces, then recover it.  This catches overlap and split-field
+        # omissions rather than accepting a summed-width argument alone.
+        values = {
+            field: ((sum(ord(ch) for ch in field) * 0x9e37 + width * 0x45)
+                    & ((1 << width) - 1))
+            for field, width in field_widths.items()
+        }
+        packed = {container: 0 for container in capacities}
+        reconstructed = {field: 0 for field in field_widths}
+        for container, owner, container_lsb, field_lsb, width in pieces:
+            mask = (1 << width) - 1
+            fragment = (values[owner] >> field_lsb) & mask
+            packed[container] |= fragment << container_lsb
+            reconstructed[owner] |= \
+                ((packed[container] >> container_lsb) & mask) << field_lsb
+        assert reconstructed == values, (name, reconstructed, values)
+        return D2FPackingRow(
+            name=name,
+            used=used,
+            capacity=sum(capacities.values()),
+            capacities=tuple(capacities.items()),
+            pieces=tuple(pieces),
+            logical_widths=tuple(sorted(field_widths.items())),
+        )
+
+    # Common physical fields.  C is the seven-bit live wt/wave/mode/alt
+    # context; T is the six-bit old wave/mode/alt tuple.  WF/MF are the two
+    # bits freed when wavetable wave3 is recoded as is-wave6 and live mode is
+    # retired after W1.
+    base = {"A": 18, "B": 18, "N": 17, "O": 17}
+    bi_early = {**base, "I": 6, "D": 3}
+    # After PC1b commits word14, old phase-view modes 0/1 are identical and
+    # modes are irrelevant for old waves 0/7.  Recode the six-bit old tuple as
+    # wave3/alternate/mode-is-two, freeing TF for the later wave-6 decision.
+    bi_late = {**base, "C": 7, "I": 6, "D": 3, "TF": 1}
+    bi_restart = {**bi_late, "Q": 16}
+    all_fields = {**base, "Q": 16, "T": 6, "C": 7,
+                  "I": 6, "D": 3}
+    wt_early = {**base, "Q": 16, "T": 6, "X": 1}
+    wt_w0 = {**wt_early, "WF": 2}
+    wt_late = {**wt_w0, "MF": 2}
+
+    rows = []
+    rows.append(row("builtin ordinary PC1c", bi_early, {
+        "A": (("noise_lp", 16), ("phase2_msb", 1), ("old_q_msb", 1)),
+        "B": (("live_dq", 14), ("old_nz_phase", 4)),
+        "N": (("live_delta", 13), ("amplitude", 4)),
+        "O": (("old_delta", 13), ("amplitude", 4)),
+        "I": (("amplitude", 4), ("restart", 1), ("clear", 1)),
+    }, 76))
+    rows.append(row("builtin old-noise PC1c", bi_early, {
+        "A": (("noise_lp", 16), ("phase2_msb", 1), ("restart", 1)),
+        "B": (("live_dq", 14), ("old_nz_phase", 4)),
+        "N": (("live_delta", 13), ("amplitude", 4)),
+        "O": (("old_noise_step", 17),),
+        "I": (("amplitude", 6),),
+        "D": (("amplitude", 2), ("clear", 1)),
+    }, 79))
+    rows.append(row("builtin ordinary W2 no-restart", bi_late, {
+        "A": (("current_primary", 18),),
+        "B": (("live_dq", 14), ("live_gain", 4)),
+        "N": (("phase2_next", 17),),
+        "O": (("old_delta", 13), ("old_q_msb", 1), ("clear", 1),
+              ("refresh", 1), ("nz_phase", 1)),
+        "C": (("live_gain", 7),),
+        "I": (("live_gain", 2), ("post_w1_flags", 2),
+              ("nz_phase", 2)),
+        "D": (("nz_phase", 1), ("restart", 1), ("snd_wt", 1)),
+        "TF": (("live_is_wave6", 1),),
+    }, 87))
+    rows.append(row("builtin ordinary W2 restart", bi_restart, {
+        "A": (("current_primary", 18),),
+        "B": (("live_dq", 14), ("live_gain", 4)),
+        "N": (("phase2_next", 17),),
+        "O": (("old_delta", 13), ("clear", 1), ("refresh", 1),
+              ("nz_phase", 2)),
+        "Q": (("q10_snapshot", 16),),
+        "C": (("live_gain", 7),),
+        "I": (("live_gain", 2), ("post_w1_flags", 2),
+              ("nz_phase", 2)),
+        "D": (("restart", 1), ("snd_wt", 1)),
+        "TF": (("live_is_wave6", 1),),
+    }, 102))
+    rows.append(row("builtin old-noise W2", all_fields, {
+        "A": (("current_primary", 18),),
+        "B": (("old_noise_sample", 18),),
+        "N": (("phase2_next", 17),),
+        "O": (("final_old_phase", 16), ("clear", 1)),
+        "Q": (("live_dq", 14), ("nz_phase", 2)),
+        "T": (("live_gain", 6),),
+        "C": (("live_gain", 7),),
+        "I": (("post_w1_flags", 2), ("refresh", 1),
+              ("nz_phase", 2)),
+        "D": (("restart", 1), ("snd_wt", 1),
+              ("live_is_wave6", 1)),
+    }, 107))
+
+    rows.append(row("wavetable old-noise PC1c", wt_early, {
+        "A": (("live_delta", 13),),
+        "B": (("amplitude", 12),),
+        "N": (("noise_lp", 16),),
+        "O": (("old_noise_step", 17),),
+        "Q": (("live_dq", 13), ("phase2_msb", 1),
+              ("restart", 1), ("clear", 1)),
+        "T": (("refresh", 1),),
+    }, 75))
+    rows.append(row("wavetable old-noise W0", wt_w0, {
+        "A": (("primary_fraction", 10),),
+        "B": (("amplitude", 12),),
+        "N": (("live_delta", 13),),
+        "O": (("old_noise_step", 17),),
+        "Q": (("live_dq", 13), ("phase2_msb", 1),
+              ("restart", 1), ("clear", 1)),
+        "T": (("nz_phase", 4), ("refresh", 1)),
+    }, 73))
+
+    def wt_overlay(extra: tuple[tuple[str, int], ...]) \
+            -> dict[str, tuple[tuple[str, int], ...]]:
+        return {
+            "Q": (("amplitude", 12), ("restart", 1), ("clear", 1),
+                  ("nz_phase", 2)),
+            "T": (("nz_phase", 2), ("refresh", 1), *extra[:1]),
+            "X": extra[1:2], "WF": extra[2:3], "MF": extra[3:4],
+        }
+
+    adjacent = (("primary_adjacent", 3), ("primary_adjacent", 1),
+                ("primary_adjacent", 2), ("primary_adjacent", 2))
+    for suffix, old_value, used_w1, used_w2, used_w3 in (
+            ("no-restart", ("old_bias", 17), 81, 89, 97),
+            ("restart", ("old_phase", 14), 78, 86, 94)):
+        overlay_no_adj = wt_overlay(())
+        # Remove empty physical containers from the W1 row.
+        overlay_no_adj = {k: v for k, v in overlay_no_adj.items() if v}
+        rows.append(row(f"wavetable old-noise W1 {suffix}", wt_late, {
+            "A": (("primary_fraction_base", 18),),
+            "B": (("old_fraction", 10),),
+            "N": (("phase2_next", 17),),
+            "O": (old_value,), **overlay_no_adj,
+        }, used_w1))
+        overlay_adj = wt_overlay(adjacent)
+        rows.append(row(f"wavetable old-noise W2 {suffix}", wt_late, {
+            "A": (("primary_fraction_base", 18),),
+            "B": (("old_fraction", 10),),
+            "N": (("phase2_next", 17),),
+            "O": (old_value,), **overlay_adj,
+        }, used_w2))
+        rows.append(row(f"wavetable old-noise W3 {suffix}", wt_late, {
+            "A": (("primary_fraction_base", 18),),
+            "B": (("old_fraction_base", 18),),
+            "N": (("phase2_next", 17),),
+            "O": (old_value,), **overlay_adj,
+        }, used_w3))
+
+    old_other_overlay = wt_overlay(adjacent)
+    rows.append(row("wavetable old-other W3 restart", wt_late, {
+        "A": (("primary_fraction_base", 18),),
+        "B": (("old_fraction_base", 18),),
+        "N": (("phase2_next", 17),),
+        "O": (("q10_snapshot", 16),), **old_other_overlay,
+    }, 96))
+    rows.append(row("wavetable old-other W3 no-restart", wt_late, {
+        "A": (("primary_fraction_base", 18),),
+        "B": (("old_fraction_base", 18),),
+        "N": (("phase2_next", 17),),
+        "O": (("primary_adjacent", 8),),
+        "Q": (("amplitude", 12), ("restart", 1), ("clear", 1),
+              ("nz_phase", 2)),
+        "T": (("nz_phase", 2), ("refresh", 1)),
+    }, 80))
+
+    assert max(result.used / result.capacity for result in rows) == 1
+    tight = sorted(result.name for result in rows
+                   if result.used == result.capacity)
+    assert tight == ["builtin old-noise PC1c",
+                     "builtin ordinary W2 no-restart",
+                     "wavetable old-noise W3 no-restart"]
+
+    # The recoded old tuple is exact for every phase/wave/mode combination:
+    # only mode two doubles non-0/7 phases, and alternate is orthogonal.
+    for raw in range(1 << 16):
+        for old_wave in range(8):
+            for old_mode in range(4):
+                recoded_mode = 2 if old_mode == 2 else 0
+                assert phase_view(raw, old_wave, old_mode, False) \
+                    == phase_view(raw, old_wave, recoded_mode, False)
+
+    # The early phase2 formation and two compact noise identities used above
+    # are exact over their full source domains.
+    max_kick_draw = 0
+    for lfsr2 in range(1 << 15):
+        inv = 1 ^ ((lfsr2 >> 12) & 1)
+        draw = signed((inv << 11) | (inv << 10)
+                      | ((lfsr2 >> 2) & 0x3ff), 12)
+        draw = draw - (draw >> 3) - (draw >> 6)
+        max_kick_draw = max(max_kick_draw, abs(draw))
+    assert max_kick_draw == 881
+    assert 33_324 + 7 * max_kick_draw == 39_491 < (1 << 16)
+
+    pair_min, pair_max = 0, 0
+    for wave in range(8):
+        for alt in (False, True):
+            for phase in range(1 << 16):
+                pair = wave_value(phase, wave, alt, False) \
+                    + wave_value(phase, wave, alt, True)
+                pair_min = min(pair_min, pair)
+                pair_max = max(pair_max, pair)
+    assert -(1 << 17) <= pair_min and pair_max < (1 << 17)
+
+    summary = (f"H-D2F-B literal packing: {len(rows)} tight/edge rows; "
+               f"exact fits at {', '.join(tight)}; old tuple 6 -> 5 bits exact; "
+               "pre-W0 LFSR byte recovered "
+               f"for all {1 << 15:,} states; old-noise bias <= 39,491; "
+               f"built-in pair range {pair_min}..{pair_max} fits signed18; "
+               "semantic commit executor and RTL remain unproved")
+    return summary, tuple(rows)
+
+
+def validate_sample_d2fca_manifest(candidate: list[int],
+                                   actions: Actions) \
+        -> tuple[str, tuple[D2FLiveField, ...],
+                 tuple[D2FLiveField, ...], tuple[D2FLiveField, ...]]:
+    """Prove the post-D2F-B physical-state and fixed-write manifest.
+
+    This is deliberately a manifest rather than another semantic executor.
+    It binds every late value to literal A/B/N/O or H-C bit slices, checks
+    replacement at each producer/consumer edge, retains full write provenance,
+    and proves the literal fold keeps its result until dry publication.
+    """
+    action_by_code = actions.by_owner["sample"]
+    action_by_name = {action.name: code
+                      for code, action in action_by_code.items()}
+
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(candidate[pc])
+
+    def action_name(pc: int) -> str:
+        action = action_by_code.get(decoded(pc).action)
+        return "HOLD" if action is None \
+            and decoded(pc).action == COMMON_ACTION["HOLD"] else \
+            ("" if action is None else action.name)
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    # Every persistent/scratch write keeps its PC, action, physical q source,
+    # fixed destination and value provenance.  In particular, the early and
+    # final word-14/15 writes may not disappear in a last-value dictionary.
+    writes = SAMPLE_FIXED_WRITES
+    for pc, name, q_source, destination, origin in writes:
+        insn = decoded(pc)
+        assert insn.op == Op.WRITE, (pc, insn)
+        assert action_name(pc) == name, (pc, action_name(pc), name)
+        assert q_word(pc) == q_source, (pc, q_word(pc), q_source)
+        assert 10 <= destination <= 23 or destination in (48, 49)
+        assert origin
+    destinations = [destination for _, _, _, destination, _ in writes]
+    assert {word: destinations.count(word) for word in range(10, 24)} \
+        == {word: (2 if word in (14, 15) else 1)
+            for word in range(10, 24)}
+    assert destinations.count(48) == destinations.count(49) == 1
+
+    typed_q = {0x1c: 13, 0x21: 14, 0x22: 16, 0x27: 11,
+               0x28: 16, 0x29: 17, 0x2a: 13, 0x2b: 19,
+               0x2d: 12, 0x2e: 17, 0x31: 20, 0x38: 14,
+               0x39: 15}
+    assert {pc: q_word(pc) for pc in typed_q} == typed_q
+
+    # CAP_W51's literal word 26 is intended to prefetch active-bank dampen for
+    # CAP_W75, but the committed movement layer remaps 24..27 only on OP_READ
+    # while CAP is OP_EXEC.  D2F-C-B must add this exact action-qualified
+    # 26/30 address selection before semantic RTL can be accepted.  Audible is
+    # captured from play/hidden into one manifest bit until the leaf writes.
+    assert decoded(0x36) == Instruction(
+        Op.EXEC, action=action_by_name["CAP_W51"], word=26)
+    assert q_word(0x37) == 26
+    move = MOVE.read_text()
+    assert "if (sample && op == OP_READ && state_word[5:2] == 4'b0110)" \
+        in move
+    assert tuple(30 if spar_bank else 26 for spar_bank in (0, 1)) == (26, 30)
+
+    events = ("PRE_W15", "W15", "PC27", "PC28", "PC29", "PC2A",
+              "W26", "W27", "PC2D", "PC2E", "W40", "W51", "W75",
+              "PC38", "PC39", "W84", "PC3C", "PC3D", "PC4C", "PC4D",
+              "DONE")
+    event = {name: index for index, name in enumerate(events)}
+    capacities = {"A": 18, "B": 18, "N": 17, "O": 17,
+                  "Q": 16, "T": 6, "C": 7, "I": 6, "D": 3}
+    assert sum(capacities.values()) == 108
+    hc_aliases = {
+        "Q": "old_q[15:0]",
+        "T": "{old_wave[2:0],old_mode[1:0],old_alt}",
+        "C": "{snd_wt,snd_wave[2:0],snd_mode[1:0],snd_alt}",
+        "I": "phase_index_hold[5:0]",
+        "D": "snd_id[2:0]",
+    }
+    assert set(hc_aliases) == set(capacities) - {"A", "B", "N", "O"}
+
+    def field(name: str, width: int,
+              pieces: tuple[tuple[str, int, int], ...],
+              born: str, dead: str, source: str,
+              consumer: str) -> D2FLiveField:
+        return D2FLiveField("", name, width, pieces, born, dead, source,
+                            consumer)
+
+    built = tuple(replace(item, path="built-in") for item in (
+        field("final_nz_phase", 4, (("A", 0, 4),), "PRE_W15", "PC2A",
+              "unpacked D2F-B W0 state", "word13 merge"),
+        field("refresh", 1, (("A", 4, 1),), "PRE_W15", "PC27",
+              "unpacked D2F-B refresh", "word11 merge"),
+        field("restart", 1, (("A", 5, 1),), "PRE_W15", "PC2A",
+              "unpacked D2F-B restart", "blend/gain merges"),
+        field("clear", 1, (("A", 6, 1),), "PRE_W15", "PC39",
+              "unpacked D2F-B clear", "word13/15 merges"),
+        field("last_gain_we", 1, (("A", 7, 1),), "PRE_W15", "PC2A",
+              "play/music predicate", "word13 merge"),
+        field("old_q_replace", 1, (("A", 8, 1),), "PRE_W15", "PC29",
+              "restart or old-DQ update", "word11/17 merges"),
+        field("live_gain_hi", 5, (("A", 9, 5),), "PRE_W15", "PC2A",
+              "unpacked D2F-B live gain", "word13 last-gain merge"),
+        field("current_sign", 1, (("A", 14, 1),), "PRE_W15", "W27",
+              "sign of W4 current source", "signed current arm"),
+        field("snd_wt", 1, (("A", 15, 1),), "PRE_W15", "W84",
+              "unpacked D2F-B live context", "path decode"),
+        field("live_is_wave6", 1, (("A", 16, 1),), "PRE_W15", "W27",
+              "unpacked D2F-B live wave", "live reciprocal bypass"),
+        field("audible", 1, (("A", 17, 1),), "PRE_W15", "DONE",
+              "W4 play/hidden capture", "leaf48/49 gate"),
+        field("old_source", 18, (("B", 0, 18),), "PRE_W15", "W27",
+              "unpacked D2F-B W3 pair", "old-gain launch"),
+        field("live_gain_limb", 17, (("N", 0, 17),), "W15", "W27",
+              "CAP_W15 multiplier result", "current-arm reciprocal"),
+        field("final_phase2", 17, (("O", 0, 17),), "PRE_W15", "PC2D",
+              "W6 live-DQ merge", "word13/12 merges"),
+        field("final_old_phase", 16, (("Q", 0, 16),),
+              "PRE_W15", "PC28", "W5 old phase update", "word16 write"),
+        field("final_old_q", 17,
+              (("T", 0, 6), ("C", 0, 7), ("I", 0, 4)),
+              "PRE_W15", "PC29", "W5 old-q update/copy",
+              "word11/17 merges"),
+        field("old_wave", 3, (("D", 0, 3),), "PRE_W15", "W27",
+              "unpacked D2F-B selected tuple", "old-gain launch"),
+        field("selected_old_gain_hi", 5, (("Q", 0, 5),),
+              "PC2A", "W26", "typed q13", "typed q19 merge"),
+        field("selected_old_gain", 13, (("Q", 0, 13),),
+              "W26", "W27", "q13 high plus typed q19 low",
+              "old-gain launch"),
+        field("current_arm", 17, (("N", 0, 17),), "W27", "W84",
+              "CAP_W27 reciprocal", "blend/dampen"),
+        field("old_sign", 1, (("D", 0, 1),), "W27", "W51",
+              "sign of retained old source", "signed old arm"),
+        field("old_is_wave6", 1, (("D", 1, 1),), "W27", "W51",
+              "compressed selected old wave", "old reciprocal bypass"),
+        field("blend_count", 7, (("T", 0, 6), ("C", 0, 1)),
+              "PC2E", "W75", "typed final q17", "blend launch/bypass"),
+        field("old_gain_limb", 17, (("O", 0, 17),), "W40", "W51",
+              "CAP_W40 multiplier", "old-arm reciprocal"),
+        field("reverb_flags", 4, (("C", 1, 4),), "W40", "W84",
+              "typed q20", "current/old ring combine and W84 base"),
+        field("old_arm", 17, (("O", 0, 17),), "W51", "W84",
+              "CAP_W51 reciprocal", "blend/dampen"),
+        field("filter_hi", 16, (("B", 0, 16),), "PC38", "W84",
+              "typed q14 at PC38", "filter/word14 merge"),
+        field("damp", 2, (("A", 0, 2),), "W75", "W84",
+              "active-bank q26/q30 at CAP_W75", "CAP_W84 dampen"),
+        field("filter_lo", 16, (("Q", 0, 16),), "PC39", "W84",
+              "clear-qualified typed q15", "filter/word15 merge"),
+        field("sample_f", 17, (("A", 0, 17),), "W84", "DONE",
+              "CAP_W84 blend/dampen result", "ring and word48/49 writes"),
+        field("final_filter_hi", 16, (("B", 0, 16),), "W84", "PC3C",
+              "lp_final sign merged with typed q14 payload",
+              "final word14 write"),
+        field("final_filter_lo", 16, (("Q", 0, 16),), "W84", "PC3D",
+              "lp_final low word", "final word15 write"),
+    ))
+
+    wavetable = tuple(replace(item, path="wavetable") for item in (
+        field("old_adjacent", 8, (("A", 0, 8),),
+              "PRE_W15", "W15", "CAP_W4 ARAM result",
+              "CAP_W15 old interpolation launch"),
+        field("pre_live_gain", 13,
+              (("A", 8, 7), ("A", 17, 1), ("C", 0, 5)),
+              "PRE_W15", "W15", "unpacked D2F-B amplitude gain",
+              "CAP_W15 B relocation"),
+        field("primary_interp", 15, (("A", 0, 15),), "W15", "W27",
+              "CAP_W15 multiplier", "wavetable current sum"),
+        field("snd_wt", 1, (("A", 15, 1),), "PRE_W15", "W84",
+              "unpacked D2F-B live context", "path decode"),
+        field("live_is_wave6", 1, (("A", 16, 1),), "PRE_W15", "W51",
+              "unpacked D2F-B live wave", "live reciprocal bypass"),
+        field("old_fraction_base", 18, (("B", 0, 18),),
+              "PRE_W15", "W15", "unpacked D2F-B W3 state",
+              "CAP_W15 old interpolation launch"),
+        field("old_base", 8, (("C", 0, 7), ("T", 4, 1)),
+              "W15", "W26", "CAP_W15 retained signed base byte",
+              "CAP_W26 interpolated sum"),
+        field("old_delta_sign", 1, (("T", 5, 1),),
+              "W15", "W26", "CAP_W15 old delta sign",
+              "CAP_W26 signed multiplier result"),
+        field("live_gain", 13, (("B", 0, 13),), "W15", "W27",
+              "CAP_W15 relocation from pre_live_gain", "live-gain launch"),
+        field("pre_final_nz_phase", 4,
+              (("C", 5, 2), ("I", 0, 2)), "PRE_W15", "W15",
+              "unpacked D2F-B W0 state", "CAP_W15 B relocation"),
+        field("final_nz_phase", 4, (("B", 13, 4),),
+              "W15", "PC2A", "CAP_W15 relocation",
+              "word13 merge"),
+        field("pre_refresh", 1, (("I", 2, 1),), "PRE_W15", "W15",
+              "unpacked D2F-B refresh", "CAP_W15 B relocation"),
+        field("refresh", 1, (("B", 17, 1),), "W15", "PC27",
+              "CAP_W15 relocation", "word11 merge"),
+        field("final_phase2", 17, (("N", 0, 17),),
+              "PRE_W15", "PC2D", "W6 live-DQ merge", "word13/12 merges"),
+        field("final_old_q", 17, (("O", 0, 17),),
+              "PRE_W15", "PC29",
+              "original phase2 on restart; typed q11/q17 otherwise",
+              "word11/17 merges"),
+        field("final_old_phase", 16, (("Q", 0, 16),),
+              "PRE_W15", "PC28", "W5 old-noise/phase result",
+              "word16 write"),
+        field("restart", 1, (("T", 0, 1),), "PRE_W15", "PC2A",
+              "unpacked D2F-B restart", "blend/gain merges"),
+        field("clear", 1, (("T", 1, 1),), "PRE_W15", "PC39",
+              "unpacked D2F-B clear", "word13/15 merges"),
+        field("last_gain_we", 1, (("T", 2, 1),), "PRE_W15", "PC2A",
+              "play/music predicate", "word13 merge"),
+        field("old_q_replace", 1, (("T", 3, 1),), "PRE_W15", "PC29",
+              "restart", "word11/17 merges"),
+        field("selected_old_gain_hi", 5, (("Q", 0, 5),),
+              "PC2A", "W26", "typed q13", "typed q19 merge"),
+        field("old_interp", 15, (("O", 0, 15),), "W26", "W27",
+              "CAP_W26 multiplier", "wavetable current sum"),
+        field("old_gain_nonzero", 1, (("Q", 0, 1),), "W26", "W84",
+              "q13 high plus typed q19 low", "old-arm enable through base"),
+        field("current_sign", 1, (("T", 0, 1),), "W27", "W51",
+              "sign of wavetable current sum", "signed current arm"),
+        field("audible", 1, (("A", 17, 1),), "W27", "DONE",
+              "W27 play/hidden capture", "leaf48/49 gate"),
+        field("blend_count", 7, (("C", 0, 7),), "PC2E", "W75",
+              "typed final q17", "blend launch/bypass"),
+        field("reverb_flags", 4, (("I", 0, 4),), "W40", "W84",
+              "typed q20", "current/old ring combine and W84 base"),
+        field("live_gain_limb", 17, (("N", 0, 17),), "W40", "W51",
+              "CAP_W40 multiplier", "current-arm reciprocal"),
+        field("current_arm", 17, (("N", 0, 17),), "W51", "W84",
+              "CAP_W51 reciprocal", "blend/dampen"),
+        field("filter_hi", 16, (("B", 0, 16),), "PC38", "W84",
+              "typed q14 at PC38", "filter/word14 merge"),
+        field("damp", 2, (("A", 0, 2),), "W75", "W84",
+              "active-bank q26/q30 at CAP_W75", "CAP_W84 dampen"),
+        field("filter_lo", 16, (("O", 0, 16),), "PC39", "W84",
+              "clear-qualified typed q15", "filter/word15 merge"),
+        field("sample_f", 17, (("A", 0, 17),), "W84", "DONE",
+              "CAP_W84 blend/dampen result", "ring and word48/49 writes"),
+        field("final_filter_hi", 16, (("B", 0, 16),), "W84", "PC3C",
+              "lp_final sign merged with typed q14 payload",
+              "final word14 write"),
+        field("final_filter_lo", 16, (("O", 0, 16),), "W84", "PC3D",
+              "lp_final low word", "final word15 write"),
+    ))
+
+    def validate_fields(path: str, fields: tuple[D2FLiveField, ...],
+                        expected_pre_w15: int,
+                        expected_w15: int) -> tuple[int, int]:
+        for item in fields:
+            assert item.born in event and item.dead in event
+            assert event[item.born] < event[item.dead], item
+            assert sum(width for _, _, width in item.pieces) == item.width
+            assert item.source and item.consumer
+            for container, lsb, width in item.pieces:
+                assert container in capacities
+                assert 0 <= lsb and lsb + width <= capacities[container], item
+        peak = 0
+        w15 = 0
+        for snapshot in range(len(events)):
+            owned: set[tuple[str, int]] = set()
+            used = 0
+            for item in fields:
+                if event[item.born] <= snapshot < event[item.dead]:
+                    used += item.width
+                    for container, lsb, width in item.pieces:
+                        for bit in range(lsb, lsb + width):
+                            key = (container, bit)
+                            assert key not in owned, (path, events[snapshot],
+                                                      key, item.name)
+                            owned.add(key)
+            assert used == len(owned), (path, events[snapshot], used,
+                                        len(owned))
+            assert used <= 108, (path, events[snapshot], used)
+            peak = max(peak, used)
+            if snapshot == event["PRE_W15"]:
+                assert used == expected_pre_w15, \
+                    (path, events[snapshot], used, expected_pre_w15)
+            if snapshot == event["W15"]:
+                w15 = used
+            if snapshot == event["W84"]:
+                assert used == 50, (path, events[snapshot], used)
+            if snapshot == event["PC3C"]:
+                assert used == 34, (path, events[snapshot], used)
+            if snapshot in (event["PC3D"], event["PC4C"], event["PC4D"]):
+                assert used == 18, (path, events[snapshot], used)
+            if snapshot == event["DONE"]:
+                assert used == 0, (path, events[snapshot], used)
+        assert w15 == expected_w15, (path, w15, expected_w15)
+        return w15, peak
+
+    built_w15, built_peak = validate_fields("built-in", built, 89, 106)
+    wave_w15, wave_peak = validate_fields("wavetable", wavetable, 100, 98)
+    assert {item.name for item in built if item.born == "W15"} \
+        == {"live_gain_limb"}
+    assert {item.name for item in wavetable if item.born == "W15"} \
+        == {"primary_interp", "old_base", "old_delta_sign", "live_gain",
+            "final_nz_phase", "refresh"}
+    assert next(item for item in wavetable
+                if item.name == "primary_interp").source.startswith("CAP_W15")
+    assert all("relocation" in item.source
+               for item in wavetable
+               if item.name in {"live_gain", "final_nz_phase", "refresh"})
+
+    # The seven literal fold nodes preserve their q stream, fixed destinations
+    # and eight physical microstep words.  The final signed-18 work value stays
+    # in A through FOLD_FINISH, because that action receives q49 rather than a
+    # typed q48 and must publish dry16 from retained state.
+    fold_entry = decoded(0).target
+    assert fold_entry == 0x50
+    fold_prime = action_by_name["FOLD_PRIME"]
+    fold_a_lo = action_by_name["FOLD_A_LO"]
+    fold_a_hi = action_by_name["FOLD_A_HI"]
+    fold_b_lo = action_by_name["FOLD_B_LO"]
+    fold_start = action_by_name["FOLD_START"]
+    fold_run = action_by_name["FOLD_RUN"]
+    fold_write_lo = action_by_name["FOLD_WRITE_LO"]
+    fold_write_hi = action_by_name["FOLD_WRITE_HI"]
+    for node, (a_slot, b_slot, dst_slot) in enumerate(FOLD_NODES):
+        base = fold_entry + node * 20
+        assert decoded(base) == Instruction(Op.SLOT, slot_value=a_slot)
+        assert decoded(base + 1) == Instruction(
+            Op.READ, action=fold_prime, word=48)
+        assert decoded(base + 2) == Instruction(
+            Op.READ, action=fold_a_lo, word=49)
+        assert decoded(base + 3) == Instruction(
+            Op.EXEC, action=fold_a_hi)
+        assert decoded(base + 4) == Instruction(Op.SLOT, slot_value=b_slot)
+        assert decoded(base + 5) == Instruction(
+            Op.READ, action=fold_prime, word=48)
+        assert decoded(base + 6) == Instruction(
+            Op.READ, action=fold_b_lo, word=49)
+        assert decoded(base + 7) == Instruction(
+            Op.EXEC, action=fold_start)
+        assert decoded(base + 8) == Instruction(
+            Op.EXEC, action=fold_run)
+        for step in range(8):
+            assert decoded(base + 9 + step) == Instruction(
+                Op.EXEC, action=COMMON_ACTION["HOLD"], word=step + 1)
+        assert decoded(base + 17) == Instruction(
+            Op.SLOT, slot_value=dst_slot)
+        assert decoded(base + 18) == Instruction(
+            Op.WRITE, action=fold_write_lo, word=48)
+        assert decoded(base + 19) == Instruction(
+            Op.WRITE, action=fold_write_hi, word=49)
+        assert q_word(base + 18) == 8 and q_word(base + 19) == 48
+    finish_pc = fold_entry + len(FOLD_NODES) * 20
+    assert decoded(finish_pc) == Instruction(
+        Op.EXEC, action=action_by_name["FOLD_FINISH"])
+    assert q_word(finish_pc) == 49
+    assert decoded(finish_pc + 1).op == Op.DONE
+    fold_events = ("INPUTS", "STEP1", "STEP2", "STEP3", "STEP4",
+                   "STEP5", "STEP6", "STEP7", "STEP8", "WRITE_LO",
+                   "WRITE_HI", "FINISH", "DONE")
+    fold_event = {name: index for index, name in enumerate(fold_events)}
+    fold_fields = tuple(replace(item, path="fold") for item in (
+        field("fold_a", 18, (("A", 0, 18),), "INPUTS", "STEP1",
+              "state_q words48/49 first operand", "fold add service"),
+        field("fold_b", 18, (("B", 0, 18),), "INPUTS", "STEP1",
+              "state_q words48/49 second operand", "fold add service"),
+        field("fold_sum", 18, (("A", 0, 18),), "STEP1", "STEP2",
+              "fold add result", "threshold service"),
+        field("threshold_class", 2, (("B", 0, 2),), "STEP2", "STEP7",
+              "threshold service result", "signed result restore"),
+        field("absolute_excess", 16, (("A", 0, 16),), "STEP2", "STEP4",
+              "threshold/excess service result", "base-256 split"),
+        field("split_high_low", 16, (("A", 0, 16),), "STEP4", "STEP5",
+              "base-256 split service result", "quotient service"),
+        field("partial_51high", 13, (("A", 0, 13),), "STEP5", "STEP6",
+              "quotient service partial", "quotient service finish"),
+        field("fdiv5_address", 9, (("B", 2, 9),), "STEP5", "STEP6",
+              "base-256 address service result", "fdiv5 table"),
+        field("fdiv5_q", 7, (("N", 0, 7),), "STEP5", "STEP6",
+              "fdiv5 table result", "quotient service finish"),
+        field("fold_quotient", 16, (("A", 0, 16),), "STEP6", "STEP7",
+              "quotient service result", "signed result restore"),
+        field("fold_result", 18, (("A", 0, 18),), "STEP7", "DONE",
+              "signed result service", "words48/49 and dry publication"),
+    ))
+    fold_peak = 0
+    for snapshot, snapshot_name in enumerate(fold_events):
+        owned: set[tuple[str, int]] = set()
+        for item in fold_fields:
+            assert sum(part for _, _, part in item.pieces) == item.width
+            if fold_event[item.born] <= snapshot < fold_event[item.dead]:
+                for container, lsb, part in item.pieces:
+                    assert lsb + part <= capacities[container]
+                    for bit in range(lsb, lsb + part):
+                        key = (container, bit)
+                        assert key not in owned, (snapshot_name, key,
+                                                  item.name)
+                        owned.add(key)
+        fold_peak = max(fold_peak, len(owned))
+        if snapshot_name in ("WRITE_LO", "WRITE_HI", "FINISH"):
+            assert all(("A", bit) in owned for bit in range(18))
+    assert fold_peak == 36
+
+    summary = (f"H-D2F-C-A manifest: 18 per-slot writes with exact PC/action/q/"
+               f"destination provenance; built W15 {built_w15}/108, peak "
+               f"{built_peak}/108; wavetable pre/W15 {100}/{wave_w15}/108, "
+               f"peak {wave_peak}/108; W84 split 50/108 -> 34/108 -> 18/108; "
+               "active q26/q30 override exposed; seven 20-PC fold "
+               f"nodes peak at {fold_peak}/70 and retain A18 through q49 "
+               "FOLD_FINISH/dry publication")
+    return summary, built, wavetable, fold_fields
+
+
+def validate_sample_b1_atomic_root_manifest(candidate: list[int],
+                                            actions: Actions) \
+        -> tuple[str, tuple[object, ...]]:
+    """Inventory every internal SampleTrace replacement root before typing."""
+    source_text = Path(__file__).read_text()
+    machine = source_text[source_text.index("\nclass SampleImageMachine:"):
+                          source_text.index("\ndef make_sample_case(")]
+    issue_keys = re.findall(r'self\.issue\(\s*"([^"]+)"', machine)
+    expected_issue_keys = (
+        "dq_live", "noise_old", "noise_old_hold", "dq_live_hold",
+        "dq_old", "noise_live", "wave_0", "aram_0", "wave_1",
+        "aram_1", "wave_2", "aram_2", "wave_3", "aram_3",
+        "mul_live", "mul_primary_interp", "mul_old_interp",
+        "mul_live_recip", "mul_live", "mul_old", "mul_arm_recip",
+        "mul_blend", "ring_current", "ring_old",
+    )
+    assert len(issue_keys) == len(expected_issue_keys) == 24
+    assert sorted(issue_keys) == sorted(expected_issue_keys)
+    for spelling in (
+            "expected = (self.trace.current_arm",
+            "record = decode_sample_record(self.trace.final_words)",
+            "self.leaf = self.trace.leaf",
+            "value = (self.trace.final_words[index]",
+            "self.lfsr = self.trace.next_lfsr",
+            "self.lfsr2 = self.trace.next_lfsr2"):
+        assert spelling in machine
+
+    events = (
+        "LOAD", "NZ_OLD", "NZ_LIVE", "W0", "W1", "W2", "W3",
+        "W4", "W5", "W6", "W15", "W26", "W27", "PC2E", "W40",
+        "RING1", "RING2", "RING3", "W51", "W75", "W84", "STORES", "SLOT",
+        "FOLD", "DONE",
+    )
+    event = {name: index for index, name in enumerate(events)}
+
+    @dataclass(frozen=True)
+    class Root:
+        name: str
+        trace_key: str
+        group: str
+        width: int
+        producer: str
+        born: str
+        dead: str
+        owner: str
+        consumer: str
+
+    def root(name: str, trace_key: str, group: str, width: int,
+             producer: str, born: str, dead: str, owner: str,
+             consumer: str) -> Root:
+        return Root(name, trace_key, group, width, producer, born, dead,
+                    owner, consumer)
+
+    roots = (
+        root("dq_live_issue", "dq_live", "dq_live", 17,
+             "dqsvc(eff_inc,wavetable,wave,detune)", "LOAD", "NZ_LIVE",
+             "service:dq", "NZ_LIVE fanout"),
+        root("noise_old_issue", "noise_old", "noise_old_step", 17,
+             "mul(nz_j(selected_old_inc),noise_draw(lfsr2))",
+             "NZ_OLD", "NZ_LIVE", "service:mul", "NZ_LIVE capture"),
+        root("noise_old_hold", "noise_old_hold", "noise_old_step", 17,
+             "retained noise_old_step", "NZ_LIVE", "W1", "frame:O17",
+             "old-noise pre-sum"),
+        root("dq_live_hold", "dq_live_hold", "dq_live", 17,
+             "retained dq_live", "NZ_LIVE", "W6", "frame:N17",
+             "final_phase2"),
+        root("dq_old_issue", "dq_old", "dq_old", 17,
+             "dqsvc(selected_old_inc,wavetable,old_wave,old_mode)",
+             "NZ_LIVE", "W5", "service:dq", "final_old_q"),
+        root("noise_live_issue", "noise_live", "noise_live_step", 17,
+             "mul(nz_j(eff_inc),noise_draw(lfsr))", "NZ_LIVE", "W0",
+             "service:mul", "noise lowpass update"),
+        root("wave_0_issue", "wave_0", "built_wave_0", 18,
+             "wave(current_phase,live_context,primary)", "W0", "W2",
+             "service:wave", "current pair"),
+        root("aram_0_issue", "aram_0", "aram_base_0", 8,
+             "aram[rec_base(snd_id)+current_index]", "W0", "W1",
+             "service:aram_seq_q", "primary_base A17:10"),
+        root("wave_1_issue", "wave_1", "built_wave_1", 18,
+             "wave(phase2,live_context,secondary)", "W1", "W3",
+             "service:wave", "current pair"),
+        root("aram_1_issue", "aram_1", "aram_adjacent_1", 8,
+             "aram[rec_base(snd_id)+current_index+1]", "W1", "W2",
+             "service:aram_seq_q", "primary delta"),
+        root("wave_2_issue", "wave_2", "built_wave_2", 18,
+             "wave(old_phase,old_context,primary)", "W2", "W4",
+             "service:wave", "old pair"),
+        root("aram_2_issue", "aram_2", "aram_base_2", 8,
+             "aram[rec_base(snd_id)+old_index]", "W2", "W3",
+             "service:aram_seq_q", "secondary_base B17:10"),
+        root("wave_3_issue", "wave_3", "built_wave_3", 18,
+             "wave(old_q,old_context,secondary)", "W3", "W5",
+             "service:wave", "old pair"),
+        root("aram_3_issue", "aram_3", "aram_adjacent_3", 8,
+             "aram[rec_base(snd_id)+old_index+1]", "W3", "W4",
+             "service:aram_seq_q", "secondary_adjacent A7:0"),
+        root("mul_live_w4", "mul_live", "built_live_gain_limb", 17,
+             "mul(abs(current_source),live_gain)", "W4", "W15",
+             "service:mul", "frame:N17 or current reciprocal"),
+        root("mul_primary_interp", "mul_primary_interp",
+             "primary_interp", 19,
+             "mul(abs(primary_delta),primary_fraction); base/sign in frame",
+             "W4", "W15", "service:mul+frame:A15", "wavetable sum"),
+        root("mul_old_interp", "mul_old_interp", "old_interp", 19,
+             "mul(abs(old_delta),old_fraction); base/sign in frame", "W15",
+             "W26", "service:mul+frame:O15", "wavetable sum"),
+        root("mul_live_recip", "mul_live_recip", "current_arm", 17,
+             "reciprocal_or_wave6(live_gain_limb,current_sign)",
+             "W15", "W27", "service:mul+frame:N17", "blend current"),
+        root("mul_live_w27", "mul_live", "wave_live_gain_limb", 17,
+             "mul(abs(primary_interp+old_interp/2),live_gain)",
+             "W27", "W40", "service:mul+frame:N17", "current reciprocal"),
+        root("mul_old_w27", "mul_old", "old_gain_limb", 17,
+             "mul(abs(old_source),selected_old_gain)", "W27", "W40",
+             "service:mul+frame:O17", "old reciprocal"),
+        root("mul_arm_recip", "mul_arm_recip", "arm_result", 17,
+             "reciprocal_or_wave6(selected_limb,selected_sign)",
+             "W40", "W51", "service:mul+frame:N17/O17", "blend arms"),
+        root("mul_blend", "mul_blend", "blend_product", 23,
+             "mul(abs(current_arm-old_arm),blend_count)",
+             "W75", "W84", "service:mul", "signed blend reconstruction"),
+        root("ring_current", "ring_current", "ring_current", 16,
+             "ring[current_slot,current_tap]", "RING1", "RING2",
+             "service:ring", "current comb"),
+        root("ring_old", "ring_old", "ring_old", 16,
+             "ring[current_slot,old_tap]", "RING2", "RING3",
+             "service:ring", "old comb"),
+        root("expected_arm", "direct:expected_arm", "arm_result", 17,
+             "retained current_arm or old_arm", "W51", "W51",
+             "frame:N17/O17", "remove circular assertion"),
+        root("blend_control", "direct:blend_control", "blend_count", 7,
+             "typed q17 blend_count", "PC2E", "W75", "frame:C7",
+             "blend launch or bypass"),
+        root("leaf_commit", "direct:leaf", "filtered_leaf", 17,
+             "audible ? dampen(blend(arms,rings,count),q14,q15,q26/30) : 0",
+             "W84", "STORES",
+             "frame:A17", "state words 48/49"),
+        root("record_commit", "direct:final_words", "record_commits", 16,
+             "typed fixed-edge phase/noise/gain/filter merge", "W0", "STORES",
+             "state:words10..23", "18 fixed writes"),
+        root("lfsr_next", "direct:next_lfsr", "lfsr_next", 15,
+             "{lfsr[13:0],lfsr[14]^lfsr[13]}", "W0", "SLOT",
+             "persistent:lfsr", "next slot"),
+        root("lfsr2_next", "direct:next_lfsr2", "lfsr2_next", 15,
+             "{lfsr2[13:0],lfsr2[14]^lfsr2[10]}", "W0", "SLOT",
+             "persistent:lfsr2", "next slot"),
+    )
+    assert len(roots) == 30
+    assert len({item.name for item in roots}) == 30
+    assert [item.trace_key for item in roots[:24]] == list(expected_issue_keys)
+    assert {item.trace_key for item in roots[24:]} == {
+        "direct:expected_arm", "direct:blend_control", "direct:leaf",
+        "direct:final_words", "direct:next_lfsr", "direct:next_lfsr2",
+    }
+    owner_prefixes = ("service:", "frame:", "state:", "persistent:")
+    for item in roots:
+        assert 0 < item.width <= (34 if item.owner.startswith("service:")
+                                  else 19)
+        assert item.born in event and item.dead in event
+        assert event[item.born] <= event[item.dead], item
+        assert item.owner.startswith(owner_prefixes), item
+        assert item.producer and item.consumer
+        assert "trace" not in item.producer.lower()
+        assert "oracle" not in item.producer.lower()
+
+    groups: dict[str, list[Root]] = {}
+    for item in roots:
+        groups.setdefault(item.group, []).append(item)
+    assert len(groups) == 27
+    assert {item.name for item in groups["dq_live"]} \
+        == {"dq_live_issue", "dq_live_hold"}
+    assert {item.name for item in groups["noise_old_step"]} \
+        == {"noise_old_issue", "noise_old_hold"}
+    assert {item.name for item in groups["arm_result"]} \
+        == {"mul_arm_recip", "expected_arm"}
+    assert all(len(items) == 1 for name, items in groups.items()
+               if name not in {"dq_live", "noise_old_step", "arm_result"})
+
+    # Bind the direct record root to the already-proved fixed-write image and
+    # require the fold/public skeleton to remain literal production topology.
+    action_names = {action.name
+                    for action in actions.by_owner["sample"].values()}
+    assert {f"STORE_{index}_{10 + index}" for index in range(14)} \
+        <= action_names
+    assert {"STORE_14_15", "STORE_15_14", "STORE_LEAF_LO",
+            "STORE_LEAF_HI", "FOLD_FINISH"} <= action_names
+    assert sum(word != 0 for word in candidate) == 222
+    summary = (
+        "H-D2F-C-B3-B2-A2-A1-B1-A atomic-root inventory: 30 trace/direct "
+        f"replacement roots grouped into {len(groups)} exact values; "
+        "24 issue sites and six direct uses bound to production edges, "
+        "coarse service/frame/state owners and final consumers; no "
+        "Trace/oracle producer; literal slices, collision/capacity and "
+        "executor/value equivalence remain unproved")
+    return summary, roots
 
 
 def reachable_to_idle(nodes: list[Node]) -> None:
@@ -1373,7 +4508,3301 @@ def output_commit_inventory(seq: str, walk: str) -> list[str]:
     return commits
 
 
+def validate_sample_action_inventory(actions: Actions,
+                                     program: list[int]) -> str:
+    """Prove every owner-zero action belongs to one fixed lowering family."""
+    names = {action.name for action in actions.by_owner["sample"].values()}
+    loads = {name for name in names
+             if name == "READ_PRIME" or name.startswith("LOAD_")}
+    services = {name for name in names
+                if name.startswith("NZ_") or name.startswith("CAP_")}
+    stores = {name for name in names if name.startswith("STORE_")}
+    folds = {name for name in names if name.startswith("FOLD_")}
+    assert not names - loads - services - stores - folds
+    assert (len(loads), len(services), len(stores), len(folds), len(names)) \
+        == (18, 16, 18, 9, 61)
+
+    # Name every service edge rather than treating CAP as a generic macro.
+    dependencies = SAMPLE_SERVICE_DEPENDENCIES
+    assert set(dependencies) == services
+    assert all(deps for deps in dependencies.values())
+
+    # Bind the model to the accepted full-mode schedule rather than copying a
+    # prose list.  The CAP indices and the two noise launches are executable
+    # source facts in the current walker/control generator.
+    ctrl = runpy.run_path(str(CTRL_GEN))
+    expected_caps = {offset: n
+                     for n, (_, offset) in enumerate(SAMPLE_CAP_SCHEDULE)}
+    assert ctrl["PWORK"] == 29 and ctrl["CAPS"] == expected_caps
+    walk = WALK.read_text()
+    assert re.search(r"localparam int PNZ_OLD\s*=\s*19;", walk)
+    assert re.search(r"localparam int PNZ_LIVE\s*=\s*24;", walk)
+
+    static_holds = sum(
+        Instruction.decode(word).op == Op.EXEC
+        and Instruction.decode(word).action == COMMON_ACTION["HOLD"]
+        for word in program)
+    cap_holds = SAMPLE_CAP_SCHEDULE[-1][1] - (len(SAMPLE_CAP_SCHEDULE) - 1)
+    assert static_holds == 4 + 4 + cap_holds + len(FOLD_NODES) * 8
+    return ("61 owner-zero actions: 18 addressed loads, 16 named service/CAP "
+            "edges, 18 addressed stores and 9 unrolled-fold actions; "
+            f"{static_holds} fixed-latency HOLD words; exact accepted "
+            "NZ/W0..W84 cadence")
+
+
+def validate_fold_word_contract() -> str:
+    """Prove the two-word signed-18 representation and literal tree shape."""
+    for value in range(-(1 << 17), 1 << 17):
+        lo = value & 0xffff
+        hi = (value >> 16) & 0xffff
+        raw = ((hi & 3) << 16) | lo
+        decoded = raw - (1 << 18) if raw & (1 << 17) else raw
+        assert decoded == value
+
+    # Treat the fold as an arbitrary non-associative binary operation.  If
+    # the symbolic expression is exact, the address schedule preserves the
+    # required soft_add ordering independently of its arithmetic internals.
+    values: list[object] = list(range(8))
+    for a_slot, b_slot, dst_slot in FOLD_NODES:
+        values[dst_slot] = (values[a_slot], values[b_slot])
+    expected = (((0, 1), (2, 3)), ((4, 5), (6, 7)))
+    assert values[0] == expected
+    return ("all 262,144 signed-18 values round-trip through words 48/49; "
+            "literal nodes preserve ((0,1),(2,3)),((4,5),(6,7)) ordering")
+
+
+def validate_fold_arithmetic_contract() -> str:
+    """Prove the base-256 /5 lowering over every reachable fold sum."""
+    threshold = 24_576
+    pair_lo = -(1 << 16)
+    pair_hi = (1 << 16) - 2
+    excess_max = max(pair_hi - threshold, -threshold - pair_lo)
+    assert excess_max == 40_960
+
+    def split5(excess: int) -> tuple[int, int, int]:
+        high, low = divmod(excess, 256)
+        address = high + low
+        return 51 * high + address // 5, address, address // 5
+
+    for excess in range(excess_max + 1):
+        quotient, address, table_q = split5(excess)
+        assert quotient == excess // 5
+        assert 0 <= address <= 414
+        assert 0 <= table_q < (1 << 7)
+
+    def shipped(sum_value: int) -> int:
+        if sum_value >= threshold:
+            excess = sum_value - threshold
+            return threshold + ((excess * 52_429) >> 18)
+        if sum_value <= -threshold:
+            excess = -threshold - sum_value
+            return -threshold - ((excess * 52_429) >> 18)
+        return sum_value
+
+    def lowered(sum_value: int) -> int:
+        if sum_value >= threshold:
+            return threshold + split5(sum_value - threshold)[0]
+        if sum_value <= -threshold:
+            return -threshold - split5(-threshold - sum_value)[0]
+        return sum_value
+
+    outputs = []
+    for sum_value in range(pair_lo, pair_hi + 1):
+        got = lowered(sum_value)
+        assert got == shipped(sum_value), sum_value
+        assert -(1 << 15) <= got < (1 << 15)
+        outputs.append(got)
+    assert len(outputs) == 131_071
+    assert min(outputs) == -(1 << 15) and max(outputs) == (1 << 15) - 1
+    return ("131,071 signed-int16 pair sums and 40,961 reachable /5 "
+            "excesses; exact reciprocal equivalence and signed16 result")
+
+
+def validate_sample_pool_contract() -> str:
+    """Execute the four-field 70-bit transient lifetime hypothesis.
+
+    This is an information/lifetime proof, not sample arithmetic.  Persistent
+    oscillator/restart state and state owned inside wave, DQ, multiplier and
+    ring services are deliberately outside this pool.
+    """
+    capacities = {"A": 18, "B": 18, "N": 17, "O": 17}
+
+    class Pool:
+        def __init__(self) -> None:
+            self.live: dict[str, tuple[str, int] | None] = {
+                field: None for field in capacities
+            }
+            self.peak_payload = 0
+
+        def put(self, field: str, name: str, bits: int) -> None:
+            assert self.live[field] is None, (field, self.live[field], name)
+            assert 0 < bits <= capacities[field], (field, name, bits)
+            self.live[field] = (name, bits)
+            self.peak_payload = max(
+                self.peak_payload,
+                sum(value[1] for value in self.live.values()
+                    if value is not None))
+
+        def take(self, field: str, name: str) -> None:
+            assert self.live[field] is not None
+            assert self.live[field][0] == name, (field, self.live[field], name)
+            self.live[field] = None
+
+        def empty(self) -> None:
+            assert all(value is None for value in self.live.values()), self.live
+
+    def begin_visit(pool: Pool) -> None:
+        pool.put("N", "dq_live", 14)        # W-5 -> W6
+        pool.put("O", "old_noise_step", 17) # W-5 -> W1
+
+    # Built-in oscillator path.
+    built = Pool()
+    begin_visit(built)
+    built.take("O", "old_noise_step")        # W1
+    built.put("A", "new_wave", 18)           # W2 -> W4
+    built.put("B", "old_wave", 18)           # W3 -> W27
+    built.take("A", "new_wave")              # W4 gain launch
+    built.put("A", "sign_aud_flags", 3)      # W4 -> W84
+    built.take("N", "dq_live")               # W6
+    built.put("N", "live_gain_limb", 17)     # W15 -> W27
+    built.take("N", "live_gain_limb")        # W27
+    built.put("N", "current_arm", 17)        # W27 -> W84
+    built.take("B", "old_wave")               # W27 old-gain launch
+    built.put("O", "old_gain_limb", 17)      # W40 -> W51
+    built.take("O", "old_gain_limb")         # W51
+    built.put("O", "old_arm", 17)            # W51 -> W84
+    built.take("N", "current_arm")           # W84
+    built.take("O", "old_arm")
+    built.take("A", "sign_aud_flags")
+    built.put("A", "filtered_leaf", 17)      # W84 -> word48/49
+    built.take("A", "filtered_leaf")
+    built.empty()
+
+    # Wavetable path.  The 18-bit packed point is exactly fraction10 plus a
+    # signed byte.  Linear interpolation is a convex combination, so its
+    # scaled result is bounded by signed-byte*128: -16384..16256 (signed15).
+    interp_min = (-128 * 1024) >> 3
+    interp_max = (127 * 1024) >> 3
+    assert (interp_min, interp_max) == (-16_384, 16_256)
+    assert -(1 << 14) <= interp_min and interp_max < (1 << 14)
+
+    wave = Pool()
+    begin_visit(wave)
+    wave.take("O", "old_noise_step")          # W1
+    wave.put("A", "primary_fraction_base", 18)
+    wave.put("O", "primary_adjacent", 8)     # W2 -> W4
+    wave.put("B", "old_fraction_base", 18)   # W3 -> W15
+    wave.take("O", "primary_adjacent")       # W4 primary launch
+    wave.take("A", "primary_fraction_base")
+    wave.put("O", "old_adjacent", 8)         # W4 -> W15
+    wave.take("N", "dq_live")                # W6
+    wave.take("B", "old_fraction_base")      # W15 old launch
+    wave.take("O", "old_adjacent")
+    wave.put("A", "primary_interpolated", 15)
+    wave.put("B", "old_interpolated", 15)   # W26
+    wave.take("A", "primary_interpolated")   # W27 gain launch
+    wave.take("B", "old_interpolated")
+    wave.put("A", "sign_aud_flags", 3)
+    wave.put("N", "live_gain_limb", 17)     # W40 -> W51
+    wave.take("N", "live_gain_limb")
+    wave.put("N", "current_arm", 17)        # W51 -> W84
+    wave.take("N", "current_arm")
+    wave.take("A", "sign_aud_flags")
+    wave.put("A", "filtered_leaf", 17)
+    wave.take("A", "filtered_leaf")
+    wave.empty()
+
+    # The fold begins only after the eighth leaf write, so it reuses the same
+    # fields.  HOLD words 1..8 are its step identity; no state counter exists.
+    fold = Pool()
+    fold.put("A", "fold_a", 18)
+    fold.put("B", "fold_b", 18)
+    fold.take("A", "fold_a")
+    fold.take("B", "fold_b")
+    fold.put("A", "fold_sum_or_result", 18)
+    fold.put("N", "fdiv5_q", 7)
+    assert tuple(range(1, 9)) == (1, 2, 3, 4, 5, 6, 7, 8)
+    fold.take("N", "fdiv5_q")
+    fold.take("A", "fold_sum_or_result")
+    fold.empty()
+
+    assert sum(capacities.values()) == 70
+    assert max(built.peak_payload, wave.peak_payload,
+               fold.peak_payload) <= 70
+    return ("A18+B18+N17+O17 = 70 shared bits; built-in, wavetable and "
+            "counter-free fold lifetimes execute without overlap or spill")
+
+
+@dataclass(frozen=True)
+class PhaseContextCase:
+    phase: int
+    phase2: int
+    old_phase: int
+    old_q: int
+    eff_inc: int
+    old_inc: int
+    dq_live: int
+    dq_old: int
+    noise_seed: int
+    old_noise_next: int
+    play: bool
+    amp_nonzero: bool
+    wt: bool
+    restart: bool
+    old_noise_on: bool
+    old_gain_nonzero: bool
+    wave: int
+    mode: int
+    old_wave: int
+    old_mode: int
+
+
+@dataclass(frozen=True)
+class PhaseContextResult:
+    w0_primary: int
+    w1_secondary: int
+    w2_old_primary: int
+    w3_old_secondary: int
+    phase: int
+    phase2: int
+    old_phase: int
+    old_q: int
+
+
+def phase_view(raw: int, wave: int, mode: int, wt: bool) -> int:
+    """Exact low-16 context transform used by psg_execwave."""
+    raw &= 0xffff
+    if not wt and wave in (0, 7):
+        return raw
+    if mode == 2:
+        return (raw << 1) & 0xffff
+    return raw
+
+
+def legacy_phase_contexts(case: PhaseContextCase) -> PhaseContextResult:
+    """Execute W0/W1/W5/W6 in legacy nonblocking-assignment source order."""
+    phase = case.phase & 0xffff
+    phase2 = case.phase2 & 0x1ffff
+    old_phase = case.old_phase & 0xffff
+    old_q = case.old_q & 0x1ffff
+    run = case.play and case.amp_nonzero
+
+    # W0 issues the old value before any edge assignments commit.
+    w0_primary = phase
+    if run and not case.wt:
+        phase = (phase + (case.eff_inc >> 1)) & 0xffff
+
+    if case.restart:
+        old_phase = case.phase & 0xffff
+        old_q = case.phase2 & 0x1ffff
+        if not case.amp_nonzero:
+            phase = 0
+            phase2 = 0
+
+    old_nz_active = run and case.old_noise_on
+    # noise_filt_step is textually after restart and therefore wins this NBA.
+    if old_nz_active:
+        old_phase = case.noise_seed & 0xffff
+
+    w1_secondary = phase_view(phase2, case.wave, case.mode, case.wt)
+
+    # W1 consumes the old-noise temporary and advances wavetable primary phase.
+    if old_nz_active:
+        old_phase = case.old_noise_next & 0xffff
+    if run and case.wt:
+        phase = (phase + (case.eff_inc >> 1)) & 0xffff
+
+    w2_old_primary = old_phase
+    w3_old_secondary = phase_view(old_q, case.old_wave,
+                                  case.old_mode, False)
+
+    # W5/W6 updates are later writeback values, after their issue contexts.
+    if (not case.wt and case.old_gain_nonzero and not old_nz_active):
+        old_phase = (old_phase + (case.old_inc >> 1)) & 0xffff
+        old_q = (old_q + case.dq_old) & 0x1ffff
+    if run:
+        phase2 = (phase2 + case.dq_live) & 0x1ffff
+
+    return PhaseContextResult(w0_primary, w1_secondary, w2_old_primary,
+                              w3_old_secondary, phase, phase2,
+                              old_phase, old_q)
+
+
+def compiled_phase_contexts(case: PhaseContextCase) -> PhaseContextResult:
+    """Closed addressed-state substitution intended for the H-D adapter."""
+    run = case.play and case.amp_nonzero
+    w0_primary = case.phase & 0xffff
+
+    # Restart selects the just-audible tuple.  The later noise seed has source
+    # priority only while the old-noise arm is actually running.
+    old_nz_active = run and case.old_noise_on
+    selected_old_phase = ((case.phase if case.restart else case.old_phase)
+                          & 0xffff)
+    if old_nz_active:
+        selected_old_phase = case.noise_seed & 0xffff
+    w2_old_primary = ((case.old_noise_next if old_nz_active
+                       else selected_old_phase) & 0xffff)
+    selected_old_q = ((case.phase2 if case.restart else case.old_q)
+                      & 0x1ffff)
+
+    cleared = case.restart and not case.amp_nonzero
+    selected_phase2 = 0 if cleared else case.phase2 & 0x1ffff
+    w1_secondary = phase_view(selected_phase2, case.wave,
+                              case.mode, case.wt)
+    w3_old_secondary = phase_view(selected_old_q, case.old_wave,
+                                  case.old_mode, False)
+
+    phase = case.phase & 0xffff
+    if run:
+        phase = (phase + (case.eff_inc >> 1)) & 0xffff
+    elif cleared:
+        phase = 0
+    phase2 = selected_phase2
+    if run:
+        phase2 = (phase2 + case.dq_live) & 0x1ffff
+
+    old_phase = w2_old_primary
+    old_q = selected_old_q
+    if (not case.wt and case.old_gain_nonzero and not old_nz_active):
+        old_phase = (old_phase + (case.old_inc >> 1)) & 0xffff
+        old_q = (old_q + case.dq_old) & 0x1ffff
+
+    return PhaseContextResult(w0_primary, w1_secondary, w2_old_primary,
+                              w3_old_secondary, phase, phase2,
+                              old_phase, old_q)
+
+
+def validate_phase_substitution_contract() -> str:
+    """Prove control priority and context/writeback association at W0--W6."""
+    numeric = [0, 1, 2, 0x7fff, 0x8000, 0xffff, 0x1ffff]
+    value = 0x4d35
+    while len(numeric) < 64:
+        value = (value * 25_173 + 13_849) & 0x1ffff
+        numeric.append(value)
+
+    cases = 0
+    for flags in range(64):
+        play = bool(flags & 1)
+        amp_nonzero = bool(flags & 2)
+        wt = bool(flags & 4)
+        restart = bool(flags & 8)
+        old_noise_on = bool(flags & 16)
+        old_gain_nonzero = bool(flags & 32)
+        if restart and not play:  # blend_restart itself includes play_bits
+            continue
+        for wave in range(8):
+            for mode in range(3):
+                for n, raw in enumerate(numeric):
+                    case = PhaseContextCase(
+                        phase=raw, phase2=(raw * 3 + n) & 0x1ffff,
+                        old_phase=(raw * 5 + 7) & 0xffff,
+                        old_q=(raw * 9 + 11) & 0x1ffff,
+                        eff_inc=(raw * 13 + 17) & 0x3fff,
+                        old_inc=(raw * 19 + 23) & 0x3fff,
+                        dq_live=(raw * 29 + 31) & 0x3fff,
+                        dq_old=(raw * 37 + 41) & 0x3fff,
+                        noise_seed=(raw * 43 + 47) & 0xffff,
+                        old_noise_next=(raw * 53 + 59) & 0xffff,
+                        play=play, amp_nonzero=amp_nonzero, wt=wt,
+                        restart=restart, old_noise_on=old_noise_on,
+                        old_gain_nonzero=old_gain_nonzero,
+                        wave=wave, mode=mode,
+                        old_wave=(wave + 3) & 7,
+                        old_mode=(mode + 1) % 3)
+                    legacy = legacy_phase_contexts(case)
+                    compiled = compiled_phase_contexts(case)
+                    assert compiled == legacy, (case, legacy, compiled)
+                    cases += 1
+
+    # Direct convictions for the three non-commutative substitution edges.
+    zero_restart = PhaseContextCase(
+        phase=0x1234, phase2=0x15678, old_phase=0xaaaa,
+        old_q=0x1bbbb, eff_inc=0x321, old_inc=0x222,
+        dq_live=0x111, dq_old=0x333, noise_seed=0x4444,
+        old_noise_next=0x5555, play=True, amp_nonzero=False, wt=False,
+        restart=True, old_noise_on=True, old_gain_nonzero=True,
+        wave=2, mode=2, old_wave=7, old_mode=1)
+    result = compiled_phase_contexts(zero_restart)
+    assert result.w0_primary == 0x1234
+    assert result.w1_secondary == 0
+    assert result.w2_old_primary == 0x1234
+    assert result.w3_old_secondary == 0x5678
+
+    noise_restart = PhaseContextCase(
+        **{**zero_restart.__dict__, "amp_nonzero": True,
+           "noise_seed": 0x6789, "old_noise_next": 0x789a})
+    result = compiled_phase_contexts(noise_restart)
+    assert result.w2_old_primary == 0x789a
+    return (f"{cases:,} W0--W6 context/writeback cases; restart zero, "
+            "noise-seed priority and old/live DQ association exact")
+
+
+def trunc_zero(value: int, divisor: int) -> int:
+    quotient = abs(value) // divisor
+    return -quotient if value < 0 else quotient
+
+
+def signed(value: int, bits: int) -> int:
+    value &= (1 << bits) - 1
+    return value - (1 << bits) if value & (1 << (bits - 1)) else value
+
+
+def wave_value(phase: int, wave: int, alt: bool, secondary: bool) -> int:
+    """Scalar form of the separately exhaustive psg_wave_ctx oracle."""
+    phase &= 0xffff
+    if wave in (0, 7):
+        raw = 3 * phase - 49_152 if phase < 32_768 \
+            else 147_456 - 3 * phase
+        if wave == 0 and alt:
+            ramp = 65_535 - phase if phase >= 57_344 else phase
+            numerator = 3 * ramp - ((ramp + 2_047) >> 11)
+            tilt = (numerator if phase >= 57_344 else numerator // 7) - 12_286
+            raw = tilt + 3 * trunc_zero(raw, 4)
+        return trunc_zero(raw, 8 if secondary else 4)
+    if wave == 1:
+        boundary = 61_440 if alt else 57_344
+        divisor = 15 if alt else 7
+        ceil_shift = 10 if alt else 11
+        scale = 6 if alt else 3
+        ramp = 65_535 - phase if phase >= boundary else phase
+        numerator = scale * ramp - ((ramp + (1 << ceil_shift) - 1)
+                                    >> ceil_shift)
+        raw = (numerator if phase >= boundary else numerator // divisor) \
+            - 12_286
+        return trunc_zero(raw, 2) if secondary else raw
+    if wave == 2:
+        raw = trunc_zero(phase - 32_768, 4)
+        if alt:
+            raw = trunc_zero(raw + trunc_zero((phase // 2) - 32_768, 4), 2)
+        return trunc_zero(raw, 2) if secondary else raw
+    if wave in (3, 4):
+        threshold = ((0x9800 if alt else 0x8000) if wave == 3
+                     else (0xC800 if alt else 0xB000))
+        raw = -6_143 if phase < threshold else 6_143
+        return trunc_zero(raw, 2) if secondary else raw
+    if wave == 5:
+        if alt and secondary:
+            raw = -3_071 if phase < 32_768 else 3_071
+        elif phase < 16_384:
+            raw = phase - 8_192
+        elif phase < 32_768:
+            raw = 24_576 - phase
+        else:
+            magnitude = 2 * (phase - 32_768) if phase < 49_152 \
+                else 2 * (65_536 - phase)
+            raw = magnitude // 3 - 8_192
+        return trunc_zero(raw, 2) if secondary else raw
+    return 0
+
+
+def soft_add_value(a: int, b: int) -> int:
+    total = a + b
+    threshold = 24_576
+    if total >= threshold:
+        return threshold + (total - threshold) // 5
+    if total <= -threshold:
+        return -threshold - (-threshold - total) // 5
+    return total
+
+
+@dataclass
+class SampleRecord:
+    phase: int
+    nz_hold: int
+    old_q: int
+    phase2: int
+    clr_ack: int
+    old_gain: int
+    last_gain: int
+    nz_phase: int
+    old_mode: int
+    brown: int
+    lowpass: int
+    old_phase: int
+    blend_count: int
+    old_inc: int
+    old_rev: int
+    last_rev: int
+    last_wave: int
+    last_inc: int
+    old_alt: int
+    last_alt: int
+    last_mode: int
+    old_wave: int
+    noise_lowpass: int
+
+
+@dataclass(frozen=True)
+class SampleParams:
+    eff_inc: int
+    snd_id: int
+    wavetable: bool
+    wave: int
+    damp: int
+    reverb: int
+    detune: int
+    buzz: bool
+    noise: bool
+    amplitude: int
+    clr_tog: int
+
+
+@dataclass(frozen=True)
+class SampleInputs:
+    play: bool
+    hidden: bool
+    music_slot: bool
+    music_playing: bool
+    nz_tog: bool
+    nz_tick: bool
+    lfsr: int
+    lfsr2: int
+    ring_current: int
+    ring_old: int
+    aram_salt: int
+
+
+@dataclass(frozen=True)
+class SampleTrace:
+    initial_words: tuple[int, ...]
+    final_words: tuple[int, ...]
+    dq_live: int
+    dq_old: int
+    noise_old_step: int
+    noise_live_step: int
+    wave_contexts: tuple[tuple[int, int, bool, bool], ...]
+    wave_results: tuple[int, ...]
+    aram_requests: tuple[tuple[int, int, bool], ...]
+    aram_results: tuple[int, ...]
+    primary_interp: int
+    old_interp: int
+    live_gain_limb: int
+    old_gain_limb: int
+    current_arm: int
+    old_arm: int
+    ring_current: int
+    ring_old: int
+    blend_value: int
+    filtered_value: int
+    leaf: int
+    ring_write: int | None
+    next_lfsr: int
+    next_lfsr2: int
+
+
+def decode_sample_record(words: list[int] | tuple[int, ...]) -> SampleRecord:
+    assert len(words) == 14
+    return SampleRecord(
+        phase=words[0],
+        nz_hold=signed(words[1] >> 8, 8),
+        old_q=((words[7] & 0x1ff) << 8) | (words[1] & 0xff),
+        phase2=((words[3] & 1) << 16) | words[2],
+        clr_ack=(words[3] >> 15) & 1,
+        old_gain=((words[3] >> 10) & 0x1f) << 8 | (words[9] >> 8),
+        last_gain=((words[3] >> 5) & 0x1f) << 8 | (words[12] & 0xff),
+        nz_phase=(words[3] >> 1) & 0xf,
+        old_mode=(words[4] >> 13) & 3,
+        brown=signed(words[4], 13),
+        lowpass=signed(((words[4] >> 15) << 16) | words[5], 17),
+        old_phase=words[6],
+        blend_count=(words[7] >> 9) & 0x7f,
+        old_inc=((words[9] & 0x1f) << 9) | (words[8] >> 7),
+        old_rev=(words[10] >> 13) & 3,
+        last_rev=(words[10] >> 11) & 3,
+        last_wave=(words[10] >> 8) & 7,
+        last_inc=((words[10] & 0x1f) << 9) | (words[11] >> 7),
+        old_alt=bool((words[12] >> 14) & 1),
+        last_alt=bool((words[12] >> 13) & 1),
+        last_mode=(words[12] >> 11) & 3,
+        old_wave=(words[12] >> 8) & 7,
+        noise_lowpass=signed(words[13], 16),
+    )
+
+
+def encode_sample_record(record: SampleRecord) -> tuple[int, ...]:
+    words = [0] * 14
+    words[0] = record.phase & 0xffff
+    words[1] = ((record.nz_hold & 0xff) << 8) | (record.old_q & 0xff)
+    words[2] = record.phase2 & 0xffff
+    words[3] = ((record.clr_ack & 1) << 15) \
+        | (((record.old_gain >> 8) & 0x1f) << 10) \
+        | (((record.last_gain >> 8) & 0x1f) << 5) \
+        | ((record.nz_phase & 0xf) << 1) | ((record.phase2 >> 16) & 1)
+    words[4] = ((record.lowpass < 0) << 15) \
+        | ((record.old_mode & 3) << 13) | (record.brown & 0x1fff)
+    words[5] = record.lowpass & 0xffff
+    words[6] = record.old_phase & 0xffff
+    words[7] = ((record.blend_count & 0x7f) << 9) \
+        | ((record.old_q >> 8) & 0x1ff)
+    words[8] = (record.old_inc & 0x1ff) << 7
+    words[9] = ((record.old_gain & 0xff) << 8) \
+        | ((record.old_inc >> 9) & 0x1f)
+    words[10] = ((record.old_rev & 3) << 13) \
+        | ((record.last_rev & 3) << 11) \
+        | ((record.last_wave & 7) << 8) \
+        | ((record.last_inc >> 9) & 0x1f)
+    words[11] = (record.last_inc & 0x1ff) << 7
+    words[12] = (int(record.old_alt) << 14) \
+        | (int(record.last_alt) << 13) \
+        | ((record.last_mode & 3) << 11) \
+        | ((record.old_wave & 7) << 8) | (record.last_gain & 0xff)
+    words[13] = record.noise_lowpass & 0xffff
+    return tuple(words)
+
+
+def decode_sample_params(words: list[int] | tuple[int, ...]) -> SampleParams:
+    assert len(words) == 4
+    return SampleParams(
+        eff_inc=((words[1] & 0x1f) << 9) | (words[0] >> 7),
+        snd_id=(words[1] >> 12) & 7,
+        wavetable=bool((words[1] >> 11) & 1),
+        wave=(words[1] >> 8) & 7,
+        damp=(words[2] >> 12) & 3,
+        reverb=(words[2] >> 10) & 3,
+        detune=(words[2] >> 8) & 3,
+        buzz=bool((words[2] >> 7) & 1),
+        noise=bool((words[2] >> 6) & 1),
+        amplitude=words[3] & 0xfff,
+        clr_tog=(words[3] >> 13) & 1,
+    )
+
+
+def encode_sample_params(params: SampleParams) -> tuple[int, ...]:
+    return (
+        (params.eff_inc & 0x1ff) << 7,
+        ((params.snd_id & 7) << 12) | (int(params.wavetable) << 11)
+        | ((params.wave & 7) << 8) | ((params.eff_inc >> 9) & 0x1f),
+        ((params.damp & 3) << 12) | ((params.reverb & 3) << 10)
+        | ((params.detune & 3) << 8) | (int(params.buzz) << 7)
+        | (int(params.noise) << 6),
+        (params.clr_tog << 13) | (params.amplitude & 0xfff),
+    )
+
+
+def phase_view(raw: int, wave: int, mode: int, wavetable: bool) -> int:
+    raw &= 0xffff
+    if not wavetable and wave in (0, 7):
+        return raw
+    return ((raw << 1) & 0xffff) if mode == 2 else raw
+
+
+def dq_value(increment: int, wavetable: bool, wave: int, mode: int) -> int:
+    if wavetable:
+        coefficient = 256
+    elif wave == 0:
+        coefficient = (256, 193, 384)[mode]
+    elif wave == 7:
+        coefficient = (254, 250, 508)[mode]
+    else:
+        coefficient = 256 if mode == 0 else 255
+    return ((increment >> 1) * coefficient) >> 8
+
+
+def noise_draw(lfsr: int) -> int:
+    value = 0
+    for term in range(8):
+        source = 7 + term
+        value |= (((lfsr >> source) ^ (lfsr >> (source - 1))) & 1) \
+            << (7 - term)
+    return signed(value, 8)
+
+
+def advance_lfsr(value: int, tap: int) -> int:
+    return ((value << 1) & 0x7fff) | (((value >> 14) ^ (value >> tap)) & 1)
+
+
+def noise_kick(lfsr: int, lfsr2: int, dp: int, amplitude: int) -> int:
+    gain = ((lfsr >> 7) & 0xff) << 5 | (lfsr & 0x1f)
+    if 3 * gain > dp + 497:
+        return 0
+    inv = 1 ^ ((lfsr2 >> 12) & 1)
+    draw = signed((inv << 11) | (inv << 10) | ((lfsr2 >> 2) & 0x3ff), 12)
+    draw = draw - (draw >> 3) - (draw >> 6)
+    return draw * ((amplitude >> 8) & 7)
+
+
+def aram_value(snd_id: int, index: int, salt: int) -> int:
+    index &= 0x3f
+    raw = ((snd_id * 73 + index * 29 + salt * 17) ^ 0xa5) & 0xff
+    return signed(raw, 8)
+
+
+def wavetable_value(snd_id: int, phase: int, salt: int) \
+        -> tuple[int, tuple[tuple[int, int, bool], ...], tuple[int, ...]]:
+    index = (phase >> 10) & 0x3f
+    fraction = phase & 0x3ff
+    base = aram_value(snd_id, index, salt)
+    adjacent = aram_value(snd_id, index + 1, salt)
+    value = (base * 1024 + (adjacent - base) * fraction) // 8
+    requests = ((snd_id, index, False), (snd_id, index, True))
+    return value, requests, (base, adjacent)
+
+
+def gain_arm(value: int, gain: int, wave: int) -> tuple[int, int]:
+    limb = (abs(value) * gain) >> 10
+    if wave == 6:
+        magnitude = limb >> 1
+    else:
+        p341 = limb * 341
+        reciprocal = (((p341 & ((1 << 25) - 1)) << 9)
+                      + ((p341 + limb) >> 1)) & ((1 << 34) - 1)
+        magnitude = (reciprocal >> 19) & 0x1ffff
+    return (-magnitude if value < 0 else magnitude), limb
+
+
+def evaluate_sample_slot(record: SampleRecord, params: SampleParams,
+                         inputs: SampleInputs) -> SampleTrace:
+    """Direct legacy source/NBA oracle for one complete full-mode slot."""
+    initial_words = encode_sample_record(record)
+    state = SampleRecord(**record.__dict__)
+    run = inputs.play and params.amplitude != 0
+    boost = params.detune != 0 and not params.wavetable \
+        and not ((params.wave & 4) and (params.wave & 2))
+    gain_a = params.amplitude + (params.amplitude >> 2) \
+        if boost else params.amplitude
+    live_gain = gain_a + (gain_a >> 1)
+    restart = inputs.play and (
+        params.eff_inc != state.last_inc or live_gain != state.last_gain
+        or params.wave != state.last_wave or params.detune != state.last_mode
+        or params.reverb != state.last_rev or params.buzz != state.last_alt
+        or (params.amplitude != 0 and params.wave == 6
+            and not params.wavetable and not params.buzz and inputs.nz_tick))
+
+    old_inc_now = state.last_inc if restart else state.old_inc
+    old_wave_now = state.last_wave if restart else state.old_wave
+    old_mode_now = state.last_mode if restart else state.old_mode
+    old_alt_now = state.last_alt if restart else state.old_alt
+    old_gain_now = state.last_gain if restart else state.old_gain
+    old_rev_now = state.last_rev if restart else state.old_rev
+    dq_live = dq_value(params.eff_inc, params.wavetable, params.wave,
+                       params.detune)
+    dq_old = dq_value(old_inc_now, params.wavetable, old_wave_now,
+                      old_mode_now)
+    live_random = noise_draw(inputs.lfsr)
+    old_random = noise_draw(inputs.lfsr2)
+    noise_live_step = (((params.eff_inc >> 1) << 3) + 1_120) \
+        * live_random // 256
+    noise_old_step = (((old_inc_now >> 1) << 3) + 1_120) \
+        * old_random // 256
+    kick = noise_kick(inputs.lfsr, inputs.lfsr2, params.eff_inc >> 1,
+                      params.amplitude)
+    old_noise_on = old_wave_now == 6 and not old_alt_now
+    old_noise_active = run and old_noise_on
+
+    w0_phase = state.phase
+    if run and not params.wavetable:
+        state.phase = (state.phase + (params.eff_inc >> 1)) & 0xffff
+    if restart:
+        state.blend_count = 0
+        state.old_phase = record.phase
+        state.old_q = record.phase2
+        state.old_inc = record.last_inc
+        state.old_gain = record.last_gain
+        state.old_wave = record.last_wave
+        state.old_mode = record.last_mode
+        state.old_alt = record.last_alt
+        state.old_rev = record.last_rev
+        if params.amplitude == 0:
+            state.phase = 0
+            state.phase2 = 0
+    elif state.blend_count != 64:
+        state.blend_count += 1
+
+    clear = params.clr_tog != state.clr_ack
+    if run and (params.noise or (record.phase >> 12) != state.nz_phase):
+        state.nz_phase = record.phase >> 12
+        state.nz_hold = signed(inputs.lfsr, 8)
+    if clear:
+        state.clr_ack = params.clr_tog
+        state.lowpass = 0
+    if run or clear:
+        state.brown = 0 if clear else signed(
+            state.brown - (state.brown >> 5) + signed(inputs.lfsr, 8), 13)
+    noise_pre = state.noise_lowpass \
+        + (noise_live_step if inputs.nz_tog else 0) + kick
+    if (run and params.wave == 6) or clear:
+        state.noise_lowpass = 0 if clear else max(-6_143, min(6_143, noise_pre))
+        live_noise_out = 0 if clear else noise_pre
+    else:
+        live_noise_out = 0
+    if old_noise_active:
+        seed_base = record.noise_lowpass if (restart or inputs.nz_tick) \
+            else record.old_phase
+        state.old_phase = (signed(seed_base, 16) + kick) & 0xffff
+
+    w1_phase = phase_view(state.phase2, params.wave, params.detune,
+                          params.wavetable)
+    old_noise_pre = signed(state.old_phase, 16) \
+        + (noise_old_step if inputs.nz_tog else 0)
+    if old_noise_active:
+        state.old_phase = max(-6_143, min(6_143, old_noise_pre)) & 0xffff
+        old_noise_out = old_noise_pre
+    else:
+        old_noise_out = 0
+    if run and params.wavetable:
+        state.phase = (state.phase + (params.eff_inc >> 1)) & 0xffff
+
+    w2_phase = state.old_phase
+    w3_phase = phase_view(state.old_q, state.old_wave, state.old_mode, False)
+    contexts = (
+        (w0_phase, params.wave, params.buzz, False),
+        (w1_phase, params.wave, params.buzz, True),
+        (w2_phase, state.old_wave, state.old_alt, False),
+        (w3_phase, state.old_wave, state.old_alt, True),
+    )
+    wave_results = tuple(wave_value(*context) for context in contexts)
+    aram_requests: tuple[tuple[int, int, bool], ...] = ()
+    aram_results: tuple[int, ...] = ()
+    primary_interp = old_interp = 0
+    if params.wavetable and inputs.play:
+        primary_interp, primary_req, primary_bytes = wavetable_value(
+            params.snd_id, w0_phase, inputs.aram_salt)
+        old_interp, old_req, old_bytes = wavetable_value(
+            params.snd_id, w1_phase, inputs.aram_salt)
+        aram_requests = primary_req + old_req
+        aram_results = primary_bytes + old_bytes
+        z_new = primary_interp + trunc_zero(old_interp, 2)
+        z_old = 0
+    elif params.wavetable:
+        z_new = z_old = 0
+    else:
+        z_new = wave_results[0] + wave_results[1]
+        z_old = wave_results[2] + wave_results[3]
+
+    if params.wave == 6 and not params.wavetable:
+        if params.buzz and not params.noise:
+            z_new = state.brown << 3
+        else:
+            coarse = live_noise_out >> 6
+            z_new = coarse * (68 if params.eff_inc & 0x2000 else 80)
+    if old_noise_active:
+        coarse = old_noise_out >> 6
+        z_old = coarse * (68 if state.old_inc & 0x2000 else 80)
+
+    state.last_inc = params.eff_inc
+    if inputs.play or not (inputs.music_slot and inputs.music_playing):
+        state.last_gain = live_gain
+    state.last_wave = params.wave
+    state.last_mode = params.detune
+    state.last_alt = params.buzz
+    state.last_rev = params.reverb
+    if not params.wavetable and state.old_gain != 0 and not old_noise_active:
+        state.old_phase = (state.old_phase + (state.old_inc >> 1)) & 0xffff
+        state.old_q = (state.old_q + dq_old) & 0x1ffff
+    if run:
+        state.phase2 = (state.phase2 + dq_live) & 0x1ffff
+
+    current_arm, live_limb = gain_arm(z_new, live_gain, params.wave)
+    if params.wavetable:
+        old_arm = current_arm if state.old_gain != 0 else 0
+        old_limb = 0
+    else:
+        old_arm, old_limb = gain_arm(z_old, state.old_gain, state.old_wave)
+    combined_new = trunc_zero(2 * current_arm + inputs.ring_current, 2) \
+        if params.reverb != 0 else current_arm
+    combined_old = trunc_zero(2 * old_arm + inputs.ring_old, 2) \
+        if state.old_rev != 0 else old_arm
+    blend_value = combined_new if state.blend_count == 64 else trunc_zero(
+        combined_old * 64 + (combined_new - combined_old)
+        * state.blend_count, 64)
+    if params.damp == 0:
+        filtered = blend_value
+    else:
+        factor = 1 if params.damp == 1 else 3
+        divisor = 2 if params.damp == 1 else 4
+        filtered = trunc_zero(blend_value + factor * state.lowpass, divisor)
+        state.lowpass = signed(filtered, 17)
+    audible = inputs.play and not inputs.hidden
+    # The shipped fold boundary deliberately takes mx_filt[15:0] and restores
+    # its bit-15 sign; persistent dampen state separately retains bit 16.
+    leaf = signed(filtered, 16) if audible else 0
+    ring_write = (signed(filtered, 17) & 0xffff) if inputs.play else None
+    next_lfsr = advance_lfsr(inputs.lfsr, 13)
+    next_lfsr2 = advance_lfsr(inputs.lfsr2, 10)
+    return SampleTrace(
+        initial_words=initial_words, final_words=encode_sample_record(state),
+        dq_live=dq_live, dq_old=dq_old,
+        noise_old_step=noise_old_step, noise_live_step=noise_live_step,
+        wave_contexts=contexts, wave_results=wave_results,
+        aram_requests=aram_requests, aram_results=aram_results,
+        primary_interp=primary_interp, old_interp=old_interp,
+        live_gain_limb=live_limb, old_gain_limb=old_limb,
+        current_arm=current_arm, old_arm=old_arm,
+        ring_current=inputs.ring_current, ring_old=inputs.ring_old,
+        blend_value=blend_value, filtered_value=signed(filtered, 17),
+        leaf=leaf, ring_write=ring_write,
+        next_lfsr=next_lfsr, next_lfsr2=next_lfsr2)
+
+
+@dataclass
+class ServiceToken:
+    producer: str
+    consumer: str
+    ready_cycle: int
+    value: object
+
+
+SAMPLE_HOLD_TARGETS = (
+    "NZ_OLD_LOAD_PAR_3", "NZ_LIVE",
+    *(f"CAP_{name}" for name, _ in SAMPLE_CAP_SCHEDULE),
+    *(f"HOLD_{word}" for word in range(9)),
+    "FOLD_PRIME", "FOLD_A_LO", "FOLD_A_HI", "FOLD_B_LO",
+    "FOLD_START", "FOLD_RUN", "FOLD_WRITE_LO", "FOLD_WRITE_HI",
+    "FOLD_FINISH",
+)
+
+
+class SampleImageMachine:
+    """Execute the real owner-zero image and compose the proved services."""
+    def __init__(self, program: list[int], actions: Actions, memory: list[int],
+                 *, spar_bank: int, play_bits: int, music_playing: bool,
+                 reverb: bool, lfsr: int, lfsr2: int, nz_tog: bool,
+                 nz_tick: bool, aram_salt: int, hold_selector: int) -> None:
+        self.program = program
+        self.actions = actions
+        self.memory = memory
+        self.spar_bank = spar_bank
+        self.play_bits = play_bits
+        self.music_playing = music_playing
+        self.reverb = reverb
+        self.lfsr = lfsr
+        self.lfsr2 = lfsr2
+        self.nz_tog = nz_tog
+        self.nz_tick = nz_tick
+        self.aram_salt = aram_salt
+        self.hold_selector = hold_selector
+        self.pc = SAMPLE_START
+        self.slot = 0
+        self.state_q = 0
+        self.active_cycles = 0
+        self.wall_cycles = 0
+        self.semantic_reads = 0
+        self.semantic_writes = 0
+        self.physical_reads = 0
+        self.pending: tuple[int, int] | None = None
+        self.loaded_words: list[int] = []
+        self.params_words: list[int] = []
+        self.trace: SampleTrace | None = None
+        self.tokens: dict[str, ServiceToken] = {}
+        self.leaf = 0
+        self.hold_checks = 0
+        self.hold_labels: set[str] = set()
+        self.service_transactions = 0
+        self.ring_tags: list[int] = []
+        self.fold_a = 0
+        self.fold_b = 0
+        self.fold_value = 0
+        self.fold_tags: list[int] = []
+        self.dry16 = 0
+        self.dry_valid = 0
+
+    def address(self, slot: int, word: int) -> int:
+        return (slot << 6) | word
+
+    def freeze_fingerprint(self) -> tuple[object, ...]:
+        return (self.pc, self.slot, self.state_q, self.active_cycles,
+                self.semantic_reads, self.semantic_writes, self.physical_reads,
+                self.pending, tuple(self.loaded_words), tuple(self.params_words),
+                repr(self.trace), repr(self.tokens), self.leaf,
+                tuple(self.ring_tags), self.fold_a, self.fold_b,
+                self.fold_value, tuple(self.fold_tags), self.dry16,
+                self.dry_valid, self.lfsr, self.lfsr2)
+
+    def inject_hold(self, label: str) -> None:
+        target = SAMPLE_HOLD_TARGETS[self.hold_selector
+                                     % len(SAMPLE_HOLD_TARGETS)]
+        if self.hold_checks or label != target:
+            return
+        before = self.freeze_fingerprint()
+        self.wall_cycles += 3
+        assert self.freeze_fingerprint() == before, label
+        self.hold_checks += 1
+        self.hold_labels.add(label)
+
+    def issue(self, key: str, producer: str, consumer: str,
+              delay: int, value: object) -> None:
+        assert key not in self.tokens, (key, self.tokens)
+        self.tokens[key] = ServiceToken(producer, consumer,
+                                        self.active_cycles + delay, value)
+        self.service_transactions += 1
+
+    def take(self, key: str, consumer: str) -> object:
+        token = self.tokens.pop(key)
+        assert token.consumer == consumer, (key, token, consumer)
+        assert self.active_cycles >= token.ready_cycle, (key, token,
+                                                         self.active_cycles)
+        return token.value
+
+    def begin_trace(self) -> None:
+        assert len(self.loaded_words) == 14 and len(self.params_words) == 4
+        record = decode_sample_record(self.loaded_words)
+        params = decode_sample_params(self.params_words)
+        hidden = self.slot >= 4 and bool(self.play_bits & (1 << (self.slot - 4)))
+        ring_current = signed((self.slot * 0x1931 + self.aram_salt * 0x111)
+                              & 0xffff, 16) if self.reverb else 0
+        ring_old = signed((self.slot * 0x2b17 + self.aram_salt * 0x73)
+                          & 0xffff, 16) if self.reverb else 0
+        inputs = SampleInputs(
+            play=bool(self.play_bits & (1 << self.slot)), hidden=hidden,
+            music_slot=self.slot >= 4, music_playing=self.music_playing,
+            nz_tog=self.nz_tog, nz_tick=self.nz_tick,
+            lfsr=self.lfsr, lfsr2=self.lfsr2,
+            ring_current=ring_current, ring_old=ring_old,
+            aram_salt=self.aram_salt)
+        self.trace = evaluate_sample_slot(record, params, inputs)
+
+    def fold_step(self, tag: int) -> None:
+        assert tag == len(self.fold_tags) + 1, (self.fold_tags, tag)
+        self.fold_tags.append(tag)
+        if tag == 1:
+            self.fold_value = self.fold_a + self.fold_b
+        elif tag == 2:
+            total = self.fold_value
+            self.fold_value = (total - 24_576 if total >= 24_576
+                               else -24_576 - total if total <= -24_576
+                               else 0)
+        elif tag == 3:
+            self.fold_value = abs(self.fold_value)
+        elif tag == 4:
+            high, low = divmod(self.fold_value, 256)
+            self.fold_value = (high << 16) | low
+        elif tag == 5:
+            high, low = self.fold_value >> 16, self.fold_value & 0xffff
+            self.fold_value = (51 * high << 16) | (high + low)
+        elif tag == 6:
+            partial, address = self.fold_value >> 16, self.fold_value & 0xffff
+            self.fold_value = partial + address // 5
+        elif tag == 7:
+            total = self.fold_a + self.fold_b
+            self.fold_value = (24_576 + self.fold_value
+                               if total >= 24_576 else
+                               -24_576 - self.fold_value
+                               if total <= -24_576 else total)
+        else:
+            assert self.fold_value == soft_add_value(self.fold_a, self.fold_b)
+
+    def execute_action(self, name: str, insn: Instruction) -> None:
+        if name.startswith("LOAD_OSC_"):
+            assert self.pending is not None
+            self.loaded_words.append(self.state_q)
+            self.pending = None
+        elif name.startswith("LOAD_PAR_"):
+            assert self.pending is not None
+            self.params_words.append(self.state_q)
+            self.pending = None
+        elif name == "NZ_OLD_LOAD_PAR_3":
+            assert self.pending is not None
+            self.params_words.append(self.state_q)
+            self.pending = None
+            self.begin_trace()
+            assert self.trace is not None
+            self.issue("dq_live", name, "NZ_LIVE", 5, self.trace.dq_live)
+            self.issue("noise_old", name, "NZ_LIVE", 5,
+                       self.trace.noise_old_step)
+        elif name == "NZ_LIVE":
+            assert self.trace is not None
+            assert self.take("dq_live", name) == self.trace.dq_live
+            assert self.take("noise_old", name) == self.trace.noise_old_step
+            self.issue("noise_old_hold", name, "CAP_W1", 0,
+                       self.trace.noise_old_step)
+            self.issue("dq_live_hold", name, "CAP_W6", 0,
+                       self.trace.dq_live)
+            self.issue("dq_old", name, "CAP_W5", 5, self.trace.dq_old)
+            self.issue("noise_live", name, "CAP_W0", 5,
+                       self.trace.noise_live_step)
+        elif name == "CAP_W0":
+            assert self.trace is not None
+            assert self.state_q == self.trace.initial_words[0]
+            assert self.take("noise_live", name) == self.trace.noise_live_step
+            if not decode_sample_params(self.params_words).wavetable:
+                self.issue("wave_0", name, "CAP_W2", 2,
+                           self.trace.wave_results[0])
+            elif self.trace.aram_requests:
+                self.issue("aram_0", name, "CAP_W1", 1,
+                           self.trace.aram_results[0])
+        elif name == "CAP_W1":
+            assert self.trace is not None
+            assert self.state_q == self.trace.initial_words[2]
+            assert self.take("noise_old_hold", name) \
+                == self.trace.noise_old_step
+            if not decode_sample_params(self.params_words).wavetable:
+                self.issue("wave_1", name, "CAP_W3", 2,
+                           self.trace.wave_results[1])
+            elif self.trace.aram_requests:
+                assert self.take("aram_0", name) == self.trace.aram_results[0]
+                self.issue("aram_1", name, "CAP_W2", 1,
+                           self.trace.aram_results[1])
+        elif name == "CAP_W2":
+            assert self.trace is not None
+            assert self.state_q == self.trace.initial_words[6]
+            params = decode_sample_params(self.params_words)
+            if not params.wavetable:
+                assert self.take("wave_0", name) == self.trace.wave_results[0]
+                self.issue("wave_2", name, "CAP_W4", 2,
+                           self.trace.wave_results[2])
+            elif self.trace.aram_requests:
+                assert self.take("aram_1", name) == self.trace.aram_results[1]
+                self.issue("aram_2", name, "CAP_W3", 1,
+                           self.trace.aram_results[2])
+        elif name == "CAP_W3":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            if not params.wavetable:
+                assert self.take("wave_1", name) == self.trace.wave_results[1]
+                self.issue("wave_3", name, "CAP_W5", 2,
+                           self.trace.wave_results[3])
+            elif self.trace.aram_requests:
+                assert self.take("aram_2", name) == self.trace.aram_results[2]
+                self.issue("aram_3", name, "CAP_W4", 1,
+                           self.trace.aram_results[3])
+        elif name == "CAP_W4":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            if not params.wavetable:
+                assert self.take("wave_2", name) == self.trace.wave_results[2]
+                self.issue("mul_live", name, "CAP_W15", 5,
+                           self.trace.live_gain_limb)
+            elif self.trace.aram_requests:
+                assert self.take("aram_3", name) == self.trace.aram_results[3]
+                self.issue("mul_primary_interp", name, "CAP_W15", 5,
+                           self.trace.primary_interp)
+        elif name == "CAP_W5":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            assert self.take("dq_old", name) == self.trace.dq_old
+            if not params.wavetable:
+                assert self.take("wave_3", name) == self.trace.wave_results[3]
+        elif name == "CAP_W6":
+            assert self.trace is not None
+            assert self.take("dq_live_hold", name) == self.trace.dq_live
+        elif name == "CAP_W15":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            if params.wavetable and self.trace.aram_requests:
+                assert self.take("mul_primary_interp", name) \
+                    == self.trace.primary_interp
+                self.issue("mul_old_interp", name, "CAP_W26", 5,
+                           self.trace.old_interp)
+            elif not params.wavetable:
+                assert self.take("mul_live", name) == self.trace.live_gain_limb
+                self.issue("mul_live_recip", name, "CAP_W27", 6,
+                           self.trace.current_arm)
+        elif name == "CAP_W26":
+            assert self.trace is not None
+            if self.trace.aram_requests:
+                assert self.take("mul_old_interp", name) == self.trace.old_interp
+        elif name == "CAP_W27":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            if params.wavetable:
+                self.issue("mul_live", name, "CAP_W40", 5,
+                           self.trace.live_gain_limb)
+            else:
+                assert self.take("mul_live_recip", name) \
+                    == self.trace.current_arm
+                self.issue("mul_old", name, "CAP_W40", 5,
+                           self.trace.old_gain_limb)
+        elif name == "CAP_W40":
+            assert self.trace is not None
+            params = decode_sample_params(self.params_words)
+            if params.wavetable:
+                assert self.take("mul_live", name) == self.trace.live_gain_limb
+            else:
+                assert self.take("mul_old", name) == self.trace.old_gain_limb
+            self.issue("mul_arm_recip", name, "CAP_W51", 5,
+                       (self.trace.current_arm if params.wavetable
+                        else self.trace.old_arm))
+        elif name == "CAP_W51":
+            assert self.trace is not None
+            expected = (self.trace.current_arm
+                        if decode_sample_params(self.params_words).wavetable
+                        else self.trace.old_arm)
+            assert self.take("mul_arm_recip", name) == expected
+            assert self.ring_tags == ([1, 2, 3, 4] if self.reverb else [])
+        elif name == "CAP_W75":
+            assert self.trace is not None
+            record = decode_sample_record(self.trace.final_words)
+            if record.blend_count != 64:
+                self.issue("mul_blend", name, "CAP_W84", 4,
+                           self.trace.blend_value)
+        elif name == "CAP_W84":
+            assert self.trace is not None
+            if "mul_blend" in self.tokens:
+                assert self.take("mul_blend", name) == self.trace.blend_value
+            self.leaf = self.trace.leaf
+        elif name.startswith("STORE_"):
+            assert self.trace is not None
+            if name == "STORE_LEAF_LO":
+                value = self.leaf & 0xffff
+            elif name == "STORE_LEAF_HI":
+                value = (self.leaf >> 16) & 0xffff
+            else:
+                index = int(name.split("_")[1])
+                value = (self.trace.final_words[index]
+                         if index < 14 else
+                         self.trace.final_words[5 if index == 14 else 4])
+            self.memory[self.address(self.slot, insn.word)] = value
+            self.semantic_writes += 1
+        elif name == "FOLD_A_LO":
+            self.fold_a = self.state_q
+            self.pending = None
+        elif name == "FOLD_A_HI":
+            self.fold_a = signed(((self.state_q & 3) << 16) | self.fold_a, 18)
+            self.pending = None
+        elif name == "FOLD_B_LO":
+            self.fold_b = self.state_q
+            self.pending = None
+        elif name == "FOLD_START":
+            self.fold_b = signed(((self.state_q & 3) << 16) | self.fold_b, 18)
+            self.pending = None
+            self.fold_tags = []
+        elif name == "FOLD_WRITE_LO":
+            self.memory[self.address(self.slot, insn.word)] = \
+                self.fold_value & 0xffff
+            self.semantic_writes += 1
+        elif name == "FOLD_WRITE_HI":
+            self.memory[self.address(self.slot, insn.word)] = \
+                (self.fold_value >> 16) & 0xffff
+            self.semantic_writes += 1
+        elif name == "FOLD_FINISH":
+            self.dry16 = signed(self.memory[self.address(0, 48)], 16)
+            self.dry_valid += 1
+
+    def run(self) -> tuple[int, int, int, int, int]:
+        for _ in range(2_000):
+            insn = Instruction.decode(self.program[self.pc])
+            label = ""
+            action = self.actions.get("sample", insn.action) \
+                if insn.op in (Op.READ, Op.WRITE, Op.EXEC) else None
+            if action is not None:
+                label = action.name
+            elif insn.op == Op.EXEC and insn.action == COMMON_ACTION["HOLD"]:
+                label = f"HOLD_{insn.word}"
+            self.inject_hold(label)
+            self.active_cycles += 1
+            self.wall_cycles += 1
+            self.physical_reads += 1
+            if action is not None and action.consumes is not None:
+                assert self.pending == (self.slot, action.consumes), \
+                    (self.pc, action.name, self.pending)
+            if action is not None:
+                self.execute_action(action.name, insn)
+            if insn.op == Op.READ:
+                self.semantic_reads += 1
+                self.pending = (self.slot, insn.word)
+                next_pc = (self.pc + 1) & 0xff
+            elif insn.op in (Op.WRITE, Op.EXEC):
+                if insn.op == Op.EXEC and insn.action == COMMON_ACTION["HOLD"]:
+                    if 1 <= insn.word <= 4 and self.trace is not None:
+                        if self.reverb:
+                            self.ring_tags.append(insn.word)
+                            if insn.word == 1:
+                                self.issue("ring_current", "HOLD_1", "HOLD_2",
+                                           1, self.trace.ring_current)
+                            elif insn.word == 2:
+                                assert self.take("ring_current", "HOLD_2") \
+                                    == self.trace.ring_current
+                                self.issue("ring_old", "HOLD_2", "HOLD_3", 1,
+                                           self.trace.ring_old)
+                            elif insn.word == 3:
+                                assert self.take("ring_old", "HOLD_3") \
+                                    == self.trace.ring_old
+                            else:
+                                assert "ring_current" not in self.tokens \
+                                    and "ring_old" not in self.tokens
+                    elif 1 <= insn.word <= 8 and self.trace is None:
+                        self.fold_step(insn.word)
+                next_pc = (self.pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                self.slot = (self.slot + 1) & 7 if insn.slot_inc \
+                    else insn.slot_value
+                if insn.slot_inc:
+                    assert self.trace is not None and not self.tokens
+                    self.lfsr = self.trace.next_lfsr
+                    self.lfsr2 = self.trace.next_lfsr2
+                    self.loaded_words = []
+                    self.params_words = []
+                    self.trace = None
+                    self.ring_tags = []
+                next_pc = (self.pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                next_pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = self.slot == 0
+                next_pc = insn.target if take == bool(insn.sense) \
+                    else (self.pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                assert not self.tokens and self.pending is None
+                assert self.dry_valid == 1
+                break
+            else:
+                raise AssertionError(insn)
+            physical_word = insn.word
+            if (insn.op == Op.READ and 24 <= insn.word <= 27
+                    and self.spar_bank):
+                physical_word += 4
+            self.state_q = self.memory[self.address(self.slot, physical_word)] \
+                if insn.op in (Op.READ, Op.WRITE, Op.EXEC) else \
+                self.memory[self.address(self.slot, 0)]
+            self.pc = next_pc
+        else:
+            raise AssertionError("sample image did not terminate")
+        return (self.active_cycles, self.semantic_reads, self.semantic_writes,
+                self.service_transactions, self.hold_checks)
+
+
+def make_sample_case(case: int, spar_bank: int) \
+        -> tuple[list[int], int, bool, int, int, bool, bool, int]:
+    memory = [((case * 0x91 + n * 0x25) ^ 0x5a5a) & 0xffff
+              for n in range(512)]
+    play_bits = 0
+    music_playing = bool(case & 1)
+    for slot in range(8):
+        play = ((case + slot * 3) % 5) != 0
+        if play:
+            play_bits |= 1 << slot
+        wavetable = play and ((case + slot) % 4 == 0)
+        wave = (case + slot) & 7
+        amplitude = 0 if play and ((case + slot) % 7 == 0) \
+            else (0 if not play else ((case * 173 + slot * 419) & 0xfff) or 1)
+        detune = (case + 2 * slot) % 3
+        buzz = bool((case ^ slot) & 1)
+        noise = bool((case + slot) & 2)
+        damp = 0 if not play else (case + slot) % 3
+        reverb = (case + slot) % 3
+        eff_inc = (0x101 + case * 0x93 + slot * 0x257) & 0x3fff
+        gain_a = amplitude + (amplitude >> 2) \
+            if detune != 0 and not wavetable and not ((wave & 4) and (wave & 2)) \
+            else amplitude
+        gain = gain_a + (gain_a >> 1)
+        restart = play and bool((case + slot) & 1)
+        last_wave = ((wave + 3) & 7) if restart else wave
+        last_gain = (gain ^ 0x155) & 0x1fff if restart else gain
+        last_inc = (eff_inc ^ 0x321) & 0x3fff if restart else eff_inc
+        last_mode = ((detune + 1) % 3) if restart else detune
+        last_alt = not buzz if restart else buzz
+        last_rev = ((reverb + 1) % 3) if restart else reverb
+        old_noise = (case + slot * 2) % 9 == 0
+        record = SampleRecord(
+            phase=(0xf031 + case * 0x511 + slot * 0x1d3) & 0xffff,
+            nz_hold=signed(case * 17 + slot * 31, 8),
+            old_q=(0x1e123 + case * 0x229 + slot * 0x431) & 0x1ffff,
+            phase2=(0x10123 + case * 0x337 + slot * 0x119) & 0x1ffff,
+            clr_ack=(case + slot + 1) & 1,
+            old_gain=(0x311 + case * 0x51 + slot * 0x87) & 0x1fff,
+            last_gain=last_gain, nz_phase=(case + slot) & 0xf,
+            old_mode=(case + slot + 1) % 3,
+            brown=signed(0x177 + case * 0x29 + slot * 0x77, 13),
+            lowpass=signed(0x1a031 + case * 0x991 + slot * 0x533, 17),
+            old_phase=(0x8123 + case * 0x739 + slot * 0x2b1) & 0xffff,
+            blend_count=(0, 1, 63, 64)[(case + slot) & 3],
+            old_inc=(0x222 + case * 0x71 + slot * 0x183) & 0x3fff,
+            old_rev=(case + slot + 2) % 3, last_rev=last_rev,
+            last_wave=last_wave, last_inc=last_inc,
+            old_alt=False if old_noise else bool((case + slot + 1) & 1),
+            last_alt=last_alt, last_mode=last_mode,
+            old_wave=6 if old_noise else ((wave + 5) & 7),
+            noise_lowpass=signed(0x9234 + case * 0x155 + slot * 0x2d1, 16))
+        params = SampleParams(
+            eff_inc=eff_inc, snd_id=(7 - slot) & 7,
+            wavetable=wavetable, wave=wave, damp=damp, reverb=reverb,
+            detune=detune, buzz=buzz, noise=noise, amplitude=amplitude,
+            clr_tog=(case + slot) & 1)
+        base = slot << 6
+        memory[base + 10:base + 24] = encode_sample_record(record)
+        selected = 28 if spar_bank else 24
+        other = 24 if spar_bank else 28
+        memory[base + selected:base + selected + 4] = encode_sample_params(params)
+        poison = SampleParams(**{**params.__dict__,
+                                 "wave": params.wave ^ 7,
+                                 "amplitude": params.amplitude ^ 0xfff})
+        memory[base + other:base + other + 4] = encode_sample_params(poison)
+    lfsr = (0x2a5f ^ (case * 0x133)) & 0x7fff
+    lfsr2 = (0x5117 ^ (case * 0x287)) & 0x7fff
+    return (memory, play_bits, music_playing, lfsr, lfsr2,
+            bool(case & 2), bool(case & 4), case ^ 0x35)
+
+
+def direct_sample_image(memory: list[int], *, spar_bank: int, play_bits: int,
+                        music_playing: bool, reverb: bool, lfsr: int, lfsr2: int,
+                        nz_tog: bool, nz_tick: bool, aram_salt: int) \
+        -> tuple[list[int], int]:
+    out = list(memory)
+    leaves = []
+    for slot in range(8):
+        base = slot << 6
+        record = decode_sample_record(out[base + 10:base + 24])
+        pbase = base + (28 if spar_bank else 24)
+        params = decode_sample_params(out[pbase:pbase + 4])
+        inputs = SampleInputs(
+            play=bool(play_bits & (1 << slot)),
+            hidden=slot >= 4 and bool(play_bits & (1 << (slot - 4))),
+            music_slot=slot >= 4, music_playing=music_playing,
+            nz_tog=nz_tog, nz_tick=nz_tick, lfsr=lfsr, lfsr2=lfsr2,
+            ring_current=signed((slot * 0x1931 + aram_salt * 0x111)
+                                & 0xffff, 16) if reverb else 0,
+            ring_old=signed((slot * 0x2b17 + aram_salt * 0x73)
+                            & 0xffff, 16) if reverb else 0,
+            aram_salt=aram_salt)
+        trace = evaluate_sample_slot(record, params, inputs)
+        out[base + 10:base + 24] = trace.final_words
+        out[base + 15] = trace.final_words[5]
+        out[base + 14] = trace.final_words[4]
+        out[base + 48] = trace.leaf & 0xffff
+        out[base + 49] = (trace.leaf >> 16) & 0xffff
+        leaves.append(trace.leaf)
+        lfsr, lfsr2 = trace.next_lfsr, trace.next_lfsr2
+    for a_slot, b_slot, dst_slot in FOLD_NODES:
+        leaves[dst_slot] = soft_add_value(leaves[a_slot], leaves[b_slot])
+        base = dst_slot << 6
+        out[base + 48] = leaves[dst_slot] & 0xffff
+        out[base + 49] = (leaves[dst_slot] >> 16) & 0xffff
+    return out, signed(leaves[0], 16)
+
+
+def validate_sample_image_semantics(program: list[int], actions: Actions) -> str:
+    runs = slots = active = transactions = hold_checks = 0
+    held_labels: set[str] = set()
+    coverage: dict[str, set[object]] = {
+        "bank": set(), "reverb_build": set(), "wave": set(),
+        "wavetable": set(), "play": set(), "hidden": set(),
+        "amplitude_zero": set(), "restart": set(), "old_noise": set(),
+        "buzz": set(), "noise": set(), "detune": set(), "dampen": set(),
+        "blend_count": set(),
+    }
+    for spar_bank in (0, 1):
+        for reverb in (False, True):
+            for case in range(16):
+                (memory, play_bits, music_playing, lfsr, lfsr2,
+                 nz_tog, nz_tick, aram_salt) = make_sample_case(case, spar_bank)
+                coverage["bank"].add(spar_bank)
+                coverage["reverb_build"].add(reverb)
+                for slot in range(8):
+                    base = slot << 6
+                    record = decode_sample_record(memory[base + 10:base + 24])
+                    pbase = base + (28 if spar_bank else 24)
+                    params = decode_sample_params(memory[pbase:pbase + 4])
+                    play = bool(play_bits & (1 << slot))
+                    hidden = slot >= 4 and bool(play_bits & (1 << (slot - 4)))
+                    boost = params.detune != 0 and not params.wavetable \
+                        and not ((params.wave & 4) and (params.wave & 2))
+                    gain_a = params.amplitude + (params.amplitude >> 2) \
+                        if boost else params.amplitude
+                    gain = gain_a + (gain_a >> 1)
+                    restart = play and (
+                        params.eff_inc != record.last_inc
+                        or gain != record.last_gain
+                        or params.wave != record.last_wave
+                        or params.detune != record.last_mode
+                        or params.reverb != record.last_rev
+                        or params.buzz != record.last_alt
+                        or (params.amplitude != 0 and params.wave == 6
+                            and not params.wavetable and not params.buzz
+                            and nz_tick))
+                    old_wave = record.last_wave if restart else record.old_wave
+                    old_alt = record.last_alt if restart else record.old_alt
+                    coverage["wave"].add(params.wave)
+                    coverage["wavetable"].add(params.wavetable)
+                    coverage["play"].add(play)
+                    coverage["hidden"].add(hidden)
+                    coverage["amplitude_zero"].add(params.amplitude == 0)
+                    coverage["restart"].add(restart)
+                    coverage["old_noise"].add(old_wave == 6 and not old_alt)
+                    coverage["buzz"].add(params.buzz)
+                    coverage["noise"].add(params.noise)
+                    coverage["detune"].add(params.detune)
+                    coverage["dampen"].add(params.damp)
+                    coverage["blend_count"].add(record.blend_count)
+                expected, expected_dry = direct_sample_image(
+                    memory, spar_bank=spar_bank, play_bits=play_bits,
+                    music_playing=music_playing, reverb=reverb,
+                    lfsr=lfsr, lfsr2=lfsr2, nz_tog=nz_tog, nz_tick=nz_tick,
+                    aram_salt=aram_salt)
+                machine = SampleImageMachine(
+                    program, actions, list(memory), spar_bank=spar_bank,
+                    play_bits=play_bits, music_playing=music_playing,
+                    reverb=reverb, lfsr=lfsr, lfsr2=lfsr2,
+                    nz_tog=nz_tog, nz_tick=nz_tick, aram_salt=aram_salt,
+                    hold_selector=runs)
+                counts = machine.run()
+                assert counts[0:3] == (782, 172, 158), counts
+                if machine.memory != expected:
+                    mismatch = next(index for index, pair in
+                                    enumerate(zip(machine.memory, expected))
+                                    if pair[0] != pair[1])
+                    raise AssertionError(
+                        (case, spar_bank, reverb, mismatch,
+                         machine.memory[mismatch], expected[mismatch]))
+                assert machine.dry16 == expected_dry and machine.dry_valid == 1
+                runs += 1
+                slots += 8
+                active += counts[0]
+                transactions += counts[3]
+                hold_checks += counts[4]
+                held_labels.update(machine.hold_labels)
+    assert runs == 64 and slots == 512 and active == 50_048
+    assert transactions == 8_052
+    assert hold_checks == runs
+    assert held_labels == set(SAMPLE_HOLD_TARGETS)
+    assert coverage["bank"] == {0, 1}
+    assert coverage["reverb_build"] == {False, True}
+    assert coverage["wave"] == set(range(8))
+    for name in ("wavetable", "play", "hidden", "amplitude_zero", "restart",
+                 "old_noise", "buzz", "noise"):
+        assert coverage[name] == {False, True}, (name, coverage[name])
+    assert coverage["detune"] == {0, 1, 2}
+    assert coverage["dampen"] == {0, 1, 2}
+    assert coverage["blend_count"] == {0, 1, 63, 64}
+    return (f"{runs} production-image runs / {slots} slots / {active:,} active "
+            f"instructions; {transactions:,} service transactions; "
+            f"{hold_checks} external-hold freezes; persistent/scratch/fold/"
+            "dry commits exact")
+
+
+def validate_sample_arithmetic_contract() -> str:
+    """Prove the bounded arithmetic identities used around retained services."""
+    dq_cases = 0
+    coefficients = {193, 250, 254, 255, 256, 384, 508}
+    for wt in (False, True):
+        for wave in range(8):
+            for mode in range(3):
+                if wt:
+                    coefficient = 256
+                elif wave == 0:
+                    coefficient = (256, 193, 384)[mode]
+                elif wave == 7:
+                    coefficient = (254, 250, 508)[mode]
+                else:
+                    coefficient = 256 if mode == 0 else 255
+                assert coefficient in coefficients
+                for dp in range(1 << 13):
+                    # Five radix-4 coefficient digits are the exact service
+                    # recurrence expressed as a positional sum.
+                    product = 0
+                    for shift in range(0, 10, 2):
+                        product += dp * ((coefficient >> shift) & 3) << shift
+                    assert product == dp * coefficient
+                    assert product >> 8 == (dp * coefficient) // 256
+                    dq_cases += 1
+
+    # Noise multiply: the service uses magnitude and then restores the sign
+    # with floor semantics for a negative arithmetic right shift.
+    noise_mul_cases = 0
+    max_noise_step = 0
+    for dp in range(1 << 13):
+        jitter = (dp << 3) + 1120
+        for random_step in range(-128, 128):
+            product = jitter * abs(random_step)
+            magnitude = product >> 8
+            restored = (-magnitude - bool(product & 0xff)
+                        if random_step < 0 else magnitude)
+            reference = (jitter * random_step) // 256
+            assert restored == reference
+            max_noise_step = max(max_noise_step, abs(restored))
+            noise_mul_cases += 1
+    assert max_noise_step == 33_324
+
+    # The old/live noise output shifts are exact small-constant multiplies.
+    noise_scale_cases = 0
+    for raw in range(1 << 18):
+        signed = raw - (1 << 18) if raw & (1 << 17) else raw
+        coarse = signed >> 6
+        assert (coarse << 6) + (coarse << 2) == coarse * 68
+        assert (coarse << 6) + (coarse << 4) == coarse * 80
+        noise_scale_cases += 2
+
+    # Positive amplitude boost and G formation are nested floor operations.
+    gain_cases = 0
+    for amplitude in range(1 << 12):
+        for wt in (False, True):
+            for wave in range(8):
+                for mode in range(3):
+                    boost = mode != 0 and not wt and not (
+                        (wave & 4) and (wave & 2))
+                    gain_a = amplitude + (amplitude >> 2) \
+                        if boost else amplitude
+                    gain = gain_a + (gain_a >> 1)
+                    reference_a = (5 * amplitude) // 4 \
+                        if boost else amplitude
+                    assert gain_a == reference_a
+                    assert gain == (3 * reference_a) // 2
+                    gain_cases += 1
+
+    def comb(value: int, history: int, enabled: bool) -> int:
+        if not enabled:
+            return value
+        acc = 2 * value + history
+        return (acc + (1 if acc < 0 else 0)) >> 1
+
+    def blend(new: int, old: int, count: int) -> int:
+        if count == 64:
+            return new
+        diff = new - old
+        product = abs(diff) * count
+        signed_product = -product if diff < 0 else product
+        acc = old * 64 + signed_product
+        return (acc + (63 if acc < 0 else 0)) >> 6
+
+    def damp(value: int, previous: int, level: int) -> int:
+        if level == 0:
+            return value
+        factor = 1 if level == 1 else 3
+        divisor = 2 if level == 1 else 4
+        acc = value + factor * previous
+        correction = divisor - 1 if acc < 0 else 0
+        return (acc + correction) >> (1 if level == 1 else 2)
+
+    # Boundary vectors plus a deterministic full-width stream convict signed
+    # truncation, bypass, count-64 and both dampen levels.
+    arithmetic_cases = 0
+    boundaries = (-(1 << 16), -32_768, -1, 0, 1,
+                  32_767, (1 << 16) - 1)
+    vectors = []
+    for new in boundaries:
+        for old in boundaries:
+            for history in (-32_768, -1, 0, 1, 32_767):
+                for count in range(65):
+                    vectors.append((new, old, history, count))
+    state = 0x5a17_3c29
+    while len(vectors) < 262_144:
+        state = (state * 1_664_525 + 1_013_904_223) & 0xffff_ffff
+        new = (state & 0x1ffff) - 0x10000
+        state = (state * 1_664_525 + 1_013_904_223) & 0xffff_ffff
+        old = (state & 0x1ffff) - 0x10000
+        history = ((state >> 16) & 0xffff) - 0x8000
+        count = state % 65
+        vectors.append((new, old, history, count))
+
+    for new, old, history, count in vectors:
+        for enabled in (False, True):
+            got = comb(new, history, enabled)
+            want = (trunc_zero(2 * new + history, 2)
+                    if enabled else new)
+            assert got == want
+            arithmetic_cases += 1
+        got_blend = blend(new, old, count)
+        want_blend = (new if count == 64 else
+                      trunc_zero(old * 64 + (new - old) * count, 64))
+        assert got_blend == want_blend
+        arithmetic_cases += 1
+        for level in range(3):
+            got_damp = damp(got_blend, old, level)
+            want_damp = (got_blend if level == 0 else
+                         trunc_zero(got_blend + (1 if level == 1 else 3)
+                                    * old, 2 if level == 1 else 4))
+            assert got_damp == want_damp
+            arithmetic_cases += 1
+
+    total = (dq_cases + noise_mul_cases + noise_scale_cases
+             + gain_cases + arithmetic_cases)
+    return (f"{total:,} DQ/noise/gain/comb/blend/dampen formulas; "
+            f"noise step <= {max_noise_step:,}; signed truncation exact")
+
+
+def remaining_owner_action_inventory(nodes: list[Node]) -> str:
+    """Separate proved transactions from every owner-one placeholder site."""
+    names = {node.name for node in nodes}
+    advance = {"K_ADV", "EA0", "EA1", "EA2", "EA3", "EA4", "EA5"}
+    movement = ({f"V_LD{i}" for i in range(8)}
+                | {f"V_ST{i}" for i in range(5)}
+                | {"K_ROT", "PC0", "PC1", "PC2", "PC3"})
+    publication = {"P_W0", "P_W1", "P_W2", "P_W3"}
+    remaining = names - advance - movement - publication
+    assert len(names) == 85
+    assert len(advance) == 7 and advance <= names
+    assert len(movement) == 18 and movement <= names
+    assert len(publication) == 4 and publication <= names
+    assert len(remaining) == 56
+
+    trigger_note = ({f"T_{name}" for name in ("FL", "SP", "LS", "LE",
+                                               "NL", "NH", "LD")}
+                    | {"K_NL", "K_NH", "K_LD"}
+                    | {f"I_TR{i}" for i in range(5)}
+                    | {"I_TW", "I_NL", "I_NH", "I_LD"})
+    effect = ({"ES0", "ES1", "ES2", "K_ARP", "K_ARPC", "K_PF0"}
+              | {f"K_FX{i}" for i in range(12)}
+              | {f"K_SL{i}" for i in range(9)})
+    flow = ({"S_IDLE", "W_MUS", "ML_STOP", "ML_RD0", "MS_RD", "MS_CK"}
+            | {f"ML_L{i}" for i in range(4)})
+    assert (len(trigger_note), len(effect), len(flow)) == (19, 27, 10)
+    assert remaining == trigger_note | effect | flow
+    return ("owner-one: 18 proved memory transactions, 4 address-only "
+            "publication sites, 56 placeholders (19 trigger/note, 27 effect/"
+            "service, 10 music flow); completion/arbitration still external")
+
+
+def validate_condition_contract(sample_program: list[int],
+                                tick_program: list[int]) -> str:
+    sample_conds = {
+        Instruction.decode(word).cond
+        for word in sample_program
+        if Instruction.decode(word).op == Op.BRANCH
+    }
+    tick_conds = {
+        Instruction.decode(word).cond
+        for word in tick_program
+        if Instruction.decode(word).op == Op.BRANCH
+    }
+    assert sample_conds == {COND_SAMPLE_SLOT_WRAP}
+    assert not (sample_conds | tick_conds) & set(range(4, 8))
+    assert {COND_TRIG, COND_ADVANCE, COND_INS_USE, COND_RELEASED} \
+        <= tick_conds
+    return ("owner-zero slot-wrap is external condition 8; owner-one exact "
+            "advance predicates occupy external conditions 8..11; common "
+            "Z/N/C/V remain 0..3 and hard-zero 4..7 are unused")
+
+
+def validate_public_priority(seq: str) -> str:
+    """Pin the source-order/NBA priority that one future adapter must retain."""
+    start = seq.index("// Main controller.")
+    end = seq.index("// Register-resident record words", start)
+    owner = seq[start:end]
+    tokens = (
+        "if (ptick_pend && !m_busy)",
+        "if (tick_en_d)",
+        "case (sst)",
+        "if (pre_tick)",
+        "if (cs && rw && addr[7:4] == 4'h1)",
+        "if (cs && rw && addr == 8'h21)",
+    )
+    positions = [owner.index(token) for token in tokens]
+    assert positions == sorted(positions)
+
+    layers = ("service", "boundary", "action", "pre_tick", "cpu", "tail")
+    rank = {name: n for n, name in enumerate(layers)}
+    winner_sets = (
+        (("service", "action"), "action"),
+        (("boundary", "action"), "action"),
+        (("action", "pre_tick"), "pre_tick"),
+        (("action", "cpu"), "cpu"),
+        (("pre_tick", "cpu"), "cpu"),
+        (("cpu", "tail"), "tail"),
+    )
+    for contenders, expected in winner_sets:
+        assert max(contenders, key=rank.__getitem__) == expected
+    return "public priority: " + " < ".join(layers)
+
+
+def serialize_program(words: list[int]) -> str:
+    """Return the controller's complete plain-hex memory image."""
+    assert len(words) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
+    assert all(0 <= word <= 0xffff for word in words)
+    return "".join(f"{word:04x}\n" for word in words)
+
+
+def write_candidate_image(path: Path, accepted: list[int],
+                          sample_candidate: list[int],
+                          tick_program: list[int]) -> str:
+    """Materialize the bounded D2F candidate without touching production."""
+    output = path.resolve()
+    assert output != IMAGE.resolve(), \
+        "candidate output must not replace rtl/psg_exec.hex"
+    if output.exists():
+        assert not output.samefile(IMAGE), \
+            "candidate output must not hard-link rtl/psg_exec.hex"
+    assert len(accepted) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
+    assert len(sample_candidate) == PROGRAM_BANK_WORDS
+    assert len(tick_program) == PROGRAM_BANK_WORDS
+
+    candidate = list(sample_candidate) + list(tick_program)
+    lower_changes = [index for index in range(PROGRAM_BANK_WORDS)
+                     if candidate[index] != accepted[index]]
+    upper_changes = [index for index in range(PROGRAM_BANK_WORDS,
+                                               len(candidate))
+                     if candidate[index] != accepted[index]]
+    assert len(lower_changes) == 44
+    assert not upper_changes
+    assert sum(word != 0 for word in candidate[:PROGRAM_BANK_WORDS]) == 222
+
+    production_before = IMAGE.read_bytes()
+    image = serialize_program(candidate)
+    # A second serializer invocation pins stable same-input formatting.  The
+    # gate runs the complete generator twice to prove whole-run determinism.
+    image_again = serialize_program(
+        list(sample_candidate) + list(tick_program))
+    assert image_again == image
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(image)
+    readback = output.read_text()
+    assert readback == image
+    lines = readback.splitlines()
+    assert len(lines) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
+    assert all(re.fullmatch(r"[0-9a-f]{4}", line) for line in lines)
+    assert [int(line, 16) for line in lines] == candidate
+    assert IMAGE.read_bytes() == production_before
+    return (f"{output}: 512 words, 44 owner-zero differences, "
+            "0 owner-one differences, 222 owner-zero nonzero words")
+
+
+def write_sample_d1_controller_edges(path: Path, candidate: list[int],
+                                     actions: Actions,
+                                     labels: dict[int, str]) -> str:
+    """Emit the complete direct-core owner-zero controller edge relation.
+
+    This is address/control proof only.  It records no pool field, service
+    value or arithmetic result; ``state_q`` is represented solely by the
+    enabled predecessor read that makes it available on the next edge.
+    """
+    output = path.resolve()
+    assert output != IMAGE.resolve(), \
+        "D1 controller edges must not replace rtl/psg_exec.hex"
+    if output.exists():
+        assert not output.samefile(IMAGE), \
+            "D1 controller edges must not hard-link rtl/psg_exec.hex"
+    production_before = IMAGE.read_bytes()
+    assert len(candidate) == PROGRAM_BANK_WORDS
+    assert set(labels) == {pc for pc, word in enumerate(candidate) if word}
+
+    action_by_code = actions.by_owner["sample"]
+    fixed_destinations = {
+        name: destination
+        for _pc, name, _q_source, destination, _origin in SAMPLE_FIXED_WRITES
+    }
+    assert len(fixed_destinations) == 18
+
+    def instruction_row(insn: Instruction) -> dict[str, object]:
+        row: dict[str, object] = {"op": insn.op.name,
+                                 "raw": insn.encode()}
+        if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+            row.update({"action": insn.action, "word": insn.word})
+        elif insn.op == Op.BRANCH:
+            row.update({"condition": insn.cond, "sense": insn.sense,
+                        "target": insn.target})
+        elif insn.op == Op.SLOT:
+            row.update({"increment": insn.slot_inc,
+                        "slot_value": insn.slot_value})
+        elif insn.op in (Op.JUMP, Op.OWNER):
+            row["target"] = insn.target
+        return row
+
+    def action_name(insn: Instruction) -> str | None:
+        if insn.op not in (Op.READ, Op.WRITE, Op.EXEC):
+            return None
+        action = action_by_code.get(insn.action)
+        return None if action is None else action.name
+
+    def read_word(insn: Instruction, name: str | None,
+                  spar_bank: int) -> tuple[int, str]:
+        literal = insn.encode() & 0x3f
+        if insn.op == Op.READ and insn.word >> 2 == 6:
+            return 24 + (spar_bank << 2) + (insn.word & 3), \
+                "sample-parameter-bank"
+        if name == "CAP_W51":
+            assert insn.op == Op.EXEC and insn.word == 26
+            return (30 if spar_bank else 26), "cap-w51-active-bank"
+        return literal, "instruction-low6"
+
+    edges: list[dict[str, object]] = []
+    run_counts: list[dict[str, object]] = []
+    for spar_bank in (0, 1):
+        pc = SAMPLE_START
+        slot = 0
+        predecessor_read: dict[str, object] | None = None
+        op_counts: Counter[str] = Counter()
+        read_override_counts: Counter[str] = Counter()
+        branch_taken = branch_not_taken = 0
+        run_start = len(edges)
+        for occurrence in range(900):
+            raw = candidate[pc]
+            assert raw != 0, (spar_bank, occurrence, pc)
+            insn = Instruction.decode(raw)
+            name = action_name(insn)
+            effective_word, read_kind = read_word(insn, name, spar_bank)
+            read = {
+                "enabled": True,
+                "kind": read_kind,
+                "literal_word": raw & 0x3f,
+                "effective_word": effective_word,
+                "address": (slot << 6) | effective_word,
+                "available_on": (None if insn.op == Op.DONE else {
+                    "run_bank": spar_bank, "occurrence": occurrence + 1,
+                }),
+            }
+            read_override_counts[read_kind] += 1
+
+            write: dict[str, object] | None = None
+            if insn.op == Op.WRITE:
+                if name in fixed_destinations:
+                    write_word = fixed_destinations[name]
+                    write_kind = "fixed-action-destination"
+                else:
+                    write_word = insn.word
+                    write_kind = "instruction-word"
+                write = {"enabled": True, "kind": write_kind,
+                         "effective_word": write_word,
+                         "address": (slot << 6) | write_word,
+                         "requires_address_override": write_word != insn.word}
+
+            next_pc = (pc + 1) & 0xff
+            next_slot = slot
+            successor_kind = "fallthrough"
+            guard: dict[str, object] = {"kind": "unconditional"}
+            terminal = False
+            if insn.op == Op.BRANCH:
+                assert insn.cond == COND_SAMPLE_SLOT_WRAP
+                take = (slot == 0) == bool(insn.sense)
+                next_pc = insn.target if take else (pc + 1) & 0xff
+                successor_kind = "branch-taken" if take \
+                    else "branch-fallthrough"
+                guard = {"kind": "sample-slot-wrap",
+                         "condition": insn.cond, "sense": insn.sense,
+                         "slot_is_zero": slot == 0, "taken": take}
+                branch_taken += take
+                branch_not_taken += not take
+            elif insn.op == Op.JUMP:
+                next_pc = insn.target
+                successor_kind = "jump"
+            elif insn.op == Op.SLOT:
+                next_slot = ((slot + 1) & 7
+                             if insn.slot_inc else insn.slot_value)
+                successor_kind = "slot-update"
+            elif insn.op == Op.DONE:
+                terminal = True
+                successor_kind = "done"
+
+            edge = {
+                "run_bank": spar_bank,
+                "occurrence": occurrence,
+                "pc": pc,
+                "slot": slot,
+                "instruction": instruction_row(insn),
+                "action_name": name,
+                "guard": guard,
+                "pre_edge_q": predecessor_read,
+                "state_read": read,
+                "state_write": write,
+                "successor": {
+                    "kind": successor_kind,
+                    "terminal": terminal,
+                    "pc": None if terminal else next_pc,
+                    "slot": None if terminal else next_slot,
+                },
+            }
+            edges.append(edge)
+            op_counts[insn.op.name] += 1
+            if terminal:
+                assert occurrence == 781
+                break
+            predecessor_read = {
+                "run_bank": spar_bank,
+                "occurrence": occurrence,
+                "pc": pc,
+                "slot": slot,
+                "effective_word": effective_word,
+                "address": (slot << 6) | effective_word,
+                "phase": "successor-pre-edge",
+            }
+            pc, slot = next_pc, next_slot
+        else:
+            raise AssertionError("D1 controller run did not terminate")
+
+        run_edges = edges[run_start:]
+        assert len(run_edges) == 782
+        assert len({row["pc"] for row in run_edges}) == 222
+        assert {row["slot"] for row in run_edges} == set(range(8))
+        assert dict(op_counts) == {
+            "READ": 172, "EXEC": 406, "WRITE": 158,
+            "SLOT": 29, "JUMP": 8, "BRANCH": 8, "DONE": 1,
+        }
+        assert (branch_taken, branch_not_taken) == (1, 7)
+        assert dict(read_override_counts) == {
+            "instruction-low6": 742,
+            "sample-parameter-bank": 32,
+            "cap-w51-active-bank": 8,
+        }
+        assert sum(row["state_write"] is not None for row in run_edges) == 158
+        assert sum(row["state_write"] is not None
+                   and row["state_write"]["requires_address_override"]
+                   for row in run_edges) == 128
+        assert run_edges[0]["pre_edge_q"] is None
+        assert all(row["pre_edge_q"] is not None for row in run_edges[1:])
+        run_counts.append({
+            "run_bank": spar_bank,
+            "edges": len(run_edges),
+            "static_pcs": len({row["pc"] for row in run_edges}),
+            "op_counts": dict(op_counts),
+            "read_kinds": dict(read_override_counts),
+            "writes": sum(row["state_write"] is not None
+                          for row in run_edges),
+            "address_overrides": sum(
+                row["state_write"] is not None
+                and row["state_write"]["requires_address_override"]
+                for row in run_edges),
+            "branch_taken": branch_taken,
+            "branch_not_taken": branch_not_taken,
+        })
+
+    assert len(edges) == 1564
+    owner_zero_bytes = b"".join(
+        word.to_bytes(2, "big") for word in candidate)
+    manifest = {
+        "schema": "psg_exec_d1_controller_edges_v1",
+        "claim": "future-direct-core-controller-address-obligations-only",
+        "candidate_owner_zero_sha256": hashlib.sha256(
+            owner_zero_bytes).hexdigest(),
+        "source_contract": {
+            "current_controller":
+                "psg_execctl-state-read-every-enabled-edge",
+            "current_movement":
+                "psg_execmove-sample-parameter-read-bank-only",
+            "future_address_sidebands":
+                "c2cc-cap-w51-q26-q30-and-16-remapped-fixed-write-destinations",
+            "excluded_current_rtl_claim":
+                "cap-w51-and-16-remapped-owner-zero-writes-not-implemented",
+            "wave_adapter": "direct-core-literal-words",
+            "excluded_compatibility_override": "hc-hold-to-word10",
+        },
+        "external_hold": {
+            "successor": "self",
+            "controller_advance": "disabled",
+            "ucode_read": "disabled",
+            "state_read": "disabled",
+            "state_write": "disabled",
+            "service_transaction": "disabled",
+            "state_q": "retain",
+        },
+        "counts": {
+            "runs": 2, "edges": len(edges), "edges_per_run": 782,
+            "static_pcs_per_run": 222,
+            "future_address_overrides": sum(
+                row["state_write"] is not None
+                and row["state_write"]["requires_address_override"]
+                for row in edges),
+        },
+        "run_counts": run_counts,
+        "edges": edges,
+    }
+    encoded = json.dumps(manifest, sort_keys=True, indent=2) + "\n"
+
+    def forbidden_keys(value: object) -> list[str]:
+        found: list[str] = []
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"value", "expected", "result", "sample_trace",
+                           "final_words", "record_commit", "state_wd",
+                           "pool", "expression", "expr"}:
+                    found.append(key)
+                found.extend(forbidden_keys(child))
+        elif isinstance(value, list):
+            for child in value:
+                found.extend(forbidden_keys(child))
+        return found
+
+    assert not forbidden_keys(manifest)
+    assert "SampleTrace" not in encoded \
+        and "evaluate_sample_slot" not in encoded
+    assert json.dumps(json.loads(encoded), sort_keys=True, indent=2) + "\n" \
+        == encoded
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(encoded)
+    assert output.read_text() == encoded
+    assert IMAGE.read_bytes() == production_before
+    return (f"{output}: 2 banks x 782 enabled edges; 222 static PCs/run; "
+            "1,564 state reads and 316 writes; controller/address only")
+
+
+def write_sample_d1_event_dictionary(
+        path: Path, controller_path: Path, requirements_path: Path,
+        binding_path: Path, candidate: list[int]) -> str:
+    """Bind symbolic D1 lifecycle events to dynamic controller occurrences.
+
+    This is an identity dictionary only.  It records no physical-slice update,
+    arithmetic value or candidate write data.  Service completions remain the
+    already accepted C2-C-C observations; the controller references here only
+    identify their issue/take boundaries.
+    """
+    output = path.resolve()
+    production_before = IMAGE.read_bytes()
+    proof_inputs = (controller_path.resolve(), requirements_path.resolve(),
+                    binding_path.resolve())
+    assert output != IMAGE.resolve() and output not in proof_inputs
+    if output.exists():
+        assert not output.samefile(IMAGE)
+        assert all(not output.samefile(source) for source in proof_inputs)
+
+    controller_bytes = controller_path.read_bytes()
+    requirements_bytes = requirements_path.read_bytes()
+    binding_bytes = binding_path.read_bytes()
+    assert hashlib.sha256(controller_bytes).hexdigest() \
+        == D1_CONTROLLER_SHA256
+    assert hashlib.sha256(requirements_bytes).hexdigest() \
+        == D1_REQUIREMENTS_SHA256
+    assert hashlib.sha256(binding_bytes).hexdigest() \
+        == D1_BINDING_MANIFEST_SHA256
+    assert hashlib.sha256("".join(
+        f"{word:04x}\n" for word in candidate
+    ).encode()).hexdigest() == D1_CANDIDATE_SHA256
+    assert hashlib.sha256(IMAGE.read_bytes()).hexdigest() \
+        == D1_PRODUCTION_IMAGE_SHA256
+
+    controller = json.loads(controller_bytes)
+    requirements = json.loads(requirements_bytes)
+    binding = json.loads(binding_bytes)
+    assert controller["schema"] == "psg_exec_d1_controller_edges_v1"
+    assert requirements["schema"] == "psg_exec_pool_requirements_v2"
+    assert binding["schema"] == "psg_exec_binding_v1"
+    assert requirements["packing_layout_sha256"] \
+        == D1_PACKING_LAYOUT_SHA256
+    assert requirements["live_layout_sha256"] == D1_LIVE_LAYOUT_SHA256
+    assert controller["counts"]["edges"] == 1564
+
+    edges = controller["edges"]
+    actions_by_name = {row["name"]: row for row in binding["actions"]}
+    fixed_writes = binding["fixed_writes"]
+    root_catalog = {row["name"]: row
+                    for row in requirements["source_catalog"]}
+    bound_roots = {row["name"]: row for row in binding["roots"]}
+    assert len(root_catalog) == len(bound_roots) == 30
+
+    def action_pc(name: str) -> int:
+        row = actions_by_name[name]
+        pcs = {int(item["pc"]) for item in row["occurrences"]}
+        assert len(pcs) == 1, (name, pcs)
+        pc = pcs.pop()
+        selected = [edge for edge in edges if int(edge["pc"]) == pc]
+        assert selected and all(edge["action_name"] == name
+                                for edge in selected), (name, pc)
+        return pc
+
+    def references(pcs: set[int], phase: str) -> list[dict[str, object]]:
+        assert phase in {"pre", "post"} and pcs
+        selected = [row for row in edges if int(row["pc"]) in pcs]
+        assert selected and {int(row["pc"]) for row in selected} == pcs
+        refs = [{
+            "bank": int(row["run_bank"]),
+            "slot": int(row["slot"]),
+            "occurrence": int(row["occurrence"]),
+            "pc": int(row["pc"]),
+            "phase": phase,
+        } for row in selected]
+        assert len({(row["bank"], row["occurrence"], row["phase"])
+                    for row in refs}) == len(refs)
+        return refs
+
+    def coverage(refs: list[dict[str, object]], semantic_guard: str) \
+            -> dict[str, object]:
+        selected = {(int(ref["bank"]), int(ref["occurrence"]))
+                    for ref in refs}
+        source_edges = [row for row in edges
+                        if (int(row["run_bank"]), int(row["occurrence"]))
+                        in selected]
+        guards = sorted({json.dumps(row["guard"], sort_keys=True,
+                                    separators=(",", ":"))
+                         for row in source_edges})
+        return {
+            "banks": sorted({int(ref["bank"]) for ref in refs}),
+            "slots": sorted({int(ref["slot"]) for ref in refs}),
+            "controller_guards": [json.loads(guard) for guard in guards],
+            "semantic_guard": semantic_guard,
+            "occurrences": len(refs),
+        }
+
+    leaf_pcs = {int(row["pc"]) for row in fixed_writes
+                if row["action"].startswith("STORE_LEAF_")}
+    record_pcs = {int(row["pc"]) for row in fixed_writes
+                  if not row["action"].startswith("STORE_LEAF_")}
+    slot_pc = {int(row["pc"]) for row in edges
+               if row["run_bank"] == 0
+               and row["instruction"]["op"] == "SLOT"
+               and row["instruction"]["increment"]}
+    assert len(leaf_pcs) == 2 and len(record_pcs) == 16 \
+        and len(slot_pc) == 1
+
+    root_events: list[dict[str, object]] = []
+    for name in sorted(bound_roots):
+        root = bound_roots[name]
+        catalog = root_catalog[name]
+        for key in ("name", "group", "width", "owner",
+                    "producer_event", "consumer_event"):
+            assert root[key] == catalog[key], (name, key)
+        transaction = root["source_binding"]["transaction"]
+        identity = {key: root[key] for key in
+                    ("name", "group", "width", "owner", "guard")}
+        identity["transaction"] = transaction
+        for endpoint in ("producer", "consumer"):
+            event_name = root[f"{endpoint}_event"]
+            observation = root["source_binding"][f"{endpoint}_observation"]
+            if endpoint == "consumer" and name == "leaf_commit":
+                pcs, basis = leaf_pcs, "leaf-fixed-writes"
+            elif endpoint == "consumer" and name == "record_commit":
+                pcs, basis = record_pcs, "record-fixed-writes"
+            elif endpoint == "consumer" and name in {
+                    "lfsr_next", "lfsr2_next"}:
+                pcs, basis = slot_pc, "per-slot-increment"
+            else:
+                pcs = {int(pc) for pc in root[f"{endpoint}_pcs"]}
+                basis = "manifest-pcs"
+            if endpoint == "producer":
+                phase = "post" if transaction is not None \
+                    else observation["phase"]
+                roles = ["issue"] if transaction is not None else ["define"]
+            else:
+                phase = observation["phase"]
+                roles = (["take", "consume"] if transaction is not None
+                         else ["consume"])
+                if event_name == "STORES":
+                    roles.append("commit")
+            refs = references(pcs, phase)
+            row: dict[str, object] = {
+                "id": f"root:{name}:{endpoint}",
+                "root": identity,
+                "endpoint": endpoint,
+                "symbolic_event": event_name,
+                "selection_basis": basis,
+                "roles": roles,
+                "observation": {
+                    "event": observation["event"],
+                    "phase": observation["phase"],
+                },
+                "coverage": coverage(refs, root["guard"]),
+                "occurrences": refs,
+            }
+            if endpoint == "producer" and transaction is not None:
+                completion_refs = references(pcs, observation["phase"])
+                row["transaction_completion"] = {
+                    "role": "complete",
+                    "service": transaction["service"],
+                    "kind": transaction["kind"],
+                    "observation_event": observation["event"],
+                    "observation_phase": observation["phase"],
+                    "occurrences": completion_refs,
+                }
+            root_events.append(row)
+    assert len(root_events) == 60
+
+    def cap_pc(event: str) -> int:
+        assert event.startswith("W") and event[1:].isdigit(), event
+        return action_pc(f"CAP_{event}")
+
+    def sample_event_pcs(event: str) -> tuple[set[int], str]:
+        if event == "PRE_W15":
+            return {cap_pc("W6")}, "post-w6"
+        if event == "DONE":
+            return {action_pc("STORE_LEAF_HI")}, "post-leaf-high"
+        if event.startswith("W"):
+            return {cap_pc(event)}, "cap-action"
+        if re.fullmatch(r"PC[0-9A-F]{2}", event):
+            return {int(event[2:], 16)}, "literal-pc"
+        raise AssertionError(f"unknown sample lifecycle event {event}")
+
+    fold_entry = 0x50
+
+    def fold_pc(node: int, event: str) -> tuple[set[int], str]:
+        assert 0 <= node < len(FOLD_NODES)
+        base = fold_entry + node * 20
+        input_slot = FOLD_NODES[node][1]
+        destination_slot = FOLD_NODES[node][2]
+
+        def fold_site(pc: int, *, action: str | None = None,
+                      step: int | None = None, slot: int) -> None:
+            selected = [edge for edge in edges if int(edge["pc"]) == pc]
+            assert selected and all(int(edge["slot"]) == slot
+                                    for edge in selected), (node, event, pc)
+            if action is not None:
+                assert all(edge["action_name"] == action
+                           for edge in selected), (node, event, pc)
+            if step is not None:
+                assert all(edge["instruction"]["op"] == "EXEC"
+                           and int(edge["instruction"]["action"]) == 0x70
+                           and int(edge["instruction"]["word"]) == step
+                           for edge in selected), (node, event, pc)
+
+        if event == "INPUTS":
+            fold_site(base + 7, action="FOLD_START", slot=input_slot)
+            return {base + 7}, "fold-start"
+        if event.startswith("STEP"):
+            step = int(event[4:])
+            assert 1 <= step <= 8
+            fold_site(base + 8 + step, step=step, slot=input_slot)
+            return {base + 8 + step}, "hold-step-tag"
+        if event == "WRITE_LO":
+            fold_site(base + 18, action="FOLD_WRITE_LO",
+                      slot=destination_slot)
+            return {base + 18}, "fold-write-low"
+        if event == "WRITE_HI":
+            fold_site(base + 19, action="FOLD_WRITE_HI",
+                      slot=destination_slot)
+            return {base + 19}, "fold-write-high"
+        if event == "DONE":
+            if node < 6:
+                fold_site(base + 19, action="FOLD_WRITE_HI",
+                          slot=destination_slot)
+                return {base + 19}, "node-write-high"
+            fold_site(0xdc, action="FOLD_FINISH", slot=destination_slot)
+            return {0xdc}, "root-fold-finish"
+        raise AssertionError(f"unknown fold lifecycle event {event}")
+
+    lifetime_events: list[dict[str, object]] = []
+    live_fields = requirements["live_fields"]
+    assert len(live_fields) == 78
+    assert len({(row["path"], row["name"]) for row in live_fields}) == 78
+    for field in live_fields:
+        for endpoint in ("born", "dead"):
+            symbolic = field[endpoint]
+            phase = "post" if endpoint == "born" else "pre"
+            basis: str
+            if field["path"] == "fold":
+                if symbolic == "DONE":
+                    phase = "post"
+                pcs: set[int] = set()
+                bases: set[str] = set()
+                for node in range(len(FOLD_NODES)):
+                    node_pcs, node_basis = fold_pc(node, symbolic)
+                    pcs.update(node_pcs)
+                    bases.add(node_basis)
+                basis = "+".join(sorted(bases))
+                path_guard = "fold"
+            else:
+                pcs, basis = sample_event_pcs(symbolic)
+                if symbolic == "DONE":
+                    phase = "post"
+                path_guard = field["path"]
+            refs = references(pcs, phase)
+            lifetime_events.append({
+                "id": (f"lifetime:{field['path']}:{field['name']}:"
+                       f"{endpoint}"),
+                "lifetime": {key: field[key] for key in
+                             ("path", "name", "width", "pieces")},
+                "endpoint": endpoint,
+                "symbolic_event": symbolic,
+                "selection_basis": basis,
+                "roles": ["define" if endpoint == "born" else "consume"],
+                "coverage": coverage(refs, path_guard),
+                "occurrences": refs,
+            })
+    assert len(lifetime_events) == 156
+
+    fold_events: list[dict[str, object]] = []
+    fold_topology = binding["source_contract"]["fold_nodes"]
+    assert len(fold_topology) == len(FOLD_NODES) == 7
+    for node, topology in enumerate(fold_topology):
+        assert tuple(topology) == FOLD_NODES[node]
+        for event in ("INPUTS", *(f"STEP{step}" for step in range(1, 9)),
+                      "WRITE_LO", "WRITE_HI", "DONE"):
+            pcs, basis = fold_pc(node, event)
+            refs = references(pcs, "post")
+            if event == "INPUTS":
+                roles = ["define"]
+            elif event.startswith("STEP"):
+                roles = ["consume", "define"]
+            elif event.startswith("WRITE"):
+                roles = ["consume", "commit"]
+            else:
+                roles = ["complete"]
+            fold_events.append({
+                "id": f"fold:{node}:{event}",
+                "node": node,
+                "topology": {"a_slot": topology[0],
+                             "b_slot": topology[1],
+                             "destination_slot": topology[2]},
+                "symbolic_event": event,
+                "selection_basis": basis,
+                "roles": roles,
+                "coverage": coverage(refs, "fold"),
+                "occurrences": refs,
+            })
+    finish_refs = references({action_pc("FOLD_FINISH")}, "post")
+    fold_events.append({
+        "id": "fold:root:FOLD_FINISH",
+        "node": "root",
+        "symbolic_event": "FOLD_FINISH",
+        "selection_basis": "fold-finish-action",
+        "roles": ["consume", "complete", "commit"],
+        "coverage": coverage(finish_refs, "fold"),
+        "occurrences": finish_refs,
+    })
+    assert len(fold_events) == 85
+
+    manifest = {
+        "schema": "psg_exec_d1_event_dictionary_v1",
+        "claim": "dynamic-event-identity-only-no-values-or-pool-updates",
+        "anchors": {
+            "controller_sha256": D1_CONTROLLER_SHA256,
+            "candidate_sha256": D1_CANDIDATE_SHA256,
+            "binding_manifest_sha256": D1_BINDING_MANIFEST_SHA256,
+            "requirements_sha256": D1_REQUIREMENTS_SHA256,
+            "packing_layout_sha256": D1_PACKING_LAYOUT_SHA256,
+            "live_layout_sha256": D1_LIVE_LAYOUT_SHA256,
+            "production_image_sha256": D1_PRODUCTION_IMAGE_SHA256,
+        },
+        "external_hold": controller["external_hold"],
+        "counts": {
+            "root_events": len(root_events),
+            "lifetime_events": len(lifetime_events),
+            "fold_events": len(fold_events),
+            "root_occurrences": sum(len(row["occurrences"])
+                                    for row in root_events),
+            "transaction_completions": sum(
+                "transaction_completion" in row for row in root_events),
+            "transaction_completion_occurrences": sum(
+                len(row["transaction_completion"]["occurrences"])
+                for row in root_events
+                if "transaction_completion" in row),
+            "lifetime_occurrences": sum(len(row["occurrences"])
+                                        for row in lifetime_events),
+            "fold_occurrences": sum(len(row["occurrences"])
+                                    for row in fold_events),
+        },
+        "root_events": root_events,
+        "lifetime_events": lifetime_events,
+        "fold_events": fold_events,
+    }
+
+    def forbidden_keys(value: object) -> list[str]:
+        forbidden: list[str] = []
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"value", "expected", "result", "pool",
+                           "pool_update", "state_wd", "record_commit",
+                           "final_words", "expression", "expr"}:
+                    forbidden.append(key)
+                forbidden.extend(forbidden_keys(child))
+        elif isinstance(value, list):
+            for child in value:
+                forbidden.extend(forbidden_keys(child))
+        return forbidden
+
+    assert not forbidden_keys(manifest)
+    encoded = json.dumps(manifest, sort_keys=True, indent=2) + "\n"
+    assert "SampleTrace" not in encoded \
+        and "evaluate_sample_slot" not in encoded
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(encoded)
+    assert output.read_text() == encoded
+    assert IMAGE.read_bytes() == production_before
+    return (f"{output}: 60 root endpoints, 22 transaction completions, "
+            "156 lifetime endpoints, 85 fold events; dynamic identity only")
+
+
+def write_sample_d1_requirement_manifest(
+        path: Path, packing_rows: tuple[D2FPackingRow, ...],
+        built_fields: tuple[D2FLiveField, ...],
+        wavetable_fields: tuple[D2FLiveField, ...],
+        fold_fields: tuple[D2FLiveField, ...],
+        roots: tuple[object, ...]) -> str:
+    """Emit D1's literal requirements and source catalog without joining them.
+
+    This artifact makes the next source-completeness audit mechanical.  It is
+    deliberately not a transition manifest: source prose is preserved only as
+    an unbound requirement, and no root is selected as a field source here.
+    """
+    output = path.resolve()
+    assert output != IMAGE.resolve(), \
+        "D1 requirements must not replace rtl/psg_exec.hex"
+    if output.exists():
+        assert not output.samefile(IMAGE), \
+            "D1 requirements must not hard-link rtl/psg_exec.hex"
+
+    def packing_row(row: D2FPackingRow) -> dict[str, object]:
+        return {
+            "name": row.name,
+            "used": row.used,
+            "capacity": row.capacity,
+            "capacities": dict(row.capacities),
+            "pieces": [
+                {
+                    "container": container,
+                    "container_lsb": container_lsb,
+                    "field": field_name,
+                    "field_lsb": field_lsb,
+                    "width": width,
+                }
+                for container, field_name, container_lsb, field_lsb, width
+                in row.pieces
+            ],
+            "logical_widths": dict(row.logical_widths),
+            "source_status": "unbound",
+        }
+
+    def live_field(item: D2FLiveField) -> dict[str, object]:
+        return {
+            "path": item.path,
+            "name": item.name,
+            "width": item.width,
+            "pieces": [
+                {"container": container, "lsb": lsb, "width": width}
+                for container, lsb, width in item.pieces
+            ],
+            "born": item.born,
+            "dead": item.dead,
+            "unbound_source_description": item.source,
+            "consumer": item.consumer,
+            "source_status": "unbound",
+        }
+
+    root_rows = [
+        {
+            "name": root.name,
+            "group": root.group,
+            "width": root.width,
+            "producer": root.producer,
+            "producer_event": root.born,
+            "consumer": root.consumer,
+            "consumer_event": root.dead,
+            "owner": root.owner,
+            "transaction_bound_candidate": root.owner.startswith("service:"),
+        }
+        for root in roots
+    ]
+    assert len(root_rows) == 30
+    assert len({row["name"] for row in root_rows}) == 30
+    assert len({row["group"] for row in root_rows}) == 27
+    assert all(row["source_status"] == "unbound"
+               for row in map(packing_row, packing_rows))
+
+    all_live = built_fields + wavetable_fields + fold_fields
+    assert all(item.path in {"built-in", "wavetable", "fold"}
+               for item in all_live)
+    packing_output = [packing_row(row) for row in packing_rows]
+    packing_layout = [
+        {key: row[key] for key in
+         ("name", "capacities", "pieces", "logical_widths")}
+        for row in packing_output
+    ]
+    packing_layout_sha256 = hashlib.sha256(json.dumps(
+        packing_layout, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    live_output = [live_field(item) for item in all_live]
+    live_layout = [
+        {key: row[key] for key in
+         ("path", "name", "width", "pieces", "born", "dead")}
+        for row in live_output
+    ]
+    live_layout_sha256 = hashlib.sha256(json.dumps(
+        live_layout, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    manifest = {
+        "schema": "psg_exec_pool_requirements_v2",
+        "claim": "requirements-and-source-catalog-only",
+        "containers": {"A": 18, "B": 18, "N": 17, "O": 17,
+                       "Q": 16, "T": 6, "C": 7, "I": 6, "D": 3},
+        "packing_layout_sha256": packing_layout_sha256,
+        "packing_rows": packing_output,
+        "live_layout_sha256": live_layout_sha256,
+        "live_fields": live_output,
+        "source_catalog": root_rows,
+        "counts": {
+            "packing_rows": len(packing_rows),
+            "built_fields": len(built_fields),
+            "wavetable_fields": len(wavetable_fields),
+            "fold_fields": len(fold_fields),
+            "roots": len(root_rows),
+            "root_groups": len({row["group"] for row in root_rows}),
+            "bound_fields": 0,
+        },
+    }
+    encoded = json.dumps(manifest, sort_keys=True, indent=2) + "\n"
+    assert "source_binding" not in encoded
+    assert '"bound_fields": 0' in encoded
+    assert json.dumps(json.loads(encoded), sort_keys=True, indent=2) + "\n" \
+        == encoded
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(encoded)
+    assert output.read_text() == encoded
+    assert json.loads(output.read_text()) == manifest
+    return (f"{output}: {len(packing_rows)} packing rows, "
+            f"{len(all_live)} path/fold lifetimes, 30 roots/27 groups, "
+            "0 bound fields")
+
+
+def write_sample_binding_manifest(path: Path, accepted: list[int],
+                                  candidate: list[int], actions: Actions,
+                                  roots: tuple[object, ...],
+                                  control_path: Path | None = None) -> str:
+    """Emit source-binding metadata without carrying semantic sample values."""
+    output = path.resolve()
+    assert output != IMAGE.resolve(), \
+        "binding output must not replace rtl/psg_exec.hex"
+    if output.exists():
+        assert not output.samefile(IMAGE), \
+            "binding output must not hard-link rtl/psg_exec.hex"
+    control_output = control_path.resolve() if control_path else None
+    if control_output is not None:
+        assert control_output != IMAGE.resolve() and control_output != output, \
+            "binding control must be separate from image and JSON manifest"
+        if control_output.exists():
+            assert not control_output.samefile(IMAGE) \
+                and (not output.exists()
+                     or not control_output.samefile(output)), \
+                "binding control must not alias image or JSON manifest"
+    assert len(accepted) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
+    assert len(candidate) == PROGRAM_BANK_WORDS
+    action_by_code = actions.by_owner["sample"]
+    action_by_name = {action.name: action for action in action_by_code.values()}
+
+    def q_source(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = Instruction.decode(candidate[prior])
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    action_pcs: dict[str, list[int]] = {name: [] for name in action_by_name}
+    for pc, word in enumerate(candidate):
+        # Zero-filled space after the owner-zero DONE is not executable ROM.
+        # Decoding it as OP_READ/action zero would fabricate READ_PRIME sites.
+        if word == 0:
+            continue
+        insn = Instruction.decode(word)
+        if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+            action = action_by_code.get(insn.action)
+            if action is not None:
+                action_pcs[action.name].append(pc)
+    retired_replacements = {
+        "STORE_0_10": "CAP_W1",
+        "STORE_13_23": "CAP_W0",
+    }
+    assert {name for name, pcs in action_pcs.items() if not pcs} \
+        == set(retired_replacements)
+    assert all(action_pcs[name] for name in retired_replacements.values())
+
+    destination_by_action: dict[str, list[int]] = {}
+    for _, name, _, destination, _ in SAMPLE_FIXED_WRITES:
+        destination_by_action.setdefault(name, []).append(destination)
+
+    def family(name: str) -> str:
+        if name == "READ_PRIME" or name.startswith("LOAD_"):
+            return "load"
+        if name.startswith("NZ_") or name.startswith("CAP_"):
+            return "service"
+        if name.startswith("STORE_"):
+            return "store"
+        if name.startswith("FOLD_"):
+            return "fold"
+        raise AssertionError(name)
+
+    cap_index = {name: index
+                 for index, (name, _) in enumerate(SAMPLE_CAP_SCHEDULE)}
+    service_phase = {
+        name: 29 + offset for name, offset in SAMPLE_SERVICE_SCHEDULE
+    }
+    fold_event = {
+        "FOLD_PRIME": "operand_a_low",
+        "FOLD_A_LO": "operand_a_high",
+        "FOLD_A_HI": "operand_a_commit",
+        "FOLD_B_LO": "operand_b_low",
+        "FOLD_START": "node_start",
+        "FOLD_RUN": "node_run",
+        "FOLD_WRITE_LO": "result_low",
+        "FOLD_WRITE_HI": "result_high",
+        "FOLD_FINISH": "dry_commit",
+    }
+
+    def source_binding(name: str, kind: str,
+                       occurrences: list[dict[str, object]]) \
+            -> dict[str, object]:
+        if kind == "load":
+            return {"trace": "legacy", "event": "state_read",
+                    "words": sorted({int(row["word"])
+                                     for row in occurrences})}
+        if kind == "service":
+            if name.startswith("CAP_"):
+                cap = name.removeprefix("CAP_")
+                return {"trace": "legacy", "event": "cap",
+                        "cap": cap, "cap_index": cap_index[cap],
+                        "source_phase": service_phase[name],
+                        "dependencies": list(
+                            SAMPLE_SERVICE_DEPENDENCIES[name])}
+            return {"trace": "legacy", "event": "service_phase",
+                    "source_phase": service_phase[name],
+                    "dependencies": list(SAMPLE_SERVICE_DEPENDENCIES[name])}
+        if kind == "store":
+            if name.startswith("STORE_LEAF_"):
+                return {"trace": "legacy", "event": "leaf_commit",
+                        "words": destination_by_action.get(name, [])}
+            if occurrences:
+                return {"trace": "legacy", "event": "state_write",
+                        "words": destination_by_action.get(name, [])}
+            return {"trace": "manifest", "event": "retired_alias",
+                    "replacement": retired_replacements[name]}
+        assert kind == "fold"
+        return {"trace": "legacy", "event": "fold_step",
+                "role": fold_event[name], "nodes": len(FOLD_NODES)}
+
+    action_rows = []
+    for code, action in sorted(action_by_code.items()):
+        occurrences = []
+        for pc in action_pcs[action.name]:
+            insn = Instruction.decode(candidate[pc])
+            occurrence = {
+                "pc": pc,
+                "op": insn.op.name,
+                "word": insn.word,
+                "q_source": q_source(pc),
+                "changed": candidate[pc] != accepted[pc],
+            }
+            if action.name == "CAP_W51":
+                occurrence["physical_read_words"] = [26, 30]
+            occurrences.append(occurrence)
+        kind = family(action.name)
+        row = {
+            "name": action.name,
+            "code": code,
+            "family": kind,
+            "consumes_word": action.consumes,
+            "destinations": destination_by_action.get(action.name, []),
+            "occurrences": occurrences,
+            "source_binding": source_binding(action.name, kind, occurrences),
+        }
+        if action.name in retired_replacements:
+            replacement = retired_replacements[action.name]
+            row["retired_replacement"] = replacement
+            row["replacement_pcs"] = action_pcs[replacement]
+        action_rows.append(row)
+    assert len(action_rows) == 61
+
+    changed_pcs = [pc for pc in range(PROGRAM_BANK_WORDS)
+                   if candidate[pc] != accepted[pc]]
+    changed_pc_bindings = []
+    for pc in changed_pcs:
+        insn = Instruction.decode(candidate[pc])
+        binding: dict[str, object]
+        action_name: str | None = None
+        if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+            action = action_by_code.get(insn.action)
+            if action is not None:
+                action_name = action.name
+                binding = {"trace": "manifest", "event": "action",
+                           "action": action_name}
+            else:
+                assert insn.op == Op.EXEC \
+                    and insn.action == COMMON_ACTION["HOLD"], (pc, insn)
+                binding = {"trace": "c2b", "event": "fixed_hold",
+                           "word": insn.word}
+        elif insn.op == Op.SLOT:
+            binding = {"trace": "c2b", "event": "slot_select",
+                       "increment": insn.slot_inc,
+                       "slot_value": insn.slot_value}
+        elif insn.op == Op.JUMP:
+            binding = {"trace": "c2b", "event": "jump",
+                       "target": insn.target}
+        elif insn.op == Op.BRANCH:
+            binding = {"trace": "c2b", "event": "branch",
+                       "condition": insn.cond, "sense": insn.sense,
+                       "target": insn.target}
+        elif insn.op == Op.DONE:
+            binding = {"trace": "c2b", "event": "done"}
+        else:
+            raise AssertionError((pc, insn))
+        changed_pc_bindings.append({
+            "pc": pc, "op": insn.op.name, "action": action_name,
+            "word": insn.word if insn.op in (Op.READ, Op.WRITE, Op.EXEC)
+                    else None,
+            "q_source": q_source(pc), "source_binding": binding,
+        })
+    assert len(changed_pc_bindings) == 44
+    assert {row["pc"] for row in changed_pc_bindings} == set(changed_pcs)
+
+    def observation(event: str, phase: str, field: str,
+                    *, selected_by: str | None = None,
+                    field_when_one: str | None = None,
+                    field_when_zero: str | None = None) \
+            -> dict[str, object]:
+        row: dict[str, object] = {"event": event, "phase": phase,
+                                 "field": field}
+        if selected_by is not None:
+            assert field_when_one is not None and field_when_zero is not None
+            row["selected_by"] = selected_by
+            row["field_when_one"] = field_when_one
+            row["field_when_zero"] = field_when_zero
+        return row
+
+    # Each fixed transport names only the live Boolean classes that can
+    # change its source value.  C2-C-C must observe both sides of every named
+    # predicate at that action's real source edge; a global profile-wide
+    # guard count cannot discharge an individual write's obligation.
+    fixed_guard_obligations = {
+        "STORE_10_20": (("guard_restart", "selected old/current tuple"),),
+        "STORE_11_21": (("guard_restart", "restart-qualified current increment"),),
+        "STORE_12_22": (
+            ("guard_wavetable", "wave/mode control word"),
+            ("guard_noise", "noise-mode control word"),
+            ("guard_brown", "brown-mode control word"),
+            ("guard_play", "playing-state gain"),
+            ("guard_amplitude", "effective gain"),
+        ),
+        "STORE_8_18": (("guard_restart", "selected old increment"),),
+        "STORE_9_19": (
+            ("guard_restart", "selected old gain/increment"),
+            ("guard_amplitude", "old effective gain"),
+        ),
+        "STORE_15_14": (
+            ("guard_clear", "early clear-qualified state"),
+            ("guard_wavetable", "wave/mode state"),
+            ("guard_noise", "noise-mode state"),
+            ("guard_brown", "brown-mode state"),
+            ("guard_play", "playing-state filter"),
+            ("guard_amplitude", "effective-gain filter"),
+        ),
+        "CAP_W0": tuple(
+            (field, "W0 final noise/phase transaction") for field in (
+                "guard_restart", "guard_clear", "guard_wavetable",
+                "guard_play", "guard_amplitude", "guard_noise",
+                "guard_brown")),
+        "CAP_W1": tuple(
+            (field, "W1 final phase transaction") for field in (
+                "guard_restart", "guard_wavetable", "guard_play",
+                "guard_amplitude")),
+        "STORE_1_11": (
+            ("guard_restart", "old-q/noise hold"),
+            ("guard_noise", "noise hold"),
+            ("guard_brown", "brown-noise hold"),
+        ),
+        "STORE_6_16": tuple(
+            (field, "final old phase") for field in (
+                "guard_restart", "guard_wavetable", "guard_play",
+                "guard_amplitude")),
+        "STORE_7_17": (
+            ("guard_blend", "blend/old-q state"),
+            ("guard_restart", "restart-selected old-q state"),
+        ),
+        "STORE_3_13": tuple(
+            (field, "ack/gain/noise/phase2 state") for field in (
+                "guard_restart", "guard_clear", "guard_wavetable",
+                "guard_play", "guard_amplitude", "guard_noise",
+                "guard_brown")),
+        "STORE_2_12": tuple(
+            (field, "final phase2") for field in (
+                "guard_restart", "guard_wavetable", "guard_play",
+                "guard_amplitude")),
+        "STORE_14_15": tuple(
+            (field, "clear-qualified filter state") for field in (
+                "guard_clear", "guard_wavetable", "guard_play",
+                "guard_amplitude", "guard_noise", "guard_brown")),
+        "STORE_4_14": tuple(
+            (field, "final filter/mode state") for field in (
+                "guard_clear", "guard_wavetable", "guard_play",
+                "guard_amplitude", "guard_noise", "guard_brown")),
+        "STORE_5_15": tuple(
+            (field, "final filter state") for field in (
+                "guard_clear", "guard_wavetable", "guard_play",
+                "guard_amplitude", "guard_noise", "guard_brown")),
+        "STORE_LEAF_LO": tuple(
+            (field, "retained leaf source") for field in (
+                "guard_wavetable", "guard_reverb", "guard_blend",
+                "guard_noise", "guard_brown")),
+        "STORE_LEAF_HI": tuple(
+            (field, "retained leaf source") for field in (
+                "guard_wavetable", "guard_reverb", "guard_blend",
+                "guard_noise", "guard_brown")),
+    }
+    assert set(fixed_guard_obligations) == {
+        name for _pc, name, _q_word, _destination, _origin
+        in SAMPLE_FIXED_WRITES
+    }
+
+    fixed_write_rows = []
+    for pc, name, q_word, destination, origin in SAMPLE_FIXED_WRITES:
+        if name.startswith("CAP_"):
+            cap_name = name.removeprefix("CAP_")
+            event = {"trace": "legacy", "event": "cap", "cap": cap_name}
+            source_field = ("s_noise_lp_word" if cap_name == "W0"
+                            else "s_phase_low16")
+            event["source_observation"] = observation(
+                cap_name, "post", source_field)
+            event["consumer_observation"] = observation(
+                "STATE_WRITE", "pre", "state_wd")
+        elif name.startswith("STORE_LEAF_"):
+            source_field = ("leaf_lo" if name.endswith("_LO") else "leaf_hi")
+            consumer_by_slot = {
+                "0": "fstk0", "1": "fold_fdb", "2": "fstk1",
+                "3": "fold_fdb", "4": "fstk1", "5": "fold_fdb",
+                "6": "fstk2", "7": "fold_fdb",
+            }
+            event = {"trace": "legacy", "event": "leaf_commit",
+                     "source_observation": observation(
+                         "LEAF_COMMIT", "pre", source_field),
+                     "consumer_observation": observation(
+                         "LEAF_COMMIT", "post", "consumer_by_slot"),
+                     "consumer_by_slot": consumer_by_slot,
+                     "consumer_slice": ("low16" if name.endswith("_LO")
+                                        else "sign_hi16")}
+        else:
+            event = {"trace": "legacy", "event": "state_write",
+                     "word": destination,
+                     "source_observation": observation(
+                         "STATE_WRITE", "pre", "state_wd"),
+                     "consumer_observation": observation(
+                         "STATE_WRITE", "post", "state_mem_w")}
+        for key in ("source_observation", "consumer_observation"):
+            event[key]["physical_width"] = 16
+            event[key]["physical_signed"] = False
+        event["guard_obligations"] = [
+            {"field": field, "reason": reason}
+            for field, reason in fixed_guard_obligations[name]
+        ]
+        fixed_write_rows.append({
+            "pc": pc, "action": name, "q_source": q_word,
+            "destination": destination, "provenance": origin,
+            "source_binding": event,
+        })
+    assert len(fixed_write_rows) == 18
+    assert {
+        row["action"]: row["destination"] for row in fixed_write_rows
+        if row["action"].startswith("STORE_LEAF_")
+    } == {"STORE_LEAF_LO": 48, "STORE_LEAF_HI": 49}
+
+    cap_pcs = {name.removeprefix("CAP_"): action_pcs[name]
+               for name in action_pcs if name.startswith("CAP_")}
+    cap_w40 = cap_pcs["W40"][0]
+    cap_w51 = cap_pcs["W51"][0]
+
+    def event_pcs(event: str, root_name: str) -> list[int]:
+        if root_name == "dq_live_issue" and event == "LOAD":
+            return action_pcs["NZ_OLD_LOAD_PAR_3"]
+        if event == "LOAD":
+            return sorted(pc for name, pcs in action_pcs.items()
+                          if name == "READ_PRIME" or name.startswith("LOAD_")
+                          for pc in pcs)
+        if event == "NZ_OLD":
+            return action_pcs["NZ_OLD_LOAD_PAR_3"]
+        if event == "NZ_LIVE":
+            return action_pcs["NZ_LIVE"]
+        if event.startswith("W") and event[1:].isdigit():
+            return cap_pcs[event]
+        if event.startswith("PC"):
+            return [int(event[2:], 16)]
+        if event.startswith("RING"):
+            word = int(event.removeprefix("RING"))
+            return [pc for pc in range(cap_w40 + 1, cap_w51)
+                    if (lambda insn: insn.op == Op.EXEC
+                        and insn.action == COMMON_ACTION["HOLD"]
+                        and insn.word == word)(Instruction.decode(candidate[pc]))]
+        if event == "STORES":
+            return sorted(pc for name, pcs in action_pcs.items()
+                          if name.startswith("STORE_") for pc in pcs)
+        if event == "SLOT":
+            return [pc for pc, word in enumerate(candidate)
+                    if Instruction.decode(word).op == Op.SLOT]
+        if event == "FOLD":
+            return sorted(pc for name, pcs in action_pcs.items()
+                          if name.startswith("FOLD_") for pc in pcs)
+        if event == "DONE":
+            return [pc for pc, word in enumerate(candidate)
+                    if Instruction.decode(word).op == Op.DONE and word != 0]
+        raise AssertionError((root_name, event))
+
+    root_guards = {
+        "dq_live_issue": "always", "noise_old_issue": "always",
+        "noise_old_hold": "always", "dq_live_hold": "always",
+        "dq_old_issue": "always", "noise_live_issue": "always",
+        "wave_0_issue": "!wavetable", "aram_0_issue": "wavetable&&play",
+        "wave_1_issue": "!wavetable", "aram_1_issue": "wavetable&&play",
+        "wave_2_issue": "!wavetable", "aram_2_issue": "wavetable&&play",
+        "wave_3_issue": "!wavetable", "aram_3_issue": "wavetable&&play",
+        "mul_live_w4": "!wavetable", "mul_primary_interp": "wavetable",
+        "mul_old_interp": "wavetable", "mul_live_recip": "!wavetable",
+        "mul_live_w27": "wavetable", "mul_old_w27": "!wavetable",
+        "mul_arm_recip": "always", "mul_blend": "blend_count!=64",
+        "ring_current": "reverb", "ring_old": "reverb",
+        "expected_arm": "always", "blend_control": "always",
+        "leaf_commit": "audible", "record_commit": "always",
+        "lfsr_next": "always", "lfsr2_next": "always",
+    }
+    assert set(root_guards) == {root.name for root in roots}
+    # C2-C-C names only raw testbench trace endpoints.  Service results use
+    # result-ready events derived from live issue/busy/done strobes, followed
+    # by a distinct later capture or take.  No endpoint compares one wire to
+    # itself and no phase label can create a service result without a live
+    # transaction.
+    root_value_bindings = {
+        "dq_live_issue": (observation("DQ_RESULT_LIVE", "pre", "dq_result"),
+                          observation("DQ_CAPTURE_LIVE", "post", "dq_live_r"), False),
+        "noise_old_issue": (
+            observation("MUL_RESULT_NZ_OLD", "post", "selected_old_noise",
+                        selected_by="nz2_sign",
+                        field_when_one="nz_neg17",
+                        field_when_zero="nz_pos17"),
+            observation("NZ_LIVE", "post", "mx_old"), False),
+        "noise_old_hold": (observation("NZ_LIVE", "post", "mx_old"),
+                           observation("W1", "pre", "mx_old"), False),
+        "dq_live_hold": (observation("NZ_LIVE", "post", "dq_live_r"),
+                         observation("W6", "pre", "dq_visit"), False),
+        "dq_old_issue": (observation("DQ_RESULT_OLD", "pre", "dq_result"),
+                         observation("W5", "pre", "dq_visit"), False),
+        "noise_live_issue": (observation("MUL_RESULT_NZ_LIVE", "post", "nz_step"),
+                             observation("W0", "pre", "nz_step"), False),
+        "wave_0_issue": (observation("WAVE_RESULT_0", "post", "z_eval"),
+                         observation("W2", "post", "smp_a"), False),
+        "aram_0_issue": (observation("ARAM_RESULT_0", "post", "seq_q"),
+                         observation("W1", "post", "smp_a_byte"), False),
+        "wave_1_issue": (observation("WAVE_RESULT_1", "post", "z_eval"),
+                         observation("W3", "post", "smp_b"), False),
+        "aram_1_issue": (observation("ARAM_RESULT_1", "post", "seq_q"),
+                         observation("W2", "post", "wt_p1_byte"), False),
+        "wave_2_issue": (observation("WAVE_RESULT_2", "post", "z_eval"),
+                         observation("W4", "post", "smp_b"), False),
+        "aram_2_issue": (observation("ARAM_RESULT_2", "post", "seq_q"),
+                         observation("W3", "post", "smp_b_byte"), False),
+        "wave_3_issue": (observation("WAVE_RESULT_3", "post", "z_eval"),
+                         observation("W5", "pre", "z_eval"), False),
+        "aram_3_issue": (observation("ARAM_RESULT_3", "post", "seq_q"),
+                         observation("W4", "post", "wt_q1_byte"), False),
+        "mul_live_w4": (observation("MUL_RESULT_LIVE_W4", "post", "mul_limb17"),
+                        observation("W15", "post", "gz_s1_r"), False),
+        "mul_primary_interp": (observation("MUL_RESULT_PRIMARY_INTERP", "post", "wt_mag19"),
+                               observation("W15", "pre", "wt_mag19"), False),
+        "mul_old_interp": (observation("MUL_RESULT_OLD_INTERP", "post", "wt_mag19"),
+                           observation("W26", "pre", "wt_mag19"), False),
+        "mul_live_recip": (observation("MUL_RESULT_LIVE_RECIP", "post", "arm_new_w51"),
+                           observation("W27", "post", "mx_new"), False),
+        "mul_live_w27": (observation("MUL_RESULT_LIVE_W27", "post", "mul_limb17"),
+                         observation("W40", "post", "gz_s1_r"), False),
+        "mul_old_w27": (observation("MUL_RESULT_OLD_W27", "post", "mul_limb17"),
+                        observation("W40", "post", "gz_s1_r"), False),
+        "mul_arm_recip": (
+            observation("MUL_RESULT_ARM_RECIP", "post", "selected_arm",
+                        selected_by="guard_wavetable",
+                        field_when_one="arm_new_w51",
+                        field_when_zero="arm_old_w51"),
+            observation("W51", "post", "selected_arm",
+                        selected_by="guard_wavetable",
+                        field_when_one="mx_new", field_when_zero="mx_old"),
+            False),
+        "mul_blend": (observation("MUL_RESULT_BLEND", "post", "blend_mag23"),
+                      observation("W84", "pre", "bl_res"), False),
+        "ring_current": (observation("RING_RESULT_CURRENT", "pre", "ring_rd"),
+                         observation("RING2", "post", "ring_q"), False),
+        "ring_old": (observation("RING_RESULT_OLD", "pre", "ring_rd"),
+                     observation("RING3", "post", "ring_q_old"), False),
+        "expected_arm": (
+            observation("W51", "post", "selected_arm",
+                        selected_by="guard_wavetable",
+                        field_when_one="mx_new", field_when_zero="mx_old"),
+            observation("W75", "pre", "selected_arm",
+                        selected_by="guard_wavetable",
+                        field_when_one="mx_new", field_when_zero="mx_old"),
+            False),
+        "blend_control": (observation("W0", "post", "bl_cnt"),
+                          observation("W75", "pre", "bl_cnt"), False),
+        "leaf_commit": (observation("LEAF_COMMIT", "pre", "mix_leaf"),
+                        observation("LEAF_COMMIT", "post", "fold_leaf_sink"),
+                        False),
+        "record_commit": (observation("STATE_WRITE", "pre", "state_wd"),
+                          observation("STATE_WRITE", "post", "state_mem_w"),
+                          False),
+        "lfsr_next": (observation("W0", "post", "lfsr"),
+                      observation("NEXT_STATE_READ", "pre", "lfsr"), False),
+        "lfsr2_next": (observation("W0", "post", "lfsr2"),
+                       observation("NEXT_STATE_READ", "pre", "lfsr2"), False),
+    }
+
+    root_transactions = {
+        "dq_live_issue": ("dq", "live"),
+        "noise_old_issue": ("mul", "nz_old"),
+        "dq_old_issue": ("dq", "old"),
+        "noise_live_issue": ("mul", "nz_live"),
+        "wave_0_issue": ("wave", "primary"),
+        "wave_1_issue": ("wave", "secondary"),
+        "wave_2_issue": ("wave", "old_primary"),
+        "wave_3_issue": ("wave", "old_secondary"),
+        "aram_0_issue": ("aram", "base0"),
+        "aram_1_issue": ("aram", "adjacent1"),
+        "aram_2_issue": ("aram", "base2"),
+        "aram_3_issue": ("aram", "adjacent3"),
+        "mul_live_w4": ("mul", "live_w4"),
+        "mul_primary_interp": ("mul", "primary_interp"),
+        "mul_old_interp": ("mul", "old_interp"),
+        "mul_live_recip": ("mul", "live_recip"),
+        "mul_live_w27": ("mul", "live_w27"),
+        "mul_old_w27": ("mul", "old_w27"),
+        "mul_arm_recip": ("mul", "arm_recip"),
+        "mul_blend": ("mul", "blend"),
+        "ring_current": ("ring", "current"),
+        "ring_old": ("ring", "old"),
+    }
+    signed_value_roots = {
+        "noise_old_issue", "noise_old_hold", "noise_live_issue",
+        "wave_0_issue", "wave_1_issue", "wave_2_issue", "wave_3_issue",
+        "mul_live_recip", "mul_arm_recip", "ring_current", "ring_old",
+        "expected_arm", "leaf_commit",
+    }
+    assert set(root_value_bindings) == {root.name for root in roots}
+    root_rows = []
+    for root in roots:
+        producer_observation, consumer_observation, same_net = \
+            root_value_bindings[root.name]
+        assert not same_net
+        is_signed = root.name in signed_value_roots
+        for endpoint in (producer_observation, consumer_observation):
+            endpoint["physical_width"] = root.width
+            endpoint["physical_signed"] = is_signed
+        transaction = root_transactions.get(root.name)
+        root_rows.append({
+            "name": root.name,
+            "group": root.group,
+            "width": root.width,
+            "trace_key": root.trace_key,
+            "producer": root.producer,
+            "producer_event": root.born,
+            "producer_pcs": event_pcs(root.born, root.name),
+            "consumer": root.consumer,
+            "consumer_event": root.dead,
+            "consumer_pcs": event_pcs(root.dead, root.name),
+            "owner": root.owner,
+            "guard": root_guards[root.name],
+            "signed": is_signed,
+            "source_binding": {"trace": "legacy",
+                               "producer_event": root.born,
+                               "consumer_event": root.dead,
+                               "producer_observation": producer_observation,
+                               "consumer_observation": consumer_observation,
+                               "transaction": ({"service": transaction[0],
+                                                "kind": transaction[1]}
+                                               if transaction is not None
+                                               else None),
+                               "observe_inactive": root.name == "leaf_commit"},
+        })
+    assert len(root_rows) == 30
+    assert len({row["group"] for row in root_rows}) == 27
+    missing_root_pcs = [row["name"] for row in root_rows
+                        if not row["producer_pcs"]
+                        or not row["consumer_pcs"]]
+    assert not missing_root_pcs, missing_root_pcs
+
+    target_text = (ROOT / "rtl" / "target_psg.sv").read_text()
+    assert re.search(r"\.MULTIPUMP\(1\)\)\s+psg0", target_text)
+    manifest = {
+        "schema": "psg_exec_binding_v1",
+        "source_contract": {
+            "target": "ice40-hx8k",
+            "target_multipump": 1,
+            "legacy_trace_schema": "psg_legacy_binding_v1",
+            "primitive_trace_schema": "psg_edge_v1",
+            "cap_indices": cap_index,
+            "noise_phases": {"NZ_OLD": service_phase["NZ_OLD_LOAD_PAR_3"],
+                             "NZ_LIVE": service_phase["NZ_LIVE"]},
+            "fold_nodes": [list(node) for node in FOLD_NODES],
+        },
+        "candidate_changed_pcs": changed_pcs,
+        "changed_pc_bindings": changed_pc_bindings,
+        "actions": action_rows,
+        "roots": root_rows,
+        "fixed_writes": fixed_write_rows,
+        "counts": {"actions": len(action_rows), "roots": len(root_rows),
+                   "groups": len({row["group"] for row in root_rows}),
+                   "changed_pcs": len(changed_pc_bindings),
+                   "fixed_writes": len(fixed_write_rows)},
+    }
+    assert len(manifest["candidate_changed_pcs"]) == 44
+    encoded = json.dumps(manifest, sort_keys=True, indent=2) + "\n"
+    assert "SampleTrace" not in encoded and "evaluate_sample_slot" not in encoded
+    assert all(token not in encoded for token in ('"value":', '"expected":',
+                                                   '"result":'))
+    production_before = IMAGE.read_bytes()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(encoded)
+    assert output.read_text() == encoded
+    control_summary = ""
+    if control_output is not None:
+        action_row = {row["name"]: row for row in action_rows}
+        control = [0] * 128
+        for write in fixed_write_rows:
+            row = action_row[write["action"]]
+            assert row["destinations"] == [write["destination"]], \
+                (write, row)
+            assert len(row["occurrences"]) == 1, (write, row)
+            occurrence = row["occurrences"][0]
+            assert occurrence["pc"] == write["pc"] \
+                and occurrence["op"] == Op.WRITE.name, (write, occurrence)
+            code = row["code"]
+            assert control[code] == 0, (write, control[code])
+            control[code] = 0x80 | int(write["destination"])
+        cap_w51 = action_row["CAP_W51"]
+        assert len(cap_w51["occurrences"]) == 1
+        assert cap_w51["occurrences"][0]["op"] == Op.EXEC.name \
+            and cap_w51["occurrences"][0]["word"] == 26
+        cap_w51_code = cap_w51["code"]
+        assert control[cap_w51_code] == 0
+        control[cap_w51_code] = 0x40
+        assert sum(bool(word & 0x80) for word in control) == 18
+        assert sum(bool(word & 0x40) for word in control) == 1
+        assert all((word & 0x3f) < 64 for word in control)
+        control_text = "".join(f"{word:02x}\n" for word in control)
+        control_output.parent.mkdir(parents=True, exist_ok=True)
+        control_output.write_text(control_text)
+        assert control_output.read_text() == control_text
+        assert len(control_output.read_text().splitlines()) == 128
+        control_summary = \
+            f"; {control_output}: 18 commits + CAP_W51 address flag"
+    assert IMAGE.read_bytes() == production_before
+    return (f"{output}: 61 actions, 44 changed PCs, 30 roots / 27 groups; "
+            f"metadata only{control_summary}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="build and validate the R.84 executor control contract")
+    parser.add_argument(
+        "--write", action="store_true",
+        help="regenerate the accepted production image")
+    parser.add_argument(
+        "--candidate-out", type=Path,
+        help="write the complete bounded D2F candidate to this separate path")
+    parser.add_argument(
+        "--binding-out", type=Path,
+        help="write metadata-only candidate/source binding JSON")
+    parser.add_argument(
+        "--binding-control-out", type=Path,
+        help="write the address-only action-indexed binding control map")
+    parser.add_argument(
+        "--d1-requirements-out", type=Path,
+        help="write the unbound D1 physical-pool requirements/source catalog")
+    parser.add_argument(
+        "--d1-controller-edges-out", type=Path,
+        help="write D1's controller/address-only dynamic edge relation")
+    parser.add_argument(
+        "--d1-event-dictionary-out", type=Path,
+        help="write D1's proof-only dynamic lifecycle event dictionary")
+    parser.add_argument(
+        "--d1-controller-edges-in", type=Path,
+        help="accepted D1 controller edges used by the event dictionary")
+    parser.add_argument(
+        "--d1-requirements-in", type=Path,
+        help="accepted D1 requirements used by the event dictionary")
+    parser.add_argument(
+        "--d1-binding-manifest-in", type=Path,
+        help="accepted C2-C-C manifest used by the event dictionary")
+    args = parser.parse_args()
+    event_inputs = (args.d1_controller_edges_in, args.d1_requirements_in,
+                    args.d1_binding_manifest_in)
+    if args.d1_event_dictionary_out and not all(event_inputs):
+        parser.error("--d1-event-dictionary-out requires all three D1 inputs")
+    if not args.d1_event_dictionary_out and any(event_inputs):
+        parser.error("D1 event inputs require --d1-event-dictionary-out")
+    if args.write and (args.candidate_out or args.binding_out
+                       or args.binding_control_out
+                       or args.d1_requirements_out
+                       or args.d1_controller_edges_out
+                       or args.d1_event_dictionary_out):
+        parser.error("--write is mutually exclusive with proof outputs")
+    if args.binding_control_out and not args.binding_out:
+        parser.error("--binding-control-out requires --binding-out")
+    proof_outputs = [
+        (name, path) for name, path in (
+            ("candidate", args.candidate_out),
+            ("binding", args.binding_out),
+            ("binding control", args.binding_control_out),
+            ("D1 requirements", args.d1_requirements_out),
+            ("D1 controller edges", args.d1_controller_edges_out),
+            ("D1 event dictionary", args.d1_event_dictionary_out),
+        ) if path is not None
+    ]
+    for index, (left_name, left_path) in enumerate(proof_outputs):
+        for right_name, right_path in proof_outputs[index + 1:]:
+            if left_path.resolve() == right_path.resolve() \
+                    or (left_path.exists() and right_path.exists()
+                        and left_path.samefile(right_path)):
+                parser.error(
+                    f"{left_name} and {right_name} outputs must be separate")
+    return args
+
+
 def main() -> int:
+    args = parse_args()
     seq, walk, _ = legacy_contract()
     states = sequencer_states(seq)
     successors = state_successors(seq, states)
@@ -1402,6 +7831,51 @@ def main() -> int:
     validate_node_contract(seq_nodes, tick_program)
     sample_cycles, sample_spare, sample_used = validate_sample(
         sample_program, actions, sample_labels)
+    sample_waits = validate_sample_wait_manifest(sample_program,
+                                                 sample_labels)
+    sample_tail_gap = validate_sample_fixed_tail_gap(sample_program, actions,
+                                                     sample_labels)
+    sample_relocated, sample_candidate = validate_sample_relocated_commit_manifest(
+        sample_program, actions, sample_labels)
+    sample_value_gap = validate_sample_relocated_value_gap(sample_candidate)
+    sample_stream, sample_stream_candidate = \
+        validate_sample_relocated_stream_correction(
+            sample_program, sample_candidate, actions)
+    sample_blend_gap = validate_sample_d2c_blend_gap(sample_stream_candidate)
+    sample_blend, sample_blend_candidate = \
+        validate_sample_typed_blend_correction(
+            sample_program, sample_stream_candidate)
+    sample_overlay = validate_sample_context_path_bound(
+        sample_blend_candidate)
+    sample_physical_gap = validate_sample_physical_w2_gap(
+        sample_blend_candidate, actions)
+    sample_w5_q16, sample_w5_q16_candidate = \
+        build_sample_w5_q16_candidate(
+            sample_program, sample_blend_candidate, actions)
+    sample_b3b2a, sample_b3b2a_candidate, sample_b3b2a_codec = \
+        validate_sample_b3b2a_slice_map(
+            sample_program, sample_w5_q16_candidate, actions)
+    sample_b3b2a2a1 = validate_sample_b3b2a2a1_edge_services(
+        sample_b3b2a_candidate, actions, sample_b3b2a_codec)
+    sample_d2fb_packing, d2fb_rows = validate_sample_d2fb_packing(
+        sample_b3b2a_candidate, actions)
+    sample_d2fca_manifest, d2f_built, d2f_wavetable, d2f_fold = \
+        validate_sample_d2fca_manifest(sample_b3b2a_candidate, actions)
+    sample_b1_roots, atomic_roots = \
+        validate_sample_b1_atomic_root_manifest(
+            sample_b3b2a_candidate, actions)
+    sample_inventory = validate_sample_action_inventory(actions,
+                                                        sample_program)
+    fold_contract = validate_fold_word_contract()
+    fold_arithmetic = validate_fold_arithmetic_contract()
+    sample_pool = validate_sample_pool_contract()
+    phase_substitution = validate_phase_substitution_contract()
+    sample_arithmetic = validate_sample_arithmetic_contract()
+    sample_semantics = validate_sample_image_semantics(sample_program, actions)
+    owner_inventory = remaining_owner_action_inventory(seq_nodes)
+    condition_contract = validate_condition_contract(sample_program,
+                                                     tick_program)
+    public_priority = validate_public_priority(seq)
     reachable_to_idle(seq_nodes)
     addresses = state_address_inventory(seq)
     commits = output_commit_inventory(seq, walk)
@@ -1423,12 +7897,12 @@ def main() -> int:
                     f"{insn.target:02x} is not a same-bank label"
 
     assert len(program) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
-    assert sample_used == 62
+    assert sample_used == 222
     assert voice_used + instrument_used == 117
     assert normalized_used == 226
     assert normalized_used <= PROGRAM_BANK_WORDS
 
-    print("R.84G-F normalized advance transaction contract: PASS")
+    print("R.84H-A addressed-state/service manifest contract: PASS")
     print(f"sample bank: {sample_used}/256 words, {sample_cycles}/"
           f"{SAMPLE_CLOCK_LIMIT} conservative clocks, {sample_spare} spare")
     print(f"tick/flow bank: {normalized_used}/256 words "
@@ -1449,9 +7923,34 @@ def main() -> int:
           + "; scratch 34..63")
     print("tick record movement: " + movement)
     print("fixed decoder RTL: " + move_rtl)
+    print("sample action inventory: " + sample_inventory)
+    print("sample stored-wait manifest: " + sample_waits)
+    print("sample fixed-tail manifest: " + sample_tail_gap)
+    print("sample relocated-commit manifest: " + sample_relocated)
+    print("sample relocated-value gate: " + sample_value_gap)
+    print("sample corrected-stream manifest: " + sample_stream)
+    print("sample corrected-stream blend gate: " + sample_blend_gap)
+    print("sample typed-blend manifest: " + sample_blend)
+    print("sample context-overlay gate: " + sample_overlay)
+    print("sample physical-allocation gate: " + sample_physical_gap)
+    print("sample W5-q16 candidate: " + sample_w5_q16)
+    print("sample B3-B2-A1 slice map: " + sample_b3b2a)
+    print("sample B3-B2-A2-A1 services: " + sample_b3b2a2a1)
+    print("sample D2F-B packing: " + sample_d2fb_packing)
+    print("sample D2F-C-A manifest: " + sample_d2fca_manifest)
+    print("sample B1-A atomic inventory: " + sample_b1_roots)
+    print("sample transient pool: " + sample_pool)
+    print("sample phase substitution: " + phase_substitution)
+    print("sample arithmetic: " + sample_arithmetic)
+    print("sample image semantics: " + sample_semantics)
+    print("fold word/tree contract: " + fold_contract)
+    print("fold arithmetic contract: " + fold_arithmetic)
+    print("remaining owner action inventory: " + owner_inventory)
+    print("condition contract: " + condition_contract)
+    print(public_priority)
     print("externally visible commits: " + ",".join(commits))
-    image = "".join(f"{word:04x}\n" for word in program)
-    if "--write" in sys.argv[1:]:
+    image = serialize_program(program)
+    if args.write:
         IMAGE.write_text(image)
         print(f"wrote {IMAGE.relative_to(ROOT)}")
     else:
@@ -1459,8 +7958,30 @@ def main() -> int:
         assert IMAGE.read_text() == image, \
             f"{IMAGE}: stale; regenerate with --write"
         print(f"image: {IMAGE.relative_to(ROOT)} byte-identical")
-    print("warning: exact advance-family transaction proof only; whole-PSG "
-          "schedule/render/area equivalence remain atomic integration gates")
+    if args.candidate_out:
+        print("candidate image: " + write_candidate_image(
+            args.candidate_out, program, sample_b3b2a_candidate,
+            tick_program))
+    if args.binding_out:
+        print("candidate bindings: " + write_sample_binding_manifest(
+            args.binding_out, program, sample_b3b2a_candidate,
+            actions, atomic_roots, args.binding_control_out))
+    if args.d1_requirements_out:
+        print("D1 requirements: " + write_sample_d1_requirement_manifest(
+            args.d1_requirements_out, d2fb_rows, d2f_built,
+            d2f_wavetable, d2f_fold, atomic_roots))
+    if args.d1_controller_edges_out:
+        print("D1 controller edges: " + write_sample_d1_controller_edges(
+            args.d1_controller_edges_out, sample_b3b2a_candidate,
+            actions, sample_labels))
+    if args.d1_event_dictionary_out:
+        print("D1 event dictionary: " + write_sample_d1_event_dictionary(
+            args.d1_event_dictionary_out, args.d1_controller_edges_in,
+            args.d1_requirements_in, args.d1_binding_manifest_in,
+            sample_b3b2a_candidate + tick_program))
+    print("warning: owner-zero actions and remaining owner-one actions are "
+          "manifests, not semantic RTL; whole-PSG schedule/render/area "
+          "equivalence remain atomic integration gates")
     return 0
 
 

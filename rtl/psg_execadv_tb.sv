@@ -16,7 +16,7 @@ module psg_execadv_tb;
   logic released, cpz;
   logic boundary_on_stop;
 
-  logic active, done, owner, state_we;
+  logic active, done, owner, state_re, state_we;
   logic [2:0] slot, op;
   logic [8:0] state_ra, state_wa;
   logic [15:0] state_wd, ir;
@@ -70,7 +70,8 @@ module psg_execadv_tb;
     .state_wd_i(state_wd_mux), .state_ra_override_i(state_ra_override),
     .state_ra_word_i(state_ra_word), .state_we_i(state_we_extra),
     .state_wa_word_i(state_wa_word), .active(active), .done(done),
-    .owner(owner), .slot(slot), .state_ra(state_ra), .state_we(state_we),
+    .owner(owner), .slot(slot), .state_re(state_re), .state_ra(state_ra),
+    .state_we(state_we),
     .state_wa(state_wa), .state_wd(state_wd), .action(action),
     .state_word(state_word), .op_dbg(op), .pc_dbg(pc), .ir_dbg(ir));
 
@@ -80,7 +81,8 @@ module psg_execadv_tb;
   always_ff @(posedge clk) begin
     if (state_we)
       mem[state_wa] <= state_wd;
-    state_q <= mem[state_ra];
+    if (state_re)
+      state_q <= mem[state_ra];
 
     if (reset) begin
       pend_stop <= 1'b0;
@@ -97,6 +99,12 @@ module psg_execadv_tb;
         cpz <= cpz_next;
     end
   end
+
+  // G-F relies on every executing instruction edge priming the synchronous
+  // memory output, including WRITE/EXEC edges with fixed address overrides.
+  always @(negedge clk)
+    if (!reset && active && !hold && !state_re)
+      $fatal(1, "active advance instruction did not enable state memory");
 
   task automatic step;
     @(posedge clk);

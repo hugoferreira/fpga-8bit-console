@@ -4,21 +4,23 @@
 `ifndef PSG_ARAM_SV
 `define PSG_ARAM_SV
 
-module psg_aram (input  bit          clk,
-                 input  bit          reset,
+/* verilator lint_off DECLFILENAME */
+module psg_aram_core(input  bit          clk,
+                     input  bit          reset,
 
-                 input  bit          cs,
-                 input  bit          rw,
-                 input  logic [7:0]  addr,
-                 input  logic [7:0]  di,
+                     input  bit          cs,
+                     input  bit          rw,
+                     input  logic [7:0]  addr,
+                     input  logic [7:0]  di,
 
-                 input  logic [12:0] seq_addr,
+                     input  logic [12:0] seq_addr,
 
-                 input  logic        syn_rd,
-                 input  logic [12:0] syn_addr,
-                 input  logic        seq_hold,
-                 output logic [7:0]  seq_q,
-                 output logic        seq_frozen);
+                     input  logic        syn_rd,
+                     input  logic [12:0] syn_addr,
+                     input  logic        syn_freeze,
+                     input  logic        seq_hold,
+                     output logic [7:0]  seq_q,
+                     output logic        seq_frozen);
 
   logic [7:0]  aram[0:4607];
   logic [15:0] wraddr;
@@ -33,7 +35,7 @@ module psg_aram (input  bit          clk,
   // state's current seq_addr already names the following byte.  A synthesis
   // borrow still replaces that output, so its replay cycle forcibly reissues
   // the held sequencer address before the output is held again.
-  wire aram_rd = syn_rd | replay | !seq_hold;
+  wire aram_rd = !syn_freeze && (syn_rd | replay | !seq_hold);
   wire [12:0] aram_addr = syn_rd ? syn_addr : seq_addr;
 
   always_ff @(posedge clk) begin
@@ -41,7 +43,7 @@ module psg_aram (input  bit          clk,
       seq_q <= aram[aram_addr];
     if (reset) begin
       replay <= 0;
-    end else begin
+    end else if (!syn_freeze) begin
       replay <= syn_rd;
     end
   end
@@ -71,6 +73,35 @@ module psg_aram (input  bit          clk,
       endcase
     end
   end
+
+endmodule
+/* verilator lint_on DECLFILENAME */
+
+// The accepted PSG keeps the historical always-running synthesis-borrow
+// state.  The full executor instantiates psg_aram_core directly so an external
+// hold can freeze the borrowed byte and its pending sequencer replay together.
+module psg_aram (input  bit          clk,
+                 input  bit          reset,
+
+                 input  bit          cs,
+                 input  bit          rw,
+                 input  logic [7:0]  addr,
+                 input  logic [7:0]  di,
+
+                 input  logic [12:0] seq_addr,
+
+                 input  logic        syn_rd,
+                 input  logic [12:0] syn_addr,
+                 input  logic        seq_hold,
+                 output logic [7:0]  seq_q,
+                 output logic        seq_frozen);
+
+  psg_aram_core u_core(
+    .clk(clk), .reset(reset),
+    .cs(cs), .rw(rw), .addr(addr), .di(di),
+    .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
+    .syn_freeze(1'b0), .seq_hold(seq_hold),
+    .seq_q(seq_q), .seq_frozen(seq_frozen));
 
 endmodule
 

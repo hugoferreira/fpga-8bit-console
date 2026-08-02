@@ -13,9 +13,10 @@
 `ifndef PSG_DQSVC_SV
 `define PSG_DQSVC_SV
 
-module psg_dqsvc (
+module psg_dqsvc_core (
     input  bit          clk,
     input  bit          reset,
+    input  logic        ce,
     input  logic        start,
     input  logic [12:0] live_a,
     input  logic [12:0] old_a,
@@ -59,7 +60,7 @@ module psg_dqsvc (
   always_ff @(posedge clk) begin
     if (reset) begin
       count <= 3'd0;
-    end else begin
+    end else if (ce) begin
       if (count != 0) begin
         if (count == 1) begin
           if (start) begin
@@ -82,10 +83,33 @@ module psg_dqsvc (
 
 `ifndef SYNTHESIS
   always @(posedge clk)
-    if (!reset && start && !start_ready)
+    if (!reset && ce && start && !start_ready)
       $fatal(1, "psg_dqsvc: request while service cannot accept one");
 `endif
 
+endmodule
+
+// The legacy walker has no external executor hold.  Keep its source-visible
+// interface unchanged while the memory-native executor uses the enabled core
+// to freeze the recurrence on the same edges as PC, IR and state_q.
+module psg_dqsvc (
+    input  bit          clk,
+    input  bit          reset,
+    input  logic        start,
+    input  logic [12:0] live_a,
+    input  logic [12:0] old_a,
+    input  logic [8:0]  start_k,
+    input  logic        start_old,
+    output logic [13:0] result,
+    output logic        done,
+    output logic        busy,
+    output logic        start_ready
+);
+  psg_dqsvc_core u_core(
+    .clk(clk), .reset(reset), .ce(1'b1), .start(start),
+    .live_a(live_a), .old_a(old_a), .start_k(start_k),
+    .start_old(start_old), .result(result), .done(done), .busy(busy),
+    .start_ready(start_ready));
 endmodule
 
 `endif

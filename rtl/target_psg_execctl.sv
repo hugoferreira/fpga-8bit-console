@@ -22,7 +22,7 @@ module target_psg_execctl(input  bit          clk,
   // These wires deliberately stay internal: keep preserves the complete
   // controller interface for synthesis without spending TQ144 package pins.
   /* verilator lint_off UNUSEDSIGNAL */
-  (* keep *) logic active, done, owner, state_we;
+  (* keep *) logic active, done, owner, state_re, state_we;
   (* keep *) logic [2:0] slot;
   (* keep *) logic [8:0] state_ra, state_wa;
   (* keep *) logic [15:0] state_wd, ir;
@@ -72,6 +72,7 @@ module target_psg_execctl(input  bit          clk,
     .state_ra_word_i(state_ra_word), .state_we_i(state_we_extra),
     .state_wa_word_i(state_wa_word),
     .active(active), .done(done), .owner(owner), .slot(slot),
+    .state_re(state_re),
     .state_ra(state_ra), .state_we(state_we), .state_wa(state_wa),
     .state_wd(state_wd), .action(action), .state_word(state_word),
     .op_dbg(op_dbg), .pc_dbg(pc), .ir_dbg(ir));

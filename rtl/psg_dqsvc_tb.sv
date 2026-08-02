@@ -6,15 +6,41 @@ module psg_dqsvc_tb;
   always #5 clk = ~clk;
 
   logic start = 0;
+  logic ce = 1;
   logic [12:0] live_a = 0;
   logic [12:0] old_a = 0;
   logic [8:0] start_k = 0;
   logic start_old = 0;
   logic [13:0] result;
   logic done, busy, start_ready;
+  logic [26:0] saved_p;
+  logic [2:0] saved_count;
+  logic [13:0] saved_result;
+  logic saved_busy, saved_done, saved_ready;
+  bit edge_trace = 0;
+  bit trace_active = 0;
+  int trace_edge = 0;
+  int trace_case = 0;
 
-  psg_dqsvc dut(
-    .clk(clk), .reset(reset),
+  initial edge_trace = $test$plusargs("PSG_EDGE_TRACE");
+
+  // bench_case is a diagnostic scenario label, never a service transaction
+  // identity.  Consumers derive acceptance and completion from count/ready.
+  always @(posedge clk) if (edge_trace && trace_active) begin
+    $display("PSGTRACE {\"schema\":\"psg_edge_v1\",\"svc\":\"dq\",\"domain\":\"clk\",\"phase\":\"pre\",\"edge\":%0d,\"bench_case\":%0d,\"time\":%0t,\"reset\":%0b,\"ce\":%0b,\"start\":%0b,\"live_a\":%0d,\"old_a\":%0d,\"start_k\":%0d,\"start_old\":%0b,\"p\":\"%0h\",\"count\":%0d,\"step_a\":%0d,\"step_next\":\"%0h\",\"result\":%0d,\"done\":%0b,\"busy\":%0b,\"start_ready\":%0b}",
+             trace_edge, trace_case, $time, reset, ce, start, live_a, old_a,
+             start_k, start_old, dut.p, dut.count, dut.step_a, dut.step_next,
+             result, done, busy, start_ready);
+    #1;
+    $display("PSGTRACE {\"schema\":\"psg_edge_v1\",\"svc\":\"dq\",\"domain\":\"clk\",\"phase\":\"post\",\"edge\":%0d,\"bench_case\":%0d,\"time\":%0t,\"reset\":%0b,\"ce\":%0b,\"start\":%0b,\"live_a\":%0d,\"old_a\":%0d,\"start_k\":%0d,\"start_old\":%0b,\"p\":\"%0h\",\"count\":%0d,\"step_a\":%0d,\"step_next\":\"%0h\",\"result\":%0d,\"done\":%0b,\"busy\":%0b,\"start_ready\":%0b}",
+             trace_edge, trace_case, $time, reset, ce, start, live_a, old_a,
+             start_k, start_old, dut.p, dut.count, dut.step_a, dut.step_next,
+             result, done, busy, start_ready);
+    trace_edge++;
+  end
+
+  psg_dqsvc_core dut(
+    .clk(clk), .reset(reset), .ce(ce),
     .start(start), .live_a(live_a), .old_a(old_a),
     .start_k(start_k), .start_old(start_old),
     .result(result), .done(done),
@@ -44,8 +70,11 @@ module psg_dqsvc_tb;
   endtask
 
   int coeffs[0:6] = '{193, 250, 254, 255, 256, 384, 508};
+  int freeze_states[0:4] = '{6, 5, 2, 4, 1};
   int kidx;
   int aval;
+  int freeze_index;
+  int freeze_count;
   initial begin
     repeat (3) @(negedge clk);
     reset = 0;
@@ -59,6 +88,8 @@ module psg_dqsvc_tb;
     end
 
     // Exercise the terminal-cycle handoff used by phases 19 and 24.
+    trace_case = 1;
+    if (edge_trace) trace_active = 1'b1;
     launch(13'd8191, 9'd508);
     while (!(done && busy && start_ready)) @(negedge clk);
     if (result !== 14'd16254)
@@ -80,7 +111,37 @@ module psg_dqsvc_tb;
                busy, done, result);
     end
 
-    $display("psg_dqsvc_tb: PASS (57,344 exhaustive + chained transactions)");
+    // Freeze each nonterminal recurrence state and the terminal chained
+    // handoff.  The core must neither age nor accept a new request while its
+    // executor is held, and must resume on the exact interrupted step.
+    for (freeze_index = 0; freeze_index < 5; freeze_index++) begin
+      freeze_count = freeze_states[freeze_index];
+      trace_case = 10 + freeze_count;
+      launch(13'(16'h123 + freeze_count), 9'(coeffs[freeze_count]));
+      while (dut.count != 3'(freeze_count)) @(negedge clk);
+      saved_p = dut.p;
+      saved_count = dut.count;
+      saved_result = result;
+      saved_busy = busy;
+      saved_done = done;
+      saved_ready = start_ready;
+      ce = 1'b0;
+      start = 1'b1;
+      repeat (3) begin
+        @(negedge clk);
+        if (dut.p !== saved_p || dut.count !== saved_count
+            || result !== saved_result || busy !== saved_busy
+            || done !== saved_done || start_ready !== saved_ready)
+          $fatal(1, "dq hold aged state count=%0d", freeze_count);
+      end
+      start = 1'b0;
+      ce = 1'b1;
+      await_result(13'(16'h123 + freeze_count),
+                   9'(coeffs[freeze_count]));
+    end
+    trace_active = 1'b0;
+
+    $display("psg_dqsvc_tb: PASS (57,344 exhaustive + chained + held transactions)");
     $finish;
   end
 endmodule

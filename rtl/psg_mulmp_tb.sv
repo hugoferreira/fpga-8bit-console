@@ -18,10 +18,12 @@ module psg_mulmp_tb;
   logic [11:0]        b = 0;
   logic [1:0]         mode = 0;
   logic               short_req = 0;
+  logic               freeze = 0;
 
-  wire [33:0] ref_res, r2_res, r4_res;
-  wire ref_busy, r2_busy, r4_busy;
+  wire [33:0] ref_res, r2_res, r4_res, hold_res;
+  wire ref_busy, r2_busy, r4_busy, hold_busy;
   wire r2_seq_busy, r4_seq_busy;
+  wire hold_seq_busy;
 
   psg_mulsvc ref_dut(
       .clk(clk), .reset(reset),
@@ -41,12 +43,79 @@ module psg_mulmp_tb;
       .mul_start_mode(mode), .mul_start_short(short_req),
       .m_res(r4_res), .m_busy(r4_busy), .m_seq_busy(r4_seq_busy));
 
+  psg_mulmp_core #(.RADIX_BITS(1)) hold_dut(
+      .clk(clk), .fastclk(fastclk), .reset(reset), .freeze(freeze),
+      .mul_start(start), .mul_start_a(a), .mul_start_b(b),
+      .mul_start_mode(mode), .mul_start_short(short_req),
+      .m_res(hold_res), .m_busy(hold_busy), .m_seq_busy(hold_seq_busy));
+
   int errors = 0;
   int cases = 0;
   int r2_wait, r4_wait;
   int r2_max = 0, r4_max = 0;
   int r2_short_max = 0;
   bit active = 0;
+  bit edge_trace = 0;
+  bit trace_enable = 0;
+  bit trace_active = 0;
+  int slow_edge = 0;
+  int fast_edge = 0;
+  int trace_case = 0;
+  int slow_case = 0;
+  int fast_subedge = 0;
+
+  initial edge_trace = $test$plusargs("PSG_EDGE_TRACE");
+
+  // bench_case/slow_edge/subedge are diagnostic coordinates only.  A trace
+  // consumer must derive transactions from req/ack toggle transitions and
+  // use time/domain/edge/phase for causal ordering.
+  always @(posedge clk) begin
+    fast_subedge = 0;
+    if (edge_trace && trace_enable) begin
+      trace_active = 1'b1;
+      slow_case = trace_case;
+      $display("PSGTRACE {\"schema\":\"psg_edge_v1\",\"svc\":\"mul\",\"domain\":\"slow\",\"phase\":\"pre\",\"edge\":%0d,\"bench_case\":%0d,\"time\":%0t,\"reset\":%0b,\"freeze\":%0b,\"start\":%0b,\"a_signed\":%0d,\"a_raw\":\"%0h\",\"b\":%0d,\"mode\":%0d,\"short\":%0b,\"req_a\":\"%0h\",\"req_b\":\"%0h\",\"req_steps\":%0d,\"req_tgl\":%0b,\"ack_tgl\":%0b,\"ack_meta\":%0b,\"ack_sync\":%0b,\"seq_pad\":%0d,\"m_p\":\"%0h\",\"m_cnt\":%0d,\"m_res\":\"%0h\",\"busy\":%0b,\"seq_busy\":%0b}",
+             slow_edge, slow_case, $time, reset, freeze, start, $signed(a),
+             a, b, mode, short_req, hold_dut.req_a, hold_dut.req_b,
+             hold_dut.req_steps, hold_dut.req_tgl, hold_dut.ack_tgl,
+             hold_dut.ack_meta, hold_dut.ack_sync, hold_dut.seq_pad,
+             hold_dut.m_p, hold_dut.m_cnt, hold_res, hold_busy,
+             hold_seq_busy);
+      #1;
+      $display("PSGTRACE {\"schema\":\"psg_edge_v1\",\"svc\":\"mul\",\"domain\":\"slow\",\"phase\":\"post\",\"edge\":%0d,\"bench_case\":%0d,\"time\":%0t,\"reset\":%0b,\"freeze\":%0b,\"start\":%0b,\"a_signed\":%0d,\"a_raw\":\"%0h\",\"b\":%0d,\"mode\":%0d,\"short\":%0b,\"req_a\":\"%0h\",\"req_b\":\"%0h\",\"req_steps\":%0d,\"req_tgl\":%0b,\"ack_tgl\":%0b,\"ack_meta\":%0b,\"ack_sync\":%0b,\"seq_pad\":%0d,\"m_p\":\"%0h\",\"m_cnt\":%0d,\"m_res\":\"%0h\",\"busy\":%0b,\"seq_busy\":%0b}",
+             slow_edge, slow_case, $time, reset, freeze, start, $signed(a),
+             a, b, mode, short_req, hold_dut.req_a, hold_dut.req_b,
+             hold_dut.req_steps, hold_dut.req_tgl, hold_dut.ack_tgl,
+             hold_dut.ack_meta, hold_dut.ack_sync, hold_dut.seq_pad,
+             hold_dut.m_p, hold_dut.m_cnt, hold_res, hold_busy,
+             hold_seq_busy);
+      slow_edge++;
+    end else begin
+      trace_active = 1'b0;
+    end
+  end
+
+  always @(posedge fastclk) begin
+    if (edge_trace && trace_active) begin
+      $display("PSGTRACE {\"schema\":\"psg_edge_v1\",\"svc\":\"mul\",\"domain\":\"fast\",\"phase\":\"pre\",\"edge\":%0d,\"bench_case\":%0d,\"time\":%0t,\"slow_edge\":%0d,\"subedge\":%0d,\"reset\":%0b,\"freeze\":%0b,\"start\":%0b,\"a_signed\":%0d,\"a_raw\":\"%0h\",\"b\":%0d,\"mode\":%0d,\"short\":%0b,\"req_a\":\"%0h\",\"req_b\":\"%0h\",\"req_steps\":%0d,\"req_tgl\":%0b,\"req_meta\":%0b,\"req_sync\":%0b,\"ack_tgl\":%0b,\"m_p\":\"%0h\",\"m_cnt\":%0d,\"busy\":%0b,\"seq_busy\":%0b}",
+             fast_edge, slow_case, $time, slow_edge - 1, fast_subedge, reset,
+             freeze, start, $signed(a), a, b, mode, short_req,
+             hold_dut.req_a, hold_dut.req_b, hold_dut.req_steps,
+             hold_dut.req_tgl, hold_dut.req_meta, hold_dut.req_sync,
+             hold_dut.ack_tgl, hold_dut.m_p, hold_dut.m_cnt, hold_busy,
+             hold_seq_busy);
+      #1;
+      $display("PSGTRACE {\"schema\":\"psg_edge_v1\",\"svc\":\"mul\",\"domain\":\"fast\",\"phase\":\"post\",\"edge\":%0d,\"bench_case\":%0d,\"time\":%0t,\"slow_edge\":%0d,\"subedge\":%0d,\"reset\":%0b,\"freeze\":%0b,\"start\":%0b,\"a_signed\":%0d,\"a_raw\":\"%0h\",\"b\":%0d,\"mode\":%0d,\"short\":%0b,\"req_a\":\"%0h\",\"req_b\":\"%0h\",\"req_steps\":%0d,\"req_tgl\":%0b,\"req_meta\":%0b,\"req_sync\":%0b,\"ack_tgl\":%0b,\"m_p\":\"%0h\",\"m_cnt\":%0d,\"busy\":%0b,\"seq_busy\":%0b}",
+             fast_edge, slow_case, $time, slow_edge - 1, fast_subedge, reset,
+             freeze, start, $signed(a), a, b, mode, short_req,
+             hold_dut.req_a, hold_dut.req_b, hold_dut.req_steps,
+             hold_dut.req_tgl, hold_dut.req_meta, hold_dut.req_sync,
+             hold_dut.ack_tgl, hold_dut.m_p, hold_dut.m_cnt, hold_busy,
+             hold_seq_busy);
+      fast_edge++;
+    end
+    fast_subedge++;
+  end
 
   always @(negedge clk) begin
     if (!reset) begin
@@ -109,7 +178,95 @@ module psg_mulmp_tb;
                av, bv, mv, sv, r4_res, ref_res);
         errors++;
       end
+      if (hold_res !== ref_res) begin
+        $error("enabled-core mismatch A=%0d B=%0d mode=%0d short=%0b got=%h ref=%h",
+               av, bv, mv, sv, hold_res, ref_res);
+        errors++;
+      end
       cases++;
+    end
+  endtask
+
+  task automatic check_frozen_state;
+    logic [17:0] saved_req_a;
+    logic [12:0] saved_req_b;
+    logic [3:0] saved_req_steps;
+    logic saved_req_tgl, saved_ack_tgl;
+    logic saved_ack_meta, saved_ack_sync, saved_req_meta, saved_req_sync;
+    logic [2:0] saved_seq_pad;
+    logic [33:0] saved_m_p;
+    logic [3:0] saved_m_cnt;
+    logic saved_busy, saved_seq_busy;
+    begin
+      saved_req_a = hold_dut.req_a;
+      saved_req_b = hold_dut.req_b;
+      saved_req_steps = hold_dut.req_steps;
+      saved_req_tgl = hold_dut.req_tgl;
+      saved_ack_tgl = hold_dut.ack_tgl;
+      saved_ack_meta = hold_dut.ack_meta;
+      saved_ack_sync = hold_dut.ack_sync;
+      saved_req_meta = hold_dut.req_meta;
+      saved_req_sync = hold_dut.req_sync;
+      saved_seq_pad = hold_dut.seq_pad;
+      saved_m_p = hold_dut.m_p;
+      saved_m_cnt = hold_dut.m_cnt;
+      saved_busy = hold_busy;
+      saved_seq_busy = hold_seq_busy;
+      repeat (18) begin
+        @(posedge fastclk);
+        #1;
+        if (hold_dut.req_a !== saved_req_a
+            || hold_dut.req_b !== saved_req_b
+            || hold_dut.req_steps !== saved_req_steps
+            || hold_dut.req_tgl !== saved_req_tgl
+            || hold_dut.ack_tgl !== saved_ack_tgl
+            || hold_dut.ack_meta !== saved_ack_meta
+            || hold_dut.ack_sync !== saved_ack_sync
+            || hold_dut.req_meta !== saved_req_meta
+            || hold_dut.req_sync !== saved_req_sync
+            || hold_dut.seq_pad !== saved_seq_pad
+            || hold_dut.m_p !== saved_m_p || hold_dut.m_cnt !== saved_m_cnt
+            || hold_busy !== saved_busy || hold_seq_busy !== saved_seq_busy)
+          $fatal(1, "multi-pumped transaction aged during freeze");
+      end
+    end
+  endtask
+
+  task automatic run_freeze_case(input int target_count,
+                                 input logic freeze_ack_crossing);
+    logic signed [17:0] av;
+    logic [11:0] bv;
+    logic [33:0] expected;
+    begin
+      trace_case = freeze_ack_crossing ? 209 : 200 + target_count;
+      av = -18'sd123457;
+      bv = 12'd253;
+      expected = 34'((18'(-av) * bv) << 4);
+      @(negedge clk);
+      a = {{7{av[17]}}, av};
+      b = bv;
+      mode = 2'd0;
+      short_req = 1'b0;
+      start = 1'b1;
+      @(negedge clk);
+      start = 1'b0;
+      if (freeze_ack_crossing)
+        wait (hold_dut.m_cnt == 0
+              && hold_dut.ack_tgl != hold_dut.ack_sync);
+      else
+        wait (hold_dut.m_cnt == 4'(target_count));
+      @(negedge fastclk);
+      #1;
+      freeze = 1'b1;
+      check_frozen_state();
+      @(negedge fastclk);
+      #1;
+      freeze = 1'b0;
+      wait (!hold_busy);
+      @(negedge clk);
+      if (hold_res !== expected)
+        $fatal(1, "held multiplier result mismatch count=%0d ack=%0b got=%h expected=%h",
+               target_count, freeze_ack_crossing, hold_res, expected);
     end
   endtask
 
@@ -149,6 +306,29 @@ module psg_mulmp_tb;
       sv = ($urandom_range(0, 7) == 0);
       av = 18'($urandom);
       run_case(av, legal_b(mv, sv, $urandom), mv, sv);
+    end
+
+    if (edge_trace) begin
+      // Remove the random sweep's final state from the trace boundary.  This
+      // preamble is untraced and leaves every retained field deterministic.
+      run_case(18'sd0, 12'd0, 2'd0, 1'b0);
+      trace_enable = 1'b1;
+      for (int mv = 0; mv < 4; mv++) begin
+        trace_case = 100 + mv;
+        run_case(-18'sd12345, legal_b(mv[1:0], 1'b0,
+                                     32'h35a5_17c3), mv[1:0], 1'b0);
+      end
+      trace_case = 104;
+      run_case(18'sd23456, 12'd63, 2'd1, 1'b1);
+    end
+
+    if (edge_trace) trace_enable = 1'b1;
+    for (int target = 8; target > 0; target--)
+      run_freeze_case(target, 1'b0);
+    run_freeze_case(0, 1'b1);
+    if (edge_trace) begin
+      trace_enable = 1'b0;
+      wait (!trace_active);
     end
 
     if (errors == 0)

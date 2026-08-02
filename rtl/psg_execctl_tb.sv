@@ -12,7 +12,7 @@ module psg_execctl_tb;
   logic [5:0] state_ra_word_i;
   logic state_we_i;
   logic [5:0] state_wa_word_i;
-  logic active, done, owner, state_we;
+  logic active, done, owner, state_re, state_we;
   logic [2:0] slot;
   logic [8:0] state_ra, state_wa;
   logic [15:0] state_wd, ir;
@@ -93,7 +93,7 @@ module psg_execctl_tb;
     launch(8'd2, 1'b0);
     hold = 1'b1;
     step();
-    if (pc != 2 || owner || !active || state_we
+    if (pc != 2 || owner || !active || state_re || state_we
         || ir != {3'd2, 4'd0, 1'b1, 8'd5})
       $fatal(1, "hold mismatch");
     hold = 1'b0;
