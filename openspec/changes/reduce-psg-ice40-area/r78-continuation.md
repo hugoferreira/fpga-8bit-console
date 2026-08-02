@@ -2728,6 +2728,45 @@ git history; do not repeat them without the recorded changed condition.
   semantic values.  Only after complete action/PC/root coverage may the D2F
   adapter consume it.  Generic PSG/Tang RTL remains untouched until the board
   task releases ownership or an atomic integration boundary is coordinated.
+- **C2-C-A active hypothesis:** a metadata-only contract generated from the
+  complete D2F candidate and checked against deterministic traces from the
+  live legacy walker plus the already hold-correct primitive RTL can close the
+  missing source boundary without creating another semantic implementation.
+  Reify the existing 30-root inventory as typed machine-readable metadata,
+  mechanically attach every root to its candidate producer/consumer PC,
+  literal q source, fixed destination and service class, and emit no value or
+  expected-result field.  Add an optional structural trace to the existing
+  full-PSG budget bench that exposes only enabled/held edge identity, slot,
+  walker phase/CAP mask, state addresses/enables, real wave/ARAM/DQ/multiplier
+  issue/take/done strobes, ring/fold phase and final commit strobes.  A checker
+  shall join those rows to the candidate contract by decoded action and live
+  source event, never by a hand-written phase table or sampled semantic value.
+- **C2-C-A scope and baseline:** start from docs-only rejection `40591a5` and
+  accepted executable C2-B `4340adb`.  Work only in
+  `tools/psg_exec_model.py`, `rtl/psg_budget_tb.sv`, an optional focused
+  binding checker/test, and this ledger.  `rtl/psg_exec.hex`, production RTL,
+  generic walker/sequencer composition, Tang/H022 and `main` remain untouched.
+  The full-PSG trace may observe hierarchical source signals but may not force
+  data, alter scheduling, or feed anything back to the DUT.  Existing C1/C2-A
+  RTL traces remain the authority for primitive freeze and executor
+  wave/ARAM lineage; C2-C-A must consume their actual strobe schema rather
+  than re-state their conclusions.
+- **C2-C-A gates:** require all 61 owner-zero actions and every changed
+  candidate PC to have one typed source binding; all 30 roots and 27 value
+  groups must have complete producer/consumer/service/width/guard ownership;
+  all eight slots must exercise every unconditional binding and each guarded
+  binding must exercise both enabled and disabled classes.  State q origin,
+  eighteen fixed writes, CAP_W51's pending 26/30 distinction, four wave and
+  four ARAM contexts, both DQ chains, every multiplier role, ring reads,
+  seven ordered folds, leaf/dry and persistent LFSR commits must appear in the
+  joined real-RTL trace.  Require byte-identical repeated manifests/traces,
+  C1 primitive freeze traces, C2-A issue/take queues, C2-B candidate control,
+  full/PREVIEW lint, `make test-psg`, strict OpenSpec, image/production-RTL
+  immutability and `git diff --check`.  Reject if a row carries a semantic
+  value, if the checker imports `SampleTrace`/`evaluate_sample_slot`, if any
+  candidate action/root remains prose-only, or if source instrumentation
+  perturbs the existing regression output.  This is a source-contract gate,
+  not adapter equivalence, integration, synthesis or area credit.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
