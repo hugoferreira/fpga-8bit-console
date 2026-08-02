@@ -1,0 +1,24 @@
+// Tang Nano 20K standalone PSG/SDRAM player.
+// The SDRAM signals deliberately have no IO_LOC entries: current Apicula
+// chip databases carry their private GW2AR-18C SiP locations and recognize
+// the exact O_sdram_*/IO_sdram_dq names used by the top module.
+IO_LOC  "clk" 4;
+IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+IO_LOC  "led_playing" 15;
+IO_PORT "led_playing" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC  "led_error" 16;
+IO_PORT "led_error" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+
+IO_LOC  "i2s_bclk" 56;
+IO_PORT "i2s_bclk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "i2s_lrck" 55;
+IO_PORT "i2s_lrck" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "i2s_din" 54;
+IO_PORT "i2s_din" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "pa_en" 51;
+IO_PORT "pa_en" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+// FPGA -> onboard debugger USB-UART RX.
+IO_LOC  "uart_tx_o" 69;
+IO_PORT "uart_tx_o" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;

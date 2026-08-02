@@ -8,31 +8,31 @@
  * the speaker pads. This feeds it directly, so the board makes sound with a
  * speaker and no other parts.
  *
- * Standard (Philips) I2S, 32 bits per channel slot, MSB first, LRCK and data
+ * Standard (Philips) I2S, 16 bits per channel slot, MSB first, LRCK and data
  * changing on the falling edge of BCLK and sampled by the receiver on the
- * rising edge. The one-BCLK delay between the LRCK edge and the MSB - the
- * detail that distinguishes I2S from left-justified - is the explicit pad bit
- * driven at the slot boundary below.
+ * rising edge. LRCK changes while the preceding channel's LSB is present, one
+ * BCLK before the following channel's MSB. This is the 32-BCLK frame shape
+ * used by Sipeed's working Tang Nano 20K audio example.
  *
  * The same sample goes to both slots. The MAX98357A's channel select is a
  * board-level resistor (left, right, or (L+R)/2) and the Tang Nano 20K does
  * not break it out, so a mono source has to be duplicated to be heard whatever
  * that resistor says.
  *
- *   BCLK = clk / (2 * HALF) = 112.5 MHz / 40 = 2.8125 MHz
- *   LRCK = BCLK / 64        = 43.945 kHz
+ *   BCLK = clk / (2 * HALF)
+ *   LRCK = BCLK / 32
  *
  * The PSG's virtual sample rate is 22050 Hz, so each PSG sample is sent about
  * twice - a zero-order hold, which is what the modulator in dsigma.sv does to
- * the same signal at a far higher rate. 43.945 kHz is inside the MAX98357A's
- * 8-96 kHz window with room on both sides, and it is what an integer division
- * of 112.5 MHz gives: there is no exact 44.1 or 48 kHz from this clock, and
- * there does not need to be, because nothing downstream is clocked by it.
+ * the same signal at a far higher rate. The owner chooses HALF so LRCK remains
+ * inside the MAX98357A's 8-96 kHz window.
  */
 module i2s_out #(
-    parameter int HALF = 20              // clk cycles per BCLK half-period
+    parameter int HALF = 40,             // clk cycles per BCLK half-period
+    parameter int ATTEN_SHIFT = 0,       // arithmetic right shift (6 dB/bit)
+    parameter bit BOOST_50_PERCENT = 0   // multiply the attenuated word by 3/2
   ) (
-    input  logic               clk,      // 112.5 MHz (psgclk)
+    input  logic               clk,      // serializer clock
     input  logic               reset,
     input  logic signed [15:0] pcm,      // PSG output, updated at 22050 Hz
     output logic               bclk,
@@ -43,13 +43,18 @@ module i2s_out #(
   localparam int DIVW = $clog2(HALF);
 
   logic [DIVW-1:0]    div;
-  logic [5:0]         bitcnt;            // 0..63: two 32-bit slots
-  logic [31:0]        sr;
-  logic signed [15:0] hold;              // the left slot's sample, repeated
+  logic [4:0]         bitcnt;            // 0..31: two 16-bit slots
+  logic signed [15:0] hold;              // one frame's sample, repeated
+  wire  signed [15:0] atten_pcm = pcm >>> ATTEN_SHIFT;
+  wire  signed [16:0] atten_ext = {atten_pcm[15], atten_pcm};
+  wire  signed [16:0] boosted_pcm =
+    (atten_ext + (atten_ext <<< 1)) >>> 1;
+  wire  signed [15:0] scaled_pcm = BOOST_50_PERCENT
+                                      ? boosted_pcm[15:0] : atten_pcm;
 
   // No declaration initialisers and no `initial`: every one of these is written
-  // in the reset branch below, and the console holds reset for 65536 master
-  // clocks at power-on (rtl/clocks.sv), so there is no window in which an
+  // in the reset branch below, and the owner holds reset through clock lock,
+  // so there is no window in which an
   // uninitialised value reaches a pin.
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -58,7 +63,6 @@ module i2s_out #(
       bclk   <= 1'b0;
       lrck   <= 1'b0;
       din    <= 1'b0;
-      sr     <= '0;
       hold   <= '0;
     end else if (div != DIVW'(HALF - 1)) begin
       div <= div + 1'b1;
@@ -70,13 +74,16 @@ module i2s_out #(
       // receiver will sample on the next rising edge.
       if (bclk) begin
         bitcnt <= bitcnt + 1'b1;
-        case (bitcnt)
-          // Slot boundaries. LRCK moves and the pad bit goes out here; the
-          // MSB follows one BCLK later, off the freshly loaded register.
-          6'd63: begin lrck <= 1'b0; hold <= pcm; sr <= {pcm,  16'b0}; din <= 1'b0; end
-          6'd31: begin lrck <= 1'b1;              sr <= {hold, 16'b0}; din <= 1'b0; end
-          default: begin sr <= {sr[30:0], 1'b0}; din <= sr[31]; end
-        endcase
+        din <= hold[4'd15 - bitcnt[3:0]];
+
+        // LRCK moves with the old channel's LSB. The next BCLK therefore
+        // carries the new channel's MSB, exactly one clock after the edge.
+        if (bitcnt == 5'd15)
+          lrck <= 1'b1;
+        else if (bitcnt == 5'd31) begin
+          lrck <= 1'b0;
+          hold <= scaled_pcm;
+        end
       end
     end
   end
