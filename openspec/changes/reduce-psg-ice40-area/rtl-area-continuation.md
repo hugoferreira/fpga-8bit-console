@@ -24,7 +24,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H021.
+- Next hypothesis ID: H022.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
@@ -35,7 +35,10 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   reductions are deterministic; the 57-LC placed improvement is positive but
   remains just inside the known roughly 60-LC placement-sensitivity band and
   is not claimed as robust.
-- Latest rejected variant: H020 proves the audio-RAM busy export is contained
+- Latest rejected variant: H021 proves the 32-arm filter decode is wrapped
+  base-3, but the existing table maps to 23 LUT4/no carries versus 28 LUT4/70
+  carries for direct arithmetic and 26 LUT4/11 carries for staged thresholds.
+  H020 proves the audio-RAM busy export is contained
   inside `prun` and locally saves one LUT4, but whole-PSG mapping adds three
   LUT4s/three carries and seed-1 placement adds one LC. H019 proves whole-walk state-memory ownership is
   behaviorally exact and both forms reduce the isolated mux/store cone, but
@@ -108,6 +111,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H018 | rejected | Keep the 26-bit add-then-shift: the exact 25-bit half-sum saves one carry locally but globally adds 31 LUT4s, nine carries, and 38 LCs. |
 | H019 | rejected | Keep per-operation state-memory selects: both whole-walk owner forms are exact and locally smaller, but globally add LUT4s/carries; the retained-OR form also fails to route promptly. |
 | H020 | rejected | Keep the redundant audio-RAM busy export: removing it saves one local LUT4 but adds three LUT4s/three carries globally and one placed LC. |
+| H021 | rejected | Keep the 32-arm filter table: its wrapped base-3 identity is exact, but ABC maps the table smaller than direct or staged arithmetic. |
 
 ## Hypothesis H001
 
@@ -855,6 +859,41 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   audio-RAM replay depth, walk termination, mapper busy-cone lowering, or
   sequencer-credit ownership changes materially.
 
+## Hypothesis H021
+
+- **ID:** H021.
+- **Hypothesis:** `fdec(n)` is exactly the three base-3 digits of `n mod 27`,
+  each stored in a two-bit field. Replacing its 32 explicit case arms with one
+  wrap-at-27 step and two small quotient/remainder stages should make the
+  filter contract much shorter and may share the narrow comparisons/subtracts
+  better than the table mux.
+- **Scope:** `rtl/psg_seq.sv`, exhaustive all-32-input equivalence, isolated
+  registered decoder/consumer synthesis, whole-PSG mapping, and the complete
+  H007 acceptance battery if mapping improves. No note data, filter value,
+  FSM phase/action, memory, EBR, R.84 executor, or tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H021 setup
+  through `5e0f19b`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1
+  7,392 LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Changed condition versus prior decode experiments:** task 5.3 explicitly
+  leaves filter decode open. H021 replaces the entire 32-arm function using
+  its arithmetic structure; it does not peel individual phase consumers from
+  shared pph decode or add a new ROM/EBR.
+- **Change:** exhaustively prove the identity and compare both direct `/`/`%`
+  arithmetic and explicit two-stage threshold/subtract decompositions against
+  the full registered table consumer. No production RTL is changed.
+- **Result:** all 32 inputs match the packed base-3 digits of `n mod 27`. The
+  existing table maps to 23 LUT4 / zero carry / 12 FF. Direct arithmetic maps
+  to 28 LUT4 / 70 carry / 12 FF, while the staged form maps to 26 LUT4 / 11
+  carry / 12 FF. Both candidates are strictly larger in the isolated complete
+  consumer cone, so whole-PSG synthesis and the fidelity battery are correctly
+  skipped.
+- **Decision:** rejected before production RTL. The arithmetic structure is a
+  useful specification, but the current truth table already receives superior
+  Boolean covering from Yosys/ABC.
+- **Repeat only if:** if rejected, retry only after the note filter encoding,
+  consumer fields, mapper truth-table/arithmetic lowering, or constants-ROM
+  port schedule changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -904,12 +943,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h020/containment-{proof.py,proof.log}` | exhaustive wavetable-read/replay containment proof | All six possible read phases and following replay edges remain inside `prun`. |
 | `build/experiments/h020/isolated-{baseline,candidate}.log` | registered audio-RAM/top-level hold cone | Exact candidate saves one local LUT4. |
 | `build/experiments/h020/candidate.{synth,pnr}.log` | canonical synthesis without exported `seq_frozen` | Whole-PSG map and seed-1 placement regress; rejected. |
+| `build/experiments/h021/filter-{proof.py,proof.log}` | exhaustive wrapped-base-3 proof | All 32 filter codes agree. |
+| `build/experiments/h021/isolated-{baseline,arith,staged}.log` | complete registered filter decoder/consumer synthesis | Both arithmetic forms are larger than the case table. |
 
 ## Handoff
 
-- Next allowed experiment: H021 only after its resume audit and hypothesis row
+- Next allowed experiment: H022 only after its resume audit and hypothesis row
   are recorded; it must use a new generic-RTL mechanism outside the closed
-  audio-RAM busy, whole-walk ownership, half-sum/gain-context, and R.84 families.
+  filter-decode arithmetic, audio-RAM busy, whole-walk ownership,
+  half-sum/gain-context, and R.84 families.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -937,5 +979,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   closes.
   H020's redundant audio-RAM busy export is exact but globally worse; both
   production files are reverted and the family closes.
+  H021's filter-code arithmetic is exact but locally larger than the current
+  table in both measured forms; no production file changed and the family
+  closes.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
