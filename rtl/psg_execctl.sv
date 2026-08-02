@@ -11,13 +11,14 @@
 `ifndef PSG_EXECCTL_SV
 `define PSG_EXECCTL_SV
 
-module psg_execctl(input  bit         clk,
+module psg_execctl #(parameter TEST_PROGRAM = 0)
+                  (input  bit         clk,
                    input  bit         reset,
                    input  logic       start,
                    input  logic       start_owner,
                    input  logic [7:0] start_pc,
                    input  logic       hold,
-                   input  logic [3:0] cond,
+                   input  logic [15:0] cond,
                    input  logic [15:0] state_q,
 
                    output logic       active,
@@ -28,6 +29,9 @@ module psg_execctl(input  bit         clk,
                    output logic       state_we,
                    output logic [8:0] state_wa,
                    output logic [15:0] state_wd,
+                   output logic [6:0] action,
+                   output logic [5:0] state_word,
+                   output logic [2:0] op_dbg,
                    output logic [7:0] pc_dbg,
                    output logic [15:0] ir_dbg);
 
@@ -39,34 +43,37 @@ module psg_execctl(input  bit         clk,
     OP_JUMP   = 3'd4,
     OP_OWNER  = 3'd5,
     OP_DONE   = 3'd6,
-    OP_NOP    = 3'd7;
+    OP_EXEC   = 3'd7;
 
   // R.84 reserves the fifteenth and final permitted EBR for the complete
   // full-mode program.  start_pc remains dynamic so synthesis cannot prune
   // unvisited pages while the instruction format is being measured.
   (* ram_style = "block" *) logic [15:0] ucode[0:255];
   initial begin
-    for (int i = 0; i < 256; i++)
-      ucode[i] = {i[2:0], i[7:0], i[7:3]};
+    if (TEST_PROGRAM) begin
+      for (int i = 0; i < 256; i++)
+        ucode[i] = {OP_DONE, 13'd0};
 
-    // A short self-checking path used by psg_execctl_tb.  Production program
-    // generation will replace the image, not the controller interface.
-    ucode[0] = {OP_READ,   7'd0, 6'd34};
-    ucode[1] = {OP_WRITE,  7'd0, 6'd38};
-    ucode[2] = {OP_BRANCH, 2'd0, 1'b1, 2'd0, 8'd5};
-    ucode[3] = {OP_NOP,   13'd0};
-    ucode[4] = {OP_JUMP,   5'd0, 8'd6};
-    ucode[5] = {OP_SLOT,   9'd0, 1'b0, 3'd3};
-    ucode[6] = {OP_DONE,  13'd0};
-    ucode[8] = {OP_OWNER, 12'd0, 1'b0};
-    ucode[9] = {OP_SLOT,   9'd0, 1'b1, 3'd0};
-    ucode[10] = {OP_DONE, 13'd0};
+      // A short self-checking path used by psg_execctl_tb.
+      ucode[0] = {OP_READ,   7'd0, 6'd34};
+      ucode[1] = {OP_WRITE,  7'd0, 6'd38};
+      ucode[2] = {OP_BRANCH, 4'd0, 1'b1, 8'd5};
+      ucode[3] = {OP_EXEC,   7'd17, 6'd9};
+      ucode[4] = {OP_JUMP,   5'd0, 8'd6};
+      ucode[5] = {OP_SLOT,   9'd0, 1'b0, 3'd3};
+      ucode[6] = {OP_DONE,  13'd0};
+      ucode[8] = {OP_OWNER, 12'd0, 1'b0};
+      ucode[9] = {OP_SLOT,   9'd0, 1'b1, 3'd0};
+      ucode[10] = {OP_DONE, 13'd0};
+    end else begin
+      $readmemh("./rtl/psg_exec.hex", ucode);
+    end
   end
 
   logic [7:0] pc;
   logic [15:0] ir;
   wire [2:0] op = ir[15:13];
-  wire branch_take = cond[ir[12:11]] == ir[10];
+  wire branch_take = cond[ir[12:9]] == ir[8];
   logic [7:0] next_pc;
   wire launch = start && !active;
   wire advance = active && !hold && op != OP_DONE;
@@ -92,6 +99,10 @@ module psg_execctl(input  bit         clk,
     state_wa = {slot, ir[5:0]};
     state_we = active && !hold && op == OP_WRITE;
     state_wd = state_q;
+    action = (op == OP_READ || op == OP_WRITE || op == OP_EXEC)
+               ? ir[12:6] : 7'd0;
+    state_word = ir[5:0];
+    op_dbg = op;
     pc_dbg = pc;
     ir_dbg = ir;
   end

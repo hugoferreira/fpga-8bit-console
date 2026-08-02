@@ -373,6 +373,57 @@ git history; do not repeat them without the recorded changed condition.
   gate is the generated action/program model required above.  Repeat R.83
   only through this address-state executor; do not add another flat waveform
   request/result service.
+- **R.84C hypothesis:** the legacy `pph`/`sst`/`xs` machines can be
+  lowered into fewer than 256 address-state instructions without encoding
+  their phase/state identities again in a wide PC decode.  Use the unused
+  seven instruction bits on read/write/execute formats as a structured action
+  field, pipeline synchronous state reads explicitly, and enumerate every
+  persistent/scratch address, branch target and externally visible commit in
+  an executable generator/model.  Sample code may wait on true service-ready
+  conditions instead of storing legacy idle phases; the top-level still gives
+  the sequencer exactly 272 advances per sample, so this changes no audible
+  ownership boundary.  Accept this iteration only if all three program pages
+  fit, every path terminates inside the `/4` 1,003-clock sample bound, and the
+  action field remains address-selected rather than rebuilding flat operand
+  or destination bundles.  Scope is the generator/model, controller
+  interface/test/isolated target and this ledger; generic PSG integration is
+  still forbidden until the model closes.
+- **R.84C result:** accepted as the generated control/data-movement contract.
+  The executable model extracts all 63 legacy sequencer states, removes the
+  `xs`/`vcnt` loop identities into 85 address-state nodes and proves every
+  node can reach `S_IDLE`.  All defined 16-bit instruction-format encodings
+  round-trip; every generated branch/jump names a compiled instruction; every
+  persistent address is below 34 and scratch stays in 34..63; synchronous
+  reads are consumed by the following action; and the twelve externally
+  visible commit families are inventoried against the legacy RTL.  The sample
+  page uses 62/64 words and takes a conservative 652/1,003 `/4` clocks, leaving
+  351 spare.  Tick/effect uses 99/128 words and trigger/music 26/64.  The
+  generated image is freshness-checked byte-for-byte.  Sample actions use 57
+  codes (family occupancy 15/3/16/14/3/6/0/0); tick actions use 85
+  (13/12/9/13/13/15/10/0), so no family exceeds its sixteen-subop field.
+  Icarus self-check, testbench and production-target Verilator lint, Python
+  compilation and strict OpenSpec validation pass.  The production image still
+  infers exactly one EBR and maps to 86 LUT4s, 7 carries, 14 flops, 10
+  unpackable flops and a 96-LC floor.  Seed-1 places and routes at 100 LCs,
+  one EBR and 103.16 MHz against 28.125 MHz.  This proves instruction control,
+  storage movement and capacity only: arithmetic actions, output semantics,
+  schedule equivalence, frozen renders and whole-PSG area remain R.84D/full
+  integration gates.
+- **R.84C decision:** retain the controller interface, generated image and
+  executable contract.  The one-EBR image fits with two sample words, 29 tick
+  words and 38 flow words spare; physical fixed cost remains negligible
+  against the 3,224-floor 6k replacement budget.  Do not cite this result as
+  behavioral equivalence or as a PSG LC reduction.
+- **R.84D next permitted hypothesis:** implement and price the actual
+  address-selected action/state datapath behind this controller without
+  partially migrating any `pph`/`sst` consumer.  Actions must select structured
+  family/suboperations and one state address at a time; they may not rebuild a
+  flat register-fed source/destination bundle.  Keep the accepted controller
+  pair in the whole PSG until the replacement datapath is complete enough for
+  an atomic elaboration switch.  Accept R.84D only if the program remains one
+  EBR, the standalone replacement stays on the measured 6k trajectory, and
+  state-read/write timing plus action semantics gain executable proof before
+  whole-PSG integration.
 
 ### Active task queue
 
@@ -390,6 +441,12 @@ git history; do not repeat them without the recorded changed condition.
 - [x] R.84B: infer and route the complete one-EBR controller shell before
       action logic; 43 LUT4s, 14 flops, 53-LC floor, 57 placed LCs and
       122.22 MHz, with self-check and both lint configurations clean.
+- [x] R.84C: generate and exhaustively validate the structured action/program
+      contract, including synchronous-read alignment, page/target bounds,
+      state addresses, output commits, termination and worst-case clocks.
+- [ ] R.84D: implement and price the address-selected action/state datapath;
+      keep legacy controllers intact until an atomic full-mode switch and do
+      not rebuild their wide source/destination muxes behind action decode.
 
 ## Handoff rule
 

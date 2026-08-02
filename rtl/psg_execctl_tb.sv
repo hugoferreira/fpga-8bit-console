@@ -5,17 +5,20 @@ module psg_execctl_tb;
   bit reset = 1;
   logic start, start_owner, hold;
   logic [7:0] start_pc;
-  logic [3:0] cond;
+  logic [15:0] cond;
   logic [15:0] state_q;
   logic active, done, owner, state_we;
   logic [2:0] slot;
   logic [8:0] state_ra, state_wa;
   logic [15:0] state_wd, ir;
+  logic [6:0] action;
+  logic [5:0] state_word;
+  logic [2:0] op_dbg;
   logic [7:0] pc;
 
   always #5 clk = ~clk;
 
-  psg_execctl dut(.*,
+  psg_execctl #(.TEST_PROGRAM(1)) dut(.*,
     .pc_dbg(pc), .ir_dbg(ir));
 
   task automatic step;
@@ -46,7 +49,7 @@ module psg_execctl_tb;
     cond[0] = 1'b1;
     launch(8'd0, 1'b1);
     if (!active || !owner || pc != 0 || ir != {3'd0, 7'd0, 6'd34}
-        || state_ra != 9'd34)
+        || state_ra != 9'd34 || state_word != 6'd34 || op_dbg != 3'd0)
       $fatal(1, "launch/read mismatch");
     step();
     if (pc != 1 || ir != {3'd1, 7'd0, 6'd38}
@@ -76,11 +79,12 @@ module psg_execctl_tb;
       $fatal(1, "hold mismatch");
     hold = 1'b0;
     step();
-    if (pc != 3)
-      $fatal(1, "untaken branch mismatch");
+    if (pc != 3 || action != 7'd17 || state_word != 6'd9
+        || op_dbg != 3'd7)
+      $fatal(1, "untaken branch/action mismatch");
     step();
     if (pc != 4)
-      $fatal(1, "nop mismatch");
+      $fatal(1, "execute mismatch");
     step();
     if (pc != 6)
       $fatal(1, "jump mismatch");
