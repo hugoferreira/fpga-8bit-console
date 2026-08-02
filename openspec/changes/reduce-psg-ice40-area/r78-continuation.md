@@ -3087,6 +3087,33 @@ git history; do not repeat them without the recorded changed condition.
   binding.  The output is still an inventory: no pool executor or RTL until
   every load/service/transport source closes and mutations reject a lost row,
   wrong slice, direct-final-value source and false root-name match.
+- **C2-C-D1-B active hypothesis:** make the D1-A inventory independently
+  slice-checkable, then perform a structured source-completeness join without
+  executing one pool transition.  D1-A records each packing fragment's width
+  but not its logical-field or physical-container bit offset; canonical JSON
+  key sorting therefore destroys the only implicit cross-container order and
+  makes the required wrong-slice mutation unprovable.  Upgrade the generated
+  requirements schema with explicit `field_lsb` and `container_lsb` on every
+  packing fragment, preserving all fifteen rows and capacities.  Extend the
+  existing structural binding checker to consume that artifact plus the
+  accepted C2-C-C manifest and classify every packing field and path lifetime
+  as exactly one of prior-address `state_q`, transaction-bound root slice,
+  preceding physical slice or explicit unmatched.  Joins must use complete
+  structured identities, never source-description text or a root name alone.
+  The output remains a source-completeness inventory: it carries no semantic
+  value, arithmetic, enabled-successor transition or write-data producer.
+- **C2-C-D1-B scope and reject gates:** work only in
+  `tools/psg_exec_model.py`, `tools/psg_exec_bindings.py`, generated `build/`
+  evidence and this ledger.  Require deterministic repeated output, exact
+  reconstruction of every D1-A row/piece/lifetime/root, and in-memory
+  convictions for a missing row, wrong slice, forbidden direct final-value
+  source and a same-name-but-wrong structured root.  Keep every unclosed
+  source explicit and count it; reject `record_commit`, `state_wd`,
+  `final_words`, Python expressions, prose matching or any binding wider than
+  its observed physical source.  Re-run the accepted C2-C-C structural/value
+  checkers, Python compilation, strict OpenSpec, production-image immutability
+  and diff checks.  No proof-bench, adapter RTL, image, generic integration,
+  synthesis, routing, timing, render or area claim is permitted.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
