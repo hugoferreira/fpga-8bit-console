@@ -70,7 +70,7 @@ H095_SOURCE_SHA256 = {
 }
 I001_RTL_REVISION = \
     "6c9eebe1bf78591a748208fb9763bf9d9abf4ac6"
-COMBINED_SOURCE_SHA256 = {
+I001_COMBINED_SOURCE_SHA256 = {
     **H095_SOURCE_SHA256,
     "rtl/psg_aram.sv":
         "497cee26589b6a264b2fb86a227a0ba9d2bb2ddff6b8727481c22188c89478a7",
@@ -84,6 +84,13 @@ COMBINED_SOURCE_SHA256 = {
         "59b6f86e1917c069762c2c67c3cfc33d3d1a7652c518e99f9f8437e019d4ebcf",
     "rtl/psg_execmove.sv":
         "3bf543a849a77a652ef043b7be2ca2dd798ad4c0bb3fd630c2d3547b6beae133",
+}
+MAIN_COMBINED_REVISION = \
+    "9aacce15482ff6e73504400db8b80d1c9d0c0512"
+COMBINED_SOURCE_SHA256 = {
+    **I001_COMBINED_SOURCE_SHA256,
+    "rtl/psg_aram.sv":
+        "92fae0f8d71cd481733d171d01fd8b41d28f0739c0c21bff9669e140f95640ef",
 }
 MODEL_LIVE_SOURCES = (
     "rtl/psg_common.svh", "rtl/psg_seq.sv", "rtl/psg_walk.sv",
@@ -146,17 +153,28 @@ def write_h095_r84_source_contract(path: Path,
         "accepted I001 combined source hash drift"
     committed = {
         relative: hashlib.sha256(
-            git_blob(I001_RTL_REVISION, relative)).hexdigest()
+            git_blob(MAIN_COMBINED_REVISION, relative)).hexdigest()
         for relative in COMBINED_SOURCE_SHA256
     }
     assert committed == COMBINED_SOURCE_SHA256, \
+        "accepted main composition git-object source drift"
+    i001_committed = {
+        relative: hashlib.sha256(
+            git_blob(I001_RTL_REVISION, relative)).hexdigest()
+        for relative in I001_COMBINED_SOURCE_SHA256
+    }
+    assert i001_committed == I001_COMBINED_SOURCE_SHA256, \
         "accepted I001 git-object source drift"
+    assert {relative for relative in COMBINED_SOURCE_SHA256
+            if COMBINED_SOURCE_SHA256[relative]
+            != I001_COMBINED_SOURCE_SHA256[relative]} == {"rtl/psg_aram.sv"}
     assert all(combined[relative] == source_hashes[relative]
                for relative in MODEL_LIVE_SOURCES)
     contract = {
-        "schema": "psg_exec_h095_r84_source_contract_v2",
+        "schema": "psg_exec_h095_r84_main_source_contract_v3",
         "h095_revision": H095_RTL_REVISION,
         "i001_revision": I001_RTL_REVISION,
+        "main_revision": MAIN_COMBINED_REVISION,
         "h095_generic_source_sha256": source_hashes,
         "combined_source_sha256": combined,
         "model_live_sources": list(MODEL_LIVE_SOURCES),
@@ -168,9 +186,9 @@ def write_h095_r84_source_contract(path: Path,
             "normalized_transactions": 131_087,
         },
         "boundary": [
-            "model live sources are byte-identical in H095 and I001",
-            "R.84 runtime and proof overrides are bound to I001",
-            "source certificate relies on the separately accepted I001 gates",
+            "model live sources are byte-identical in H095, I001 and main",
+            "R.84 overrides and diagnostic ARAM are bound to main",
+            "source certificate relies on I001 gates plus main ARAM tests",
         ],
     }
     output = path.resolve()
@@ -179,7 +197,7 @@ def write_h095_r84_source_contract(path: Path,
     output.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n")
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
     return f"{output}: H095 {len(source_hashes)} generic sources / " \
-           f"I001 {len(combined)} combined sources; sha256 {digest}"
+           f"main {len(combined)} combined sources; sha256 {digest}"
 
 PAGE_SAMPLE = range(0x00, 0x100)
 PAGE_TICK = range(0x40, 0xC0)
@@ -3053,13 +3071,16 @@ def validate_sample_b3b2a2a1_edge_services(
     mul_rtl = (ROOT / "rtl" / "psg_mulmp.sv").read_text()
     walk_rtl = live_source_text(WALK)
     for spelling in (
-            "assign seq_frozen = syn_rd | replay;",
-            "wire [12:0] aram_addr = syn_rd ? syn_addr : seq_addr;",
+            "assign cpu_q = seq_q;",
+            "assign seq_frozen = cpu_rd | syn_rd | replay;",
+            "wire [12:0] aram_addr = cpu_rd ? up_idx",
+            ": (syn_rd ? syn_addr : seq_addr);",
             "seq_q <= aram[aram_addr];",
-            "replay <= syn_rd;"):
+            "replay <= cpu_rd | syn_rd;",
+            "else if (cpu_rd && !syn_freeze) begin"):
         assert spelling in aram_rtl
-    assert "wire aram_rd = !syn_freeze && (syn_rd | replay | !seq_hold);" \
-        in aram_rtl
+    assert "wire aram_rd = !syn_freeze &&\n" \
+        "      (cpu_rd | syn_rd | replay | !seq_hold);" in aram_rtl
     for spelling in (
             "assign m_busy     = req_tgl != ack_sync;",
             "ack_meta <= ack_tgl;",

@@ -3394,6 +3394,25 @@ git history; do not repeat them without the recorded changed condition.
   it does not reinterpret the isolated `0db0484` result as having proved them.
   B2 remains the next proof step, but must not start until this combined merge
   is safely fast-forwarded to `main`.
+- **C2-C-D1-C-B1-H095-main composition:** accepted proof rebinding after
+  `main` fast-forwarded to combined merge `0e951a4` and the pre-existing board
+  diagnostic ARAM read was mechanically composed with the R.84 hold-frozen
+  core as `9aacce1`.  Schema
+  `psg_exec_h095_r84_main_source_contract_v3` binds canonical H095
+  `3d7a2e2`, verified I001 `6c9eebe` and main composition `9aacce1`.  The only
+  combined source hash changed from I001 is `rtl/psg_aram.sv`; the three
+  model-live generic sources remain byte-identical.  Independent A/B source
+  certificates are byte-identical at SHA-256 `3f8a3ec8...`; seven source
+  mutations are convicted.  Candidate `6f5713e2...`, manifest `438d85a0...`,
+  control `a9233d6d...`, requirements `5a7b9809...`, controller
+  `f86698f6...`, event dictionary `5b178017...` and inventory `95619e61...`
+  remain byte-identical.  Both structural audits pass 152,893 rows and both
+  value audits pass 192,896 pairs / 43,459 service transactions.  The default
+  algebraic model and complete H095 hardware forms pass.  The combined ARAM
+  hold/replay bench passes and the diagnostic bench reads all 4,608 physical
+  audio-RAM bytes through `$42ff`.  This closes the source/proof overlap only:
+  it claims no post-diagnostic synthesis, area, timing or routing result, and
+  starts no B2 literal-slice work.  B2 remains the next permitted proof step.
 - **C2-C-D1-C-B2 boundary:** only after B1 closes, attach literal
   pool definitions/uses and service issue/result/take roots to exact enabled
   occurrences with pre/post phase.  Repair fold assembly, STEP8, result-write

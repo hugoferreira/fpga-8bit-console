@@ -71,7 +71,7 @@ H095_SOURCE_SHA256 = {
 }
 I001_RTL_REVISION = \
     "6c9eebe1bf78591a748208fb9763bf9d9abf4ac6"
-COMBINED_SOURCE_SHA256 = {
+I001_COMBINED_SOURCE_SHA256 = {
     **H095_SOURCE_SHA256,
     "rtl/psg_aram.sv":
         "497cee26589b6a264b2fb86a227a0ba9d2bb2ddff6b8727481c22188c89478a7",
@@ -84,6 +84,13 @@ COMBINED_SOURCE_SHA256 = {
     "rtl/psg_exec.hex": D1_PRODUCTION_IMAGE_SHA256,
     "rtl/psg_execmove.sv":
         "3bf543a849a77a652ef043b7be2ca2dd798ad4c0bb3fd630c2d3547b6beae133",
+}
+MAIN_COMBINED_REVISION = \
+    "9aacce15482ff6e73504400db8b80d1c9d0c0512"
+COMBINED_SOURCE_SHA256 = {
+    **I001_COMBINED_SOURCE_SHA256,
+    "rtl/psg_aram.sv":
+        "92fae0f8d71cd481733d171d01fd8b41d28f0739c0c21bff9669e140f95640ef",
 }
 MODEL_LIVE_SOURCES = (
     "rtl/psg_common.svh", "rtl/psg_seq.sv", "rtl/psg_walk.sv",
@@ -148,18 +155,21 @@ def git_blob(revision: str, relative: str) -> bytes:
 def validate_h095_r84_source_contract(contract: Json,
                                        recompute: bool = True) -> None:
     expected_fields = {
-        "schema", "h095_revision", "i001_revision",
+        "schema", "h095_revision", "i001_revision", "main_revision",
         "h095_generic_source_sha256", "combined_source_sha256",
         "model_live_sources", "r84_combined_overrides", "counts", "boundary",
     }
     require(set(contract) == expected_fields,
             "H095/R.84 source-contract fields changed")
-    require(contract["schema"] == "psg_exec_h095_r84_source_contract_v2",
+    require(contract["schema"]
+            == "psg_exec_h095_r84_main_source_contract_v3",
             "H095/R.84 source-contract schema")
     require(contract["h095_revision"] == H095_RTL_REVISION,
             "H095 source-contract revision")
     require(contract["i001_revision"] == I001_RTL_REVISION,
             "I001 source-contract revision")
+    require(contract["main_revision"] == MAIN_COMBINED_REVISION,
+            "main source-contract revision")
     require(contract["h095_generic_source_sha256"] == H095_SOURCE_SHA256,
             "H095 generic source hashes")
     require(contract["combined_source_sha256"] == COMBINED_SOURCE_SHA256,
@@ -180,9 +190,9 @@ def validate_h095_r84_source_contract(contract: Json,
                     for value in contract["counts"].values()),
             "H095/R.84 source-contract counts")
     require(contract["boundary"] == [
-        "model live sources are byte-identical in H095 and I001",
-        "R.84 runtime and proof overrides are bound to I001",
-        "source certificate relies on the separately accepted I001 gates",
+        "model live sources are byte-identical in H095, I001 and main",
+        "R.84 overrides and diagnostic ARAM are bound to main",
+        "source certificate relies on I001 gates plus main ARAM tests",
     ], "H095/R.84 source-contract boundary")
     if not recompute:
         return
@@ -196,19 +206,26 @@ def validate_h095_r84_source_contract(contract: Json,
     i001_observed = {
         relative: hashlib.sha256(
             git_blob(I001_RTL_REVISION, relative)).hexdigest()
+        for relative in I001_COMBINED_SOURCE_SHA256
+    }
+    require(i001_observed == I001_COMBINED_SOURCE_SHA256,
+            "I001 git-object source drift")
+    main_observed = {
+        relative: hashlib.sha256(
+            git_blob(MAIN_COMBINED_REVISION, relative)).hexdigest()
         for relative in COMBINED_SOURCE_SHA256
     }
-    require(i001_observed == COMBINED_SOURCE_SHA256,
-            "I001 git-object source drift")
+    require(main_observed == COMBINED_SOURCE_SHA256,
+            "main composition git-object source drift")
     worktree_observed = {
         relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
         for relative in COMBINED_SOURCE_SHA256
     }
     require(worktree_observed == COMBINED_SOURCE_SHA256,
             "I001 combined worktree drift")
-    require(all(h095_observed[relative] == i001_observed[relative]
+    require(all(h095_observed[relative] == main_observed[relative]
                 for relative in MODEL_LIVE_SOURCES),
-            "model live sources differ between H095 and I001")
+            "model live sources differ between H095 and main")
 
 
 def check_h095_r84_source_contract(path: Path) -> int:
@@ -219,7 +236,13 @@ def check_h095_r84_source_contract(path: Path) -> int:
     mutation["i001_revision"] = "0" * 40
     mutations.append(mutation)
     mutation = copy.deepcopy(contract)
+    mutation["main_revision"] = "0" * 40
+    mutations.append(mutation)
+    mutation = copy.deepcopy(contract)
     mutation["h095_generic_source_sha256"]["rtl/psg_walk.sv"] = "0" * 64
+    mutations.append(mutation)
+    mutation = copy.deepcopy(contract)
+    mutation["combined_source_sha256"]["rtl/psg_aram.sv"] = "0" * 64
     mutations.append(mutation)
     mutation = copy.deepcopy(contract)
     mutation["combined_source_sha256"]["rtl/psg_mulmp.sv"] = "0" * 64
