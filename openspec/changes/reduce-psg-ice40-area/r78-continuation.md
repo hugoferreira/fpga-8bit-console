@@ -1525,6 +1525,19 @@ git history; do not repeat them without the recorded changed condition.
   replay RTL gates remain clean.  Accept the complete **model composition**;
   no new semantic RTL, physical result, generic schedule or render equivalence
   is claimed yet.
+- **DQ hold-control RTL foundation:** `psg_dqsvc_core` now exposes one
+  recurrence clock-enable, while the source-compatible `psg_dqsvc` wrapper
+  ties it active for the untouched legacy walker.  The H-D adapter can
+  therefore freeze all 27 recurrence bits and its `busy`/`done`/`start_ready`
+  boundary on the same edge as PC, IR and state output without changing the
+  generic interface or adding a request/result register.  The exhaustive gate
+  still passes 57,344 coefficient/input transactions and the chained terminal
+  request; a new gate freezes each of counts 5..1 for three clocks, including
+  a presented terminal result, ignores an in-hold request, and resumes to the
+  exact quotient.  Full and PREVIEW generic lint plus the complete production
+  semantic model pass.  Accept this two-file service-freeze prerequisite only;
+  the 70-bit adapter, multiplier freeze, semantic RTL and physical cost remain
+  unproved.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
