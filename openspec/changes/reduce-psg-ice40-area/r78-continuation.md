@@ -3165,6 +3165,38 @@ git history; do not repeat them without the recorded changed condition.
   coverage, guard gaps, multiple slice definitions, read-before-write and
   hold drift.  D1-C remains structural only and may not compute a pool state
   or candidate write value.
+- **C2-C-D1-C active hypothesis:** the complete candidate image has **222**
+  executable owner-zero words and admits one mechanically checkable coverage
+  partition: **114 action occurrences**, **56 fold-step HOLDs**, **4
+  ring-service HOLDs**, **23 pool-retaining elapsed HOLDs** and **25 control
+  edges**.  Generate one row for every nonzero candidate word, join the 114
+  action rows to the accepted C2-C-C action occurrence rather than only its 44
+  changed PCs, and derive the fold/ring classes from exact labels, word tags
+  and predecessor actions.  A pool-retaining edge may still carry a literal
+  state-address prime, but it must have no pool definition, service take or
+  state/candidate write.  Every row must name its exact instruction, enabled
+  guard, pool effect, source/write permissions and one closed retain/control
+  kind or one explicitly unproved named primitive obligation.  External hold
+  is a separate global identity edge that advances no PC or pool slice and
+  emits no take/write.
+- **C2-C-D1-C scope and reject gates:** work only in
+  `tools/psg_exec_model.py`, `tools/psg_exec_bindings.py`, generated `build/`
+  evidence and this ledger.  Upgrade the D1 requirements artifact to an
+  explicit snapshot/event schema before joining it: each packing row must
+  carry structured path, snapshot, old-source and restart classes, and each
+  live lifetime must carry exact birth/death PCs.  Do not parse event identity
+  from packing-row prose.  Emit a separate deterministic edge-obligation
+  artifact; reject a missing/duplicate edge, wrong action occurrence, wrong
+  fold/ring tag, hidden take/write on a retain edge, guard loss, slice alias,
+  read-before-birth, free-form expression, semantic value field, sample loop,
+  trace-driven state mutation or final legacy value input.  Require the
+  physical packing/lifetime layouts and C2-C-C manifest to remain unchanged,
+  repeated byte-identical generation, independent reconstruction from the
+  candidate image and accepted manifest, mutation convictions, the full model
+  and C2-C-C source/value gates, `make test-psg`, Python compilation, strict
+  OpenSpec, production-image immutability and diff checks.  No RTL, candidate
+  image, adapter equivalence, synthesis, routing, timing, render or area claim
+  is permitted in D1-C.
 - **Following C2-C-D1-D boundary:** prove each non-transport D1-C primitive
   separately against the live `psg_walk.sv` cone with width, signedness,
   truncation, pre/post-NBA edge phase and guard explicit.  Existing service
