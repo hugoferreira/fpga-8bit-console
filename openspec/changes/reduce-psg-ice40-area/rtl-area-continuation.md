@@ -24,7 +24,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H019.
+- Next hypothesis ID: H020.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
@@ -35,8 +35,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   reductions are deterministic; the 57-LC placed improvement is positive but
   remains just inside the known roughly 60-LC placement-sensitivity band and
   is not claimed as robust.
-- Latest rejected variant: H018's exact 25-bit half-sum trades one local carry
-  for one LUT, but whole-PSG mapping adds 31 LUT4s, nine carries, and 38 LCs.
+- Latest rejected variant: H019 proves whole-walk state-memory ownership is
+  behaviorally exact and both forms reduce the isolated mux/store cone, but
+  whole-PSG mapping adds 48 LUT4s/seven carries for the complete bundle and 22
+  LUT4s/six carries for the retained-enable-OR form. H018's exact 25-bit
+  half-sum trades one local carry for one LUT, but whole-PSG mapping adds 31
+  LUT4s, nine carries, and 38 LCs.
   H017's full context sharing maps locally much
   smaller but globally adds 16 LUT4s and 36 placed LCs; scale-only sharing
   still adds 11 LUT4s and 22 placed LCs. Both save six mapped carries. H016 proves a nine-bit restoring subtract is exact
@@ -100,6 +104,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H016 | rejected | Keep the ten-bit restoring subtract: the nine-bit form is exact and locally -1 carry/+1 LUT, but globally adds 60 LUT4s, eight carries, and 67 LCs. |
 | H017 | rejected | Keep separate new/old gain cones: full and scale-only sharing save carries locally/globally but both add LUT4s and placed LCs in the whole PSG. |
 | H018 | rejected | Keep the 26-bit add-then-shift: the exact 25-bit half-sum saves one carry locally but globally adds 31 LUT4s, nine carries, and 38 LCs. |
+| H019 | rejected | Keep per-operation state-memory selects: both whole-walk owner forms are exact and locally smaller, but globally add LUT4s/carries; the retained-OR form also fails to route promptly. |
 
 ## Hypothesis H001
 
@@ -754,6 +759,57 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   after the reciprocal identity, limb width, mapper carry lowering, or gain
   consumer changes materially.
 
+## Hypothesis H019
+
+- **ID:** H019.
+- **Hypothesis:** `prun` already grants the sample walker exclusive ownership
+  of the shared state memory for the complete walk. Selecting the read address,
+  write address, write data, and write enable once by that owner should remove
+  the walker's phase-qualified read request and per-operation write selects,
+  while making the arbitration contract simpler and more explicit.
+- **Scope:** `rtl/psg_state_mem.sv`, `rtl/psg_walk.sv`, `rtl/psg.sv`, focused
+  ownership/replay proof, isolated state-store iCE40 synthesis, whole-PSG
+  mapping, and the complete H007 acceptance battery if mapping improves. No
+  state layout/value, walk phase/action, sequencer operation, interface outside
+  the PSG, EBR, R.84 executor/controller, or tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H018 through
+  `a1364c5`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1 7,392
+  LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Ownership/replay proof obligation:** at the edge which starts a walk,
+  pre-edge `prun` is still zero, so the sequencer owns and completes its current
+  state-memory operation. While `prun` is one, `walk_frozen` makes `seq_hold`
+  one, which forces both `eng_we` and `state_tick_we` low and therefore
+  `etk_we == 0`; every `wlk_we` is already qualified by `prun`. At the final
+  walk edge, the candidate may fetch an otherwise-unused walker word instead
+  of the held sequencer address. The registered `state_replay <= prun` then
+  holds the sequencer for the entire following reissue edge, when `prun` is
+  zero and the sequencer address is fetched again. The sequencer can advance
+  and consume `state_q` only on the next edge, after the reissued value is live.
+- **Change:** remove `wlk_rd`/`state_sample_read`; first select the complete
+  state-memory request bundle with `prun`, then attribute the result with a
+  second form which retains the existing write-enable OR while selecting only
+  read/write address and write data by whole-walk ownership.
+- **Result:** the focused proof exhausts all four legal write-owner states, all
+  29 walker words consumed across preview/hardware schedules, and the final-
+  read/reissue/resume timeline. Full and PREVIEW lint pass. The complete-bundle
+  form improves the isolated state-store cone from 67 LUT4 / 10 carry / 43 FF /
+  two EBR to 65 / 5 / 43 / two EBR, but whole-PSG mapping moves to 6,570 LUT4 /
+  1,560 carry / 1,476 FF / 14 EBR and 7,452 seed-1 LCs, or +48 LUT4/+7 carry/
+  +60 LCs versus H007. Both clocks pass at 142.57 MHz fast / 32.87 MHz PSG.
+  Retaining the write-enable OR improves the isolated cone further to 59 LUT4 /
+  5 carry / 43 FF / two EBR, but whole-PSG mapping still regresses to 6,544
+  LUT4 / 1,559 carry / 1,476 FF / 14 EBR, or +22 LUT4/+6 carry. Its seed-1
+  router remains at two overused resources after more than 14,000 iterations
+  and is stopped because the deterministic mapped gate has already failed.
+  The complete fidelity battery is correctly skipped. All production RTL and
+  the conditional proof are reverted byte-for-byte.
+- **Decision:** rejected after two whole-PSG forms. Whole-walk ownership is a
+  sound source simplification, but its higher-fanout owner select worsens the
+  flattened mapping and neither form has a deterministic mapped improvement.
+- **Repeat only if:** if rejected, retry only after the walk/replay ownership
+  interval, state-memory port topology, mapper mux absorption, or sequencer
+  write-gating contract changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -796,12 +852,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h017/candidate-v2.{synth,pnr}.log` | canonical synthesis with scale-only sharing | Smaller regression, but placement still exceeds H007; rejected. |
 | `build/experiments/h018/isolated-{baseline,candidate}.log` | registered reciprocal half-sum synthesis | Exact 25-bit form trades one carry for one LUT locally. |
 | `build/experiments/h018/candidate.{synth,pnr}.log` | canonical synthesis with the shifted half-sum | Whole-PSG mapped and placed area regress; rejected. |
+| `build/experiments/h019/isolated-{baseline,candidate,candidate-v2}.log` | state-store ownership synthesis with target schedule qualifiers | Both whole-walk forms are locally smaller. |
+| `build/experiments/h019/owner-{proof.py,proof.log}` | exhaustive legal-owner and replay-timeline proof | All write states, consumed reads, and replay observation points agree. |
+| `build/experiments/h019/candidate-v1.{synth,pnr}.log` | canonical synthesis with complete-bundle ownership | Whole-PSG map and placement regress; rejected. |
+| `build/experiments/h019/candidate-v2.{synth,pnr}.log` | canonical synthesis with retained write-enable OR | Whole-PSG map regresses; router stopped after the mapped gate failed. |
 
 ## Handoff
 
-- Next allowed experiment: H019 only after its resume audit and hypothesis row
+- Next allowed experiment: H020 only after its resume audit and hypothesis row
   are recorded; it must use a new generic-RTL mechanism outside the closed
-  half-sum/gain-context and R.84 families.
+  whole-walk ownership, half-sum/gain-context, and R.84 families.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -824,5 +884,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   production/proof patches are reverted and the family closes.
   H018's shifted half-sum is exact but globally worse; its production/proof
   patches are reverted and no behavior gate remains.
+  H019's whole-walk memory ownership is exact but both mapped forms are
+  globally worse; all production/proof changes are reverted and the family
+  closes.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
