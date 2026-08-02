@@ -23,22 +23,22 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: none; H001 accepted.
-- Next hypothesis ID: H002.
-- Current evidence: `build/experiments/h001/{baseline,candidate}.synth.log`
-  and matching `.pnr.log` files.
-- Latest decision: H001 accepted. The mapped carry reduction is deterministic;
-  the nine-LC placed improvement is positive but below the known roughly
-  60-LC placement-sensitivity band and is not claimed as a robust area delta.
-- Best accepted result: 6,602 LUT4s, 1,577 carries, 1,478 flops, 14 EBRs;
-  seed-1 7,495/7,680 LCs; 150.53 MHz fast and 30.71 MHz PSG.
+- Active hypothesis: none; H001 and H002 accepted.
+- Next hypothesis ID: H003.
+- Current evidence: `build/experiments/h001/` and
+  `build/experiments/h002/` synthesis, placement, click, and smoke artifacts.
+- Latest decision: H002 accepted. Its 18-LUT4 mapped reduction is
+  deterministic; its 17-LC placed improvement is positive but below the known
+  roughly 60-LC placement-sensitivity band and is not claimed as robust.
+- Best accepted result: 6,584 LUT4s, 1,577 carries, 1,478 flops, 14 EBRs;
+  seed-1 7,478/7,680 LCs; 138.48 MHz fast and 29.89 MHz PSG.
 - Last updated: 2026-08-02.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H002 resume audit and record one new,
+- Next permitted experiment: perform the H003 resume audit and record one new,
   bounded, source-exact generic-RTL hypothesis before editing RTL.
-- Required verification for any accepted H002: focused algebraic or exhaustive
+- Required verification for any accepted H003: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -53,6 +53,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | ID | Decision | Resume effect |
 | -- | -- | -- |
 | H001 | accepted | Keep the exact narrow tilted-saw ceiling form; treat the mapped carry reduction as the durable physical result. |
+| H002 | accepted | Keep the four-interval Boolean decode for `ceil(3*r/128)`; the deterministic result is 18 fewer LUT4s. |
 
 ## Hypothesis H001
 
@@ -90,6 +91,51 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   waveform pipeline boundary, mapper arithmetic inference, or rounding
   representation changes materially.
 
+## Hypothesis H002
+
+- **ID:** H002.
+- **Hypothesis:** the phaser detune remainder is only seven bits, so
+  `ceil(3*r/128)` has four exact intervals: zero at `r=0`, one on 1--42, two
+  on 43--85, and three on 86--127. Directly decoding those thresholds should
+  remove the current `3*r` and round-up adders while making the bounded
+  arithmetic contract explicit.
+- **Scope:** `rtl/psg_wave.sv`, the `dq` proof in `tools/psg_hw_forms.py`,
+  focused forms tests, complete H001 fidelity/physical gates, and this ledger.
+  No schedule, state, interface, EBR, R.84, or tolerance change.
+- **Baseline:** accepted H001 commit `609f035`: 6,602 LUT4s, 1,577 carries,
+  1,478 flops, 14 EBRs; seed-1 7,495 LCs; 150.53 MHz fast and 30.71 MHz PSG.
+  Isolated `synth_ice40` reconnaissance maps the current remainder expression
+  to 13 LUT4s / 7 carries and a direct Boolean threshold form to 7 LUT4s /
+  zero carries; whole-PSG mapping remains authoritative.
+- **Change:** remove the nine-bit `3*r` and round-up adders. Decode the lower-
+  six-bit thresholds 43 and 22 as Boolean trees and drive the two-bit result
+  directly; add the exact remainder and full-`dp13` proofs to `sec_dq()`.
+- **Result:** the complete `tools/psg_hw_forms.py` passes, including all 128
+  remainders and all 8,192 `dp13` values. Full/PREVIEW lint, `make test-psg`
+  (93 analysis tests, every structural test, 524/850 sample clocks,
+  4,008/5,103 tick clocks, zero late flips), 59/59 exact renders, and `/4`,
+  `/5`, `/6` budget regressions passed. The budget runs retained 524 sample
+  clocks and tick results 5,709/7,654, 4,689/6,123, and 4,008/5,103 with zero
+  lost writes, overruns, or late flips. `make test-clocks` passed. All eight
+  P.1 Celeste preview checks at 1,275 and 159 clocks/sample passed at 95%
+  agreement for combined and masks 1/2/4; both P.2 recovery probes passed.
+  Exact hardware/PREVIEW SFX-10 renders were active and `click-v1` found zero
+  clicks. The five-frame Celeste smoke again had 2,179/3,668 off-centre
+  samples, range -22,013..9,151, and 1,068 distinct levels. Strict OpenSpec
+  validation and `git diff --check` passed.
+- **Physical result:** canonical seed-1 mapping changed 6,602 LUT4 / 1,577
+  carry / 1,478 FF / 14 EBR / 7,495 placed LCs to 6,584 LUT4 / 1,577 carry /
+  1,478 FF / 14 EBR / 7,478 placed LCs. Routed clocks changed from 150.53 and
+  30.71 MHz to 138.48 and 29.89 MHz; both remain above their 112.50 and
+  18.75-MHz constraints. The 18-LUT4 reduction is deterministic; the 17-LC
+  improvement is below placement sensitivity and is not overclaimed.
+- **Decision:** accepted. It exposes the exact four-interval contract, removes
+  both remainder adders, improves a deterministic mapped resource, does not
+  regress placed LCs, preserves every fidelity gate, and retains 14 EBRs.
+- **Repeat only if:** a rejected direct threshold decode may be retried only
+  after the detune coefficient, remainder width, or mapper Boolean lowering
+  changes materially.
+
 ## Active DNR Index
 
 - Selected arithmetic and service families: R.63, R.64, R.80, R.83.
@@ -107,13 +153,17 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h001/candidate.pnr.log` | same | H001 accepted seed-1 placement and timing. |
 | `build/experiments/h001/clicks/{hardware,preview}.wav` | exact SFX-10 renders at 22,050 Hz | `click-v1` zero-click evidence. |
 | `build/experiments/h001/celeste-smoke.ppm` | five-frame headless Celeste run | Boot and active/nonconstant audio smoke. |
+| `build/experiments/h002/candidate.synth.log` | `PATH=/opt/homebrew/bin:$PATH make synth-psg` with H002 | H002 accepted mapping. |
+| `build/experiments/h002/candidate.pnr.log` | same | H002 accepted seed-1 placement and timing. |
+| `build/experiments/h002/clicks/{hardware,preview}.wav` | exact SFX-10 renders at 22,050 Hz | `click-v1` zero-click evidence. |
+| `build/experiments/h002/celeste-smoke.ppm` | five-frame headless Celeste run | Boot and active/nonconstant audio smoke. |
 
 ## Handoff
 
-- Next allowed experiment: H002 only after its hypothesis row and baseline are
+- Next allowed experiment: H003 only after its hypothesis row and baseline are
   recorded; it must be a new generic-RTL mechanism outside R.84 ownership.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
-- Verification still missing: none for H001.
+- Verification still missing: none for H001 or H002.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.

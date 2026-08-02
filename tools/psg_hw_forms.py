@@ -420,6 +420,29 @@ def sec_dq() -> None:
     for k, (label, fn) in forms.items():
         ok = all(M.tz(dp * k, 256) == fn(dp) for dp in range(8, 32769))
         report(f"dq.k{k}", ok, f"== {label}, exhaustively")
+
+    # The phaser's seven-bit remainder needs only a four-interval decode:
+    # ceil(3r/128) is 0, 1, 2, 3 on r=0, 1..42, 43..85, 86..127.
+    # Spell the two lower-six-bit thresholds as Boolean trees so the iCE40
+    # mapper does not infer another carry chain for either comparison.
+    def ceil3r_threshold(r: int) -> int:
+        lo = r & 0x3f
+        b = [(lo >> i) & 1 for i in range(6)]
+        ge43 = b[5] and (b[4] or (b[3] and (b[2] or (b[1] and b[0]))))
+        ge22 = b[5] or (b[4] and (b[3] or (b[2] and b[1])))
+        high = (r >> 6) & 1
+        y1 = high or ge43
+        y0 = ((not high) and lo != 0 and not ge43) or (high and ge22)
+        return (int(y1) << 1) | int(y0)
+
+    ok = all(ceil3r_threshold(r) == (3 * r + 127) >> 7
+             for r in range(128))
+    report("dq.ceil3r_threshold", ok,
+           "direct thresholds == ceil(3r/128), all 128 remainders")
+    ok = all(3 * (dp >> 7) + ceil3r_threshold(dp & 127)
+             == (6 * dp + 255) >> 8 for dp in range(1 << 13))
+    report("dq.k250_split", ok,
+           "3q + threshold(r) == ceil(6dp/256), all 8192 dp13 values")
     print("  note   every dq is at most two adds and one shift - the "
           "109/110 serial chain has no successor")
 

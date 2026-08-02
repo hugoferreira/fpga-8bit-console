@@ -237,13 +237,22 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   wire [13:0] dq_193 = {1'b0, dq_hi193} + {6'b0, dq_low193[7:0]};
 
   // Phaser detune-1 uses ceil(6*dp/256). Split at 128 so the coefficient is
-  // 3 on a six-bit quotient and seven-bit residue. The remaining corrections
-  // are quotient plus one iff their low residue is non-zero.
+  // 3 on a six-bit quotient and seven-bit residue. For r in [0,127],
+  // ceil(3*r/128) is 0, 1, 2, 3 across 0, 1..42, 43..85, 86..127.
   wire [5:0] dq_q128 = dp13[12:7];
   wire [6:0] dq_r128 = dp13[6:0];
   wire [7:0] dq_q128_3 = {2'b0, dq_q128} + {1'b0, dq_q128, 1'b0};
-  wire [8:0] dq_r128_3 = {2'b0, dq_r128} + {1'b0, dq_r128, 1'b0};
-  wire [1:0] dq_ceil3r128 = 2'((dq_r128_3 + 9'd127) >> 7);
+  wire dq_r128_ge43 = dq_r128[5]
+      && (dq_r128[4] || (dq_r128[3]
+          && (dq_r128[2] || (dq_r128[1] && dq_r128[0]))));
+  wire dq_r128_ge22 = dq_r128[5]
+      || (dq_r128[4] && (dq_r128[3]
+          || (dq_r128[2] && dq_r128[1])));
+  wire [1:0] dq_ceil3r128 = {
+      dq_r128[6] || dq_r128_ge43,
+      (!dq_r128[6] && |dq_r128[5:0] && !dq_r128_ge43)
+          || (dq_r128[6] && dq_r128_ge22)
+  };
   wire [8:0] dq_ceil6_256 = {1'b0, dq_q128_3}
                               + {7'b0, dq_ceil3r128};
   wire [7:0] dq_ceil64 = {1'b0, dp13[12:6]}
