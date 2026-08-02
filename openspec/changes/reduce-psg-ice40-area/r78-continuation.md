@@ -1663,11 +1663,14 @@ git history; do not repeat them without the recorded changed condition.
   explicit external-hold freeze coverage.
 - **R.84H-D2B result and decision:** rejected before image or RTL.  In the
   worst built-in current-wave6+buzz plus selected-old-wave6/non-alt case, PC
-  `0x1b` must retain independent DQ-live14, old-noise-step17, phase-delta13,
-  amplitude12, noise-lowpass16 and updated-brown13 values: **85 bits**.  The
+  `0x1b` must retain independent DQ-live13, old-noise-step17, live-delta13,
+  old-delta13, amplitude12, noise-lowpass16, updated-brown13, old-q-msb1 and
+  phase2-msb1 values.  Wave6 DQ is only 13 bits, making the exact total **99
+  bits**.  The live and selected-old deltas can differ, and the retained DQ
+  core reads the latter externally throughout its chained recurrence.  The
   A18+B18+N17+O17 pool plus every H-C field dead on that path (ARAM index6 and
   built-in-unused sound ID3) provides at most **79 bits**, an unavoidable
-  six-bit shortfall.  Two later physical-stream holes independently convict
+  twenty-bit shortfall.  Two later physical-stream holes independently convict
   the candidate: updated word20 reaches `state_q` on anonymous HOLD/word-zero
   PC `0x2f`, and filter-low word15 does the same on PC `0x39`; neither has a
   fixed consumer before the stream overwrites it.  The model asserts all
@@ -1689,12 +1692,42 @@ git history; do not repeat them without the recorded changed condition.
   word15-repeat action while q15 is present; the final word14/15 actions after
   W84 remain unchanged.  The word20 prime moves from PC `0x2e` to the final
   pre-W40 wait at PC `0x30`, so CAP_W40 consumes q20 directly.  The worst
-  pre-W0 payload falls from 85 to **72 bits**, inside the strongest 79-bit
-  pool/H-C overlay.  The candidate differs from the accepted owner-zero image
+  pre-W0 payload falls from 99 to **86 bits**, but remains seven bits above the
+  strongest fixed 79-bit pool/H-C overlay because both phase deltas remain
+  external.  The candidate differs from the accepted owner-zero image
   in 42 words and retains 222 used words, 782 active clocks, 172 reads, 158
   writes and sixteen fixed write actions.  This is still an address/lifetime
   foundation only: the accepted image and RTL are untouched, and the complete
   no-mirror value executor remains the next gate.
+- **R.84H-D2C audit result:** rejected as the direct no-mirror input.  PC
+  `0x2d` primes updated word17, but moving the q20 prime changed PC `0x2e`
+  back to anonymous HOLD/word-zero.  Final blend-count q17 therefore has no
+  fixed consumer before the stream overwrites it.  This does not invalidate
+  D2C's q14/q15/write reuse.  Independently, correcting the lower bound shows
+  D2C remains six bits over the fixed H-C/pool allocation even after brown is
+  stored; it requires both one more stored wait tag and a way to retire or
+  overlay the externally held selected-old DQ operand.
+- **R.84H-D2D typed-blend correction:** PC `0x2e` now stores HOLD/word17.  Its
+  unique action/word pair consumes the q17 primed by PC `0x2d`, then performs
+  a harmless redundant word17 prime; PC `0x30` still primes word20 and CAP_W40
+  still consumes q20.  The alternate candidate differs in 43 owner-zero image
+  words while preserving 222 used words, 782 active clocks, 172 reads, 158
+  writes and the D2C fixed write set.  No accepted image or RTL changes.  This
+  fixes the q17 provenance hole only; the corrected 86-versus-79-bit pre-W0
+  bound still blocks value execution until the old-DQ operand or equivalent
+  H-C storage is physically internalized or overlaid.
+- **R.84H-D2E next permitted hypothesis:** recode path controls after
+  `NZ_LIVE`, their last raw DQ-coefficient consumer.  On the unique peak path,
+  brown use fixes current `{wt,wave,buzz,noise}` to built-in wave6+buzz and
+  old-noise use fixes selected old `{wave,alt}` to wave6/non-alt.  Replace the
+  nine raw `{wt,wave[2:0],buzz,old_wave[2:0],old_alt}` bits with two explicit
+  path tags while retaining current/old mode2 fields, and reconstruct the
+  exact W0--W3 core inputs from those tags.  This recovers seven H-C bits; with
+  the built-in-dead ARAM index6 and sound ID3, capacity becomes exactly
+  **70+9+7 = 86 bits**, equal to the complete PC `0x1c` payload including both
+  deltas and the old-q/phase2 high bits.  There is zero headroom.  First prove
+  every other path at or below this bound and execute all fixed writes without
+  a decoded mirror; reject on any extra independent bit before interface RTL.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

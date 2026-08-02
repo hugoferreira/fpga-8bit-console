@@ -1706,21 +1706,25 @@ def validate_sample_relocated_value_gap(candidate: list[int]) -> str:
     assert q_word(0x1b) == 14
     assert decoded(0x1b) == Instruction(Op.EXEC, action=hold, word=13)
     payload = {
-        "dq_live": 14,
+        # Current wave6 uses K=256/255, so DQ is bounded below 2^13.
+        "dq_live": 13,
         "old_noise_step": 17,
-        "phase_delta": 13,
+        "live_phase_delta": 13,
+        "old_phase_delta": 13,
         "live_amplitude": 12,
         "noise_lowpass": 16,
         "updated_brown": 13,
+        "old_q_msb": 1,
+        "phase2_msb": 1,
     }
-    assert sum(payload.values()) == 85
+    assert sum(payload.values()) == 99
     # A/B/N/O provide 70.  On a built-in path only H-C's ARAM phase index
     # (6) and snd_id (3) are dead; all live/old wave controls and old_q remain
     # required by W0--W5.  The strongest possible overlay is still short.
     available = 70 + 6 + 3
     assert sum(payload.values()) > available
     shortfall = sum(payload.values()) - available
-    assert shortfall == 6
+    assert shortfall == 20
 
     # Updated word20 is presented at PC 2f, but PC 2f is one of many generic
     # HOLD/word-zero instructions.  Nothing fixed can capture selected
@@ -1738,7 +1742,7 @@ def validate_sample_relocated_value_gap(candidate: list[int]) -> str:
     assert q_word(0x38) == 14 and decoded(0x38).word == 15
     assert q_word(0x39) == 15
     assert decoded(0x39) == Instruction(Op.EXEC, action=hold, word=0)
-    return ("H-D2B rejected: PC 1b needs 85 independent bits against the "
+    return ("H-D2B rejected: PC 1b/1c need 99 independent bits against the "
             f"strongest 79-bit pool/H-C overlay ({shortfall}-bit shortfall); "
             "q20 at PC 2f and q15 at PC 39 have no fixed consumer")
 
@@ -1834,20 +1838,25 @@ def validate_sample_relocated_stream_correction(
     assert decoded(0x4b) == Instruction(
         Op.EXEC, action=COMMON_ACTION["HOLD"])
     d2b_payload = {
-        "dq_live": 14,
+        "dq_live": 13,
         "old_noise_step": 17,
-        "phase_delta": 13,
+        "live_phase_delta": 13,
+        "old_phase_delta": 13,
         "live_amplitude": 12,
         "noise_lowpass": 16,
         "updated_brown": 13,
+        "old_q_msb": 1,
+        "phase2_msb": 1,
     }
-    assert sum(d2b_payload.values()) == 85
+    assert sum(d2b_payload.values()) == 99
     # The typed q14 transaction stores the only 13-bit resident whose next
     # use is after W0.  It is fetched back as q14 at CAP_W4, reducing the
-    # pre-W0 payload below the strongest 79-bit pool/H-C overlay.
+    # pre-W0 payload, but the DQ recurrence reads selected old_a externally.
+    # Live and old phase deltas are independent, so the strongest 79-bit fixed
+    # H-C overlay remains six bits short.
     corrected_payload = sum(d2b_payload.values()) \
         - d2b_payload["updated_brown"]
-    assert corrected_payload == 72 and corrected_payload <= 79
+    assert corrected_payload == 86 and corrected_payload > 79
 
     def counts(image: list[int]) -> tuple[int, ...]:
         pc, slot = SAMPLE_START, 0
@@ -1882,9 +1891,118 @@ def validate_sample_relocated_stream_correction(
     assert sum(word != 0 for word in candidate) == 222
     changed = sum(a != b for a, b in zip(program, candidate))
     return (f"H-D2C candidate: typed q14/q15 and CAP_W40 q20; pre-W0 "
-            f"payload 85 -> {corrected_payload} bits; {changed} image words "
+            f"payload 99 -> {corrected_payload} bits (still 7 over fixed "
+            f"H-C overlay); {changed} image words "
             "change; 16 fixed writes and 222/782/172/158 invariants; "
             "accepted image untouched", candidate)
+
+
+def validate_sample_d2c_blend_gap(d2c: list[int]) -> str:
+    """Reject D2C's anonymous final blend-count arrival at PC 2e."""
+    hold_zero = Instruction(Op.EXEC, action=COMMON_ACTION["HOLD"], word=0)
+    assert Instruction.decode(d2c[0x2d]).word == 17
+    assert Instruction.decode(d2c[0x2e]) == hold_zero
+    # PC 2d primes updated word17, so q17 arrives on PC 2e.  HOLD/word-zero
+    # occurs repeatedly and cannot identify the fixed capture edge.
+    anonymous = sum(Instruction.decode(d2c[pc]) == hold_zero
+                    for pc in range(SAMPLE_START, 0x4e))
+    assert anonymous > 1
+    return ("H-D2C rejected: final q17/blend_count arrives at anonymous "
+            "HOLD/word-zero PC 2e after the q20 prime moved")
+
+
+def validate_sample_typed_blend_correction(
+        program: list[int], d2c: list[int]) -> tuple[str, list[int]]:
+    """Type the D2C q17 arrival using the existing stored HOLD word field."""
+    candidate = list(d2c)
+    hold = COMMON_ACTION["HOLD"]
+    candidate[0x2e] = Instruction(Op.EXEC, action=hold, word=17).encode()
+
+    def decoded(pc: int) -> Instruction:
+        return Instruction.decode(candidate[pc])
+
+    def q_word(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = decoded(prior)
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    assert q_word(0x2e) == 17
+    assert decoded(0x2e) == Instruction(Op.EXEC, action=hold, word=17)
+    typed = sum(decoded(pc) == decoded(0x2e)
+                for pc in range(SAMPLE_START, 0x4e))
+    assert typed == 1
+    # The redundant word17 prime changes only q on the following anonymous
+    # wait.  PC 30 still primes word20 and CAP_W40 still consumes it.
+    assert q_word(0x2f) == 17
+    assert decoded(0x30).word == 20 and q_word(0x31) == 20
+
+    def counts(image: list[int]) -> tuple[int, ...]:
+        pc, slot = SAMPLE_START, 0
+        result = [0] * 8
+        for _ in range(2_000):
+            insn = Instruction.decode(image[pc])
+            result[int(insn.op)] += 1
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.SLOT:
+                slot = (slot + 1) & 7 if insn.slot_inc else insn.slot_value
+                pc = (pc + 1) & 0xff
+            elif insn.op == Op.JUMP:
+                pc = insn.target
+            elif insn.op == Op.BRANCH:
+                take = slot == 0
+                pc = insn.target if take == bool(insn.sense) \
+                    else (pc + 1) & 0xff
+            elif insn.op == Op.DONE:
+                break
+            else:
+                raise AssertionError(insn)
+        else:
+            raise AssertionError("D2D sample candidate did not finish")
+        return tuple(result)
+
+    base_counts = counts(program)
+    assert counts(candidate) == base_counts
+    assert sum(base_counts) == 782
+    assert base_counts[int(Op.READ)] == 172
+    assert base_counts[int(Op.WRITE)] == 158
+    assert sum(word != 0 for word in candidate) == 222
+    changed = sum(a != b for a, b in zip(program, candidate))
+    return (f"H-D2D candidate: unique HOLD/word17 consumes final q17; "
+            f"{changed} image words change; 222/782/172/158 unchanged; "
+            "accepted image untouched", candidate)
+
+
+def validate_sample_context_overlay_bound() -> str:
+    """Prove the exact-fit D2E control recoding obligation at PC 1c."""
+    # Brown use fixes the current path to built-in wave6+buzz/no-noise; old
+    # noise fixes the selected old path to wave6/non-alt.  After NZ_LIVE is the
+    # last raw coefficient consumer, those nine raw bits can be represented by
+    # two path tags while the two mode fields remain literal.
+    raw_current = 1 + 3 + 1  # wt, wave, buzz
+    raw_old = 3 + 1          # old wave, old alt
+    path_tags = 2
+    recovered = raw_current + raw_old - path_tags
+    assert recovered == 7
+    always_dead = 6 + 3      # ARAM phase index and snd_id on built-in paths
+    capacity = 70 + always_dead + recovered
+    payload = {
+        "dq_live": 13,
+        "old_noise_step": 17,
+        "live_phase_delta": 13,
+        "old_phase_delta": 13,
+        "live_amplitude": 12,
+        "noise_lowpass": 16,
+        "old_q_msb": 1,
+        "phase2_msb": 1,
+    }
+    assert sum(payload.values()) == capacity == 86
+    return ("H-D2E exact-fit obligation: recode 9 raw live/old path bits as "
+            "2 tags after NZ_LIVE; recover 7 H-C bits; PC 1c payload and "
+            "70+9+7 capacity are both 86 bits with zero headroom")
 
 
 def reachable_to_idle(nodes: list[Node]) -> None:
@@ -3820,6 +3938,11 @@ def main() -> int:
     sample_stream, sample_stream_candidate = \
         validate_sample_relocated_stream_correction(
             sample_program, sample_candidate, actions)
+    sample_blend_gap = validate_sample_d2c_blend_gap(sample_stream_candidate)
+    sample_blend, sample_blend_candidate = \
+        validate_sample_typed_blend_correction(
+            sample_program, sample_stream_candidate)
+    sample_overlay = validate_sample_context_overlay_bound()
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -3885,6 +4008,9 @@ def main() -> int:
     print("sample relocated-commit manifest: " + sample_relocated)
     print("sample relocated-value gate: " + sample_value_gap)
     print("sample corrected-stream manifest: " + sample_stream)
+    print("sample corrected-stream blend gate: " + sample_blend_gap)
+    print("sample typed-blend manifest: " + sample_blend)
+    print("sample context-overlay bound: " + sample_overlay)
     print("sample transient pool: " + sample_pool)
     print("sample phase substitution: " + phase_substitution)
     print("sample arithmetic: " + sample_arithmetic)
