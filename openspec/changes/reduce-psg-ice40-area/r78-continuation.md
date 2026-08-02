@@ -577,6 +577,65 @@ git history; do not repeat them without the recorded changed condition.
   chain or source-level free-variable arithmetic outside `wide`.  Cheap
   equality/bitfield packing may remain owner actions, but `<`, `>=`, increment
   and decrement must be serialized through the common chain.
+- **R.84G-B active hypothesis:** reserve tick actions `0x47..0x4f` for three
+  counter steps (low increment, rollover compare, high increment), one
+  length decrement/test, loop-bound compare, two row-to-temporary increments,
+  row-to-loop-end compare and row-to-record-end compare.  Each action may only
+  select or align `acc`/`state_q` fields and pack `wide` back into `acc`; the
+  sole arithmetic expression remains R.84D's 17-bit `wide` chain.  The
+  record-end bound may use zero/high-bit tests and a mux, not a second
+  comparator.  Exhaustively prove fcnt 255, speed zero, length zero/one,
+  row 31, lpe zero and all 8-bit loop bounds before synthesis.  Baseline R.84E
+  is 324 LUT4s, 24 carries, 34 flops, a 351-LC floor and 357 placed LCs.
+  Reject any spelling that maps more than 24 total carries, exceeds a 430-LC
+  floor, adds a register, or expresses free-variable `+`, `-`, `<` or `>=`
+  outside `wide`.  This prices primitives only; the image must remain
+  byte-identical until R.84G-C lowers the synchronous program.
+- **R.84G-B variant A result:** the nine direct projections pass 23,265,280
+  exhaustive counter, length, loop and row transactions and map exactly one
+  arithmetic chain, but the selected result formats rebuild a wide
+  accumulator-input mux.  The isolated target is 480 LUT4s, 24 carries, 34
+  flops, 18 unpackable flops, one EBR, a 498-LC floor and 505 placed LCs at
+  56.03 MHz.  The accumulator cone alone is 217 LUT4s; three partial-byte
+  result packings are the measured excess.  Reject this spelling in place.
+- **R.84G-B variant B active hypothesis:** factor the same behavior into eight
+  actions with only three accumulator result shapes.  `COUNT_CMP` records
+  `fcnt+1>=speed`; `COUNT_STEP` selects either the rollover word or one whole
+  `wide` increment while preserving flags.  `LEN_DEC_CLASS` returns one whole
+  `wide` decrement and classifies pre-state length zero/one and row 31.
+  `LOOP_CMP` records `lps>=lpe`.  Voice/instrument `ROW_CMP` selects either
+  `lpe` or the exact legacy end bound before the same chain, recording loop in
+  C and end in V; voice looping is suppressed when released.  Voice/instrument
+  `ROW_STEP` packs either `lps` or the incremented row while preserving those
+  decisions.  This differs materially from variant A by deleting three
+  partial accumulator formats from the measured dominant cone.  Apply the
+  same 24-carry / 34-flop / one-EBR constraints and reject the selected-
+  projection family if its floor exceeds 430 or placement exceeds 470.
+- **R.84G-B variant B result:** the factored actions pass 27,262,976
+  exhaustive RTL transactions over every counter/speed tuple, encoded length,
+  row, loop-bound word, released state and voice/instrument row layout.  The
+  target retains exactly 24 carries, 34 flops and one EBR, but maps **500
+  LUT4s, 18 unpackable flops and a 518-LC floor**.  The datapath alone is 339
+  LUT4s and the accumulator cone remains 225 LUT4s.  Since the deterministic
+  floor already exceeds both the 430 acceptance gate and the 470 placement
+  ceiling, place-and-route cannot rescue it and was not run.  Netlist audit
+  finds only the intended sixteen datapath carries from `wide`; coarse AIG
+  size rises from R.84E's 1,013 AND nodes to 1,765 for variant A and 1,816 for
+  variant B.  The regression is therefore Boolean selection/packing, not a
+  hidden second arithmetic chain or a mapping anomaly.
+- **R.84G-B decision:** reject both selected-projection spellings and restore
+  the R.84E/R.84G-A datapath exactly.  Selecting eight or nine legacy field
+  roles in front of one chain preserves arithmetic hardware but rebuilds a
+  larger operand/result/flag cover than the formulas it would retire.  The
+  common chain is a useful primitive only for microcode operations whose
+  operands already have the common `acc`/`state_q` shape; owner-specific field
+  projections must move into address-selected words before execution, not
+  into another combinational selector family.
+- **Repeat only if:** the persistent/scratch record layout makes the counter,
+  length and row operands whole addressed words with common result shape, or
+  a complete lowered program proves that removing later pack/move actions
+  retires more than this isolated 167-cell excess over R.84E.  Do not retry by
+  changing action count or flag spelling around the same field projections.
 
 ### Active task queue
 
