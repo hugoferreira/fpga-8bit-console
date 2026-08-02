@@ -3048,6 +3048,45 @@ git history; do not repeat them without the recorded changed condition.
   `make test-psg`, strict OpenSpec and production immutability.  No adapter
   RTL, candidate image, generic integration, synthesis or area credit is
   permitted until this manifest closes without a legacy final-value input.
+- **C2-C-D1-A active hypothesis:** materialize the previously local D2F-B
+  packing rows, D2F-C-A path lifetimes and fold lifetimes as one deterministic
+  proof artifact beside the complete C2-C-C root catalog.  The artifact is a
+  requirements inventory, not a transition manifest: it may preserve the
+  existing source descriptions only as explicitly unbound requirements and
+  must not infer a source from matching prose.  It must expose every literal
+  container/slice, path, birth/death edge, consumer and all 30 observed roots
+  so the next source-completeness join is mechanical rather than hand-copied.
+  Scope is `tools/psg_exec_model.py`, generated `build/` evidence and this
+  ledger only.  Reject if any D2F row is omitted, any physical slice changes,
+  generated output is nondeterministic, or the artifact claims a state-q or
+  service binding it has not proved.  No proof-bench, production/image RTL,
+  adapter, synthesis, area or integration claim is permitted in D1-A.
+- **C2-C-D1-A result and decision:** accepted as a requirements-inventory
+  foundation only.  The model now emits schema
+  `psg_exec_pool_requirements_v1`: all **15** D2F-B packing rows, **32**
+  built-in, **35** wavetable and **11** fold lifetime rows over the exact
+  A18/B18/N17/O17+Q16/T6/C7/I6/D3 containers, beside all **30 roots / 27
+  groups**.  Every packing row and lifetime is explicitly `unbound`; the
+  artifact contains no `source_binding` and reports `bound_fields: 0`, so it
+  cannot be mistaken for the missing transition proof.  Two independent
+  generations are byte-identical at SHA-256
+  `362e541eda351c27520c3cf5964141a16926241c740884fa2a7bc2b1d48d16a7`.
+  Direct output aliasing to `rtl/psg_exec.hex` rejects; the production image
+  remains SHA-256 `59b6f86e...`.  The full model, C2-C-C structural/value
+  checkers (152,893 structural rows; 192,896 value pairs; 75 guard
+  obligations; 43,459 service transactions), Python compilation, strict
+  OpenSpec and diff checks pass.  No proof-bench/RTL/image source changed and
+  no semantic, adapter, synthesis, routing, timing, render or area claim is
+  made.
+- **Next permitted C2-C-D1-B:** consume only this generated requirements
+  inventory and the accepted C2-C-C manifest.  Bind each requirement either
+  to an exact prior-address `state_q` word/slice, a transaction-bound root
+  producer observation, or a preceding already-bound physical slice.  Keep
+  every unmatched requirement explicit; do not use source prose, direct
+  `record_commit`, `state_wd`, `final_words` or a Python expression as a
+  binding.  The output is still an inventory: no pool executor or RTL until
+  every load/service/transport source closes and mutations reject a lost row,
+  wrong slice, direct-final-value source and false root-name match.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

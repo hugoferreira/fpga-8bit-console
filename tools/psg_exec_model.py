@@ -128,6 +128,32 @@ class B3B2AFrameCodec:
 
 
 @dataclass(frozen=True)
+class D2FPackingRow:
+    """One literal D2F-B path snapshot, without semantic source bindings."""
+
+    name: str
+    used: int
+    capacity: int
+    capacities: tuple[tuple[str, int], ...]
+    assignments: tuple[tuple[str, tuple[tuple[str, int], ...]], ...]
+    logical_widths: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
+class D2FLiveField:
+    """One literal D2F-C-A or fold lifetime requirement."""
+
+    path: str
+    name: str
+    width: int
+    pieces: tuple[tuple[str, int, int], ...]
+    born: str
+    dead: str
+    source: str
+    consumer: str
+
+
+@dataclass(frozen=True)
 class AssemblyInstruction:
     op: Op
     action: int = 0
@@ -3479,7 +3505,7 @@ def validate_sample_b3b2a2a1_edge_services(
 
 
 def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
-        -> str:
+        -> tuple[str, tuple[D2FPackingRow, ...]]:
     """Prove the tight D2F-B physical rows after the q16 prefetch.
 
     Each row assigns named value pieces to literal physical containers.  The
@@ -3515,15 +3541,9 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
             | (((old_lfsr >> 14) ^ (old_lfsr >> 13)) & 1)
         assert ((new_lfsr >> 1) & 0xff) == (old_lfsr & 0xff)
 
-    @dataclass(frozen=True)
-    class RowResult:
-        name: str
-        used: int
-        capacity: int
-
     def row(name: str, capacities: dict[str, int],
             assignments: dict[str, tuple[tuple[str, int], ...]],
-            expected_used: int) -> RowResult:
+            expected_used: int) -> D2FPackingRow:
         field_widths: dict[str, int] = {}
         pieces: list[tuple[str, str, int, int, int]] = []
         container_offsets: dict[str, int] = {}
@@ -3559,7 +3579,15 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
             reconstructed[owner] |= \
                 ((packed[container] >> container_lsb) & mask) << field_lsb
         assert reconstructed == values, (name, reconstructed, values)
-        return RowResult(name, used, sum(capacities.values()))
+        return D2FPackingRow(
+            name=name,
+            used=used,
+            capacity=sum(capacities.values()),
+            capacities=tuple(capacities.items()),
+            assignments=tuple((container, tuple(fields))
+                              for container, fields in assignments.items()),
+            logical_widths=tuple(sorted(field_widths.items())),
+        )
 
     # Common physical fields.  C is the seven-bit live wt/wave/mode/alt
     # context; T is the six-bit old wave/mode/alt tuple.  WF/MF are the two
@@ -3744,16 +3772,19 @@ def validate_sample_d2fb_packing(candidate: list[int], actions: Actions) \
                 pair_max = max(pair_max, pair)
     assert -(1 << 17) <= pair_min and pair_max < (1 << 17)
 
-    return (f"H-D2F-B literal packing: {len(rows)} tight/edge rows; "
-            f"exact fits at {', '.join(tight)}; old tuple 6 -> 5 bits exact; "
-            "pre-W0 LFSR byte recovered "
-            f"for all {1 << 15:,} states; old-noise bias <= 39,491; "
-            f"built-in pair range {pair_min}..{pair_max} fits signed18; "
-            "semantic commit executor and RTL remain unproved")
+    summary = (f"H-D2F-B literal packing: {len(rows)} tight/edge rows; "
+               f"exact fits at {', '.join(tight)}; old tuple 6 -> 5 bits exact; "
+               "pre-W0 LFSR byte recovered "
+               f"for all {1 << 15:,} states; old-noise bias <= 39,491; "
+               f"built-in pair range {pair_min}..{pair_max} fits signed18; "
+               "semantic commit executor and RTL remain unproved")
+    return summary, tuple(rows)
 
 
 def validate_sample_d2fca_manifest(candidate: list[int],
-                                   actions: Actions) -> str:
+                                   actions: Actions) \
+        -> tuple[str, tuple[D2FLiveField, ...],
+                 tuple[D2FLiveField, ...], tuple[D2FLiveField, ...]]:
     """Prove the post-D2F-B physical-state and fixed-write manifest.
 
     This is deliberately a manifest rather than another semantic executor.
@@ -3835,23 +3866,14 @@ def validate_sample_d2fca_manifest(candidate: list[int],
     }
     assert set(hc_aliases) == set(capacities) - {"A", "B", "N", "O"}
 
-    @dataclass(frozen=True)
-    class LiveField:
-        name: str
-        width: int
-        pieces: tuple[tuple[str, int, int], ...]
-        born: str
-        dead: str
-        source: str
-        consumer: str
-
     def field(name: str, width: int,
               pieces: tuple[tuple[str, int, int], ...],
               born: str, dead: str, source: str,
-              consumer: str) -> LiveField:
-        return LiveField(name, width, pieces, born, dead, source, consumer)
+              consumer: str) -> D2FLiveField:
+        return D2FLiveField("", name, width, pieces, born, dead, source,
+                            consumer)
 
-    built = (
+    built = tuple(replace(item, path="built-in") for item in (
         field("final_nz_phase", 4, (("A", 0, 4),), "PRE_W15", "PC2A",
               "unpacked D2F-B W0 state", "word13 merge"),
         field("refresh", 1, (("A", 4, 1),), "PRE_W15", "PC27",
@@ -3920,9 +3942,9 @@ def validate_sample_d2fca_manifest(candidate: list[int],
               "final word14 write"),
         field("final_filter_lo", 16, (("Q", 0, 16),), "W84", "PC3D",
               "lp_final low word", "final word15 write"),
-    )
+    ))
 
-    wavetable = (
+    wavetable = tuple(replace(item, path="wavetable") for item in (
         field("old_adjacent", 8, (("A", 0, 8),),
               "PRE_W15", "W15", "CAP_W4 ARAM result",
               "CAP_W15 old interpolation launch"),
@@ -4005,9 +4027,9 @@ def validate_sample_d2fca_manifest(candidate: list[int],
               "final word14 write"),
         field("final_filter_lo", 16, (("O", 0, 16),), "W84", "PC3D",
               "lp_final low word", "final word15 write"),
-    )
+    ))
 
-    def validate_fields(path: str, fields: tuple[LiveField, ...],
+    def validate_fields(path: str, fields: tuple[D2FLiveField, ...],
                         expected_pre_w15: int,
                         expected_w15: int) -> tuple[int, int]:
         for item in fields:
@@ -4116,43 +4138,56 @@ def validate_sample_d2fca_manifest(candidate: list[int],
                    "STEP5", "STEP6", "STEP7", "STEP8", "WRITE_LO",
                    "WRITE_HI", "FINISH", "DONE")
     fold_event = {name: index for index, name in enumerate(fold_events)}
-    fold_fields = (
-        ("fold_a", 18, (("A", 0, 18),), "INPUTS", "STEP1"),
-        ("fold_b", 18, (("B", 0, 18),), "INPUTS", "STEP1"),
-        ("fold_sum", 18, (("A", 0, 18),), "STEP1", "STEP2"),
-        ("threshold_class", 2, (("B", 0, 2),), "STEP2", "STEP7"),
-        ("absolute_excess", 16, (("A", 0, 16),), "STEP2", "STEP4"),
-        ("split_high_low", 16, (("A", 0, 16),), "STEP4", "STEP5"),
-        ("partial_51high", 13, (("A", 0, 13),), "STEP5", "STEP6"),
-        ("fdiv5_address", 9, (("B", 2, 9),), "STEP5", "STEP6"),
-        ("fdiv5_q", 7, (("N", 0, 7),), "STEP5", "STEP6"),
-        ("fold_quotient", 16, (("A", 0, 16),), "STEP6", "STEP7"),
-        ("fold_result", 18, (("A", 0, 18),), "STEP7", "DONE"),
-    )
+    fold_fields = tuple(replace(item, path="fold") for item in (
+        field("fold_a", 18, (("A", 0, 18),), "INPUTS", "STEP1",
+              "state_q words48/49 first operand", "fold add service"),
+        field("fold_b", 18, (("B", 0, 18),), "INPUTS", "STEP1",
+              "state_q words48/49 second operand", "fold add service"),
+        field("fold_sum", 18, (("A", 0, 18),), "STEP1", "STEP2",
+              "fold add result", "threshold service"),
+        field("threshold_class", 2, (("B", 0, 2),), "STEP2", "STEP7",
+              "threshold service result", "signed result restore"),
+        field("absolute_excess", 16, (("A", 0, 16),), "STEP2", "STEP4",
+              "threshold/excess service result", "base-256 split"),
+        field("split_high_low", 16, (("A", 0, 16),), "STEP4", "STEP5",
+              "base-256 split service result", "quotient service"),
+        field("partial_51high", 13, (("A", 0, 13),), "STEP5", "STEP6",
+              "quotient service partial", "quotient service finish"),
+        field("fdiv5_address", 9, (("B", 2, 9),), "STEP5", "STEP6",
+              "base-256 address service result", "fdiv5 table"),
+        field("fdiv5_q", 7, (("N", 0, 7),), "STEP5", "STEP6",
+              "fdiv5 table result", "quotient service finish"),
+        field("fold_quotient", 16, (("A", 0, 16),), "STEP6", "STEP7",
+              "quotient service result", "signed result restore"),
+        field("fold_result", 18, (("A", 0, 18),), "STEP7", "DONE",
+              "signed result service", "words48/49 and dry publication"),
+    ))
     fold_peak = 0
     for snapshot, snapshot_name in enumerate(fold_events):
         owned: set[tuple[str, int]] = set()
-        for name, width, pieces, born, dead in fold_fields:
-            assert sum(part for _, _, part in pieces) == width
-            if fold_event[born] <= snapshot < fold_event[dead]:
-                for container, lsb, part in pieces:
+        for item in fold_fields:
+            assert sum(part for _, _, part in item.pieces) == item.width
+            if fold_event[item.born] <= snapshot < fold_event[item.dead]:
+                for container, lsb, part in item.pieces:
                     assert lsb + part <= capacities[container]
                     for bit in range(lsb, lsb + part):
                         key = (container, bit)
-                        assert key not in owned, (snapshot_name, key, name)
+                        assert key not in owned, (snapshot_name, key,
+                                                  item.name)
                         owned.add(key)
         fold_peak = max(fold_peak, len(owned))
         if snapshot_name in ("WRITE_LO", "WRITE_HI", "FINISH"):
             assert all(("A", bit) in owned for bit in range(18))
     assert fold_peak == 36
 
-    return (f"H-D2F-C-A manifest: 18 per-slot writes with exact PC/action/q/"
-            f"destination provenance; built W15 {built_w15}/108, peak "
-            f"{built_peak}/108; wavetable pre/W15 {100}/{wave_w15}/108, "
-            f"peak {wave_peak}/108; W84 split 50/108 -> 34/108 -> 18/108; "
-            "active q26/q30 override exposed; seven 20-PC fold "
-            f"nodes peak at {fold_peak}/70 and retain A18 through q49 "
-            "FOLD_FINISH/dry publication")
+    summary = (f"H-D2F-C-A manifest: 18 per-slot writes with exact PC/action/q/"
+               f"destination provenance; built W15 {built_w15}/108, peak "
+               f"{built_peak}/108; wavetable pre/W15 {100}/{wave_w15}/108, "
+               f"peak {wave_peak}/108; W84 split 50/108 -> 34/108 -> 18/108; "
+               "active q26/q30 override exposed; seven 20-PC fold "
+               f"nodes peak at {fold_peak}/70 and retain A18 through q49 "
+               "FOLD_FINISH/dry publication")
+    return summary, built, wavetable, fold_fields
 
 
 def validate_sample_b1_atomic_root_manifest(candidate: list[int],
@@ -6281,6 +6316,114 @@ def write_candidate_image(path: Path, accepted: list[int],
             "0 owner-one differences, 222 owner-zero nonzero words")
 
 
+def write_sample_d1_requirement_manifest(
+        path: Path, packing_rows: tuple[D2FPackingRow, ...],
+        built_fields: tuple[D2FLiveField, ...],
+        wavetable_fields: tuple[D2FLiveField, ...],
+        fold_fields: tuple[D2FLiveField, ...],
+        roots: tuple[object, ...]) -> str:
+    """Emit D1's literal requirements and source catalog without joining them.
+
+    This artifact makes the next source-completeness audit mechanical.  It is
+    deliberately not a transition manifest: source prose is preserved only as
+    an unbound requirement, and no root is selected as a field source here.
+    """
+    output = path.resolve()
+    assert output != IMAGE.resolve(), \
+        "D1 requirements must not replace rtl/psg_exec.hex"
+    if output.exists():
+        assert not output.samefile(IMAGE), \
+            "D1 requirements must not hard-link rtl/psg_exec.hex"
+
+    def packing_row(row: D2FPackingRow) -> dict[str, object]:
+        return {
+            "name": row.name,
+            "used": row.used,
+            "capacity": row.capacity,
+            "capacities": dict(row.capacities),
+            "assignments": {
+                container: [
+                    {"field": field_name, "width": width}
+                    for field_name, width in assignments
+                ]
+                for container, assignments in row.assignments
+            },
+            "logical_widths": dict(row.logical_widths),
+            "source_status": "unbound",
+        }
+
+    def live_field(item: D2FLiveField) -> dict[str, object]:
+        return {
+            "path": item.path,
+            "name": item.name,
+            "width": item.width,
+            "pieces": [
+                {"container": container, "lsb": lsb, "width": width}
+                for container, lsb, width in item.pieces
+            ],
+            "born": item.born,
+            "dead": item.dead,
+            "unbound_source_description": item.source,
+            "consumer": item.consumer,
+            "source_status": "unbound",
+        }
+
+    root_rows = [
+        {
+            "name": root.name,
+            "group": root.group,
+            "width": root.width,
+            "producer": root.producer,
+            "producer_event": root.born,
+            "consumer": root.consumer,
+            "consumer_event": root.dead,
+            "owner": root.owner,
+            "transaction_bound_candidate": root.owner.startswith("service:"),
+        }
+        for root in roots
+    ]
+    assert len(root_rows) == 30
+    assert len({row["name"] for row in root_rows}) == 30
+    assert len({row["group"] for row in root_rows}) == 27
+    assert all(row["source_status"] == "unbound"
+               for row in map(packing_row, packing_rows))
+
+    all_live = built_fields + wavetable_fields + fold_fields
+    assert all(item.path in {"built-in", "wavetable", "fold"}
+               for item in all_live)
+    manifest = {
+        "schema": "psg_exec_pool_requirements_v1",
+        "claim": "requirements-and-source-catalog-only",
+        "containers": {"A": 18, "B": 18, "N": 17, "O": 17,
+                       "Q": 16, "T": 6, "C": 7, "I": 6, "D": 3},
+        "packing_rows": [packing_row(row) for row in packing_rows],
+        "live_fields": [live_field(item) for item in all_live],
+        "source_catalog": root_rows,
+        "counts": {
+            "packing_rows": len(packing_rows),
+            "built_fields": len(built_fields),
+            "wavetable_fields": len(wavetable_fields),
+            "fold_fields": len(fold_fields),
+            "roots": len(root_rows),
+            "root_groups": len({row["group"] for row in root_rows}),
+            "bound_fields": 0,
+        },
+    }
+    encoded = json.dumps(manifest, sort_keys=True, indent=2) + "\n"
+    assert "source_binding" not in encoded
+    assert '"bound_fields": 0' in encoded
+    assert json.dumps(json.loads(encoded), sort_keys=True, indent=2) + "\n" \
+        == encoded
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(encoded)
+    assert output.read_text() == encoded
+    assert json.loads(output.read_text()) == manifest
+    return (f"{output}: {len(packing_rows)} packing rows, "
+            f"{len(all_live)} path/fold lifetimes, 30 roots/27 groups, "
+            "0 bound fields")
+
+
 def write_sample_binding_manifest(path: Path, accepted: list[int],
                                   candidate: list[int], actions: Actions,
                                   roots: tuple[object, ...],
@@ -6922,9 +7065,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--binding-control-out", type=Path,
         help="write the address-only action-indexed binding control map")
+    parser.add_argument(
+        "--d1-requirements-out", type=Path,
+        help="write the unbound D1 physical-pool requirements/source catalog")
     args = parser.parse_args()
     if args.write and (args.candidate_out or args.binding_out
-                       or args.binding_control_out):
+                       or args.binding_control_out
+                       or args.d1_requirements_out):
         parser.error("--write is mutually exclusive with proof outputs")
     if args.binding_control_out and not args.binding_out:
         parser.error("--binding-control-out requires --binding-out")
@@ -6933,6 +7080,7 @@ def parse_args() -> argparse.Namespace:
             ("candidate", args.candidate_out),
             ("binding", args.binding_out),
             ("binding control", args.binding_control_out),
+            ("D1 requirements", args.d1_requirements_out),
         ) if path is not None
     ]
     for index, (left_name, left_path) in enumerate(proof_outputs):
@@ -7001,10 +7149,10 @@ def main() -> int:
             sample_program, sample_w5_q16_candidate, actions)
     sample_b3b2a2a1 = validate_sample_b3b2a2a1_edge_services(
         sample_b3b2a_candidate, actions, sample_b3b2a_codec)
-    sample_d2fb_packing = validate_sample_d2fb_packing(
+    sample_d2fb_packing, d2fb_rows = validate_sample_d2fb_packing(
         sample_b3b2a_candidate, actions)
-    sample_d2fca_manifest = validate_sample_d2fca_manifest(
-        sample_b3b2a_candidate, actions)
+    sample_d2fca_manifest, d2f_built, d2f_wavetable, d2f_fold = \
+        validate_sample_d2fca_manifest(sample_b3b2a_candidate, actions)
     sample_b1_roots, atomic_roots = \
         validate_sample_b1_atomic_root_manifest(
             sample_b3b2a_candidate, actions)
@@ -7110,6 +7258,10 @@ def main() -> int:
         print("candidate bindings: " + write_sample_binding_manifest(
             args.binding_out, program, sample_b3b2a_candidate,
             actions, atomic_roots, args.binding_control_out))
+    if args.d1_requirements_out:
+        print("D1 requirements: " + write_sample_d1_requirement_manifest(
+            args.d1_requirements_out, d2fb_rows, d2f_built,
+            d2f_wavetable, d2f_fold, atomic_roots))
     print("warning: owner-zero actions and remaining owner-one actions are "
           "manifests, not semantic RTL; whole-PSG schedule/render/area "
           "equivalence remain atomic integration gates")
