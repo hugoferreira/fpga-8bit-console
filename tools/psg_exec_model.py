@@ -25,6 +25,7 @@ cited as whole-PSG behavioral, render, schedule or area equivalence.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import runpy
 from dataclasses import dataclass, replace
@@ -286,10 +287,54 @@ SAMPLE_CAP_SCHEDULE = (
     ("W75", 26),
     ("W84", 30),
 )
+
+# Candidate owner-zero commits.  This is control/address provenance only: it
+# deliberately carries no result expression or sampled semantic value.
+SAMPLE_FIXED_WRITES = (
+    (0x14, "STORE_10_20", 20, 20, "selected old/current tuple"),
+    (0x15, "STORE_11_21", 21, 21, "current increment low"),
+    (0x16, "STORE_12_22", 22, 22, "last controls/gain low"),
+    (0x17, "STORE_8_18", 18, 18, "selected old increment low"),
+    (0x19, "STORE_9_19", 19, 19, "selected old gain/inc high"),
+    (0x1b, "STORE_15_14", 14, 14, "early brown/mode/filter sign"),
+    (0x1d, "CAP_W0", 10, 23, "final noise lowpass"),
+    (0x1e, "CAP_W1", 12, 10, "final current phase"),
+    (0x27, "STORE_1_11", 11, 11, "nz hold/old-q low"),
+    (0x28, "STORE_6_16", 16, 16, "final old phase"),
+    (0x29, "STORE_7_17", 17, 17, "blend/old-q high"),
+    (0x2a, "STORE_3_13", 13, 13, "ack/gains/nz/phase2 high"),
+    (0x2d, "STORE_2_12", 12, 12, "final phase2 low"),
+    (0x39, "STORE_14_15", 15, 15, "clear-qualified filter low"),
+    (0x3c, "STORE_4_14", 14, 14, "final filter high/mode/brown"),
+    (0x3d, "STORE_5_15", 15, 15, "final filter low"),
+    (0x4c, "STORE_LEAF_LO", 0, 48,
+     "audible-gated retained filtered value low"),
+    (0x4d, "STORE_LEAF_HI", 48, 49,
+     "audible-gated retained filtered value high"),
+)
 SAMPLE_SERVICE_SCHEDULE = (
     ("NZ_OLD_LOAD_PAR_3", -10),
     ("NZ_LIVE", -5),
 ) + tuple((f"CAP_{name}", offset) for name, offset in SAMPLE_CAP_SCHEDULE)
+
+SAMPLE_SERVICE_DEPENDENCIES = {
+    "NZ_OLD_LOAD_PAR_3": ("state", "mul", "dq"),
+    "NZ_LIVE": ("mul", "dq"),
+    "CAP_W0": ("aram", "phase", "noise"),
+    "CAP_W1": ("aram", "wave", "dq"),
+    "CAP_W2": ("aram", "wave"),
+    "CAP_W3": ("aram", "wave"),
+    "CAP_W4": ("aram", "wave", "mul"),
+    "CAP_W5": ("wave", "dq"),
+    "CAP_W6": ("dq",),
+    "CAP_W15": ("wave", "mul"),
+    "CAP_W26": ("mul",),
+    "CAP_W27": ("mul",),
+    "CAP_W40": ("mul",),
+    "CAP_W51": ("mul",),
+    "CAP_W75": ("mul", "ring"),
+    "CAP_W84": ("mul", "ring", "dampen"),
+}
 
 
 def advance_manifest() -> tuple[list[AssemblyInstruction],
@@ -3740,28 +3785,7 @@ def validate_sample_d2fca_manifest(candidate: list[int],
     # Every persistent/scratch write keeps its PC, action, physical q source,
     # fixed destination and value provenance.  In particular, the early and
     # final word-14/15 writes may not disappear in a last-value dictionary.
-    writes = (
-        (0x14, "STORE_10_20", 20, 20, "selected old/current tuple"),
-        (0x15, "STORE_11_21", 21, 21, "current increment low"),
-        (0x16, "STORE_12_22", 22, 22, "last controls/gain low"),
-        (0x17, "STORE_8_18", 18, 18, "selected old increment low"),
-        (0x19, "STORE_9_19", 19, 19, "selected old gain/inc high"),
-        (0x1b, "STORE_15_14", 14, 14, "early brown/mode/filter sign"),
-        (0x1d, "CAP_W0", 10, 23, "final noise lowpass"),
-        (0x1e, "CAP_W1", 12, 10, "final current phase"),
-        (0x27, "STORE_1_11", 11, 11, "nz hold/old-q low"),
-        (0x28, "STORE_6_16", 16, 16, "final old phase"),
-        (0x29, "STORE_7_17", 17, 17, "blend/old-q high"),
-        (0x2a, "STORE_3_13", 13, 13, "ack/gains/nz/phase2 high"),
-        (0x2d, "STORE_2_12", 12, 12, "final phase2 low"),
-        (0x39, "STORE_14_15", 15, 15, "clear-qualified filter low"),
-        (0x3c, "STORE_4_14", 14, 14, "final filter high/mode/brown"),
-        (0x3d, "STORE_5_15", 15, 15, "final filter low"),
-        (0x4c, "STORE_LEAF_LO", 0, 48,
-         "audible-gated retained filtered value low"),
-        (0x4d, "STORE_LEAF_HI", 48, 49,
-         "audible-gated retained filtered value high"),
-    )
+    writes = SAMPLE_FIXED_WRITES
     for pc, name, q_source, destination, origin in writes:
         insn = decoded(pc)
         assert insn.op == Op.WRITE, (pc, insn)
@@ -4132,7 +4156,8 @@ def validate_sample_d2fca_manifest(candidate: list[int],
 
 
 def validate_sample_b1_atomic_root_manifest(candidate: list[int],
-                                            actions: Actions) -> str:
+                                            actions: Actions) \
+        -> tuple[str, tuple[object, ...]]:
     """Inventory every internal SampleTrace replacement root before typing."""
     source_text = Path(__file__).read_text()
     machine = source_text[source_text.index("\nclass SampleImageMachine:"):
@@ -4159,8 +4184,8 @@ def validate_sample_b1_atomic_root_manifest(candidate: list[int],
 
     events = (
         "LOAD", "NZ_OLD", "NZ_LIVE", "W0", "W1", "W2", "W3",
-        "W4", "W5", "W6", "W15", "W26", "W27", "PC2E", "W40", "W51",
-        "RING1", "RING2", "RING3", "W75", "W84", "STORES", "SLOT",
+        "W4", "W5", "W6", "W15", "W26", "W27", "PC2E", "W40",
+        "RING1", "RING2", "RING3", "W51", "W75", "W84", "STORES", "SLOT",
         "FOLD", "DONE",
     )
     event = {name: index for index, name in enumerate(events)}
@@ -4317,12 +4342,14 @@ def validate_sample_b1_atomic_root_manifest(candidate: list[int],
     assert {"STORE_14_15", "STORE_15_14", "STORE_LEAF_LO",
             "STORE_LEAF_HI", "FOLD_FINISH"} <= action_names
     assert sum(word != 0 for word in candidate) == 222
-    return ("H-D2F-C-B3-B2-A2-A1-B1-A atomic-root inventory: 30 trace/direct "
-            f"replacement roots grouped into {len(groups)} exact values; "
-            "24 issue sites and six direct uses bound to production edges, "
-            "coarse service/frame/state owners and final consumers; no "
-            "Trace/oracle producer; literal slices, collision/capacity and "
-            "executor/value equivalence remain unproved")
+    summary = (
+        "H-D2F-C-B3-B2-A2-A1-B1-A atomic-root inventory: 30 trace/direct "
+        f"replacement roots grouped into {len(groups)} exact values; "
+        "24 issue sites and six direct uses bound to production edges, "
+        "coarse service/frame/state owners and final consumers; no "
+        "Trace/oracle producer; literal slices, collision/capacity and "
+        "executor/value equivalence remain unproved")
+    return summary, roots
 
 
 def reachable_to_idle(nodes: list[Node]) -> None:
@@ -4442,24 +4469,7 @@ def validate_sample_action_inventory(actions: Actions,
         == (18, 16, 18, 9, 61)
 
     # Name every service edge rather than treating CAP as a generic macro.
-    dependencies = {
-        "NZ_OLD_LOAD_PAR_3": ("state", "mul", "dq"),
-        "NZ_LIVE": ("mul", "dq"),
-        "CAP_W0": ("aram", "phase", "noise"),
-        "CAP_W1": ("aram", "wave", "dq"),
-        "CAP_W2": ("aram", "wave"),
-        "CAP_W3": ("aram", "wave"),
-        "CAP_W4": ("aram", "wave", "mul"),
-        "CAP_W5": ("wave", "dq"),
-        "CAP_W6": ("dq",),
-        "CAP_W15": ("wave", "mul"),
-        "CAP_W26": ("mul",),
-        "CAP_W27": ("mul",),
-        "CAP_W40": ("mul",),
-        "CAP_W51": ("mul",),
-        "CAP_W75": ("mul", "ring"),
-        "CAP_W84": ("mul", "ring", "dampen"),
-    }
+    dependencies = SAMPLE_SERVICE_DEPENDENCIES
     assert set(dependencies) == services
     assert all(deps for deps in dependencies.values())
 
@@ -6271,6 +6281,324 @@ def write_candidate_image(path: Path, accepted: list[int],
             "0 owner-one differences, 222 owner-zero nonzero words")
 
 
+def write_sample_binding_manifest(path: Path, accepted: list[int],
+                                  candidate: list[int], actions: Actions,
+                                  roots: tuple[object, ...]) -> str:
+    """Emit source-binding metadata without carrying semantic sample values."""
+    output = path.resolve()
+    assert output != IMAGE.resolve(), \
+        "binding output must not replace rtl/psg_exec.hex"
+    if output.exists():
+        assert not output.samefile(IMAGE), \
+            "binding output must not hard-link rtl/psg_exec.hex"
+    assert len(accepted) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
+    assert len(candidate) == PROGRAM_BANK_WORDS
+    action_by_code = actions.by_owner["sample"]
+    action_by_name = {action.name: action for action in action_by_code.values()}
+
+    def q_source(pc: int) -> int | None:
+        source: int | None = None
+        for prior in range(SAMPLE_START, pc):
+            insn = Instruction.decode(candidate[prior])
+            if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+                source = insn.word
+        return source
+
+    action_pcs: dict[str, list[int]] = {name: [] for name in action_by_name}
+    for pc, word in enumerate(candidate):
+        # Zero-filled space after the owner-zero DONE is not executable ROM.
+        # Decoding it as OP_READ/action zero would fabricate READ_PRIME sites.
+        if word == 0:
+            continue
+        insn = Instruction.decode(word)
+        if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+            action = action_by_code.get(insn.action)
+            if action is not None:
+                action_pcs[action.name].append(pc)
+    retired_replacements = {
+        "STORE_0_10": "CAP_W1",
+        "STORE_13_23": "CAP_W0",
+    }
+    assert {name for name, pcs in action_pcs.items() if not pcs} \
+        == set(retired_replacements)
+    assert all(action_pcs[name] for name in retired_replacements.values())
+
+    destination_by_action: dict[str, list[int]] = {}
+    for _, name, _, destination, _ in SAMPLE_FIXED_WRITES:
+        destination_by_action.setdefault(name, []).append(destination)
+
+    def family(name: str) -> str:
+        if name == "READ_PRIME" or name.startswith("LOAD_"):
+            return "load"
+        if name.startswith("NZ_") or name.startswith("CAP_"):
+            return "service"
+        if name.startswith("STORE_"):
+            return "store"
+        if name.startswith("FOLD_"):
+            return "fold"
+        raise AssertionError(name)
+
+    cap_index = {name: index
+                 for index, (name, _) in enumerate(SAMPLE_CAP_SCHEDULE)}
+    service_phase = {
+        name: 29 + offset for name, offset in SAMPLE_SERVICE_SCHEDULE
+    }
+    fold_event = {
+        "FOLD_PRIME": "operand_a_low",
+        "FOLD_A_LO": "operand_a_high",
+        "FOLD_A_HI": "operand_a_commit",
+        "FOLD_B_LO": "operand_b_low",
+        "FOLD_START": "node_start",
+        "FOLD_RUN": "node_run",
+        "FOLD_WRITE_LO": "result_low",
+        "FOLD_WRITE_HI": "result_high",
+        "FOLD_FINISH": "dry_commit",
+    }
+
+    def source_binding(name: str, kind: str,
+                       occurrences: list[dict[str, object]]) \
+            -> dict[str, object]:
+        if kind == "load":
+            return {"trace": "legacy", "event": "state_read",
+                    "words": sorted({int(row["word"])
+                                     for row in occurrences})}
+        if kind == "service":
+            if name.startswith("CAP_"):
+                cap = name.removeprefix("CAP_")
+                return {"trace": "legacy", "event": "cap",
+                        "cap": cap, "cap_index": cap_index[cap],
+                        "source_phase": service_phase[name],
+                        "dependencies": list(
+                            SAMPLE_SERVICE_DEPENDENCIES[name])}
+            return {"trace": "legacy", "event": "service_phase",
+                    "source_phase": service_phase[name],
+                    "dependencies": list(SAMPLE_SERVICE_DEPENDENCIES[name])}
+        if kind == "store":
+            if name.startswith("STORE_LEAF_"):
+                return {"trace": "legacy", "event": "leaf_commit",
+                        "words": destination_by_action.get(name, [])}
+            if occurrences:
+                return {"trace": "legacy", "event": "state_write",
+                        "words": destination_by_action.get(name, [])}
+            return {"trace": "manifest", "event": "retired_alias",
+                    "replacement": retired_replacements[name]}
+        assert kind == "fold"
+        return {"trace": "legacy", "event": "fold_step",
+                "role": fold_event[name], "nodes": len(FOLD_NODES)}
+
+    action_rows = []
+    for code, action in sorted(action_by_code.items()):
+        occurrences = []
+        for pc in action_pcs[action.name]:
+            insn = Instruction.decode(candidate[pc])
+            occurrence = {
+                "pc": pc,
+                "op": insn.op.name,
+                "word": insn.word,
+                "q_source": q_source(pc),
+                "changed": candidate[pc] != accepted[pc],
+            }
+            if action.name == "CAP_W51":
+                occurrence["physical_read_words"] = [26, 30]
+            occurrences.append(occurrence)
+        kind = family(action.name)
+        row = {
+            "name": action.name,
+            "code": code,
+            "family": kind,
+            "consumes_word": action.consumes,
+            "destinations": destination_by_action.get(action.name, []),
+            "occurrences": occurrences,
+            "source_binding": source_binding(action.name, kind, occurrences),
+        }
+        if action.name in retired_replacements:
+            replacement = retired_replacements[action.name]
+            row["retired_replacement"] = replacement
+            row["replacement_pcs"] = action_pcs[replacement]
+        action_rows.append(row)
+    assert len(action_rows) == 61
+
+    changed_pcs = [pc for pc in range(PROGRAM_BANK_WORDS)
+                   if candidate[pc] != accepted[pc]]
+    changed_pc_bindings = []
+    for pc in changed_pcs:
+        insn = Instruction.decode(candidate[pc])
+        binding: dict[str, object]
+        action_name: str | None = None
+        if insn.op in (Op.READ, Op.WRITE, Op.EXEC):
+            action = action_by_code.get(insn.action)
+            if action is not None:
+                action_name = action.name
+                binding = {"trace": "manifest", "event": "action",
+                           "action": action_name}
+            else:
+                assert insn.op == Op.EXEC \
+                    and insn.action == COMMON_ACTION["HOLD"], (pc, insn)
+                binding = {"trace": "c2b", "event": "fixed_hold",
+                           "word": insn.word}
+        elif insn.op == Op.SLOT:
+            binding = {"trace": "c2b", "event": "slot_select",
+                       "increment": insn.slot_inc,
+                       "slot_value": insn.slot_value}
+        elif insn.op == Op.JUMP:
+            binding = {"trace": "c2b", "event": "jump",
+                       "target": insn.target}
+        elif insn.op == Op.BRANCH:
+            binding = {"trace": "c2b", "event": "branch",
+                       "condition": insn.cond, "sense": insn.sense,
+                       "target": insn.target}
+        elif insn.op == Op.DONE:
+            binding = {"trace": "c2b", "event": "done"}
+        else:
+            raise AssertionError((pc, insn))
+        changed_pc_bindings.append({
+            "pc": pc, "op": insn.op.name, "action": action_name,
+            "word": insn.word if insn.op in (Op.READ, Op.WRITE, Op.EXEC)
+                    else None,
+            "q_source": q_source(pc), "source_binding": binding,
+        })
+    assert len(changed_pc_bindings) == 44
+    assert {row["pc"] for row in changed_pc_bindings} == set(changed_pcs)
+
+    fixed_write_rows = []
+    for pc, name, q_word, destination, origin in SAMPLE_FIXED_WRITES:
+        if name.startswith("CAP_"):
+            event = {"trace": "legacy", "event": "cap",
+                     "cap": name.removeprefix("CAP_")}
+        elif name.startswith("STORE_LEAF_"):
+            event = {"trace": "legacy", "event": "leaf_commit"}
+        else:
+            event = {"trace": "legacy", "event": "state_write",
+                     "word": destination}
+        fixed_write_rows.append({
+            "pc": pc, "action": name, "q_source": q_word,
+            "destination": destination, "provenance": origin,
+            "source_binding": event,
+        })
+    assert len(fixed_write_rows) == 18
+
+    cap_pcs = {name.removeprefix("CAP_"): action_pcs[name]
+               for name in action_pcs if name.startswith("CAP_")}
+    cap_w40 = cap_pcs["W40"][0]
+    cap_w51 = cap_pcs["W51"][0]
+
+    def event_pcs(event: str, root_name: str) -> list[int]:
+        if root_name == "dq_live_issue" and event == "LOAD":
+            return action_pcs["NZ_OLD_LOAD_PAR_3"]
+        if event == "LOAD":
+            return sorted(pc for name, pcs in action_pcs.items()
+                          if name == "READ_PRIME" or name.startswith("LOAD_")
+                          for pc in pcs)
+        if event == "NZ_OLD":
+            return action_pcs["NZ_OLD_LOAD_PAR_3"]
+        if event == "NZ_LIVE":
+            return action_pcs["NZ_LIVE"]
+        if event.startswith("W") and event[1:].isdigit():
+            return cap_pcs[event]
+        if event.startswith("PC"):
+            return [int(event[2:], 16)]
+        if event.startswith("RING"):
+            word = int(event.removeprefix("RING"))
+            return [pc for pc in range(cap_w40 + 1, cap_w51)
+                    if (lambda insn: insn.op == Op.EXEC
+                        and insn.action == COMMON_ACTION["HOLD"]
+                        and insn.word == word)(Instruction.decode(candidate[pc]))]
+        if event == "STORES":
+            return sorted(pc for name, pcs in action_pcs.items()
+                          if name.startswith("STORE_") for pc in pcs)
+        if event == "SLOT":
+            return [pc for pc, word in enumerate(candidate)
+                    if Instruction.decode(word).op == Op.SLOT]
+        if event == "FOLD":
+            return sorted(pc for name, pcs in action_pcs.items()
+                          if name.startswith("FOLD_") for pc in pcs)
+        if event == "DONE":
+            return [pc for pc, word in enumerate(candidate)
+                    if Instruction.decode(word).op == Op.DONE and word != 0]
+        raise AssertionError((root_name, event))
+
+    root_guards = {
+        "dq_live_issue": "always", "noise_old_issue": "always",
+        "noise_old_hold": "always", "dq_live_hold": "always",
+        "dq_old_issue": "always", "noise_live_issue": "always",
+        "wave_0_issue": "!wavetable", "aram_0_issue": "wavetable",
+        "wave_1_issue": "!wavetable", "aram_1_issue": "wavetable",
+        "wave_2_issue": "!wavetable", "aram_2_issue": "wavetable",
+        "wave_3_issue": "!wavetable", "aram_3_issue": "wavetable",
+        "mul_live_w4": "!wavetable", "mul_primary_interp": "wavetable",
+        "mul_old_interp": "wavetable", "mul_live_recip": "!wavetable",
+        "mul_live_w27": "wavetable", "mul_old_w27": "!wavetable",
+        "mul_arm_recip": "always", "mul_blend": "blend_count!=64",
+        "ring_current": "reverb", "ring_old": "reverb",
+        "expected_arm": "always", "blend_control": "always",
+        "leaf_commit": "audible", "record_commit": "always",
+        "lfsr_next": "always", "lfsr2_next": "always",
+    }
+    assert set(root_guards) == {root.name for root in roots}
+    root_rows = []
+    for root in roots:
+        root_rows.append({
+            "name": root.name,
+            "group": root.group,
+            "width": root.width,
+            "trace_key": root.trace_key,
+            "producer": root.producer,
+            "producer_event": root.born,
+            "producer_pcs": event_pcs(root.born, root.name),
+            "consumer": root.consumer,
+            "consumer_event": root.dead,
+            "consumer_pcs": event_pcs(root.dead, root.name),
+            "owner": root.owner,
+            "guard": root_guards[root.name],
+            "source_binding": {"trace": "legacy",
+                               "producer_event": root.born,
+                               "consumer_event": root.dead},
+        })
+    assert len(root_rows) == 30
+    assert len({row["group"] for row in root_rows}) == 27
+    missing_root_pcs = [row["name"] for row in root_rows
+                        if not row["producer_pcs"]
+                        or not row["consumer_pcs"]]
+    assert not missing_root_pcs, missing_root_pcs
+
+    target_text = (ROOT / "rtl" / "target_psg.sv").read_text()
+    assert re.search(r"\.MULTIPUMP\(1\)\)\s+psg0", target_text)
+    manifest = {
+        "schema": "psg_exec_binding_v1",
+        "source_contract": {
+            "target": "ice40-hx8k",
+            "target_multipump": 1,
+            "legacy_trace_schema": "psg_legacy_binding_v1",
+            "primitive_trace_schema": "psg_edge_v1",
+            "cap_indices": cap_index,
+            "noise_phases": {"NZ_OLD": service_phase["NZ_OLD_LOAD_PAR_3"],
+                             "NZ_LIVE": service_phase["NZ_LIVE"]},
+            "fold_nodes": [list(node) for node in FOLD_NODES],
+        },
+        "candidate_changed_pcs": changed_pcs,
+        "changed_pc_bindings": changed_pc_bindings,
+        "actions": action_rows,
+        "roots": root_rows,
+        "fixed_writes": fixed_write_rows,
+        "counts": {"actions": len(action_rows), "roots": len(root_rows),
+                   "groups": len({row["group"] for row in root_rows}),
+                   "changed_pcs": len(changed_pc_bindings),
+                   "fixed_writes": len(fixed_write_rows)},
+    }
+    assert len(manifest["candidate_changed_pcs"]) == 44
+    encoded = json.dumps(manifest, sort_keys=True, indent=2) + "\n"
+    assert "SampleTrace" not in encoded and "evaluate_sample_slot" not in encoded
+    assert all(token not in encoded for token in ('"value":', '"expected":',
+                                                   '"result":'))
+    production_before = IMAGE.read_bytes()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(encoded)
+    assert output.read_text() == encoded
+    assert IMAGE.read_bytes() == production_before
+    return (f"{output}: 61 actions, 44 changed PCs, 30 roots / 27 groups; "
+            "metadata only")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="build and validate the R.84 executor control contract")
@@ -6280,9 +6608,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--candidate-out", type=Path,
         help="write the complete bounded D2F candidate to this separate path")
+    parser.add_argument(
+        "--binding-out", type=Path,
+        help="write metadata-only candidate/source binding JSON")
     args = parser.parse_args()
-    if args.write and args.candidate_out:
-        parser.error("--write and --candidate-out are mutually exclusive")
+    if args.write and (args.candidate_out or args.binding_out):
+        parser.error("--write is mutually exclusive with proof outputs")
     return args
 
 
@@ -6346,8 +6677,9 @@ def main() -> int:
         sample_b3b2a_candidate, actions)
     sample_d2fca_manifest = validate_sample_d2fca_manifest(
         sample_b3b2a_candidate, actions)
-    sample_b1_roots = validate_sample_b1_atomic_root_manifest(
-        sample_b3b2a_candidate, actions)
+    sample_b1_roots, atomic_roots = \
+        validate_sample_b1_atomic_root_manifest(
+            sample_b3b2a_candidate, actions)
     sample_inventory = validate_sample_action_inventory(actions,
                                                         sample_program)
     fold_contract = validate_fold_word_contract()
@@ -6446,6 +6778,10 @@ def main() -> int:
         print("candidate image: " + write_candidate_image(
             args.candidate_out, program, sample_b3b2a_candidate,
             tick_program))
+    if args.binding_out:
+        print("candidate bindings: " + write_sample_binding_manifest(
+            args.binding_out, program, sample_b3b2a_candidate,
+            actions, atomic_roots))
     print("warning: owner-zero actions and remaining owner-one actions are "
           "manifests, not semantic RTL; whole-PSG schedule/render/area "
           "equivalence remain atomic integration gates")

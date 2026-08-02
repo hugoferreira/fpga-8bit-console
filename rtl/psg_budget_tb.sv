@@ -82,8 +82,12 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   string pcm_trace_path = "";
   string schedule_trace_path = "";
   string walk_trace_path = "";
+  string binding_trace_path = "";
   integer schedule_trace_fd = 0;
   integer walk_trace_fd = 0;
+  integer binding_trace_fd = 0;
+  integer binding_trace_rows = 0;
+  bit binding_trace_active = 0;
   int schedule_trace_limit = 250000;
   int schedule_trace_records = 0;
   bit schedule_trace_was_active = 0;
@@ -107,6 +111,13 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
         $fdisplay(walk_trace_fd,
                   "sample,slot,event,row,eff_a,g_live,last_g,old_g,blend_restart,bl_cnt,phase,old_phase,last_inc,old_inc,snd_wave,last_wave,old_wave,nz_tick,old_nz_on,old_nz_r_on,mx_new,mx_old,blend_y,mix_leaf,preview_restart,preview_alpha,preview_old_leaf,preview_blend_leaf,fold_leaf,playing,pcm");
     end
+    if ($value$plusargs("binding_trace=%s", binding_trace_path)) begin
+      binding_trace_fd = $fopen(binding_trace_path, "w");
+      if (binding_trace_fd == 0) begin
+        $display("FAIL: cannot open binding trace %s", binding_trace_path);
+        errors++;
+      end
+    end
   end
 
   final begin
@@ -114,6 +125,8 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
       $fclose(schedule_trace_fd);
     if (walk_trace_fd != 0)
       $fclose(walk_trace_fd);
+    if (binding_trace_fd != 0)
+      $fclose(binding_trace_fd);
   end
 
   // Sample on the falling edge after DUT nonblocking assignments settle.
@@ -164,6 +177,46 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
                   $signed(dut.u_walk.fold_leaf),
                   dut.u_walk.play_bits[dut.u_walk.pc_ch],
                   $signed(pcm));
+      end
+      if (binding_trace_fd != 0 && binding_trace_active && !PREVIEW_P
+          && (dut.u_walk.prun || dut.u_walk.fold_busy || dut.dry_valid)
+          && (dut.state_sample_read || dut.state_sample_we || dut.syn_rd
+              || dut.wmul_start || dut.u_walk.dq_start
+              || dut.u_walk.dq_done || dut.u_walk.cap != 16'd0
+              || dut.u_walk.fmc != 4'd0 || dut.dry_valid
+              || (dut.u_walk.prun && !dut.ctrl_stall
+                  && (dut.u_walk.pph == 7'(dut.u_walk.PSTOR + 6)
+                      || dut.u_walk.pph == 7'(dut.u_walk.PSTOR + 7)
+                      || dut.u_walk.pph == 7'(dut.u_walk.PSTOR + 8)
+                      || dut.u_walk.pph == 7'(dut.u_walk.PLAST - 1))))) begin
+        $fdisplay(binding_trace_fd,
+          "{\"schema\":\"psg_legacy_binding_v1\",\"cycle\":%0d,\"sample\":%0d,\"multipump\":%0d,\"slot\":%0d,\"pph\":%0d,\"prun\":%0b,\"hold\":%0b,\"cap\":\"%04x\",\"state_read\":%0b,\"state_ra\":%0d,\"state_write\":%0b,\"state_wa\":%0d,\"wave_primary\":%0b,\"wave_secondary\":%0b,\"wave_old_primary\":%0b,\"wave_old_secondary\":%0b,\"aram_issue\":%0b,\"dq_start\":%0b,\"dq_start_old\":%0b,\"dq_done\":%0b,\"dq_old_take\":%0b,\"mul_start\":%0b,\"mul_mode\":%0d,\"mul_short\":%0b,\"ring_read\":%0b,\"ring_take_current\":%0b,\"ring_take_old\":%0b,\"ring_write\":%0b,\"leaf_commit\":%0b,\"lfsr_commit\":%0b,\"fold_step\":%0d,\"dry_valid\":%0b,\"guard_wavetable\":%0b,\"guard_reverb\":%0b,\"guard_audible\":%0b,\"guard_blend\":%0b}",
+          total_clk, samples, MULTIPUMP_P, dut.u_walk.pc_ch,
+          dut.u_walk.pph, dut.u_walk.prun,
+          dut.ctrl_stall, dut.u_walk.cap, dut.state_sample_read, dut.wlk_ra,
+          dut.state_sample_we, dut.wlk_wa,
+          dut.u_walk.cap[dut.u_walk.CAP_W0], dut.iss_sec, dut.iss_om,
+          dut.iss_os, dut.syn_rd, dut.u_walk.dq_start,
+          dut.u_walk.dq_start_old, dut.u_walk.dq_done, dut.dq_old_ctx,
+          dut.wmul_start, dut.wmul_mode, dut.wmul_short,
+          dut.u_walk.prun && !dut.ctrl_stall
+            && (dut.u_walk.pph == 7'(dut.u_walk.PSTOR + 6)
+                || dut.u_walk.pph == 7'(dut.u_walk.PSTOR + 7)),
+          dut.u_walk.prun && !dut.ctrl_stall
+            && dut.u_walk.pph == 7'(dut.u_walk.PSTOR + 7),
+          dut.u_walk.prun && !dut.ctrl_stall
+            && dut.u_walk.pph == 7'(dut.u_walk.PSTOR + 8),
+          dut.u_walk.prun && !dut.ctrl_stall
+            && dut.u_walk.pph == 7'(dut.u_walk.PLAST - 1)
+            && dut.u_walk.play_bits[dut.u_walk.pc_ch],
+          dut.u_walk.prun && !dut.ctrl_stall
+            && dut.u_walk.pph == 7'(dut.u_walk.PLAST),
+          dut.u_walk.prun && !dut.ctrl_stall
+            && dut.u_walk.cap[dut.u_walk.CAP_W0],
+          dut.u_walk.fmc, dut.dry_valid, dut.u_walk.s_snd_wt,
+          (dut.u_walk.s_ch_rev != 2'd0 || dut.u_walk.old_rev_r != 2'd0),
+          dut.u_walk.mx_aud, dut.u_walk.bl_cnt != 7'd64);
+        binding_trace_rows++;
       end
       if (dut.sample_en) samples++;
       st_clk[dut.u_seq.sst]++;
@@ -631,6 +684,68 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
         else             $display("%0d TEST(S) FAILED", errors);
         $finish;
       end
+    end
+
+    if ($test$plusargs("binding_only")) begin
+      automatic integer binding_commits = 0;
+      automatic integer binding_guard = 0;
+      for (int r = 0; r < 32; r++) begin
+        set_note(0, r, 33, 0, 7, 0);
+        set_note(1, r, 29, 6, 7, 0);
+        set_note(3, r, 41, 7, 7, 0);
+        set_inote(20, r, 35, 2, 7, 0);
+      end
+      set_meta(0, 255, 0, 0);
+      set_meta(1, 255, 0, 0);
+      set_meta(3, 255, 0, 0);
+      set_meta(20, 255, 0, 0);
+      set_filter(0, 8'd48);
+      set_filter(1, 8'h10);
+      set_wavetable(2, 100, 1'b0);
+      set_filter(2, 8'h0c);
+
+      repeat (8) @(posedge clk);
+      reset = 0;
+      repeat (8) @(posedge clk);
+      upload;
+      wr(8'h10, 8'd0);
+      wr(8'h11, 8'd1);
+      wr(8'h12, 8'd20);
+      wr(8'h13, 8'd3);
+      while (dut.u_seq.play_bits[3:0] != 4'hf
+             && binding_guard < 500000) begin
+        @(negedge clk);
+        binding_guard++;
+      end
+      check(dut.u_seq.play_bits[3:0] == 4'hf,
+            "binding profile published all four foreground triggers");
+      binding_guard = 0;
+      while (!(dut.u_walk.prun && dut.u_walk.pc_ch == 3'd2
+               && dut.u_walk.s_snd_wt) && binding_guard < 500000) begin
+        @(negedge clk);
+        binding_guard++;
+      end
+      check(dut.u_walk.s_snd_wt,
+            "binding profile loaded the wavetable sounding parameters");
+      do @(negedge clk); while (!dut.sample_en);
+      binding_trace_active = 1'b1;
+      binding_guard = 0;
+      while (binding_commits < 200 && binding_guard < 500000) begin
+        @(negedge clk);
+        if (dut.dry_valid)
+          binding_commits++;
+        binding_guard++;
+      end
+      #1;
+      check(binding_commits == 200,
+            "binding profile completed two hundred full sample commits");
+      check(binding_trace_fd != 0 && binding_trace_rows > 0,
+            "binding profile emitted structural source rows");
+      $display("PSG binding profile: %0d commits, %0d structural rows",
+               binding_commits, binding_trace_rows);
+      if (errors == 0) $display("ALL TESTS PASSED");
+      else             $display("%0d TEST(S) FAILED", errors);
+      $finish;
     end
 
     if (!$test$plusargs("recovery")) begin

@@ -2767,6 +2767,70 @@ git history; do not repeat them without the recorded changed condition.
   candidate action/root remains prose-only, or if source instrumentation
   perturbs the existing regression output.  This is a source-contract gate,
   not adapter equivalence, integration, synthesis or area credit.
+- **C2-C-A result and decision:** accepted as the complete metadata-only
+  candidate-to-source binding foundation.  `--binding-out` emits one
+  deterministic `psg_exec_binding_v1` artifact with 61 typed action rows,
+  44 changed-PC bindings, 30 roots in 27 value groups and eighteen fixed
+  writes.  All 44 changed PCs are explicit: 26 name a generated owner-zero
+  action and eighteen name a fixed common-HOLD edge.  The source audit found
+  and removed 34 fabricated `READ_PRIME` occurrences caused by decoding the
+  zero-filled post-DONE ROM tail; the only reachable `READ_PRIME` is PC 1.
+  Retired `STORE_0_10 -> CAP_W1` and `STORE_13_23 -> CAP_W0` aliases remain
+  explicit and have no fictitious PCs.  Two complete model runs produce the
+  same manifest SHA-256
+  `a18fa58db07ea66fc3f0ac72cf6fd072718f3e9a2aee9dfaf5ace616e2d6d7`;
+  the complete 19,728,640-formula/131,087-transaction model still reports the
+  accepted image byte-identical.
+- **Live HX8K source join:** the handoff's preliminary trace command used
+  `MULTIPUMP_P=0`; it is not target evidence because `target_psg.sv`
+  instantiates `MULTIPUMP(1)`.  The accepted trace is rebuilt with the real
+  radix-2 multi-pumped target schedule.  Its focused built-in/noise/wavetable/
+  reverb/silent profile emits 76,295 structural rows over 200 complete
+  samples, byte-identical in two runs with SHA-256
+  `19b0787d31e604842e7194111d22b00d12bec53ad7cff6a09ffb846b39d53b70`.
+  The independent checker observes all eight slots, both values of wavetable,
+  reverb, audible and blend guards, 28,800 exact state reads and 25,600 state
+  writes, both parameter banks including the word-26/30 distinction, four
+  wave plus four ARAM contexts, both DQ chains, all ten multiplier roles,
+  ring read/current/old/write edges, 1,400 ordered fold-node starts, 1,600
+  leaf and LFSR commits and 200 dry commits.  It rejected and corrected an
+  initial false classification of `STORE_LEAF_LO/HI` as legacy state writes:
+  words 48/49 are candidate destinations whose real source is the legacy leaf
+  commit, not existing legacy state memory.
+- **Joined primitive/executor evidence:** C1 multiplier and DQ traces are
+  independently byte-identical at SHA-256
+  `57afcd22903abca09f9b9c193b6e745b635fc443c71490cda9c9c5fcdd918f08`
+  and `ae4dbaee54268461de475ed7483ba95f9edfecf9c68433584799666d4d861741`;
+  the checker reconstructs 105 slow plus 630 fast multiplier pre/post pairs,
+  exactly six fast pairs per slow edge, 189 frozen pairs, 61 DQ pairs and
+  fifteen CE-held pairs including rejected starts and terminal relaunch.  The
+  accepted-image C2-A trace is byte-identical at SHA-256
+  `ac07e65c06c9fbc707f35447e1d160a26688ea1e23e6e34f293ec50df0b44e59`;
+  4,404
+  pre/post pairs retain 4,368 real state-read origins, 36 held edges, 224 wave
+  and 96 ARAM issue/take joins.  No checker row imports or calls
+  `SampleTrace`, `evaluate_sample_slot` or a semantic sample-value oracle.
+- **C2-C-A regression gates and boundary:** the complete C2-B candidate bench
+  still passes 512-word readback, all 44 changed PCs in all eight slots, 44
+  independent three-cycle holds, 782 fetch/state origins and the unchanged
+  172/158/8/29/8/0/1/406 opcode histogram.  Direct wave-core and ARAM-hold
+  benches, full/PREVIEW/executor lint, `PATH=/opt/homebrew/bin:$PATH make
+  test-psg` (fidelity PASS, 93 analysis tests, 524/850 walk deadline and
+  4008/5103 tick deadline with zero late flips), strict OpenSpec, deterministic
+  hashes, `git diff --check` and production RTL/image immutability pass.  This
+  accepts only a structural source contract.  It does not execute candidate
+  semantic values, prove persistent/fold/public result equivalence, integrate
+  the adapter, alter generic PSG/Tang RTL, synthesize, route, time or earn area
+  credit; the measured whole-PSG baseline remains 7,504 routed LCs.
+- **Next permitted C2-C-B:** consume the accepted binding artifact in one
+  bench-only adapter skeleton driven solely by the real candidate controller
+  PC/IR/state-q and existing primitive issue/take interfaces.  First prove
+  fixed destination selection, CAP_W51's action-qualified word-26/30 read and
+  enabled/held transaction ownership with no write-data semantics.  Do not
+  add a working-record mirror, sampled values, a generic production switch or
+  claim persistent/fold/dry equivalence.  Commit that address/control boundary
+  separately before any value equations; reject if it requires a second
+  action schedule, a result register or a generic walker edit.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
