@@ -24,7 +24,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H008.
+- Next hypothesis ID: H009.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/` and `build/experiments/h007/` synthesis,
@@ -36,16 +36,17 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Latest rejected variant: H005's `< 3` page suffix maps smaller but fails the
   routed 112.5-MHz fast-clock constraint at 109.12 MHz. H004 remains the last
   rejected production hypothesis family; H006 is rejected before production
-  because its direct step-count bits map larger than the current ternary.
+  because its direct step-count bits map larger than the current ternary, and
+  H008 is rejected because its shared counter prefix maps identically.
 - Best accepted result: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs;
   seed-1 7,392/7,680 LCs; 134.70 MHz fast and 30.95 MHz PSG.
 - Last updated: 2026-08-02.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H008 resume audit and record one new,
+- Next permitted experiment: perform the H009 resume audit and record one new,
   bounded, source-exact generic-RTL hypothesis before editing RTL.
-- Required verification for any accepted H008: focused algebraic or exhaustive
+- Required verification for any accepted H009: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -66,6 +67,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H005 | accepted | Keep the five-bit page subtract and explicit upload-page decode; the durable result is nine fewer carries with no placed regression. |
 | H006 | rejected | Keep the existing multiplier step-count ternary: it already maps to one LUT, while direct result-bit logic needs two. |
 | H007 | accepted | Keep the CLK_HZ-derived signed width; it deterministically removes 46 LUT4s, 13 carries, and two flops. |
+| H008 | rejected | Keep the two direct counter equalities: Yosys already shares their common high-nibble decode. |
 
 ## Hypothesis H001
 
@@ -349,6 +351,32 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   supported clock parameters, sample rate, recurrence representation, or
   mapper registered-width inference changes materially.
 
+## Hypothesis H008
+
+- **ID:** H008.
+- **Hypothesis:** the only two non-trivial `scnt` equality decodes are 176
+  (`8'hB0`) and 182 (`8'hB6`). Exposing their common high-nibble predicate
+  once and decoding only the distinguishing low nibble should preserve the
+  complete counter sequence while allowing iCE40 mapping to share the prefix.
+- **Scope:** isolated registered decode synthesis first; `rtl/psg_timing.sv`,
+  an exhaustive all-256-counter-value proof, whole-PSG mapping, and the H007
+  acceptance battery only if the isolated and whole mapped results improve.
+  No sequencer, walker, waveform, interface, EBR, R.84, or tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5`: 6,522 LUT4s, 1,553 carries,
+  1,476 flops, 14 EBRs; seed-1 7,392 LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Change:** scratch-only explicit `scnt[7:4] == 4'hB` predicate plus low-
+  nibble equality decodes; no production file changed.
+- **Result:** exhaustive comparison over all 256 counter values passes for
+  both the 176 and 182 predicates. Isolated registered `synth_ice40` maps the
+  current direct equalities and the explicit shared-prefix form identically:
+  four LUT4s and two flip-flops each.
+- **Decision:** rejected before production RTL. Yosys already shares the
+  common high-nibble term, so the candidate changes source without improving
+  a deterministic mapped resource.
+- **Repeat only if:** a rejected shared-prefix decode may be retried only after
+  the tick cadence constants, counter range, mapper equality sharing, or
+  surrounding counter-update control changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -379,12 +407,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Handoff
 
-- Next allowed experiment: H008 only after its hypothesis row and baseline are
+- Next allowed experiment: H009 only after its hypothesis row and baseline are
   recorded; it must be a new generic-RTL mechanism outside R.84 ownership.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
   H004 and H006 were rejected before production RTL; H005's timing-failing
-  spelling remains rejected.
+  spelling remains rejected. H008 was rejected before production RTL.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
