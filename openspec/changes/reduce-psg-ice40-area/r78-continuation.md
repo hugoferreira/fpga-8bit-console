@@ -2979,6 +2979,50 @@ git history; do not repeat them without the recorded changed condition.
   legacy values may appear only at the comparison boundary, never as adapter
   inputs; no production image, generic RTL or main landing is permitted until
   the complete isolated adapter passes every bank/slot/guard/hold class.
+- **C2-C-D pre-RTL audit and rejection:** the proposed fixed-write adapter has
+  no legal candidate value input yet.  The C2-C-C manifest's eighteen sources
+  are final legacy observations: fourteen ordinary `STATE_WRITE/pre/state_wd`
+  values, the W0/W1 legacy noise-lowpass/phase results and the two legacy leaf
+  slices.  They are comparison outputs, not candidate producers.  The existing
+  `psg_execbind_adapter` is deliberately address/control-only and its real
+  candidate-controller bench still supplies synthetic `{slot,action,pc}` write
+  data.  `psg_execwave[_core]` owns retained H-C wave context plus wave/ARAM
+  issue/take/address signals, but no result pool or final record value.  No RTL
+  module owns A18/B18/N17/O17, retained Q/T/C/I/D state, or a complete tagged
+  DQ/multiplier/wave/ARAM/ring/fold result interface.
+- **Write-by-write availability:** the six early stores at PCs
+  `14/15/16/17/19/1b` have no exact-edge D2F value allocation; W0/W1 at
+  `1d/1e` have legacy observations and capacity ingredients but no candidate
+  noise/phase producer; nine late writes at
+  `27/28/2a/2d/39/3c/3d/4c/4d` have only abstract q-plus-named-field sets in
+  D2F-C-A and therefore still depend on nonexistent pool transitions.  PC
+  `29` has an additional ordering defect: its required blend count is born in
+  the abstract manifest at PC `2e`, after the PC `29` write.  Deriving it from
+  q17 plus restart/saturation may be possible, but no exact proof or RTL owns
+  that relation.  The two leaf writes additionally require retained
+  `sample_f[16:0]` plus audible through both commit edges.
+- **Why C2-C-D cannot be implemented honestly:** A18+B18+N17+O17 currently
+  exists only in Python `Pool`, `row()` and `LiveField` capacity/lifetime
+  assertions.  Those prove snapshots fit, not the enabled-edge transition
+  relation that produces the next snapshot.  Their source/consumer strings
+  are descriptive metadata, not executable slice assignments.  Both
+  independent read-only audits therefore find **0/18** fixed writes with a
+  non-legacy candidate semantic producer in existing RTL.  An adapter written
+  now would have to feed final legacy values back as inputs, recreate the
+  forbidden 202-record-bit plus 42-parameter-bit mirror, or invent unproved
+  transition equations.  C2-C-D is rejected docs-only; no model, image, RTL,
+  trace, integration or physical claim changes.
+- **Next permitted C2-C-D1 prerequisite:** build the isolated physical-pool
+  substrate before the fixed-write adapter.  It must own literal
+  A18/B18/N17/O17 and retained Q/T/C/I/D slices; consume only tagged
+  prior-address `state_q` and real service result/take strobes; define every
+  enabled-edge slice write, overwrite/death point and action/guard; freeze the
+  complete state and suppress transactions on hold; and emit the eighteen
+  action-qualified candidate writes.  First generate a typed literal-slice
+  transition manifest and prove transport/alias/lifetime coverage against the
+  C2-C-C stream without semantic arithmetic or final legacy values as inputs.
+  Only that manifest may drive one isolated RTL implementation.  Do not create
+  a second Python semantic executor, per-write result mux or generic handoff.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
