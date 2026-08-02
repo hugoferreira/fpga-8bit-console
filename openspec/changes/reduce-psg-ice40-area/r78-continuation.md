@@ -2849,6 +2849,48 @@ git history; do not repeat them without the recorded changed condition.
   image, production/generic PSG or Tang files.  Reject if the decoder needs a
   PC table, semantic write data, a working-record/result register, an extra
   state transaction, or cannot suppress and resume every output under hold.
+- **C2-C-B result and decision:** accepted as the isolated address/control
+  boundary.  `--binding-control-out` emits exactly 128 lower-case byte words
+  beside the unchanged 512-word candidate and metadata manifest.  Its
+  SHA-256 is
+  `a9233d6ddec85fdcf531d215bc40144c7254e742d290f9413c21743140333d1c`:
+  eighteen entries contain fixed-commit plus their six-bit destination, one
+  disjoint CAP_W51 entry contains the active-bank-read flag, and the other
+  109 entries are zero.  Generator assertions join every commit entry back
+  to one manifest occurrence, its candidate PC, `OP_WRITE` and destination;
+  CAP_W51 joins to its sole `OP_EXEC word26` occurrence.  Two generated
+  candidate/manifest/control sets are byte-identical.  Direct, symlink and
+  existing-hard-link output aliases are rejected before mutation, including
+  a control hard link to `rtl/psg_exec.hex`; the production image remains
+  SHA-256 `59b6f86e...`.  The audit also fixed the case where an existing
+  control artifact was checked against an as-yet absent JSON output.
+- **C2-C-B live-controller proof:** the first run rejected an invalid family-
+  based op rule at PC `0x1d`: action `0x22` is CAP_W0 but the candidate
+  deliberately encodes its final commit as `OP_WRITE`, not the usual CAP
+  `OP_EXEC`.  The retained adapter therefore treats the generated valid bit
+  as authoritative and separately requires `OP_WRITE`; only CAP_W51 requires
+  `OP_EXEC word26`.  It drives the real controller's existing read- and write-
+  override inputs rather than parallel bench muxes.  Both parameter banks execute all
+  eight slots with 782 instructions and state-q origins each, the unchanged
+  `172/158/8/29/8/0/1/406` histogram, all nineteen bindings in every slot and
+  one three-cycle hold per binding per bank (**38 holds**).  Hold, inactive,
+  owner-one, wrong-op and all 109 unbound action probes expose zero valid,
+  destination, override and read-word outputs.  No extra state transaction,
+  write data, result register, PC table or working-record mirror exists.
+- **C2-C-B regression gates and boundary:** the complete
+  19,728,640-formula/131,087-transaction model, independent literal candidate/
+  JSON/control audit, accepted C2-C-A 76,295-row source join, C1 primitive
+  traces and C2-A issue/take joins pass.  C2-B again proves the complete
+  candidate image, 44 changed PCs in all slots and 44 independent holds;
+  production execwave reports 4,368 state origins plus 224 wave and 96 ARAM
+  joins, and direct wave/ARAM benches pass.  Full HX8K-multipumped, PREVIEW
+  and new executor lint pass; `PATH=/opt/homebrew/bin:$PATH make test-psg`
+  passes fidelity, 93 analysis tests and the complete structural suite at
+  524/850 sample clocks and 4008/5103 tick clocks with zero late flips.
+  Strict OpenSpec, deterministic hashes, `git diff --check` and production
+  RTL/image immutability pass.  This earns no candidate value, service-result,
+  persistent/fold/dry, generic integration, synthesis or area claim; the
+  accepted whole-PSG baseline remains **7,504 routed LCs**.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second

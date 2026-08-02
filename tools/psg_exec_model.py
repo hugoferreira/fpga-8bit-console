@@ -6283,7 +6283,8 @@ def write_candidate_image(path: Path, accepted: list[int],
 
 def write_sample_binding_manifest(path: Path, accepted: list[int],
                                   candidate: list[int], actions: Actions,
-                                  roots: tuple[object, ...]) -> str:
+                                  roots: tuple[object, ...],
+                                  control_path: Path | None = None) -> str:
     """Emit source-binding metadata without carrying semantic sample values."""
     output = path.resolve()
     assert output != IMAGE.resolve(), \
@@ -6291,6 +6292,15 @@ def write_sample_binding_manifest(path: Path, accepted: list[int],
     if output.exists():
         assert not output.samefile(IMAGE), \
             "binding output must not hard-link rtl/psg_exec.hex"
+    control_output = control_path.resolve() if control_path else None
+    if control_output is not None:
+        assert control_output != IMAGE.resolve() and control_output != output, \
+            "binding control must be separate from image and JSON manifest"
+        if control_output.exists():
+            assert not control_output.samefile(IMAGE) \
+                and (not output.exists()
+                     or not control_output.samefile(output)), \
+                "binding control must not alias image or JSON manifest"
     assert len(accepted) == PROGRAM_BANKS * PROGRAM_BANK_WORDS
     assert len(candidate) == PROGRAM_BANK_WORDS
     action_by_code = actions.by_owner["sample"]
@@ -6594,9 +6604,41 @@ def write_sample_binding_manifest(path: Path, accepted: list[int],
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(encoded)
     assert output.read_text() == encoded
+    control_summary = ""
+    if control_output is not None:
+        action_row = {row["name"]: row for row in action_rows}
+        control = [0] * 128
+        for write in fixed_write_rows:
+            row = action_row[write["action"]]
+            assert row["destinations"] == [write["destination"]], \
+                (write, row)
+            assert len(row["occurrences"]) == 1, (write, row)
+            occurrence = row["occurrences"][0]
+            assert occurrence["pc"] == write["pc"] \
+                and occurrence["op"] == Op.WRITE.name, (write, occurrence)
+            code = row["code"]
+            assert control[code] == 0, (write, control[code])
+            control[code] = 0x80 | int(write["destination"])
+        cap_w51 = action_row["CAP_W51"]
+        assert len(cap_w51["occurrences"]) == 1
+        assert cap_w51["occurrences"][0]["op"] == Op.EXEC.name \
+            and cap_w51["occurrences"][0]["word"] == 26
+        cap_w51_code = cap_w51["code"]
+        assert control[cap_w51_code] == 0
+        control[cap_w51_code] = 0x40
+        assert sum(bool(word & 0x80) for word in control) == 18
+        assert sum(bool(word & 0x40) for word in control) == 1
+        assert all((word & 0x3f) < 64 for word in control)
+        control_text = "".join(f"{word:02x}\n" for word in control)
+        control_output.parent.mkdir(parents=True, exist_ok=True)
+        control_output.write_text(control_text)
+        assert control_output.read_text() == control_text
+        assert len(control_output.read_text().splitlines()) == 128
+        control_summary = \
+            f"; {control_output}: 18 commits + CAP_W51 address flag"
     assert IMAGE.read_bytes() == production_before
     return (f"{output}: 61 actions, 44 changed PCs, 30 roots / 27 groups; "
-            "metadata only")
+            f"metadata only{control_summary}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -6611,9 +6653,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--binding-out", type=Path,
         help="write metadata-only candidate/source binding JSON")
+    parser.add_argument(
+        "--binding-control-out", type=Path,
+        help="write the address-only action-indexed binding control map")
     args = parser.parse_args()
-    if args.write and (args.candidate_out or args.binding_out):
+    if args.write and (args.candidate_out or args.binding_out
+                       or args.binding_control_out):
         parser.error("--write is mutually exclusive with proof outputs")
+    if args.binding_control_out and not args.binding_out:
+        parser.error("--binding-control-out requires --binding-out")
+    proof_outputs = [
+        (name, path) for name, path in (
+            ("candidate", args.candidate_out),
+            ("binding", args.binding_out),
+            ("binding control", args.binding_control_out),
+        ) if path is not None
+    ]
+    for index, (left_name, left_path) in enumerate(proof_outputs):
+        for right_name, right_path in proof_outputs[index + 1:]:
+            if left_path.resolve() == right_path.resolve() \
+                    or (left_path.exists() and right_path.exists()
+                        and left_path.samefile(right_path)):
+                parser.error(
+                    f"{left_name} and {right_name} outputs must be separate")
     return args
 
 
@@ -6781,7 +6843,7 @@ def main() -> int:
     if args.binding_out:
         print("candidate bindings: " + write_sample_binding_manifest(
             args.binding_out, program, sample_b3b2a_candidate,
-            actions, atomic_roots))
+            actions, atomic_roots, args.binding_control_out))
     print("warning: owner-zero actions and remaining owner-one actions are "
           "manifests, not semantic RTL; whole-PSG schedule/render/area "
           "equivalence remain atomic integration gates")
