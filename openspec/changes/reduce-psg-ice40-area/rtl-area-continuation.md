@@ -24,29 +24,30 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H010.
+- Next hypothesis ID: H011.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
-  `build/experiments/h009/` synthesis, placement, click, recovery, and smoke
-  artifacts as applicable.
+  `build/experiments/h009/` and `build/experiments/h010/` synthesis,
+  placement, click, recovery, and smoke artifacts as applicable.
 - Latest decision: H007 accepted. Its 46-LUT4, 13-carry, and two-flop mapped
   reductions are deterministic; the 57-LC placed improvement is positive but
   remains just inside the known roughly 60-LC placement-sensitivity band and
   is not claimed as robust.
-- Latest rejected variant: H009's shift token is exact and two LUT4s smaller
-  in isolation, but whole-PSG mapping adds 36 LUT4s and five carries and
-  seed-1 placement regresses by 36 LCs. H005's `< 3` suffix remains rejected
-  on fast-clock timing; H004, H006, and H008 remain rejected as indexed below.
+- Latest rejected variant: H010's phase-qualified pending bit is exact and
+  saves four LUT4s/one flop in the isolated timing cone, but whole-PSG mapping
+  adds 29 LUT4s/five carries and seed-1 placement regresses by 36 LCs. H009's
+  shift token failed similarly; H005's `< 3` suffix remains rejected on
+  fast-clock timing; H004, H006, and H008 remain rejected as indexed below.
 - Best accepted result: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs;
   seed-1 7,392/7,680 LCs; 134.70 MHz fast and 30.95 MHz PSG.
 - Last updated: 2026-08-02.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H010 resume audit and record one new,
-  bounded, source-exact generic-RTL hypothesis before editing RTL.
-- Required verification for any accepted H010: focused algebraic or exhaustive
+- Next permitted experiment: perform the H011 resume audit and record one new,
+  bounded, source-exact generic-RTL hypothesis outside the delayed-tick family.
+- Required verification for any accepted H011: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -69,6 +70,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H007 | accepted | Keep the CLK_HZ-derived signed width; it deterministically removes 46 LUT4s, 13 carries, and two flops. |
 | H008 | rejected | Keep the two direct counter equalities: Yosys already shares their common high-nibble decode. |
 | H009 | rejected | Keep the countdown form: the exact shift token is smaller alone but adds 36 LUT4s, five carries, and 36 placed LCs in the full PSG. |
+| H010 | rejected | Keep the countdown form: the exact pending bit saves one local flop but adds 29 LUT4s, five carries, and 36 placed LCs in the full PSG. |
 
 ## Hypothesis H001
 
@@ -412,6 +414,43 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   the delayed-tick depth, tick/sample ordering, mapper state lowering, or
   surrounding timing control changes materially.
 
+## Hypothesis H010
+
+- **ID:** H010.
+- **Hypothesis:** after a tick resets `scnt` to zero, the delayed strobe must
+  occur exactly when the next two sample edges see phases zero then one. A
+  single pending bit set by the tick, held while `scnt[0]` is zero, and
+  consumed while `scnt[0]` is one should replace `tick_hold`'s second flop,
+  decrement, nonzero guard, and equality decode while preserving every edge.
+- **Scope:** exact state/phase proof and isolated registered synthesis of the
+  complete sample-counter/delayed-strobe cone first; `rtl/psg_timing.sv`, a
+  permanent timing proof, whole-PSG mapping, and the complete H007 acceptance
+  battery only if the isolated and whole mapped results improve. No sequencer,
+  walker, waveform, interface, EBR, R.84, or tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H009 through
+  `6fdabb5`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1 7,392
+  LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Change:** replace `tick_hold` with one pending bit. Set it when the tick
+  resets `scnt` to zero, retain it through phase zero, then emit the delayed
+  strobe and clear it when `scnt[0]` is one; add the complete reachable-state
+  equivalence proof to the timing forms gate for measurement.
+- **Result:** exhaustive state exploration from reset closes over all 185
+  reachable paired states and 370 held/sample-enabled edges with identical
+  `tick_en`, `tick_en_d`, `pre_tick`, and `scnt`. The isolated complete timing
+  cone falls from 27 to 23 LUT4s and from 13 to 12 flops with six carries
+  unchanged. Canonical whole-PSG mapping instead moves from 6,522 LUT4 / 1,553
+  carry / 1,476 FF / 14 EBR to 6,551 LUT4 / 1,558 carry / 1,475 FF / 14 EBR;
+  seed-1 placement moves 7,392 to 7,428 LCs. Routed clocks remain above
+  constraint at 119.36 MHz fast and 29.97 MHz PSG, but the mapped and placed
+  area gates fail. Production RTL and the conditional permanent proof are
+  reverted byte-for-byte; the complete fidelity battery is correctly skipped.
+- **Decision:** rejected after whole-PSG synthesis. The local flop reduction
+  does not offset the worse flattened covering, and this is the second neutral-
+  or-worse delayed-tick variant, closing that family under the ledger stop rule.
+- **Repeat only if:** a rejected phase-qualified pending bit may be retried
+  only after the tick/sample ordering, `scnt` representation, delayed-tick
+  depth, or mapper sequential lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -440,17 +479,19 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h007/clicks/{hardware,preview}.wav` | exact SFX-10 renders at 22,050 Hz | `click-v1` zero-click evidence. |
 | `build/experiments/h007/celeste-smoke.ppm` | five-frame headless Celeste run | Boot and active/nonconstant audio smoke. |
 | `build/experiments/h009/candidate.{synth,pnr}.log` | canonical synthesis with the rejected shift token | Exact isolated win, but whole-PSG mapped and placed regression. |
+| `build/experiments/h010/candidate.{synth,pnr}.log` | canonical synthesis with the rejected pending bit | Exact isolated flop/LUT win, but whole-PSG mapped and placed regression. |
 
 ## Handoff
 
-- Next allowed experiment: H010 only after its hypothesis row and baseline are
-  recorded; it must be a new generic-RTL mechanism outside R.84 ownership.
+- Next allowed experiment: H011 only after its hypothesis row and baseline are
+  recorded; it must use a new generic-RTL mechanism outside R.84 ownership.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
   H004 and H006 were rejected before production RTL; H005's timing-failing
   spelling remains rejected. H008 was rejected before production RTL. H009
-  was rejected after exact proof and whole-PSG synthesis; its RTL/proof are
-  reverted and no complete fidelity battery is required.
+  was rejected after exact proof and whole-PSG synthesis. H010 failed the same
+  full-design gate; both RTL/proof patches are reverted and the delayed-tick
+  representation family is closed unless its mapped context changes.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
