@@ -2064,6 +2064,20 @@ git history; do not repeat them without the recorded changed condition.
   still issue selected old phase from q16.  Reject before any eight-slot
   executor, suffix, image or RTL if kick spills, q16 is lost, the W3
   replacement exceeds 108 bits or any value appears before its typed q edge.
+- **B3-B2 resume correction:** q12 is also non-negotiable at W1.  Every PC1c
+  layout retains only phase2's MSB; q12 supplies the low sixteen bits used by
+  the W1 live-secondary phase and the later W6 update.  Therefore CAP_W0 must
+  continue to prime word12 and CAP_W1 must continue to prime word16.  The only
+  zero-cycle q-stream edit still open is CAP_W2 word18 to word19, yielding
+  q10/q12/q16/q19/q14 at W0--W4.  Delay old-noise continuation from W1 to W2:
+  W0 retains either the already wrapped selected seed when restart/`nz_tick`
+  chooses noise-lowpass, or the independent kick when q16 old phase is still
+  required; W1 consumes q12 and carries that mutually exclusive seed state;
+  W2 consumes q16, forms the exact signed18 pre-sum and feeds its signed14
+  clamp directly to the W2 old-primary issue; W3 consumes q19[4] and replaces
+  built-in B18 pre-sum with the x68/x80 sample.  Before code, the next manifest
+  must prove the W0--W2 seed/kick union and the simultaneous pre-sum/final-phase
+  lifetime fit; do not assume the former `old_bias17` slot can hold both.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
