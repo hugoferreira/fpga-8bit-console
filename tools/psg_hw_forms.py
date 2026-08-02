@@ -223,6 +223,21 @@ def sec_mix() -> None:
 
 def sec_slide() -> None:
     print("slide: _get_dx_for_note_fine's 57-bit product")
+    octave_ok = True
+    for pitch in range(64):
+        reference_oct, reference_chr = divmod(pitch, 12)
+        ge12 = bool(pitch & 0x30 or (pitch & 0x0c) == 0x0c)
+        ge24 = bool(pitch & 0x20 or (pitch & 0x18) == 0x18)
+        ge36 = bool(pitch & 0x20 and pitch & 0x1c)
+        ge48 = (pitch & 0x30) == 0x30
+        ge60 = (pitch & 0x3c) == 0x3c
+        octave = (5 if ge60 else 4 if ge48 else 3 if ge36 else
+                  2 if ge24 else 1 if ge12 else 0)
+        chromatic = pitch - 12 * octave
+        octave_ok &= (octave, chromatic) == (reference_oct, reference_chr)
+    report("slide.octave_prefix", octave_ok,
+           "five shared prefix predicates preserve octave and chromatic for all 64 pitches")
+
     K = 0x2F8DF18F
     dom = sorted({(0x10000 - f) * M.NOTE_DX[c] + f * M.NOTE_DX[c + 1]
                   for c in range(12) for f in range(0x10000)})

@@ -421,9 +421,13 @@ module psg_seq (input  bit   clk,
                             ? e_prevp - sl_q1 - 6'((|sl_fmag))
                             : e_prevp + sl_q1;
 
-  wire [2:0] sl_oct = (sl_int >= 6'd60) ? 3'd5 : (sl_int >= 6'd48) ? 3'd4
-                    : (sl_int >= 6'd36) ? 3'd3 : (sl_int >= 6'd24) ? 3'd2
-                    : (sl_int >= 6'd12) ? 3'd1 : 3'd0;
+  wire sl_ge12 = sl_int[5] || sl_int[4] || (sl_int[3] && sl_int[2]);
+  wire sl_ge24 = sl_int[5] || (sl_int[4] && sl_int[3]);
+  wire sl_ge36 = sl_int[5] && (sl_int[4] || sl_int[3] || sl_int[2]);
+  wire sl_ge48 = sl_int[5] && sl_int[4];
+  wire sl_ge60 = &sl_int[5:2];
+  wire [2:0] sl_oct = sl_ge60 ? 3'd5 : sl_ge48 ? 3'd4 : sl_ge36 ? 3'd3
+                    : sl_ge24 ? 3'd2 : sl_ge12 ? 3'd1 : 3'd0;
   wire [5:0] sl_chr = sl_int - {sl_oct, 3'b0} - {1'b0, sl_oct, 2'b0};
 
   logic [8:0]  sl_bhi;
