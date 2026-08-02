@@ -28,6 +28,9 @@ git history; do not repeat them without the recorded changed condition.
 - R.76--R.78: revisit the detune result lifetimes only if a request enters the
   idle interval, a consumer moves, or the physical service itself can
   disappear.  R.81B separately removed the service's duplicated operand hold.
+- R.83: do not retry a register-fed scalar waveform engine.  Both a direct
+  expression FSM and an explicit single-chain ALU cost more than `u_wave`;
+  serialization must reuse an existing substrate or address-selected state.
 
 ## Active hypothesis
 
@@ -197,9 +200,85 @@ git history; do not repeat them without the recorded changed condition.
   recurrence latency changes.  This is a schedule-slack recomputation, not an
   R.40--R.42 cross-family register alias or an R.79 held payload.
 
+### R.83 - Replace the complete waveform pipeline with a scalar service
+
+- **Hypothesis:** return the iCE40 PSG domain from `/6` to `/4`, retain the
+  invariant 272 sequencer credits, and spend the recovered clocks evaluating
+  live-primary, live-secondary, old-primary and old-secondary through one
+  scalar waveform service.  Retiring the complete four-context `psg_wave`
+  pipeline, rather than respelling its individual expressions, should cross
+  the first 7,000-LC milestone while preserving exact R.81B behavior.
+- **Scope:** mathematical/cycle proof in `tools/psg_wave_serial_model.py`,
+  isolated radix-4/radix-8 small-divider and full waveform-service spikes,
+  and synthesis only.  Integration into `psg_walk`, clock changes and the
+  expensive render/click battery are conditional on the isolated service
+  fitting the measured replacement budget.  Unrelated dirty main files stay
+  untouched.
+- **Baseline:** accepted R.81B is 6,520 LUT4s, 1,592 carries, 1,478 flops,
+  14 EBRs and 7,421 LCs.  The R.78 flattened ownership is `u_walk` 2,670
+  LUT4s / 576 flops, `u_seq` 1,980 / 533 and `u_wave` 737 / 97; the three own
+  5,387 of 6,536 LUT4s.  Removing only `u_wave` at `/4` placed a non-functional
+  6,550-LC ceiling, so even before R.81B's 16-cell improvement a replacement
+  may spend no more than about 450 LCs to reach sub-7k.
+- **Mathematical result:** exhaustive proof covers every one of the 524,288
+  unsigned 19-bit numerators for `/3`, `/7` and `/15`, plus all 2,097,152
+  combinations of 32 wave/alternate/primary-secondary contexts and 65,536
+  phases against exact R.78/R.81B waveform semantics.  A cycle-state
+  interpreter executes every micro-operation on a separate edge and proves
+  every commit again.  It exposed two hidden assumptions: inactive low-organ
+  phases must feed canonical zero, not a masked negative value, to the
+  unsigned divider; and the high tilted-saw working value reaches 368,634,
+  so the proposed 18-bit signed accumulator was impossible.  R.81B's
+  alternate-organ secondary remains +/-1535, while `wave_pair()` expects
+  +/-3071; the 59-render matrix does not exercise that combination, so the RTL
+  behavior remains the area oracle and the discrepancy stays separate.
+- **Divider result:** both small-divider shapes pass all 1,572,864
+  numerator/divisor transactions.  Isolated radix-4 is 67 LUT4s, 20 carries,
+  49 flops and 113 LCs at 116.52 MHz.  Radix-8 is 79 LUT4s, 47 carries,
+  50 flops and 162 LCs at 87.11 MHz.  The 49-LC premium buys three clocks per
+  divide and is materially different from the rejected wide radix-8
+  multiplier; both easily clear the 28.125 MHz PSG domain.
+- **Change:** variant A implemented the original fixed sixteen-edge service
+  directly from the context-specific expressions.  Variant B used radix-8 to
+  decompose the maximal path into genuine single-add micro-operations, with
+  one explicit 20-bit add/sub chain, one accumulator write site and one
+  selected scratch destination.  Both variants pass all 2,097,152 exact RTL
+  transactions with the result captured on edge sixteen.
+- **Physical result:** both shapes fail the pre-integration area gate.
+  Variant A maps 1,215 LUT4s, 295 carries and 132 flops, placing at **1,329
+  LCs** and routing at 40.91 MHz.  The explicit-chain variant improves to 847
+  LUT4s, 179 carries, 114 flops and **1,018 LCs** at 47.68 MHz, but it is still
+  larger than the complete 737-LUT `u_wave` it would replace and more than
+  twice the roughly 450-LC milestone budget.  Its divider is small; operand,
+  operation and destination selection dominate.  Integration therefore
+  cannot improve the accepted PSG, so it was not attempted.
+- **Decision:** rejected after the two-shape stop rule.  Experimental service
+  RTL is discarded; the exhaustive model is retained as the durable proof and
+  negative result.  The 7k rung must remove an execution substrate rather than
+  add another register-fed service.
+- **Repeat only if:** waveform state/operands move into address-selected
+  storage, an existing walker/sequencer execution substrate performs the
+  operations without another wide request/result mux, or measured `u_wave`
+  ownership changes materially.
+
+### Active task queue
+
+- [x] Prove exact waveform formulae, cycle state, widths and `/4` schedule.
+- [x] Exhaustively test and physically measure radix-4/radix-8 small dividers.
+- [x] Exhaustively test both sixteen-edge scalar-service shapes.
+- [x] Reject before integration when both exceed the measured LC budget.
+- [ ] R.84: target the mutually exclusive walker/sequencer execution
+      substrates as one bulk family.  Use at most the one EBR available under
+      the 15-block ceiling for a complete shared control store and keep
+      operands/results in address-selected state; do not retry task 4.1's
+      register-fed generic ALU or a partial decode migration.
+- [ ] Re-derive the 7k/6k/5k ladder from measured whole-substrate ablations
+      before writing R.84 RTL.
+
 ## Handoff rule
 
-Before opening the next row, record it with exact formula, transaction, schedule,
+Before opening R.84, record its whole-substrate area bound, state/address map,
+schedule and retirement set.  Then finish it with exact formula, transaction, schedule,
 render, mapped, placed, routed and timing evidence.
 Commit either the accepted RTL or the reverted-source rejection record as one
 scoped iteration.  Never stage unrelated files from the dirty main worktree.
