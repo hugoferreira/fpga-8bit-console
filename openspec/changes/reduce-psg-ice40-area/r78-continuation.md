@@ -1648,6 +1648,19 @@ git history; do not repeat them without the recorded changed condition.
   differs in 39 words and contains sixteen fixed write actions; W0/W1 are no
   longer literal STORE actions.  This corrected candidate, not the earlier
   W6-to-W15 placement, is the input to the no-mirror value executor.
+- **R.84H-D2B active hypothesis:** execute the corrected candidate through a
+  second physical-value machine whose action logic can observe only the real
+  registered `state_q`, retained H-C wave context, A18+B18+N17+O17 and
+  service-owned state/tokens.  The direct legacy evaluator may build expected
+  memory outside this machine, but the machine itself may contain no decoded
+  record/parameter object, word array, derived trace, direct state-memory read
+  or persistent spill.  Assert the 38+70-bit boundary structurally in the
+  model, execute both parameter banks, all slots and both ring elaborations,
+  and compare every word10..23/48/49 commit plus `dry16`/`dry_valid` to the
+  independent direct oracle.  Reject before image or RTL if any candidate
+  write lacks a value composed solely from its fixed `state_q` source and
+  bounded live state; accept only with unchanged 222/782/172/158 counts and
+  explicit external-hold freeze coverage.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
