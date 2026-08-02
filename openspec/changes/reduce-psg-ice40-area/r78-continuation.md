@@ -2514,6 +2514,50 @@ git history; do not repeat them without the recorded changed condition.
   kind/origin requests to be observed at the RTL boundary.  Stop before an
   executor or generic integration until that trace join has no missing PC,
   live bit, q/address origin or service transition.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1-C active hypothesis:** starting from clean
+  scratch `57a1e07`, change the evidence source by adding deterministic,
+  machine-readable edge traces to the existing RTL primitive benches.  Begin
+  with the instantiated radix-2 multiplier and chained DQ services, recording
+  pre/post slow state, all six fast edges, request/ack/valid identity, CE/freeze
+  and terminal take/relaunch order.  The trace consumer may check structure
+  and join keys only; it must not reimplement arithmetic or inject expected
+  results.  Commit this bounded primitive foundation before wave/ARAM/ring or
+  the 42-PC join.  Reject if the trace omits NBA-visible prestate, derives
+  values outside RTL, or cannot convict a held and deliberately invalid edge.
+- **R.84H-D2F-C-B3-B2-A2-A1-B1-B1-C1 result and decision:** accepted as a
+  bounded primitive-only trace foundation.  Optional `+PSG_EDGE_TRACE`
+  output from the existing radix-2 multiplier and DQ benches is filtered by
+  the `PSGTRACE ` prefix into self-describing `psg_edge_v1` JSON.  Every row
+  records pre-NBA state and the settled `#1` poststate; request inputs,
+  retained payload, real toggle synchronizers, recurrence, acknowledge,
+  padding, output and hold controls come directly from the DUT.  Bench-case
+  and edge/subedge fields are diagnostic coordinates only; transaction
+  identity must be derived from real toggle/count transitions and causal
+  order from time/domain/edge/phase.
+- **C1 trace evidence:** two independent runs are byte-identical.  The
+  multiplier emits 105 slow pre/post epochs and exactly six coherent fast
+  pre/post edges for every epoch, with no orphan, partial or split-case group;
+  fourteen observed slow accepts join fourteen fast loads and completions.
+  All 27 slow and 162 fast frozen pairs preserve the complete emitted state.
+  The DQ trace has 61 pre/post edges and seven accepts/completions; its
+  terminal live result 16254 is visible before the same-edge old-context
+  relaunch, the old result 5526 remains held, and fifteen `ce=0` attempts
+  preserve state, including twelve asserted starts while not ready and three
+  terminal-ready but held starts.  Both independent source audits accept this
+  bound after one half-epoch trace-window defect was found, fixed and
+  re-audited.  The ordinary 6,020-transaction multiplier bench, 524,288-case
+  DQ model and 57,344-transaction DQ bench remain unchanged and pass.
+- **C1 hard boundary and next permitted C2:** neither primitive contains the
+  candidate image, PC/IR, semantic kind/origin or a consumer take strobe, so
+  C1 does not prove any of the 42 candidate PCs, issue/take ownership,
+  wrong-kind/origin rejection, cross-row lifetime, wave/ARAM/ring, record,
+  fold or public behavior.  C2 must expose actual controller/adapter
+  active/hold/owner/slot/PC/IR/action, state-memory activity and real
+  issue/take strobes on the same slow-edge timeline, then join those events to
+  C1's observed toggles/counts and deterministic wave/ARAM/ring RTL traces.
+  A bench label or hand-authored PC map may not supply causality.  Stop again
+  before executor semantics, image change, generic integration or physical
+  claims until every one of the 42 PCs and D2F-C-A lifetimes is joined.
 - **Repeat only if:** the H-A service cadence, H-C wave/ARAM issue boundary,
   state-word layout, retained service latency, signed fold formula, public
   priority or measured fixed-base budget changes.  Do not retry with a second
