@@ -24,32 +24,35 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, and H007 accepted.
-- Next hypothesis ID: H012.
+- Next hypothesis ID: H013.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`, and
-  `build/experiments/h009/` and `build/experiments/h010/` synthesis,
-  placement, click, recovery, and smoke artifacts as applicable.
+  `build/experiments/h009/`, `build/experiments/h010/`, and
+  `build/experiments/h012/` synthesis, placement, click, recovery, and smoke
+  artifacts as applicable.
 - Latest decision: H007 accepted. Its 46-LUT4, 13-carry, and two-flop mapped
   reductions are deterministic; the 57-LC placed improvement is positive but
   remains just inside the known roughly 60-LC placement-sensitivity band and
   is not claimed as robust.
-- Latest rejected variant: H011 proves the reflected ramp is a bitwise
-  complement, but both spellings map identically in the registered-use cone.
-  H010's phase-qualified pending bit is exact and
-  saves four LUT4s/one flop in the isolated timing cone, but whole-PSG mapping
-  adds 29 LUT4s/five carries and seed-1 placement regresses by 36 LCs. H009's
-  shift token failed similarly; H005's `< 3` suffix remains rejected on
-  fast-clock timing; H004, H006, and H008 remain rejected as indexed below.
+- Latest rejected variant: H012 proves the true-busy OR is invariant-redundant
+  and locally saves one LUT4, but whole-PSG mapping adds 48 LUT4s/five carries
+  and seed-1 placement regresses by 50 LCs. H011 proves the reflected ramp is
+  a bitwise complement, but both spellings map identically in the registered-
+  use cone. H010's phase-qualified pending bit is exact and saves four LUT4s/
+  one flop in the isolated timing cone, but whole-PSG mapping adds 29 LUT4s/
+  five carries and seed-1 placement regresses by 36 LCs. H009's shift token
+  failed similarly; H005's `< 3` suffix remains rejected on fast-clock timing;
+  H004, H006, and H008 remain rejected as indexed below.
 - Best accepted result: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs;
   seed-1 7,392/7,680 LCs; 134.70 MHz fast and 30.95 MHz PSG.
 - Last updated: 2026-08-02.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: perform the H012 resume audit and record one new,
+- Next permitted experiment: perform the H013 resume audit and record one new,
   bounded, source-exact generic-RTL hypothesis before editing RTL.
-- Required verification for any accepted H012: focused algebraic or exhaustive
+- Required verification for any accepted H013: focused algebraic or exhaustive
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
@@ -74,6 +77,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H009 | rejected | Keep the countdown form: the exact shift token is smaller alone but adds 36 LUT4s, five carries, and 36 placed LCs in the full PSG. |
 | H010 | rejected | Keep the countdown form: the exact pending bit saves one local flop but adds 29 LUT4s, five carries, and 36 placed LCs in the full PSG. |
 | H011 | rejected | Keep the subtract spelling: Yosys already maps `16'hffff - wx` exactly as `~wx`, with identical registered-use resources. |
+| H012 | rejected | Keep the defensive true-busy OR: removing it is exact in-contract and locally smaller but adds 48 LUT4s, five carries, and 50 placed LCs globally. |
 
 ## Hypothesis H001
 
@@ -481,6 +485,39 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   the reflected-ramp width, tail arithmetic, mapper constant-subtract
   lowering, or surrounding consumer changes materially.
 
+## Hypothesis H012
+
+- **ID:** H012.
+- **Hypothesis:** `psg_mulmp` already asserts that true transaction busy is
+  never high when `seq_pad` is zero, while its transaction and relative-phase
+  benches prove padded busy matches the shipped single-clock service. Under
+  that closed-loop deadline, `m_busy || (seq_pad != 0)` equals `seq_pad != 0`;
+  removing the redundant OR should simplify the sequencer-busy output cone.
+- **Scope:** isolated output-cone synthesis first; `rtl/psg_mulmp.sv`, all
+  multiplier transaction/relative-phase proofs, whole-PSG mapping, and the
+  complete H007 acceptance battery only if mapping improves. No arithmetic,
+  schedule, state, interface, EBR, R.84, or tolerance change.
+- **Baseline:** accepted H007 commit `48f0ef5` plus docs-only H008--H011 through
+  `a7e2488`: 6,522 LUT4s, 1,553 carries, 1,476 flops, 14 EBRs; seed-1 7,392
+  LCs; 134.70 MHz fast and 30.95 MHz PSG.
+- **Change:** remove `m_busy` from `m_seq_busy`, leaving the nonzero `seq_pad`
+  predicate under the module's existing true-busy deadline assertion.
+- **Result:** the Boolean identity holds in all 30 logical states satisfying
+  the asserted `m_busy -> seq_pad!=0` invariant, and the isolated output cone
+  falls from two LUT4s to one. The real multi-clock suite passes 6,020 boundary
+  and randomized transactions for both radix variants; the padded-busy trace
+  matches the shipped reference at all ten 1-ns relative phases. Canonical
+  whole-PSG mapping nevertheless moves from 6,522 LUT4 / 1,553 carry / 1,476
+  FF / 14 EBR to 6,570 LUT4 / 1,558 carry / 1,476 FF / 14 EBR; seed-1
+  placement moves 7,392 to 7,442 LCs. Routed clocks pass at 145.99 MHz fast
+  and 31.21 MHz PSG, but mapped and placed area regress. Production RTL is
+  reverted byte-for-byte; the complete fidelity battery is correctly skipped.
+- **Decision:** rejected after whole-PSG synthesis. The exact local output
+  simplification worsens flattened covering and violates both area gates.
+- **Repeat only if:** a rejected busy-output simplification may be retried only
+  after the CDC latency, padding contract, clock ratio/phase, mapper output
+  factoring, or sequencer-busy consumer changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -510,10 +547,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h007/celeste-smoke.ppm` | five-frame headless Celeste run | Boot and active/nonconstant audio smoke. |
 | `build/experiments/h009/candidate.{synth,pnr}.log` | canonical synthesis with the rejected shift token | Exact isolated win, but whole-PSG mapped and placed regression. |
 | `build/experiments/h010/candidate.{synth,pnr}.log` | canonical synthesis with the rejected pending bit | Exact isolated flop/LUT win, but whole-PSG mapped and placed regression. |
+| `build/experiments/h012/candidate.{synth,pnr}.log` | canonical synthesis with the rejected sequencer-busy output | CDC proofs pass, but whole-PSG mapped and placed area regress. |
 
 ## Handoff
 
-- Next allowed experiment: H012 only after its hypothesis row and baseline are
+- Next allowed experiment: H013 only after its hypothesis row and baseline are
   recorded; it must use a new generic-RTL mechanism outside R.84 ownership.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
@@ -524,5 +562,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   full-design gate; both RTL/proof patches are reverted and the delayed-tick
   representation family is closed unless its mapped context changes. H011 was
   rejected before production because its exact spelling maps identically.
+  H012 CDC proofs pass, but its global map regresses and production RTL is
+  reverted.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
