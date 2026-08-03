@@ -27,7 +27,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H110.
+- Next hypothesis ID: H111.
+- H110 hypothesis row: `join_stage` cannot be reconstructed from live
+  `bank_ready`, `walk_tick`, and controller state. If `tick_en_d` publishes a
+  pending bank on the same `S_IDLE` edge that a trigger starts a join pass, the
+  next state is `join_stage=1`, `bank_ready=0`, `walk_tick=0`, `V_LD`.
+  Decision: rejected before production RTL or synthesis.
 - H109 hypothesis row: Yosys declines automatic recoding of the 60-state
   sequencer FSM and leaves its many equality consumers on a six-bit binary
   state. Force complete one-hot synthesis encoding and gate on the deterministic
@@ -148,16 +153,18 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h099/`, `build/experiments/h100/`,
   `build/experiments/h101/`, the accepted `build/experiments/h102/`, and the
   rejected `build/experiments/h106/`, `build/experiments/h107/`, and
-  `build/experiments/h108/` and `build/experiments/h109/`, plus
+  `build/experiments/h108/`, `build/experiments/h109/`, and the refuted
+  `build/experiments/h110/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: I003 accepted H102 source-contract v5 after
-  deterministic A/B generation and the complete structural/value/generic gate.
-  H109 remains rejected because its eleven-cell deterministic floor reduction
-  cannot complete canonical seed-1 routing. H102 remains the best accepted
-  generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H109's one-hot sequencer state lowers mapped floor
+- Latest completed decision: H110 rejected before production because a
+  simultaneous pending-bank publication and join-pass start refutes the
+  proposed live-state reconstruction. I003 remains the accepted H102
+  source-contract v5 integration, and H102 remains the best accepted generic
+  RTL/proof point at `ccfb2a0`.
+- Latest rejected variants: H110's join-mode reconstruction loses historical
+  state on a same-edge bank publication/pass start. H109's one-hot sequencer state lowers mapped floor
   and placed LCs slightly but cannot route. H108's `REVERB=0` restart specialization is
   globally much worse before equivalence work. H107's packed playback register is globally much
   worse despite simpler source and fewer unpackable FFs. H106's exact factored
@@ -381,7 +388,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H110 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H111 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -391,6 +398,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H107's unpacked/packed playback-state representation family,
   H108's disabled-reverb restart specialization family,
   H109's sequencer-FSM synthesis-encoding family,
+  H110's inactive-bank join-mode reconstruction family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -547,6 +555,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H107 | rejected | Keep the unpacked `playing[]` storage plus exported packed view: direct `play_bits` storage removes six unpackable FFs but adds 79 LUT4s, two carries, 73 floor cells, and 79 routed LCs globally. |
 | H108 | rejected | Keep the reverb-mode term in `blend_restart` even for `REVERB=0`: parameter-gating it adds 39 LUT4s, four carries, one unpackable FF, 40 floor cells, and 47 routed LCs globally. |
 | H109 | rejected | Keep the sequencer FSM in binary encoding: forced one-hot is -6 LUT4/-5 unpackable/-11 floor and places three LCs lower, but adds 57 FF/four carries and cannot complete canonical routing. |
+| H110 | rejected | Keep the explicit `join_stage` history bit: a same-edge `tick_en_d` publication plus join-pass start clears `bank_ready` while preserving `join_stage=1`. |
 
 ## Hypothesis H001
 
@@ -774,6 +783,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Tilt-quotient shared-prefix storage: H067.
 - Soft-add threshold-probe fusion: H078.
 - Reverb comb post-shift rounding: H079.
+- Inactive-bank join-mode reconstruction: H110.
 
 ## Hypothesis H006
 
@@ -5258,6 +5268,47 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   decoder fanout, state consumers, or Yosys FSM extraction/encoding changes
   materially.
 
+## Hypothesis H110
+
+- **ID:** H110.
+- **Hypothesis:** `join_stage` records that a visit started while a completed
+  inactive bank was waiting to publish. During such a visit `bank_ready` is
+  held, `walk_tick` is false, and the controller is neither `S_IDLE` nor the
+  post-visit `W_MUS`; every other reachable combination makes `join_stage`
+  false. Reconstructing that exact pass-mode predicate should retire one flop
+  and its next-state mux without changing publication, trigger-join, or music
+  timing.
+- **Scope:** first prove the reachable reduced controller invariant and
+  synthesize the complete registered join/publication consumer. Only if that
+  gate improves may `rtl/psg_seq.sv` remove `join_stage`, followed by canonical
+  whole-PSG synthesis and the full acceptance battery. Do not change the bank
+  handshake, visit/FSM transitions, trigger or music semantics, R.84 executor,
+  image, Tang paths, tolerances, or interfaces.
+- **Baseline:** accepted H102/I003 at `39b79cb` reproduces 6,360 LUT4s, 1,321
+  carries, 1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, and
+  7,087 routed LCs at 140.92/32.65 MHz. `u_seq` owns 1,859 LUT4s, 527 flops,
+  249 unpackable flops, one EBR, and a 2,108-cell deterministic floor.
+- **Changed condition versus H096/H103/H109 and R.84:** H096/H103 changed
+  launch-worklist pacing state, H109 changed synthesis encoding of the complete
+  sequencer FSM, and R.84 owns stored-state executor replacement. H110 changes
+  none of those: it targets the separate inactive-bank publication/join mode
+  and retains the existing binary `sst` encoding and controller transitions.
+- **Change:** modeled the exact assignment ordering for `bank_ready`,
+  `join_stage`, `walk_tick`, and the reduced controller classes before any
+  production edit.
+- **Result:** the reachable-state proof refutes the proposed invariant. From
+  `S_IDLE` with `join_stage=0`, `walk_tick=1`, and `bank_ready=1`, a
+  simultaneous `tick_en_d` plus pending-trigger visit start schedules
+  `bank_ready<=0`, `join_stage<=1`, `walk_tick<=0`, and `sst<=V_LD`. The
+  candidate predicate is therefore zero while the required historical join
+  mode is one. Isolated and whole-PSG synthesis are skipped because the exact
+  behavioral gate fails; production RTL is untouched.
+- **Decision:** rejected before production. Ignored counterexample and probe
+  sources remain under `build/experiments/h110/`.
+- **Repeat only if:** if rejected, retry only after the bank-ready publication
+  protocol, join-pass entry/exit states, tick-boundary handling, or mapper
+  sequential lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5561,10 +5612,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h107/candidate*` | forced whole-PSG synthesis of direct packed playback-state storage | Source-exact alias removal and -6 unpackable FF, but +79 LUT4/+2 carry/+73 floor/+79 routed LCs globally. |
 | `build/experiments/h108/candidate*` | forced whole-PSG synthesis of the `REVERB=0` restart specialization | Enabled-reverb source remains unchanged, but the HX8K candidate is +39 LUT4/+4 carry/+1 unpackable/+40 floor/+47 routed LCs. |
 | `build/experiments/h109/{candidate.json,candidate.synth.log,candidate.pnr.log}` | forced one-hot sequencer mapping and bounded canonical seed-1 route | -6 LUT4/-5 unpackable/-11 floor and -3 placed LCs, but +57 FF/+4 carries and one unresolved wire through 29,349 router2 iterations. |
+| `build/experiments/h110/{join_stage_proof.py,join_stage_probe.sv}` | reachable reduced-controller proof and unrun synthesis probe | Refuted by same-edge bank publication plus join-pass start before production RTL or synthesis. |
 
 ## Handoff
 
-- Next allowed experiment: H110 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H111 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
