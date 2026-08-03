@@ -27,7 +27,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H127.
+- Next hypothesis ID: H128.
+- H127 hypothesis row: phaser detune-1 currently computes both low-six-bit
+  threshold predicates (`>=43` and `>=22`) even though `dp13[6]` selects only
+  one. Select the threshold first, compute one predicate, and reconstruct the
+  exact two-bit `ceil(3*r/128)` quotient from that predicate, `dp13[6]`, and
+  low-remainder nonzero. Both spellings are exact. Explicit Boolean sharing
+  adds two isolated LUT4s; the direct comparator saves three isolated LUT4s
+  for six carries but adds 50 whole-PSG LUT4s and 49 floor cells. Decision: rejected
+  and reverted before routing or fidelity work.
 - H126 hypothesis row: `ctrl_displaced` remembers whether a `$22` fade-table
   lookup displaced a live walker control read, while `crom_replay` remembers
   only the lookup. Deriving the replay stall as `crom_replay && prun` observes
@@ -248,11 +256,19 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h112/`, `build/experiments/h113/`,
   `build/experiments/h114/`, `build/experiments/h115/`, and
   `build/experiments/h116/`, `build/experiments/h117/`,
-  `build/experiments/h118/`, and `build/experiments/h119/`, plus
+  `build/experiments/h118/`, `build/experiments/h119/`, and the rejected
+  `build/experiments/h127/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H126 rejected after exhaustive edge-order proof.
+- Latest completed decision: H127 rejected after exhaustive/SAT arithmetic
+  proof, two complete registered-consumer maps, full/PREVIEW lint, and a
+  canonical whole-PSG map. The explicit shared Boolean form adds two isolated
+  LUT4s. The direct selected comparator changes 49 LUT4/19 carry locally to
+  46/25, but changes the accepted whole PSG from 6,360 LUT4/1,321 carry/floor
+  6,868 to 6,410/1,321/floor 6,917 with flops and EBRs unchanged. Production
+  RTL is byte-for-byte restored; route and fidelity gates were correctly
+  skipped. H126 was rejected after exhaustive edge-order proof.
   Across full multi-pumped, compatibility single-clock, and PREVIEW schedules,
   3,750 transition classes agree, while ten accepted same-edge walk starts
   produce a false candidate stall and eight terminal closures lose the
@@ -271,7 +287,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   bits into inactive P_W2 but added 20/51 LUT4s and 30/53 routed LCs.
   I003 remains the accepted H102 source-contract v5 integration, and H102
   remains the best accepted generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H126's replay/live-valid reconstruction loses the
+- Latest rejected variants: H127's two exact selected-threshold spellings are
+  locally neutral/trade LUTs for carries and globally much worse. H126's
+  replay/live-valid reconstruction loses the
   prior-edge collision fact on walker start/finish transitions. H125's
   high-fanout amplitude-bit packing and H124's low-fanout form both save a
   local flop/cone but regress the global map. H123's bank-history
@@ -701,6 +719,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H113 | rejected | Keep the zero-idle OR payload merge: owner selection is transaction-exact and shrinks `req_a`/`req_b`, but adds 66 LUT4s, four carries, 66 floor cells, and 73 routed LCs globally. |
 | H114 | rejected | Keep the implicit reciprocal-output width: an explicit exact signed-16-bit subtract adds 27 LUT4s, four carries, 25 floor cells, and 28 routed LCs globally. |
 | H115 | rejected | Keep the comparator/mux filter joins: the exact bounded 0..2 max formula maps identically at six LUT4s/six flops in the complete three-field registered consumer. |
+| H127 | rejected | Keep both phaser remainder thresholds: shared Boolean selection is +2 isolated LUT4s; a direct selected comparator is -3 LUT4/+6 carry locally but +50 LUT4/+49 floor cells globally. |
 
 ## Hypothesis H001
 
@@ -942,6 +961,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Sequencer-credit state representation: H121.
 - PC3 copy-zero live-state reconstruction: H122.
 - Shared constants/control-ROM collision-token reconstruction: H126.
+- Phaser remainder selected-threshold reconstruction: H127.
 
 ## Hypothesis H006
 
@@ -6247,6 +6267,56 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   adjacent `$22/$20` consumption, or mapper sequential lowering changes
   materially.
 
+## Hypothesis H127
+
+- **ID:** H127.
+- **Hypothesis:** phaser detune-1 computes
+  `ceil(3*dp13[6:0]/128)`. Its current quotient decoder builds both
+  `dp13[5:0] >= 43` and `dp13[5:0] >= 22`, then selects their contribution
+  with `dp13[6]`. Select the active threshold first, compute one shared
+  predicate, and reconstruct both quotient bits from that predicate,
+  `dp13[6]`, and low-remainder nonzero. This should retire duplicated
+  threshold logic without changing the accepted R.57 arithmetic or any
+  register, service, or schedule.
+- **Scope:** exhaustively compare the current and candidate quotient for all
+  128 remainders and all downstream `dq_ceil6_256` sums; prove the
+  combinational relation with SAT; synthesize a complete registered decoder
+  in isolation before touching production RTL. Only if isolation improves,
+  change `rtl/psg_wave.sv`, run full/PREVIEW lint, and force canonical
+  whole-PSG mapping from H113's source-identical baseline. Route and run the
+  H102 fidelity battery only after a deterministic mapped/floor win. Preserve
+  all R.84/B2 executor files, images, Tang paths, tolerances, and EBR topology.
+- **Baseline:** accepted H102/I003 RTL at commit `2d0d6a0`; H113's
+  source-identical `build/experiments/h113/baseline.json` maps 6,360 LUT4s,
+  1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor 6,868, and
+  routes in 7,087 LCs at 140.92/32.65 MHz. The complete `u_wave` scope maps
+  732 LUT4s, 250 carries, 96 flops, 46 unpackable flops, and one EBR.
+- **Changed condition versus H042, H051, R.57 and H093:** H042 tested the
+  triangle detune-1 two-bit residue comparison; H051 recoded the separate
+  visit-local DQ service count; R.57 introduced the accepted phaser
+  quotient/remainder identity; H093 regrouped the service coefficient table.
+  H127 changes none of those relations, coefficients, state encodings, or
+  services. It targets only duplicated threshold selection inside R.57's
+  already-accepted combinational phaser remainder decoder.
+- **Change:** proof-first selected threshold and one shared predicate; no
+  production RTL changes until exhaustive/SAT equivalence and isolated
+  registered-consumer synthesis both pass.
+- **Result:** exhaustive Python covers all 8,192 `dp13` values and all 128
+  remainders; both Yosys SAT miters pass. The complete registered reference is
+  49 LUT4s, 19 carries and 25 flops. Explicit Boolean sharing maps to 51/19/25.
+  Direct threshold selection maps to 46/25/25 and therefore qualifies for the
+  global gate, but canonical whole-PSG mapping changes 6,360 LUT4s, 1,321
+  carries, 1,458 flops, 508 unpackable flops, 14 EBRs and floor 6,868 to 6,410,
+  1,321, 1,458, 507, 14 and floor 6,917. Full and PREVIEW lint pass. Production
+  RTL is restored byte-for-byte; routing and fidelity gates are skipped after
+  the hard deterministic mapped/floor failure.
+- **Decision:** rejected and reverted. Keep the two existing threshold
+  predicates; the mapper covers them materially better in whole-design
+  context than either shared form.
+- **Repeat only if:** if rejected, retry only after the phaser remainder
+  formula/domain, R.57 quotient split, downstream DQ correction selection, or
+  mapper threshold/comparator lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6567,10 +6637,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h124/{packed_clear_proof.py,packed_clear_probe.sv,formal.log,isolated-*,candidate*}` | complete legal-domain proof, SAT, registered-consumer synthesis, full/PREVIEW lint, and two forced whole-PSG maps | Exact and locally -29 LUT4/-1 carry/-1 FF, but both global spellings are +39 LUT4/+2 carry/+39 floor; production reverted. |
 | `build/experiments/h125/{packed_noiz_proof.py,packed_noiz_probe.sv,formal.log,isolated-*,candidate*}` | split-load proof, SAT, registered-consumer synthesis, full/PREVIEW lint, and forced whole-PSG mapping | Exact and locally -31 LUT4/-1 carry/-1 FF, but globally +45 LUT4/+2 carry/+45 floor; production reverted. |
 | `build/experiments/h126/ctrl_displaced_counterexample.py` | exhaustive three-schedule edge-order and adjacent `$22/$20` model | Refutes `crom_replay && prun` before RTL: a same-edge walk start invents a replay stall and shifts control prefetch by one phase. |
+| `build/experiments/h127/{phaser_threshold_proof.py,phaser_threshold_probe.sv,formal*,isolated-*}` | exhaustive/SAT proof and two complete registered phaser-decoder maps | Both candidates are exact; Boolean sharing is +2 LUT4, direct comparison is -3 LUT4/+6 carry locally. |
+| `build/experiments/h127/candidate-v2.{json,synth.log}` | canonical H102 whole-PSG map of the direct selected comparator | Candidate is +50 LUT4/-1 unpackable/+49 floor cells with carry/FF/EBR counts unchanged; production reverted and no route ran. |
 
 ## Handoff
 
-- Next allowed experiment: H127 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H128 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
@@ -6821,6 +6893,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   Celeste-smoke, and forced-reproducibility gate as commit `ccfb2a0`. It changes
   both `rtl/psg_common.svh` and `rtl/psg_seq.sv`; I003 regenerated and validated
   source-contract v5 plus the unchanged C2-C-C live-value lineage. No R.84 B2
-  claim is made.
+  claim is made. H127's selected phaser-threshold forms are exact but one is
+  locally larger and the locally smaller comparator adds 50 whole-PSG LUT4s
+  and 49 floor cells; production is restored and no downstream gate remains.
 - Files to avoid staging after I003: executor/controller proof files beyond the
   accepted source-boundary tools and ledger, plus unrelated changes.
