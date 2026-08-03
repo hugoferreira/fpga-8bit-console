@@ -27,7 +27,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H124.
+- Next hypothesis ID: H125.
+- H124 hypothesis row: the walker stores the full-mode clear toggle in one
+  dedicated flop while all reachable amplitudes fit eleven bits and the
+  existing twelve-bit `s_eff_a` storage still maps bit 11. Pack the clear
+  toggle into that dead storage bit. The exact registered cone saves 29 LUT4s,
+  one carry and one FF, but both production spellings add 39 whole-PSG LUT4s,
+  two carries and 39 floor cells. Decision: rejected and reverted.
 - H123 hypothesis row: `spar_last` and `nz_tick_r` retain a two-sample bank
   history even though the pulse is consumed only during the following sample
   walk. Holding `spar_last` through the walk and deriving the pulse from the
@@ -6055,6 +6061,60 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   sites, same-edge sample/start ordering, PREVIEW drop behavior, restart
   consumption, or mapper sequential lowering changes materially.
 
+## Hypothesis H124
+
+- **ID:** H124.
+- **Hypothesis:** every reachable published amplitude is in 0..1,792, so
+  `psg_walk.s_eff_a[11]` is always zero, yet H113's source-identical netlist
+  maps all twelve walker amplitude flops plus the dedicated full-mode
+  `s_clr_tog` flop. Load one twelve-bit packed register as
+  `{state_q[13],state_q[10:0]}`, expose the numeric amplitude as
+  `{1'b0,packed[10:0]}`, and use packed bit 11 as the unchanged clear token.
+  This should retire one physical register without narrowing or rewriting any
+  amplitude consumer.
+- **Scope:** prove the complete direct-publication and copied-bank producer
+  domain, every 2,048-amplitude/two-toggle load tuple, zero/nonzero and slice
+  consumers, clear comparison, PREVIEW's independent clear-token ownership,
+  and registered load/hold behavior. Synthesize a complete isolated
+  registered consumer before changing production. If deterministic area
+  improves, change only `rtl/psg_walk.sv`, add a permanent exactness check to
+  `tools/psg_hw_forms.py`, run full/PREVIEW lint and canonical forced
+  whole-PSG synthesis/census. Route and run the complete H102 fidelity battery
+  only after mapped/floor area improves. Retain publication words, parameter
+  bank addresses, amplitude values, clear timing, noise/filter updates,
+  schedule, interfaces, EBRs, R.84 files and tolerances.
+- **Baseline:** accepted H102/I003 RTL at commit `e6df2da` maps 6,360 LUT4s,
+  1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor 6,868, and
+  routes in 7,087 LCs at 140.92/32.65 MHz. H113's source-identical JSON maps
+  twelve `s_eff_a` DFFEs and one separate unpackable `s_clr_tog` DFFE.
+- **Changed condition versus H102, H116, H118 and reset/lifetime DNRs:** H102
+  packed a wavetable-only instrument flag into a sequencer working field;
+  H116 moved eight effective-filter values through the inactive bank; H118
+  narrowed the complete sequencer/walker volume cone and regressed globally.
+  H124 neither changes the bank format nor narrows a numeric register: it
+  packs one already-loaded walker control bit into one otherwise-zero bit of
+  the same-edge walker payload and preserves the old twelve-bit amplitude
+  interface as an explicit zero-extended wire.
+- **Change:** variant one renames the physical payload, then exposes the old
+  twelve-bit amplitude name as a zero-extended wire. Variant two preserves the
+  `s_eff_a` register name and masks only the high bit at its zero tests,
+  gain operand, and PREVIEW product. Both pack `state_q[13]` into stored bit 11
+  and remove the dedicated clear-toggle register.
+- **Result:** 32,768 exhaustive load/consumer checks pass over all 4,096
+  legal amplitude/toggle tuples, and four-cycle SAT proves arbitrary load/hold
+  sequences. The complete mapper-visible isolated cone improves from 175
+  LUT4s / 24 carries / 13 DFFEs to 146 / 23 / 12. Full multi-pump and PREVIEW
+  lint pass for both production spellings. Both whole-PSG variants map
+  identically at 6,399 LUT4s, 1,323 carries, 1,457 flops, 508 unpackable flops,
+  14 EBRs and floor 6,907: +39 LUT4s, +2 carries, -1 FF and +39 floor cells
+  versus H102. Routing and fidelity gates are skipped because the binding
+  deterministic area gate fails; production RTL is restored byte-for-byte.
+- **Decision:** rejected after the two permitted spellings. The local state
+  packing win does not survive flattened global covering.
+- **Repeat only if:** if rejected, retry only after the amplitude domain,
+  P_W3 layout, clear-token ownership, walker consumer set, or mapper
+  register/enable lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6371,10 +6431,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h120/{fade_reset_proof.py,fade_reset_probe.sv,formal.log,isolated-*,sources-probe.json}` | inductive validity proof, reset-bounded SAT miter, complete registered-consumer synthesis, and fresh v5 source audit | Exact, but reset removal adds one isolated LUT4 with 41 FFs, 13 unpackable flops, and all carries unchanged. |
 | `build/experiments/h121/{seq_credit_proof.py,seq_credit_probe.sv,formal.log,isolated-*,candidate*}` | all-state transition proof, reset-bounded SAT miter, complete limiter synthesis, full/PREVIEW lint, and canonical whole-PSG mapping | Exact and -2 floor cells locally, but +13 LUT4/+5 carry/+9 floor cells globally; production reverted. |
 | `build/experiments/h122/cpz_counterexample.py` | reachable K_ADV-to-PC3 control interleaving | Refutes live-state reconstruction when a CPU stop lands during the copy chain; no RTL changed. |
+| `build/experiments/h123/bank_history_counterexample.py` | exhaustive same-edge publication and dropped-PREVIEW history model | Refutes a live bank delta before RTL: same-edge flips move restart early and dropped starts leave stale history. |
+| `build/experiments/h124/{packed_clear_proof.py,packed_clear_probe.sv,formal.log,isolated-*,candidate*}` | complete legal-domain proof, SAT, registered-consumer synthesis, full/PREVIEW lint, and two forced whole-PSG maps | Exact and locally -29 LUT4/-1 carry/-1 FF, but both global spellings are +39 LUT4/+2 carry/+39 floor; production reverted. |
 
 ## Handoff
 
-- Next allowed experiment: H123 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H125 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
