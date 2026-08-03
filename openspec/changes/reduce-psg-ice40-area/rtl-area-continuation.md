@@ -27,7 +27,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H116.
+- Next hypothesis ID: H117.
+- H116 hypothesis row: retire the eight `w_ch_{damp,rev,det,buzz,noiz}`
+  effective-filter flops into the existing inactive parameter-bank word. Copy
+  active P_W2 to inactive at V_LD outside join passes, overwrite its filter
+  field at ordinary K_LD or I_TR1, pre-read it during K_FX,
+  and update its late effect-1 bit at P_W2. This adds no state or sequencer
+  cycle and materially changes H099's retained-flop ownership. The two exact
+  variants retire eight FFs but add 20/51 LUT4s, 21/52 floor cells, and 30/53
+  routed LCs. Decision: rejected and reverted.
 - H115 hypothesis row: the three instrument/base filter joins take the numeric
   maximum of two-bit values whose reachable domain is only 0, 1, or 2. An
   explicit bounded max may replace comparator/mux logic with one high-bit OR
@@ -181,16 +189,18 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h108/`, `build/experiments/h109/`, and the rejected
   `build/experiments/h110/`, `build/experiments/h111/`,
   `build/experiments/h112/`, `build/experiments/h113/`,
-  `build/experiments/h114/`, and `build/experiments/h115/`, plus
+  `build/experiments/h114/`, `build/experiments/h115/`, and
+  `build/experiments/h116/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H115 rejected before production because its exact
-  bounded 0..2 filter-max formula maps identically to the three existing
-  comparator/mux joins at six LUT4s and six flops.
+- Latest completed decision: H116 rejected after two exact whole-PSG variants.
+  Moving the eight effective-filter bits into inactive P_W2 retires eight FFs,
+  but its extra state-port ownership adds 20/51 LUT4s and 30/53 routed LCs.
   I003 remains the accepted H102 source-contract v5 integration, and H102
   remains the best accepted generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H115's bounded filter max is already recovered by
+- Latest rejected variants: H116's EBR-owned effective-filter lifetime is
+  globally worse despite eight fewer FFs. H115's bounded filter max is already recovered by
   Yosys. H114's exact narrow reciprocal subtract defeats
   Yosys's better implicit width reduction. H113's owner-selected multiplier request payload
   shrinks `req_a`/`req_b` but globally expands downstream cones. H112's
@@ -832,6 +842,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Top-level walker/sequencer multiplier-payload merge: H113.
 - Reciprocal-output subtract width: H114.
 - Bounded instrument/base filter-max spelling: H115.
+- Effective-filter lifetime in inactive P_W2: H116.
 
 ## Hypothesis H006
 
@@ -5562,6 +5573,61 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   base-field writers, instrument join semantics, registered consumer context,
   or mapper comparator lowering changes materially.
 
+## Hypothesis H116
+
+- **ID:** H116.
+- **Hypothesis:** the eight `w_ch_{damp,rev,det,buzz,noiz}` flops hold only the
+  effective filter field eventually written to inactive-bank P_W2. The field
+  can instead live in that already-existing EBR word: copy active P_W2 to the
+  inactive bank while V_LD consumes it outside a join pass; overwrite the
+  filter field with base filters at T_SP or ordinary K_LD and with the exact
+  base/instrument join at I_TR1; pre-read inactive P_W2 during terminal K_FX;
+  then preserve its filter field while P_W2 installs the now-known effect-1
+  bit. Reissue that address while P_W2 is held. This removes eight flops
+  without a new state, register, schedule cycle, or memory.
+- **Scope:** prove all filter/effect path classes, join/non-join ownership, and
+  synchronous read/replay timing; then change only filter lifetime and the
+  existing state-memory read/write schedules in `rtl/psg_seq.sv`. Run full and
+  PREVIEW lint plus canonical forced whole-PSG mapping first. Route and run the
+  complete H102 fidelity battery only after a deterministic mapped/floor win.
+  Do not change filter decoding, trit maximum semantics, effect semantics,
+  publication layout, bank-flip ordering, state-memory ports, sample/tick
+  deadline, interfaces, EBR count, R.84 executor/proofs, images, Tang paths,
+  or tolerances.
+- **Baseline:** accepted H102/I003 RTL at docs checkpoint `1fdb2ae` maps 6,360
+  LUT4s, 1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor
+  6,868, and routes in 7,087 LCs at 140.92/32.65 MHz. Fresh source-contract v5
+  validation convicts all thirteen mutations; SHA-256 remains
+  `d54dde5d...`, with all twelve live source hashes matching.
+- **Changed condition versus H099 and H115:** H099 retained all eight effective
+  filter flops and changed only their two base-copy write arms/publication
+  source; both whole-PSG variants regressed. H115 retained the same storage
+  and publication ownership while respelling only the three maxima. H116
+  removes the entire FF lifetime, uses the existing inactive EBR word as the
+  owner, preserves the relational maxima, and adds neither equivalent
+  temporary storage nor a publication mux.
+- **Change:** both variants copy active P_W2 during non-join V_LD, replace its
+  filter field at ordinary K_LD or I_TR1, read inactive P_W2 in K_FX/P_W2,
+  and preserve `state_q[13:6]` while updating the late effect bit. Variant one
+  reads only at terminal K_FX and also performs a redundant T_SP base write;
+  variant two removes that write and reads throughout K_FX to remove the
+  terminal-state decode.
+- **Result:** the exhaustive proof passes 279,936 semantic cases across all
+  108 legal filter tuples plus 125 synchronous-read/replay timelines. Full and
+  PREVIEW lint pass for both variants. Variant one maps 6,380 LUT4 / 1,325
+  carry / 1,450 FF / 509 unpackable / 14 EBR / floor 6,889 and routes in 7,117
+  LCs at 149.34/32.50 MHz: -8 FF, but +20 LUT4, +4 carries, +21 floor cells,
+  and +30 routed LCs. Variant two maps 6,411 / 1,321 / 1,450 / 509 / 14 /
+  floor 6,920 and routes in 7,140 LCs at 140.94/32.62 MHz: -8 FF, but +51
+  LUT4, +52 floor cells, and +53 routed LCs. Both clocks pass; the fidelity
+  battery is skipped because every binding physical area gate fails.
+- **Decision:** rejected after the two permitted variants. Production RTL is
+  restored byte-for-byte; ignored proof and physical evidence remains under
+  `build/experiments/h116/`.
+- **Repeat only if:** if rejected, retry only after effective-filter lifetime,
+  inactive-bank ownership, join-pass authority, P_W2 layout/timing, state-port
+  replay, or mapper EBR/FF lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5871,10 +5937,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h113/{merge_capture_proof.sv,capture-proof.log,baseline.*,candidate.*}` | all-domain SAT proof, source-contract audit, full/PREVIEW lint, and canonical forced whole-PSG synthesis/route | Transaction-exact, but the candidate is +66 LUT4/+4 carry/+66 floor/+73 routed LCs and is rejected. |
 | `build/experiments/h114/{div_out_proof.py,div_out_formal.sv,formal.log,baseline.*,candidate.*}` | 65,536-case exhaustive proof, all-domain SAT proof, full/PREVIEW lint, and canonical forced whole-PSG synthesis/route | Exact signed-16-bit range, but +27 LUT4/+4 carry/+25 floor/+28 routed LCs globally. |
 | `build/experiments/h115/{filter_max_proof.py,filter_max_probe.sv,isolated-*}` | complete decoder-domain proof, exhaustive bounded-max proof, and isolated three-field registered-consumer synthesis | Exact over levels 0..2; both forms map identically at six LUT4s/six flops. |
+| `build/experiments/h116/{filter_bank_proof.py,candidate*,candidate-v2*}` | exhaustive bank-lifetime/replay proof, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact and -8 FF, but variants add 20/51 LUT4s, 21/52 floor cells, and 30/53 routed LCs. |
 
 ## Handoff
 
-- Next allowed experiment: H116 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H117 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
