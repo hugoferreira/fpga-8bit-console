@@ -26,7 +26,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted on merged main.
-- Next hypothesis ID: H101.
+- Next hypothesis ID: H102.
+- H101 hypothesis row: store the four pending trigger row/length tuples in one
+  prefetched block RAM, with resettable per-field valid bits preserving zeroed
+  state and same-edge CPU-write precedence. A plain EBR has a one-cycle stale
+  read counterexample; both exact forwarding variants exceed the 97-cell
+  isolated reference floor. Decision: rejected before production RTL.
 - H100 hypothesis row: restrict `released` storage to the four foreground
   slots. Music-slot bits have no set path and are therefore invariant zero;
   their loop condition can bypass the foreground array. The proof passes
@@ -95,13 +100,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H100 rejected before production because the
+- Latest completed decision: H101 rejected before production because exact
+  write-through state makes both EBR variants larger than the FF reference.
+  H100 was rejected because the
   explicit four-bit source maps identically to Yosys's optimized eight-entry
   array. H096
   remains the accepted generic RTL/proof commit `a647185`; consuming the
   launch worklist removes 31 global LUT4s, one FF, and 28 deterministic floor
   cells from merged main.
-- Latest rejected variants: H100's unreachable music release bits are already
+- Latest rejected variants: H101's pending-trigger EBR is inexact without
+  forwarding and locally worse with it. H100's unreachable music release bits are already
   removed by Yosys. H099's exact filter-publication ownership change
   is globally worse despite its 17-LUT4 isolated saving. H098's exact multiplier iteration token is globally
   worse despite its isolated four-LUT4/two-carry saving. H097's exact `ML_STOP` provenance reuse is globally
@@ -251,12 +259,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H101 on accepted H096 `a647185`, only after a fresh source
+- Next experiment: H102 on accepted H096 `a647185`, only after a fresh source
   and DNR audit. It must not repeat H096's launch-worklist/pacing-state family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
   H100's foreground/music release-state partition family,
+  H101's pending-trigger row/length memory family,
   H095's now-composed foreground trigger-length
   prefix family, H094's now-closed packed transition-inequality
   family, H093's DQ coefficient-decoder spelling family, H092's EA2/EA4 result-
@@ -398,6 +407,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H098 | rejected | Keep the binary multiplier countdown: an exact LFSR token saves four LUT4s/two carries alone, but adds 20 LUT4s, 19 floor cells, and 16 routed LCs globally. |
 | H099 | rejected | Keep the explicit filter base-copy writes: publication ownership saves 17 LUT4s alone, but both whole-PSG variants regress deterministic floor and placement. |
 | H100 | rejected | Keep the eight-entry source array: music release bits are invariant zero, but Yosys already prunes them and the explicit four-entry form maps identically at 17 LUT4s/four FF. |
+| H101 | rejected | Keep pending trigger row/length in FFs: a plain EBR is one cycle stale after a CPU write, while exact one-/two-EBR forwarding forms raise the isolated floor from 97 to 107/104 cells. |
 
 ## Hypothesis H001
 
@@ -4724,6 +4734,52 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   release addressing, trigger ordering, loop/release semantics, or mapper
   dynamic-array lowering changes materially.
 
+## Hypothesis H101
+
+- **ID:** H101.
+- **Hypothesis:** the four foreground `trg_row` and `trg_len` arrays consume 44
+  unpackable FFs even though the engine holds `c[1:0]` stable throughout the
+  eight-cycle `V_LD` prelude before `T_FL`. A four-entry block RAM can prefetch
+  both pending fields without a new state; eight resettable valid bits retain
+  the current reset/consume-to-zero contract. One EBR plus eight FFs should
+  reduce the deterministic LC floor materially.
+- **Scope:** isolated synthesis of the complete CPU-write, synchronous-read,
+  valid-bit, consume-clear, and row/length output consumer; exact proof of
+  reset, read-address settling, independent field writes, consume, and
+  same-edge CPU-write precedence; then `rtl/psg_seq.sv`, permanent
+  `tools/psg_hw_forms.py` schedule/transition checks, canonical whole-PSG
+  synthesis, and the complete H096 battery only after deterministic isolated
+  and global wins. At most two memory spellings. No trigger value/clamp,
+  command ordering, channel mapping, `T_FL` cadence, state-memory layout,
+  diagnostic ARAM, R.84 executor, or tolerance change.
+- **Baseline:** accepted H096 commit `a647185` atop merged main: 6,364 LUT4s,
+  1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
+  seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks. `trg_row` and
+  `trg_len` account for 20 and 24 unpackable FFs respectively.
+- **Changed condition versus state-memory DNR families:** H019 changed
+  ownership of the existing 16-bit per-slot runtime-state memory and regressed
+  its global muxing. H101 leaves that memory and every runtime record untouched;
+  it moves two write-only CPU pending fields whose read address is stable long
+  before their sole consume state.
+- **Change:** pack row and length into one four-entry synchronous RAM;
+  use independent per-field write masks if they infer one EBR, otherwise test
+  two narrow EBRs as the sole fallback. Clear only valid bits at consumption.
+- **Result:** the source FF consumer maps at 53 LUT4s / zero carries / 44 FFs /
+  44 unpackable / zero EBRs, for a 97-cell floor. A plain packed EBR maps at
+  44 LUT4s / two carries / 36 FFs / 26 unpackable / one EBR, for a 70-cell
+  floor, but its registered read returns the old field for one cycle after a
+  same-address CPU write. A concrete previous-cycle-write/`T_FL` trace gives
+  reference row 2 and RAM row 1. The required shared `{field,slot,data}`
+  write-through state maps at 78 LUT4s / two carries / 46 FFs / 29 unpackable /
+  one EBR, floor 107. The two-EBR fallback maps at 75 LUT4s / two carries /
+  46 FFs / 29 unpackable / two EBRs, floor 104. Both exact forms are locally
+  larger than the FF reference.
+- **Decision:** rejected before production RTL; no permanent form or
+  production file changed.
+- **Repeat only if:** if rejected, retry only after trigger register semantics,
+  CPU/engine ordering, `V_LD` prefetch cadence, iCE40 RAM write-mask inference,
+  EBR budget, or mapper memory lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5016,10 +5072,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h098/{count_proof.py,count-proof.log,count_probe.sv,count_*_r1.*,mulmp.log,candidate.*}` | exact token/freeze proof, isolated count synthesis, 6,020-transaction CDC bench, and canonical whole-PSG synthesis | Exact and -4 LUT4/-2 carries alone, but globally +20 LUT4/+19 floor cells/+16 routed LCs. |
 | `build/experiments/h099/{filter_owner_proof.py,filter-owner-proof.log,filter_owner_probe.sv,filter_owner_*.json,filter_owner_*.log,candidate*}` | exhaustive ownership proof, complete isolated registered-consumer synthesis, and two canonical whole-PSG variants | Exact across 4,224 legal paths and -17 LUT4 alone, but both whole-PSG variants regress deterministic floor and seed-1 placement. |
 | `build/experiments/h100/{released_domain_proof.py,released-domain-proof.log,released_domain_probe.sv,isolated-*-v2.*}` | exhaustive transition proof, source-matched release-array synthesis, and explicit foreground-only synthesis | Exact across 2,560 transition/consumer cases; both forms map identically at 17 LUT4s/four FF. |
+| `build/experiments/h101/{trigger_pending_probe.sv,isolated-*,write_read_counterexample.py,write-read-counterexample.log}` | complete source/one-EBR/two-EBR storage synthesis and exact write/read timing counterexample | Plain EBR floor is smaller but stale for one cycle; exact forwarding raises the 97-cell reference floor to 107/104 cells. |
 
 ## Handoff
 
-- Next allowed experiment: H101 on accepted H096 `a647185`, after a fresh
+- Next allowed experiment: H102 on accepted H096 `a647185`, after a fresh
   source/DNR audit; it must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
