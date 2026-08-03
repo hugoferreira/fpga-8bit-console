@@ -23,12 +23,12 @@ clarity is useful only when that contract remains intact.
 
 ## Current State
 
-- Active hypothesis: C007, name the executor's remaining literal record-load
-  actions so the movement program reads as an action dictionary.
-- Next hypothesis ID: C008.
+- Active hypothesis: C008, rebind the accepted clarity source set to the H139/
+  R.84 structural and value proofs and close the final audit.
+- Next hypothesis ID: none while C008 is active.
 - Current baseline artifacts: `build/integration-h139-r84/synth-1.{json,asc}`.
-- Latest decision: C006 rejected and reverted; its exact macro expansion added
-  31 LUT4s, four carries, and 33 floor cells, closing the comb-helper family.
+- Latest decision: C007 accepted; record-load actions are named and the H139
+  JSON and routed ASC remain byte-identical.
 - Best accepted result: H139 at JSON SHA-256
   `4f7c4af1678ebbaf203cc63088855ec16bc44ebaa92e0f529e5d7961f0e554ff`
   and ASC SHA-256
@@ -55,7 +55,7 @@ clarity is useful only when that contract remains intact.
   abbreviations without creating synthesized aliases.
 - [x] Audit `psg_walk.sv` phase, capture, oscillator, noise, filter, mix, and
   fold names; give every retained short name a nearby domain explanation.
-- [ ] Replace repeated magic phase/action values with named constants only when
+- [x] Replace repeated magic phase/action values with named constants only when
   the generated physical result remains exact.
 
 ### Organisation and modular boundaries
@@ -72,9 +72,9 @@ clarity is useful only when that contract remains intact.
 ### DRYness and modularity
 
 - [x] Inventory duplicated arithmetic, address, action, and handshake logic.
-- [ ] Consolidate duplication only when the abstraction makes ownership clearer
+- [x] Consolidate duplication only when the abstraction makes ownership clearer
   and the whole-PSG physical result stays at H139 exactly.
-- [ ] Avoid helper layers that duplicate state, widen muxes, hide cycle timing,
+- [x] Avoid helper layers that duplicate state, widen muxes, hide cycle timing,
   or make source simpler while making the mapped PSG larger.
 
 ### Completion proof
@@ -105,17 +105,17 @@ clarity is useful only when that contract remains intact.
 | `psg_seq.sv` | C001 accepted | C002 accepted | exact JSON/ASC |
 | `psg_execctl.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
 | `psg_execdp.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
-| `psg_execmove.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
+| `psg_execmove.sv` | C001 accepted | C007 accepted | movement/contract + exact ASC |
 | `psg_execwave.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
 
 ## Next Experiment Gate
 
-- Next permitted experiment: C007, replace raw `7'h01` through `7'h07` case
-  labels in `psg_execmove` with named `V_LD0` through `V_LD7` constants.
-- Proof required before editing: keep every action value and fixed projection
-  exact; do not generalize the decoder into an indexed mux.
-- Required verification: executor movement test, generated action/address
-  contract, full/PREVIEW lint, and byte-identical H139 physical artifacts.
+- Next permitted experiment: C008, bind the final source revision and hashes to
+  the H139/R.84 source certificate, structural traces, and value lineage.
+- Proof required before editing: commit C007 so the certificate has one exact
+  revision; inventory every changed source against H139 and C004.
+- Required verification: independent A/B source generation, structural/value
+  audits, final source audit, and the complete H139 acceptance envelope.
 - Blocked repeat families: no source-level refactor is accepted from LOC,
   readability, isolated synthesis, or generated-code size alone.
 
@@ -129,7 +129,8 @@ clarity is useful only when that contract remains intact.
 | C004 | accepted | Top-level declarations precede consumers; exact H139 ASC. |
 | C005 | rejected | Exact function adds 41 LUT4s and 40 floor cells; reverted. |
 | C006 | rejected | Exact macro adds 31 LUT4s and 33 floor cells; reverted. |
-| C007 | active | Name literal executor record-load actions. |
+| C007 | accepted | Named record-load actions; exact movement and H139 ASC. |
+| C008 | active | Rebind final source proofs and close the audit. |
 
 ## Hypothesis C001
 
@@ -300,11 +301,33 @@ clarity is useful only when that contract remains intact.
 - **Scope:** the action dictionary and record-load case labels in
   `rtl/psg_execmove.sv`; no decoder structure, address, or output changes.
 - **Baseline:** restored accepted C004.
-- **Change:** pending named load actions.
-- **Result:** pending.
-- **Decision:** active.
+- **Change:** define `V_LD0` through `V_LD7` beside the movement action
+  dictionary, use `V_LD0` for the fixed initialization edge, and replace raw
+  `7'h01` through `7'h07` case labels with the corresponding names.
+- **Result:** the movement bench passes dynamic loads/stores, fixed actions,
+  banks, and emitted effects. The generated action/address contract passes all
+  27 pinned actions and both parameter banks. Isolated executor lint is clean;
+  full/PREVIEW lint remains 52/49. Canonical target JSON and seed-1 ASC are
+  byte-identical to C004/H139, retaining 6,302 LUT4s, 7,018 routed LCs, and
+  142.63/31.17 MHz timing.
+- **Decision:** accepted.
 - **Repeat only if:** a later generated program adds a record-load action not
   represented in the movement dictionary.
+
+## Hypothesis C008
+
+- **ID:** C008.
+- **Hypothesis:** the final clarity-only source revision can replace H139 as
+  the live source certificate while retaining H139's normalized program,
+  structural transactions, value lineage, behavior, and physical image.
+- **Scope:** source-contract metadata and any source-aware proof patterns needed
+  to recognize the accepted C001--C004/C007 spellings; no production behavior
+  change.
+- **Baseline:** accepted C007 and H139/R.84 source contract v6.
+- **Change:** pending final revision/hash rebinding and source audit.
+- **Result:** pending.
+- **Decision:** active.
+- **Repeat only if:** the accepted production/source-proof revision changes.
 
 ## Saved Artifacts
 
@@ -321,6 +344,7 @@ clarity is useful only when that contract remains intact.
 | `build/experiments/c001/c004.json` | canonical C004 synthesis | Exact H139 area; moved source metadata. |
 | `build/experiments/c001/c004.asc` | canonical C004 seed-1 route | Byte-identical to H139. |
 | `build/experiments/c004/` | C004 live-source acceptance logs | Full H139 functional/fidelity battery passes. |
+| `build/experiments/c007/` | C007 executor/physical evidence | Named actions pass; JSON/ASC exact. |
 
 ## Archive
 
@@ -331,9 +355,9 @@ clarity is useful only when that contract remains intact.
 
 ## Handoff
 
-- Next allowed experiment: C007 only.
+- Next allowed experiment: C008 only.
 - Blocked/rejected mechanisms: all new area work and any clarity abstraction
   that changes H139 resources or relies on local/source-only evidence.
-- Verification still missing: C007 onward and final source rebinding/battery.
+- Verification still missing: final C008 source rebinding and completion audit.
 - Files to avoid staging: non-PSG RTL, Tang files, unrelated OpenSpec changes,
   build products, and existing area-loop evidence.

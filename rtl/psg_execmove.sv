@@ -43,6 +43,14 @@ module psg_execmove(input  logic       active,
     OP_READ  = 3'd0,
     OP_WRITE = 3'd1;
   localparam logic [6:0]
+    V_LD0           = 7'h00,
+    V_LD1           = 7'h01,
+    V_LD2           = 7'h02,
+    V_LD3           = 7'h03,
+    V_LD4           = 7'h04,
+    V_LD5           = 7'h05,
+    V_LD6           = 7'h06,
+    V_LD7           = 7'h07,
     K_ADV           = 7'h40,
     X_LO_FCNT       = 7'h47,
     X_HI_TCNT       = 7'h48,
@@ -126,24 +134,24 @@ module psg_execmove(input  logic       active,
       // V_LD1..7 consume words 3,4,5,8,9,par+2,32 into scratch 48..54.
       // V_LD6 has already captured par+2, so K_ADV's repeated read is free to
       // initialize the exact row-end constant without another port or clock.
-      if (op == OP_READ && family == 3'd0 && subop == 4'd0
+      if (op == OP_READ && action == V_LD0
           && state_word == 6'd3) begin
         fixed_write(6'd34, 16'd1);
       end else if (action == K_ADV) begin
         fixed_write(6'd35, 16'd32);
       end
       case (action)
-        7'h01: fixed_write(6'd48, state_q);
-        7'h02: fixed_write(6'd49, state_q);
-        7'h03: fixed_write(6'd50, state_q);
-        7'h04: fixed_write(6'd51, state_q);
-        7'h05: begin
+        V_LD1: fixed_write(6'd48, state_q);
+        V_LD2: fixed_write(6'd49, state_q);
+        V_LD3: fixed_write(6'd50, state_q);
+        V_LD4: fixed_write(6'd51, state_q);
+        V_LD5: begin
           fixed_write(6'd52, state_q);
           state_ra_override = 1'b1;
           state_ra_word = spar_bank ? 6'd30 : 6'd26;
         end
-        7'h06: fixed_write(6'd53, state_q);
-        7'h07: begin
+        V_LD6: fixed_write(6'd53, state_q);
+        V_LD7: begin
           fixed_write(6'd54, state_q);
           state_ra_override = 1'b1;
           state_ra_word = spar_bank ? 6'd30 : 6'd26;
