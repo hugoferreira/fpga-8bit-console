@@ -7,17 +7,20 @@
 module psg_state_mem (input  bit   clk,
                       input  bit   reset,
 
+                      // Sample-walk port; wlk_rd selects its read address.
                       input  logic wlk_rd,
                       input  logic [PSG_VADR-1:0] wlk_ra,
                       input  logic wlk_we,
                       input  logic [PSG_VADR-1:0] wlk_wa,
                       input  logic [15:0] wlk_wd,
 
+                      // Tick-sequencer port, used whenever wlk_rd/wlk_we are low.
                       input  logic [PSG_VADR-1:0] etk_ra,
                       input  logic etk_we,
                       input  logic [PSG_VADR-1:0] etk_wa,
                       input  logic [15:0] etk_wd,
 
+                      // A newly running walk displaces the current sequencer read.
                       input  logic prun,
                       output logic state_replay,
                       output logic [15:0] state_q);

@@ -4,6 +4,8 @@
 `ifndef PSG_COMMON_SVH
 `define PSG_COMMON_SVH
 
+// Public geometry: eight playback slots, a three-bit slot index, and four
+// audible channel pairs.
 localparam int PSG_NV  = 8;
 localparam int PSG_VW  = 3;
 localparam int PSG_NCH = 4;
@@ -56,7 +58,8 @@ localparam logic [5:0] PSG_V_PAR0 = 6'd24;
 localparam logic [5:0] PSG_V_PAR1 = 6'd28;
 localparam logic [5:0] PSG_V_SEQ  = 6'd32;
 
-// Pack lists shared by the sequencer's load/store paths.
+// Packed record fields are listed most-significant first. The macro suffix is
+// the per-slot state-memory word written or read by the sequencer.
 `define PSG_REC_W3 {w_ins_fx[0], w_cur_wave, w_prev_pitch, w_cur_pitch}
 `define PSG_REC_W4 {w_ins_done, w_bf_rev, w_bf_det, w_bf_buzz, w_bf_noiz, \
                     w_prev_vol, w_cur_fx, w_cur_vol}
@@ -64,7 +67,8 @@ localparam logic [5:0] PSG_V_SEQ  = 6'd32;
 `define PSG_REC_W9 {w_ins_wt, w_ins_on, w_ins_prev_vol, w_ins_fx, \
                     w_ins_prev_pitch}
 
-// Pack lists shared by the synthesis walk's oscillator load/store paths.
+// Oscillator-record packs follow the same convention: the suffix is the
+// per-slot state-memory word used by the sample walk.
 `define PSG_OSC_W14 {s_lp[16], old_mode_r, s_brown}
 `define PSG_OSC_W17 {bl_cnt, old_q0[16:8]}
 `define PSG_OSC_W22 {old_alt_r, last_alt_r, last_mode_r, s_old_wave, \

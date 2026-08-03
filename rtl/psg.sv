@@ -15,11 +15,17 @@
 //
 // This module owns only composition, bus write edge detection, shared-service
 // arbitration, the PCM output register, and readback/debug muxes.
+//
+// Data flows in two rates: psg_seq publishes one inactive sounding bank per
+// tick, while psg_walk consumes the active bank and all eight oscillator
+// records once per sample. psg_wave and the arithmetic services execute the
+// walk/sequencer requests; dry_valid commits the completed eight-slot mix.
 
 `include "psg_common.svh"
 
 // Submodules are textually included because chip and synthesis targets include
-// psg.sv as their single PSG source. Include guards keep explicit file lists safe.
+// psg.sv as their single PSG source. Include guards keep explicit file lists
+// safe.
 `include "psg_timing.sv"
 `include "psg_aram.sv"
 `include "psg_mulsvc.sv"
@@ -31,17 +37,28 @@
 `include "psg_walk.sv"
 `include "psg_seq.sv"
 
-module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
-             parameter REALTIME_PREVIEW = 0, parameter DBG_PORT = 1,
-             parameter int SEQ_BUDGET = 272,
-             parameter MULTIPUMP = 0)
-          (input bit clk, input bit fastclk, input bit reset,
-           input bit cs, input bit rw, input logic [7:0] addr, input logic [7:0] di,
-           output logic [7:0] dout,
-           output logic signed [15:0] pcm,
+module psg #(
+    parameter CLK_HZ = 32'd3_506_580,
+    parameter REVERB = 1,
+    parameter REALTIME_PREVIEW = 0,
+    parameter DBG_PORT = 1,
+    parameter int SEQ_BUDGET = 272,
+    parameter MULTIPUMP = 0
+) (
+    input  bit                 clk,
+    input  bit                 fastclk,
+    input  bit                 reset,
 
-           // Optional simulator trace: pattern, slot activity, SFX ids, rows.
-           output logic [63:0] dbg);
+    input  bit                 cs,
+    input  bit                 rw,
+    input  logic [7:0]         addr,
+    input  logic [7:0]         di,
+    output logic [7:0]         dout,
+    output logic signed [15:0] pcm,
+
+    // Optional simulator trace: pattern, slot activity, SFX ids, rows.
+    output logic [63:0]        dbg
+);
   // ---- Timing grid and per-sample sequencer budget ----
   // Timing grid. pre_tick precedes tick_en by six sample intervals;
   // tick_en_d marks the sample two intervals after tick_en.
@@ -146,7 +163,8 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   endgenerate
 
   wire         walk_frozen = walk_busy | seq_starved;
-  // ---- CPU edge adapter and shared memories ----
+
+  // ---- CPU edge adapter and audio RAM ----
   // Convert a level-style bus write into one pulse in the PSG clock domain.
   // Reads retain level semantics.
   logic cs_wr_q;
@@ -162,8 +180,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
     .seq_hold(prun | state_replay | fold_busy | seq_starved),
     .seq_q(seq_q), .seq_frozen(seq_frozen));
+
   // ---- State memory and arithmetic services ----
-  // Shared arithmetic services.
+  // The divider belongs to the tick sequencer. Multiplier requests from the
+  // sequencer and sample walk are arbitrated after both clients are declared.
   wire  [33:0] m_res;
   wire         m_busy_walk;
   wire         m_busy_seq;
@@ -197,6 +217,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .etk_ra(etk_ra), .etk_we(etk_we), .etk_wa(etk_wa), .etk_wd(etk_wd),
     .prun(prun), .state_replay(state_replay),
     .state_q(state_q));
+
   // ---- Sample-rate walk and waveform pipeline ----
   // Tick-sequencer publication and arithmetic requests consumed by the walk
   // or by the shared top-level services.
@@ -266,8 +287,9 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .prun(prun), .fold_busy(fold_busy),
     .dry16(dry16), .dry_valid(dry_valid));
 
-  // Combinational waveform evaluation shared by the walk's live, secondary,
-  // and previous-voice contexts.
+  // The waveform pipeline evaluates the walk's live/preceding and
+  // primary/secondary contexts. Its registered result returns on the fixed
+  // capture phase selected by the walk schedule.
   psg_wave #(.REALTIME_PREVIEW(REALTIME_PREVIEW)) u_wave(
     .clk(clk),
     .iss_sec(iss_sec), .iss_om(iss_om), .iss_os(iss_os),
@@ -279,6 +301,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .s_old_inc_hi(s_old_inc[13:1]), .old_mode_r(old_mode_r),
     .old_alt_r(old_alt_r), .old_q0_lo(old_q0[15:0]),
     .z_eval(z_eval), .dq17(dq17), .q16(q16));
+
   // ---- Mutually exclusive multiplier arbitration ----
   // Walk and sequencer requests are mutually exclusive under walk_frozen, so
   // their zero-when-idle bundles merge with OR gates. The assertion protects
@@ -293,7 +316,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     $fatal(1, "psg: both multiply requesters asserted in the same cycle");
 `endif
 
-  // Multi-pumping is an explicit board/bench contract, not something inferred
+  // Multi-pumping is an explicit board/clocking contract, not something inferred
   // from CLK_HZ. Only the iCE40 /6 configuration has the required 112.5 MHz
   // fast clock and six-fast-clocks-per-PSG-clock service bound. PREVIEW,
   // single-clock simulation, and boards whose PSG runs at the PLL rate use the
@@ -320,8 +343,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         .m_res(m_res), .m_busy(m_busy_walk), .m_seq_busy(m_busy_seq));
     end
   endgenerate
+
   // ---- Tick-rate note, effect, and music control ----
-  // Tick-rate note/effect/music control.
+  // The sequencer owns CPU-visible playback state and publishes the inactive
+  // sounding bank before atomically flipping it for the sample walk.
   psg_seq u_seq(
     .clk(clk), .reset(reset),
     .cs(cs_wr), .rw(rw), .addr(addr), .di(di),
@@ -343,6 +368,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .d_res(d_res), .d_rem(d_rem), .d_busy(d_busy),
     .ctrl_read(prun), .ctrl_addr(ctrl_addr), .ctrl_q(ctrl_q),
     .ctrl_stall(ctrl_stall));
+
   // ---- PCM commit, CPU readback, and optional debug ----
   // dry_valid commits one completed eight-slot reduction.
   always_ff @(posedge clk) begin
@@ -390,33 +416,33 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
   // Keep debug generation removable when no hardware consumer exists.
   generate
-  if (DBG_PORT == 1) begin : g_dbg
-    always_comb begin
-      dbg = 64'b0;
-      dbg[7:0]   = {mus_playing, 1'b0, mus_pat};
-      dbg[11:8]  = play_bits[3:0];
-      dbg[15:12] = play_bits[7:4];
-      for (int ch = 0; ch < PSG_NCH; ch++) begin
-        dbg[16 + ch*6 +: 6] = aud_sfx_bits[ch*6 +: 6];
-        dbg[40 + ch*6 +: 6] = {1'b0, aud_row_bits[ch*5 +: 5]};
+    if (DBG_PORT == 1) begin : g_dbg
+      always_comb begin
+        dbg = 64'b0;
+        dbg[7:0]   = {mus_playing, 1'b0, mus_pat};
+        dbg[11:8]  = play_bits[3:0];
+        dbg[15:12] = play_bits[7:4];
+        for (int ch = 0; ch < PSG_NCH; ch++) begin
+          dbg[16 + ch*6 +: 6] = aud_sfx_bits[ch*6 +: 6];
+          dbg[40 + ch*6 +: 6] = {1'b0, aud_row_bits[ch*5 +: 5]};
+        end
       end
+    end else if (DBG_PORT == 2) begin : g_pcm_dbg
+      // The PCM output register commits dry16 on dry_valid. Delay that condition
+      // one clock so a same-domain diagnostic consumer observes the new stable
+      // pcm word, not the preceding word from the commit edge.
+      logic pcm_commit;
+      always_ff @(posedge clk) begin
+        if (reset) pcm_commit <= 1'b0;
+        else       pcm_commit <= dry_valid;
+      end
+      always_comb begin
+        dbg = 64'b0;
+        dbg[0] = pcm_commit;
+      end
+    end else begin : g_no_dbg
+      always_comb dbg = 64'b0;
     end
-  end else if (DBG_PORT == 2) begin : g_pcm_dbg
-    // The PCM output register commits dry16 on dry_valid. Delay that condition
-    // one clock so a same-domain diagnostic consumer observes the new stable
-    // pcm word, not the preceding word from the commit edge.
-    logic pcm_commit;
-    always_ff @(posedge clk) begin
-      if (reset) pcm_commit <= 1'b0;
-      else       pcm_commit <= dry_valid;
-    end
-    always_comb begin
-      dbg = 64'b0;
-      dbg[0] = pcm_commit;
-    end
-  end else begin : g_no_dbg
-    always_comb dbg = 64'b0;
-  end
   endgenerate
 
 endmodule

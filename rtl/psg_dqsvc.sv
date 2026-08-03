@@ -89,9 +89,9 @@ module psg_dqsvc_core (
 
 endmodule
 
-// Always-enabled adapter for psg_walk. Hold-aware executors instantiate the
-// core directly and drive ce so the recurrence freezes with PC, IR, and
-// state_q.
+// Production adapter. The walk never pauses an accepted DQ transaction, so ce
+// is tied high. The core keeps ce explicit to define one atomic hold boundary
+// for its recurrence, request acceptance, result, and completion pulse.
 module psg_dqsvc (
     input  bit          clk,
     input  bit          reset,

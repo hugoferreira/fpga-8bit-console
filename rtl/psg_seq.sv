@@ -4,6 +4,11 @@
 // Each visit loads its record, advances row/instrument state, evaluates effects,
 // writes the inactive sounding bank, and stores the record. The bank flips only
 // after all visits complete. CPU triggers and music flow share the same FSM.
+//
+// Reading guide: c is the slot, sst is the serialized program state, vcnt is
+// the record-word index, and xs is the effect-arithmetic substep. w_* is the
+// current slot's register-resident record; publication writes its completed
+// sounding tuple to the bank opposite spar_bank.
 
 `ifndef PSG_SEQ_SV
 `define PSG_SEQ_SV
@@ -106,6 +111,7 @@ module psg_seq (input  bit   clk,
   // per-slot because both foreground and music records can loop.
   logic [5:0]  trg_len[0:PSG_NCH-1];
   logic        released[0:PSG_NV-1];
+
   // ---- Current-slot record working set ----
   // w_* mirrors the current slot record; vcnt selects each load/store word.
   // acc/wrd hold counter, loop, and speed fields modified by the engine below.
@@ -165,9 +171,12 @@ module psg_seq (input  bit   clk,
   logic [12:0] fade_step;
 
   logic [12:0] fstep_q;
+
   // ---- Serialized tick program and current-slot control ----
-  // State families: T trigger; K/EA/ES row/effect; I instrument; P/PC publish.
-  // V loads/stores; ML/MS handle music. c=slot, vcnt=record word, xs=substep.
+  // State families: T loads a trigger; EA advances row/instrument counters;
+  // ES loads effect counters; K evaluates note/effect work; I handles custom
+  // instruments; P publishes a new bank; PC copies an unchanged bank; V moves
+  // the register-resident record; ML launches music and MS scans loop-back.
   typedef enum logic [5:0] {
     S_IDLE,
     T_FL, T_SP, T_LS, T_LE, T_NL, T_NH, T_LD,
@@ -218,6 +227,7 @@ module psg_seq (input  bit   clk,
 
   wire [12:0] ch_base  = rec_base(sfx_id[c]);
   wire [12:0] ins_base = rec_base({3'b0, w_ins_id});
+
   // ---- Effective instrument and effect selection ----
   // A custom instrument is an SFX playhead unless marked as a wavetable.
   wire ins_use = w_ins_on & ~w_ins_wt;
@@ -326,6 +336,7 @@ module psg_seq (input  bit   clk,
 
   wire         seq_hold = walk_frozen | fade_issue | crom_replay;
   assign ctrl_stall = ctrl_displaced;
+
   // ---- Pitch, effect, slide, volume, and shared-service arithmetic ----
   // Effect intermediates persist across shared multiply/divide requests.
   wire [12:0] pinc_q = crom_q[12:0];
@@ -1298,6 +1309,7 @@ module psg_seq (input  bit   clk,
         mus_mask <= di[3:0];
     end
   end
+
   // ---- State-memory load/store and replay adapter ----
   // Register-resident record words visited by V_LD and V_ST.
   function automatic logic [5:0] tick_load_word(
@@ -1434,6 +1446,7 @@ module psg_seq (input  bit   clk,
       etk_wd = vwdata;
     end
   end
+
   // ---- Zero-idle multiplier request adapter ----
   // Multiply request bundle. It is zero while held, allowing the top-level OR
   // merge with the mutually exclusive synthesis-walk request.

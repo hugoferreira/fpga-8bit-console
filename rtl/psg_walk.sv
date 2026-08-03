@@ -5,6 +5,11 @@
 // oscillators, advances noise/filter/crossfade state, forms a mixer leaf, and
 // writes oscillator state back. The eight leaves are reduced with PICO-8's
 // soft-add function. REALTIME_PREVIEW selects a shorter approximate schedule.
+//
+// Reading guide: pph is the per-slot microphase and pc_ch is the slot. s_*
+// names the live tuple, old_* the preceding crossfade arm, and last_* the tuple
+// remembered for transition detection. wt_*, nz_*, mx_*, bl_*, and f* group
+// wavetable, noise, mixer-arm, blend, and final fold state respectively.
 
 `ifndef PSG_WALK_SV
 `define PSG_WALK_SV
@@ -15,15 +20,18 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
                   input  bit   reset,
                   input  logic sample_en,
 
+                  // Tick-published playback and sounding-bank state.
                   input  logic [PSG_NV-1:0] play_bits,
                   input  logic mus_playing,
                   input  logic spar_bank,
                   input  logic [PSG_NV-1:0] clr_tog,
 
+                  // Shared audio-RAM borrow for wavetable samples.
                   input  logic [7:0]  seq_q,
                   output logic        syn_rd,
                   output logic [12:0] syn_addr,
 
+                  // Walk side of the shared per-slot state memory.
                   input  logic [15:0] state_q,
                   output logic        state_sample_read,
                   output logic [PSG_VADR-1:0] wlk_ra,
@@ -31,6 +39,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
                   output logic [PSG_VADR-1:0] wlk_wa,
                   output logic [15:0] wlk_wd,
 
+                  // Shared multiplier result and zero-when-idle request bundle.
                   input  logic [33:0] m_res,
                   input  logic        m_busy,
                   output logic        wmul_start,
@@ -39,6 +48,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
                   output logic [1:0]  wmul_mode,
                   output logic        wmul_short,
 
+                  // Context request to psg_wave and its pipelined response.
                   output logic iss_sec,
                   output logic iss_om,
                   output logic iss_os,
@@ -60,10 +70,12 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
                   input  logic [16:0] dq17,
                   input  logic [15:0] q16,
 
+                  // Prefetched capture-action word from the shared control ROM.
                   input  logic [15:0] ctrl_q,
                   output logic [7:0]  ctrl_addr,
                   input  logic        ctrl_stall,
 
+                  // Ownership/status and completed eight-slot mix.
                   output logic        prun,
                   output logic        fold_busy,
 
@@ -87,6 +99,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   // Full-schedule shared-multiplier phases for previous/live noise steps.
   localparam int PNZ_OLD  = 19;
   localparam int PNZ_LIVE = 24;
+
   // ---- Current-slot sounding and oscillator working set ----
   // s_* is current-slot state; old_*/last_* retain transition-arm context.
   logic [2:0]  s_snd_id;
@@ -184,6 +197,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       endcase
     end
   end
+
   // ---- State-memory stream and writeback schedule ----
   // State-memory addresses stream oscillator words followed by the selected
   // sounding bank. Late full-schedule writes commit dampen state.
@@ -207,6 +221,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       wlk_wd = sosc_wd;
     end
   end
+
   // ---- Capture-action schedule ----
   // Control-ROM bits name actions, not absolute phases. pph_nxt prefetches the
   // synchronous word consumed on the next cycle.
@@ -864,6 +879,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
     always_comb ring_q_old = 16'sd0;
   end
   endgenerate
+
   // ---- Visit actions shared by PREVIEW and full mode ----
   // Advance noise and filter state once for the current slot, with trigger
   // clear requests taking priority over accumulated filter state.
@@ -1336,14 +1352,6 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       end
     end
   end
-  // ---- Simulation-only value-lineage observations ----
-  // Value-lineage tooling names the two observation phases of wt_x1
-  // separately: W2 observes p1 and W4 observes q1. Both are simulation-only
-  // aliases of the same storage and do not add a hardware lifetime.
-`ifndef SYNTHESIS
-  wire signed [7:0] wt_p1 = wt_x1;
-  wire signed [7:0] wt_q1 = wt_x1;
-`endif
 
 endmodule
 

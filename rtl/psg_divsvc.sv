@@ -7,9 +7,12 @@
 
 module psg_divsvc (input  bit          clk,
                    input  bit          reset,
+
+                   // One-cycle request sampled only while d_busy is low.
                    input  logic        div_start,
                    input  logic [23:0] div_n,
                    input  logic [7:0]  div_d,
+                   // Quotient/remainder share the live recurrence register.
                    output logic [23:0] d_res,
                    output logic [7:0]  d_rem,
                    output logic        d_busy);

@@ -23,13 +23,13 @@ clarity is useful only when that contract remains intact.
 
 ## Current State
 
-- Active hypothesis: none; C009 closes the executor-stack cleanup.
+- Active hypothesis: none; C010 closes the second production-source pass.
 - Next hypothesis ID: none.
 - Current baseline artifacts: `build/integration-h139-r84/synth-1.{json,asc}`
   and `build/experiments/c008/`.
-- Latest decision: C009 accepted. The four disconnected executor sources and
-  their dedicated proof stack are removed; C008's sixteen-source proof remains
-  historical evidence in Git rather than a maintained second architecture.
+- Latest decision: C010 accepted. All twelve live sources now expose their
+  data flow, port ownership, state vocabulary, hold boundaries, and record
+  layout without changing the synthesized token stream or H139 behavior.
 - Best accepted result: H139 at JSON SHA-256
   `4f7c4af1678ebbaf203cc63088855ec16bc44ebaa92e0f529e5d7961f0e554ff`
   and ASC SHA-256
@@ -89,23 +89,25 @@ clarity is useful only when that contract remains intact.
 - [x] C008 audited all 5,265 then-maintained lines. C009 narrows the live
   production boundary to the actual 4,350-line, 12-source PSG tree.
 - [x] C009 passes live regressions and preserves the accepted physical image.
+- [x] C010's second reader pass preserves synthesized-token, behavioral,
+  render, cadence, and physical identity.
 
 ## Source Audit Matrix
 
 | Source | Current contract | Naming/organisation/DRY | Evidence |
 | -- | -- | -- | -- |
-| `psg.sv` | C001 accepted | C004 accepted | exact area/ASC + full battery |
-| `psg_common.svh` | C001 accepted | C003 audited | exact JSON/ASC |
-| `psg_aram.sv` | C001 accepted | C003 audited | exact JSON/ASC |
-| `psg_timing.sv` | C001 accepted | C003 audited | exact JSON/ASC |
-| `psg_state_mem.sv` | C001 accepted | C003 audited | exact JSON/ASC |
-| `psg_mulsvc.sv` | C001 accepted | C003 audited | exact JSON/ASC |
-| `psg_mulmp.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
-| `psg_dqsvc.sv` | C001 accepted | C003 audited | exact JSON/ASC |
-| `psg_divsvc.sv` | C001 accepted | C003 audited | exact JSON/ASC |
-| `psg_wave.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
-| `psg_walk.sv` | C001 accepted | C002 accepted | exact JSON/ASC |
-| `psg_seq.sv` | C001 accepted | C002 accepted | exact JSON/ASC |
+| `psg.sv` | C001/C010 accepted | C004/C010 accepted | token-exact + full battery |
+| `psg_common.svh` | C001/C010 accepted | C003/C010 accepted | token-exact + full battery |
+| `psg_aram.sv` | C001/C010 accepted | C003/C010 accepted | token-exact + full battery |
+| `psg_timing.sv` | C001/C010 accepted | C003/C010 accepted | token-exact + full battery |
+| `psg_state_mem.sv` | C001/C010 accepted | C003/C010 accepted | token-exact + full battery |
+| `psg_mulsvc.sv` | C001/C010 accepted | C003/C010 accepted | token-exact + full battery |
+| `psg_mulmp.sv` | C001/C010 accepted | C003/C010 accepted | token-exact + full battery |
+| `psg_dqsvc.sv` | C001/C010 accepted | C003/C010 accepted | token-exact + full battery |
+| `psg_divsvc.sv` | C001/C010 accepted | C003/C010 accepted | token-exact + full battery |
+| `psg_wave.sv` | C001/C010 accepted | C003/C010 accepted | token-exact + full battery |
+| `psg_walk.sv` | C001/C010 accepted | C002/C010 accepted | token-exact + full battery |
+| `psg_seq.sv` | C001/C010 accepted | C002/C010 accepted | token-exact + full battery |
 
 The maintained production set is 12 files and 4,350 lines. The former
 `psg_exec*` research implementation was disconnected from `psg.sv`; its C003,
@@ -114,7 +116,7 @@ second architecture on the live source tree.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: none; C009 is accepted and the cleanup is complete.
+- Next permitted experiment: none; C010 is accepted.
 - Reopen source refactoring only if a maintained PSG source or H139 acceptance
   gate changes.
 - Blocked repeat families: no source-level refactor is accepted from LOC,
@@ -133,6 +135,7 @@ second architecture on the live source tree.
 | C007 | accepted | Named record-load actions; exact movement and H139 ASC. |
 | C008 | accepted | v7 binds all 16 sources; normalized proofs and H139 envelope exact. |
 | C009 | accepted | Removed the disconnected executor research/proof stack; live PSG remains H139. |
+| C010 | accepted | Second reader pass; synthesized tokens and full H139 behavior exact. |
 
 ## Hypothesis C001
 
@@ -384,6 +387,40 @@ second architecture on the live source tree.
 - **Repeat only if:** a live consumer of the removed stack is found or the
   production PSG's behavior or physical artifact differs after removal.
 
+## Hypothesis C010
+
+- **ID:** C010.
+- **Hypothesis:** a second reader-oriented pass can expose remaining ownership,
+  timing, state-transition, and data-shape assumptions using comments and
+  declaration/section organisation while preserving every synthesized token.
+- **Scope:** all twelve production sources in the Source Audit Matrix. Do not
+  change synthesized interfaces, identifiers, declarations, expressions,
+  generate shape, include order, or the closed C005/C006 helper family. Remove
+  the unused `wt_p1`/`wt_q1` aliases under `ifndef SYNTHESIS`; their only
+  consumer belonged to C009's retired value-trace path.
+- **Baseline:** accepted C009 and H139 physical artifacts at the hashes in
+  Current State.
+- **Change:** add a system-level data-flow map; group large module ports by
+  owner; define sequencer states, walk prefixes, waveform context selectors,
+  packed-record suffixes, service request/result boundaries, and current
+  freeze/hold behavior; reformat the top-level and timing interfaces; remove
+  the final unused `wt_p1`/`wt_q1` simulation aliases. Production comments no
+  longer refer to the retired executor architecture.
+- **Result:** the canonicalized `SYNTHESIS` preprocessor stream is byte-identical
+  before and after at SHA-256 `af8078fa40345cb0b2941c6a46bf969cb4418d92128c228e7b02f642169ce7c0`.
+  Full and PREVIEW lint pass with only the three established width warnings.
+  `make psg-viz` still derives 62 hardware phases, 24 preview phases, 63 FSM
+  states, and 90 transitions. `make test-psg` passes PICO-8 fidelity,
+  exhaustive arithmetic/DQ checks, 93 audio-analysis tests, 13 visualizer
+  tests, and the complete structural simulation at 524/850 sample clocks and
+  4,008/5,103 tick clocks. `make test-clocks` passes all three ratios and the
+  explicit 18.75 MHz render sweep is byte-identical 59/59. Synthesized tokens
+  are exact, so the retained H139 JSON/ASC, area, routing, and timing remain
+  unchanged by construction.
+- **Decision:** accepted.
+- **Repeat only if:** the post-pass source still requires a reader to infer a
+  live ownership, timing, state-transition, or data-shape contract from logic.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -415,6 +452,6 @@ second architecture on the live source tree.
 - Next allowed experiment: none; the clarity and executor-cleanup work is complete.
 - Blocked/rejected mechanisms: all new area work and any clarity abstraction
   that changes H139 resources or relies on local/source-only evidence.
-- Verification still missing: none for C001--C009.
+- Verification still missing: none for C001--C010.
 - Files to avoid staging: non-PSG RTL, Tang files, unrelated OpenSpec changes,
   build products, and existing area-loop evidence.

@@ -8,6 +8,7 @@
 module psg_aram_core(input  bit          clk,
                      input  bit          reset,
 
+                     // CPU upload register interface.
                      input  bit          cs,
                      input  bit          rw,
                      input  logic [7:0]  addr,
@@ -19,6 +20,7 @@ module psg_aram_core(input  bit          clk,
                      input  bit          cpu_rd,
                      output wire [7:0]   cpu_q,
 
+                     // Sequencer read address and sample-walk port borrow.
                      input  logic [12:0] seq_addr,
 
                      input  logic        syn_rd,
@@ -88,12 +90,13 @@ module psg_aram_core(input  bit          clk,
 endmodule
 /* verilator lint_on DECLFILENAME */
 
-// Top-level adapter for the continuously running sample walk. It ties the
-// core's external freeze low; hold-aware executors instantiate psg_aram_core
-// directly so a hold freezes both the borrowed byte and pending replay.
+// Production adapter. Top-level arbitration expresses live stalls through
+// seq_hold, so syn_freeze is tied low. The core keeps syn_freeze explicit to
+// make a held borrowed byte and its pending replay one atomic boundary.
 module psg_aram (input  bit          clk,
                  input  bit          reset,
 
+                 // CPU upload register interface.
                  input  bit          cs,
                  input  bit          rw,
                  input  logic [7:0]  addr,
@@ -105,6 +108,7 @@ module psg_aram (input  bit          clk,
                  input  bit          cpu_rd,
                  output wire [7:0]   cpu_q,
 
+                 // Sequencer read address and sample-walk port borrow.
                  input  logic [12:0] seq_addr,
 
                  input  logic        syn_rd,

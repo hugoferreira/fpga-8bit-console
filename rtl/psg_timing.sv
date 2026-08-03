@@ -3,14 +3,17 @@
 `ifndef PSG_TIMING_SV
 `define PSG_TIMING_SV
 
-module psg_timing #(parameter CLK_HZ = 32'd3_506_580)
-                   (input  bit   clk,
-                    input  bit   reset,
-                    output logic sample_en,
-                    output logic tick_en,
-                    output logic tick_en_d,
-                    output logic pre_tick,
-  output logic [7:0] scnt);
+module psg_timing #(
+    parameter CLK_HZ = 32'd3_506_580
+) (
+    input  bit         clk,
+    input  bit         reset,
+    output logic       sample_en,
+    output logic       tick_en,
+    output logic       tick_en_d,
+    output logic       pre_tick,
+    output logic [7:0] scnt
+);
 
   // divd is the sample accumulator offset by its wrap threshold. Its sign
   // selects between adding 22050 and subtracting CLK_HZ-22050.
@@ -19,7 +22,9 @@ module psg_timing #(parameter CLK_HZ = 32'd3_506_580)
       DIV_W'(CLK_HZ - 32'd22050);
   localparam logic signed [DIV_W-1:0] DIV_UP = DIV_W'(32'd22050);
   logic signed [DIV_W-1:0] divd;
-  logic [1:0]  tick_hold;
+  // scnt is the 0..182 tick cadence; tick_hold produces the delayed boundary
+  // used to publish the bank prepared by the preceding tick program.
+  logic [1:0] tick_hold;
   wire logic signed [DIV_W-1:0] div_step = divd[DIV_W-1]
       ? DIV_UP : -DIV_DOWN;
 

@@ -7,12 +7,14 @@
 module psg_mulsvc (input  bit          clk,
                    input  bit          reset,
 
+                   // One-cycle request; operands remain internal after launch.
                    input  logic        mul_start,
                    input  logic signed [24:0] mul_start_a,
                    input  logic [11:0] mul_start_b,
                    input  logic [1:0]  mul_start_mode,
                    input  logic        mul_start_short,
 
+                   // Result view and busy flag derived from recurrence state.
                    output logic [33:0] m_res,
                    output logic        m_busy);
 

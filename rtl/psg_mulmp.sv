@@ -35,8 +35,8 @@ module psg_mulmp_core #(parameter int RADIX_BITS = 1) (
 
   // Slow-domain contract for the six-fast-clocks-per-PSG-clock boundary.
   // Results are consumed only after the returned acknowledge: normal requests
-  // are safe at launch+5 and short requests at launch+4. These named gaps let
-  // schedule tooling and the transaction bench verify the same CDC contract.
+  // are safe at launch+5 and short requests at launch+4. The named gaps are
+  // the public schedule contract for any requester of this service.
   //
   localparam int NORMAL_CONSUME_GAP = 5;
   localparam int SHORT_CONSUME_GAP  = 4;
@@ -171,9 +171,10 @@ module psg_mulmp_core #(parameter int RADIX_BITS = 1) (
 
 endmodule
 
-// Always-enabled adapter for the top-level PSG. Hold-aware composition uses
-// the core directly so both clock domains freeze at one transaction boundary.
-// Consume-gap constants remain visible to schedule tooling and tests.
+// Production adapter. The top-level PSG never pauses an outstanding multiply,
+// so freeze is tied low. The core keeps freeze explicit so both clock domains
+// can be stopped at the same transaction boundary. Consume-gap constants stay
+// visible at the production module boundary.
 module psg_mulmp #(parameter int RADIX_BITS = 1) (
     input  bit                 clk,
     input  bit                 fastclk,

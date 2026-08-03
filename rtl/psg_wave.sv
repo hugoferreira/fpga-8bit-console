@@ -8,10 +8,10 @@
 `ifndef PSG_WAVE_SV
 `define PSG_WAVE_SV
 
-// Direct fixed-context waveform pipeline.  The executor presents one
+// Fixed-context waveform pipeline. A caller presents one
 // {phase, wave, alternate, primary/secondary} tuple on every enabled edge.
-// All three sequential boundaries share `ce` so an external executor hold
-// freezes the request, reciprocal lookup and result as one transaction.
+// All sequential boundaries share ce, so deasserting it freezes the request,
+// reciprocal lookup, and result as one transaction.
 module psg_wave_ctx(input  bit          clk,
                     input  logic        ce,
                     input  logic [15:0] ctx_phase,
@@ -183,15 +183,19 @@ module psg_wave_ctx(input  bit          clk,
   assign z_eval = tzs(z_prim, z_shift);
 
 endmodule
+
 // Walk-facing context selector, detune increment, and phase-view adapter.
 module psg_wave #(parameter REALTIME_PREVIEW = 0)
                  (input  bit   clk,
 
+                  // Requested context: live secondary, preceding primary, or
+                  // preceding secondary. All low selects the live primary.
                   input  logic iss_sec,
                   input  logic iss_om,
                   input  logic iss_os,
                   input  logic dq_old_ctx,
 
+                  // Live sounding tuple and oscillator state.
                   input  logic [2:0]  s_snd_wave,
                   input  logic        s_snd_wt,
                   input  logic [1:0]  s_ch_det,
@@ -201,12 +205,14 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
                   input  logic [23:0] s_phase2,
                   input  logic [12:0] s_eff_inc_hi,
 
+                  // Preceding-arm tuple retained during a transition.
                   input  logic [2:0]  s_old_wave,
                   input  logic [15:0] s_old_phase_hi,
                   input  logic [12:0] s_old_inc_hi,
                   input  logic [1:0]  old_mode_r,
                   input  logic        old_alt_r,
                   input  logic [15:0] old_q0_lo,
+                  // Pipelined waveform sample, secondary increment, and phase.
                   output logic signed [17:0] z_eval,
                   output logic [16:0] dq17,
                   output logic [15:0] q16);
@@ -237,9 +243,10 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
     .clk(clk), .ce(1'b1), .ctx_phase(wx), .ctx_wave(wsel),
     .ctx_alt(w_old_ctx ? old_alt_r : s_ch_buzz), .ctx_secondary(wsec),
     .z_eval(z_eval));
+
   // ---- Per-wave secondary-oscillator increment ----
-  // Per-wave secondary-oscillator increments. All expressions implement the
-  // integer forms directly, including their ceiling-biased corrections.
+  // All expressions implement the integer forms directly, including their
+  // ceiling-biased corrections.
   wire [2:0] dq_wave = dq_old_ctx ? s_old_wave : s_snd_wave;
   wire [1:0] dq_mode = dq_old_ctx ? old_mode_r : s_ch_det;
   wire [12:0] dp13 = dq_old_ctx ? s_old_inc_hi : s_eff_inc_hi;
@@ -318,8 +325,9 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   end
   wire [13:0] dq_calc = dq_sub ? (dq_base - {5'b0, dq_corr}) : dq_base;
   always_comb dq17 = {3'b0, dq_calc};
+
   // ---- Secondary phase presentation ----
-  // Secondary phase presentation: triangle/phaser use the unshifted 17-bit
+  // Triangle/phaser use the unshifted 17-bit
   // accumulator, detune mode 2 doubles the other built-in waves, and preview
   // retains its compact 24-bit phase representation.
   wire q_old_ctx = iss_os && !s_snd_wt;
