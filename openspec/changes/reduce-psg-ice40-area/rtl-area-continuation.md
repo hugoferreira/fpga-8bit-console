@@ -23,7 +23,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: H134; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
@@ -6616,6 +6616,48 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   reciprocal EBR width, reachable address domains, tail-result ownership,
   pipeline alignment, or mapper EBR-output lowering changes materially.
 
+## Hypothesis H134
+
+- **ID:** H134.
+- **Hypothesis:** the two signed wavetable neighbour bytes have disjoint,
+  adjacent lifetimes. `wt_p1` is loaded at W2 and consumed by the W4
+  interpolation request on the same edge that `wt_q1` is loaded; `wt_q1` is
+  then consumed at W15. Store both in one eight-bit register. Select `smp_a`
+  at W4 or `smp_b` at W15 before one shared nine-bit subtract, replacing the
+  two parallel `wt_pd`/`wt_qd` subtracts and their result selector while
+  preserving the request and sign-capture edges.
+- **Scope:** prove all signed-byte/sample-low-bit arithmetic and the W2 -> W4
+  -> W15 registered sequence with exhaustive and SAT checks; synthesize the
+  complete registered wavetable-byte/request/sign consumer in isolation. Only
+  after an isolated deterministic floor win may `rtl/psg_walk.sv` change,
+  followed by full/PREVIEW lint and a forced canonical whole-PSG map. Route
+  and run the H102 fidelity battery only after a deterministic whole-PSG
+  mapped/floor win. Preserve wavetable reads, phase fractions, request modes
+  and timing, interpolation rounding, all sample values, schedule, interfaces,
+  EBR topology, R.84/B2 files, images, Tang paths, and tolerances.
+- **Baseline:** accepted H102/I003 production RTL at docs commit `0bd30dc`;
+  H113's source-identical whole-PSG baseline is 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs and floor 6,868, routed in 7,087
+  LCs at 140.92/32.65 MHz. The fresh isolated consumer baseline will be
+  recorded before any production edit.
+- **Changed condition versus design 5c and lifetime DNR families:** design 5c
+  retired both `wt_pf`/`wt_qf` phase-fraction registers and lengthened live
+  phase cones, producing -20 FF but +99 LUT4/+70 placed LCs. H134 leaves both
+  fractions and their timing untouched. It aliases two consecutive sample
+  bytes inside one interpolation family and removes one complete subtract plus
+  the existing result selector, so arithmetic leaves with the eight FFs and
+  no new downstream selector is introduced. Both bytes refresh on every
+  wavetable visit regardless of play/amplitude, covering the persistent
+  zero-amplitude class that blocks fraction aliasing.
+- **Change:** proof-first adjacent sample-byte lifetime plus one selected-base
+  subtract; production RTL remains unchanged until exactness and isolated
+  physical gates pass.
+- **Result:** active.
+- **Decision:** active.
+- **Repeat only if:** if rejected, retry only after wavetable byte-read phases,
+  interpolation request timing, sample-byte persistence, subtract ownership,
+  or mapper register-input/arithmetic sharing changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6947,8 +6989,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Handoff
 
-- Next allowed experiment: H134 on accepted H102 `ccfb2a0`, after a fresh
-  source/DNR audit outside the now-closed reciprocal spare-bit token family.
+- Next allowed experiment: H134 on accepted H102 `ccfb2a0`, using the
+  adjacent wavetable sample-byte lifetime and selected-base subtract above.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
