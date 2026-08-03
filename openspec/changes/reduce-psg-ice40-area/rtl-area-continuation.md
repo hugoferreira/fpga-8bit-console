@@ -28,7 +28,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H151.
+- Next hypothesis ID: H152.
+- H151 hypothesis row: retire the divider's eight-bit captured divisor and
+  consume the stable live `eff_sp`, with the sole `/7` request identified by
+  its existing `K_FX/xs=10` wait state. Decision: rejected and reverted. The
+  isolated floor improves by three cells and eight flops retire, but the
+  canonical whole PSG adds 31 LUT4s, four carries, 25 floor cells and 32
+  routed LCs.
 - H150 hypothesis row: store only `fade_step[11:0]`; among the fade-eligible
   table indices 1--31, a zero low field uniquely encodes index 1's value 4096.
   Decision: rejected before production RTL. Exact proof passes and one
@@ -7708,6 +7714,72 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   fade eligibility, accumulator consumer, payload reset/validity, or mapper
   zero-detect/sequential lowering changes materially.
 
+## Hypothesis H151
+
+- **ID:** H151.
+- **Hypothesis:** `psg_divsvc.d_d` captures eight divisor bits even though the
+  sequencer holds the divisor owner for every complete 24-cycle transaction.
+  Normal slide/volume/effect requests use the stable staged `eff_sp`. The sole
+  constant-seven instrument request advances from `K_FX/xs=9` to the existing
+  `K_FX/xs=10` wait state, where `ins_use` remains true until `d_busy` clears.
+  Select seven in that launch/wait context and otherwise feed live `eff_sp`
+  directly to the restoring subtract, retiring all eight `d_d` flops without
+  adding state or changing the divider recurrence.
+- **Scope:** audit every divider launch/wait/consume path, including both slide
+  transactions, effect-3, all volume effects, instrument scaling, sequencer
+  holds and the terminal busy edge. Exhaust all nonzero eight-bit divisors,
+  numerators and 24 restoring iterations; prove captured-versus-live divisor,
+  quotient, remainder, busy and owner-state evolution cycle-exact with SAT.
+  Synthesize the complete registered provider/wait-state/divider consumer in
+  isolation. Only after exactness and a deterministic isolated floor win may
+  `rtl/psg_divsvc.sv` and `rtl/psg_seq.sv` change, followed by full/PREVIEW
+  lint and a forced canonical whole-PSG map. Route and run the H139
+  fidelity/cadence battery only after a whole-PSG mapped/floor win. Preserve
+  every numerator, rounding rule, 24-cycle latency, result slice, schedule,
+  interface except the private divider port ownership, 14 EBRs, R.84/B2 files,
+  Tang paths, images and tolerances.
+- **Baseline:** accepted H139 production at commit `d76241f` and docs commit
+  `d32f598`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed in 7,018
+  LCs at 142.63/31.17 MHz. The H139 census attributes eight unpackable flops
+  to `d_d`; the complete provider/divider baseline will be measured before any
+  production edit.
+- **Changed condition versus H016, H070 and H085:** H016 narrowed the
+  restoring subtract and regressed, H070 recoded only the 24-step iteration
+  token and regressed globally, and H085 moved numerator rounding around the
+  unchanged service. H151 changes no arithmetic width, count, numerator or
+  rounding. It removes a complete captured operand whose owner is now proved
+  stable in the current pre-run sequencer, including the otherwise exceptional
+  constant-seven wait state.
+- **Change:** proof and complete isolated synthesis first; production RTL
+  remains unchanged until both gates pass.
+- **Result:** the source-owner audit and cycle model pass 13,592 transactions
+  across the two slide requests, effect-3, volume effects 1/4/5 and the
+  constant-seven instrument request. Launch plus all 24 busy cycles preserve
+  the captured divisor for every class. A 30-cycle arbitrary-input SAT miter
+  from reset also proves quotient, remainder, busy and owner-state equivalence.
+
+  The complete isolated baseline maps to 71 LUT4s, fourteen carries, 60 flops
+  (eighteen unpackable) and floor 89. The candidate maps to 76 LUT4s, fourteen
+  carries, 52 flops (ten unpackable) and floor 86. Although all eight `d_d`
+  flops retire and the isolated floor improves by three cells, forced canonical
+  whole-PSG synthesis reverses the result: H139's 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops and floor 6,800 become **6,333 LUT4s,
+  1,295 carries, 1,442 flops, 492 unpackable flops and floor 6,825**, with 14
+  EBRs unchanged. Seed-1 router2 completes in **7,050 LCs (+32)** at 121.62
+  MHz fast / 31.54 MHz PSG. Both clocks pass, but every binding area metric
+  except flop count regresses. Full multi-pump/PREVIEW lint reaches only the
+  established warning classes. `rtl/psg_divsvc.sv` and `rtl/psg_seq.sv` are
+  restored byte-identically to H139; render, cadence, recovery, click, smoke,
+  image, Tang, tolerance and R.84/B2 files remain unchanged.
+- **Decision:** rejected and reverted at the whole-PSG physical gate. Feeding
+  the live provider through the flattened divider trades eight operand flops
+  for a wider cross-module selection/fanout cover, adding 25 deterministic
+  floor cells and 32 routed LCs.
+- **Repeat only if:** if rejected, retry only after divider requester states,
+  `eff_sp` lifetime, constant-seven ownership, hold/busy ordering, divider
+  latency, or mapper cross-module operand lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -8053,14 +8125,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h148/*` | 81,920-sequence fade/control proof, isolated port synthesis, full/PREVIEW lint and canonical map/route | Exact and -22 LUT4/-13 FF/-35 floor alone, but globally +19 LUT4/+4 carry/-13 FF/+5 floor/+13 routed LCs while spending EBR 15. |
 | `build/experiments/h149/*` | 6,594,000-transition relation, 16,155 command traces, SAT, complete isolated port synthesis, full/PREVIEW lint and canonical map/route | Exact and -1 FF/-12 floor alone, but globally +58 LUT4/+5 carry/-1 FF/-11 unpackable/+47 floor/+58 routed LCs; production reverted. |
 | `build/experiments/h150/*` | source-bound domain proof, 4,063,232 active arithmetic cases, 4,536 command cases, SAT and complete isolated fade-state synthesis | Exact and -1 FF/-1 unpackable, but +3 LUT4 worsens the isolated floor 92 -> 94; production unchanged. |
+| `build/experiments/h151/*` | seven-class transaction proof, 30-cycle arbitrary-input SAT, complete provider/divider synthesis, full/PREVIEW lint and canonical map/route | Exact and -8 FF/-3 floor alone, but globally +31 LUT4/+4 carry/-8 FF/-6 unpackable/+25 floor/+32 routed LCs; production reverted. |
 
 ## Handoff
 
-- Next allowed experiment: H151 on accepted H139 after a fresh source/DNR
-  audit. H149 is exact and improves its isolated floor, but adds 47 whole-PSG
-  floor cells and 58 routed LCs. H150 is exact and retires one unpackable
-  flop, but its isolated floor grows by two cells. Do not retry either without
-  its repeat-condition change.
+- Next allowed experiment: H152 on accepted H139 after a fresh source/DNR
+  audit. H149 and H151 improve their isolated floors but add 47 and 25
+  whole-PSG floor cells respectively; H150 retires one unpackable flop but its
+  isolated floor grows by two cells. Do not retry any of them without its
+  repeat-condition change.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -8368,5 +8441,17 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   wins five isolated LUT4s plus two FFs, but globally adds 26 LUT4s, two
   carries, 27 floor cells and 33 routed LCs while failing fast timing;
   production is restored byte-for-byte and no fidelity gate remains.
+  H148's dedicated fade-step ROM is exact and wins 35 isolated floor cells,
+  but globally adds nineteen LUT4s, four carries, five floor cells and thirteen
+  routed LCs while spending the fifteenth EBR; production is restored and no
+  fidelity gate remains. H149's collision-token packing is exact and wins
+  twelve isolated floor cells, but globally adds 58 LUT4s, five carries, 47
+  floor cells and 58 routed LCs; production is restored and no fidelity gate
+  remains. H150's twelve-bit fade-step encoding is exact but worsens the
+  complete isolated floor by two cells, so production never changed. H151's
+  live divider operand is exact and retires eight flops with a three-cell
+  isolated floor win, but globally adds 31 LUT4s, four carries, 25 floor cells
+  and 32 routed LCs; production is restored byte-for-byte and no fidelity gate
+  remains.
 - Files to avoid staging after H139: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
