@@ -27,7 +27,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H106.
+- Next hypothesis ID: H107.
+- H106 hypothesis row: after diagnostic readback was composed on main, upload
+  data writes and CPU reads contain two priority-separated copies of the same
+  16-bit pointer increment. Factor one exact advance transaction without
+  changing H005's index/window form. The 6,291,456-transition proof, hold test,
+  and 4,608-byte readback pass, and the isolated consumer falls from 51 to 49
+  LUT4s. Whole-PSG mapping instead adds 51 LUT4s, one unpackable FF, 52 floor
+  cells, and 54 routed LCs. Decision: rejected and reverted.
 - H105 hypothesis row: `vcnt` only visits 0--7 because V_LD terminates at 7
   and V_ST terminates at 4, yet the accepted netlist maps all four declared
   counter bits. A three-bit form is exact and removes one FF/two carries in the
@@ -120,17 +127,19 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted `build/experiments/h095/` and `build/experiments/h096/`, the
   rejected `build/experiments/h097/`, `build/experiments/h098/`, and
   `build/experiments/h099/`, `build/experiments/h100/`,
-  `build/experiments/h101/`, and the accepted `build/experiments/h102/`, plus
+  `build/experiments/h101/`, the accepted `build/experiments/h102/`, and the
+  rejected `build/experiments/h106/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H102 accepted as generic RTL/proof commit
-  `ccfb2a0`; the encoded wavetable bass flag removes four global LUT4s, one FF,
-  one unpackable FF, and five deterministic floor cells from H096. H101 was
-  rejected before production because exact write-through state makes both EBR
-  variants larger than the FF reference. H100 was rejected because the explicit
-  four-bit source maps identically to Yosys's optimized eight-entry array.
-- Latest rejected variants: H101's pending-trigger EBR is inexact without
+- Latest completed decision: H106 rejected and reverted because its exact
+  two-LUT4 isolated pointer simplification adds 51 LUT4s and 52 deterministic
+  floor cells globally. H102 remains the best accepted generic RTL/proof point
+  at `ccfb2a0`, four LUT4s, one FF, one unpackable FF, and five floor cells below
+  H096.
+- Latest rejected variants: H106's exact factored upload/read pointer advance
+  is globally much worse despite its two-LUT4 isolated saving. H101's pending-
+  trigger EBR is inexact without
   forwarding and locally worse with it. H100's unreachable music release bits are already
   removed by Yosys. H099's exact filter-publication ownership change
   is globally worse despite its 17-LUT4 isolated saving. H098's exact multiplier iteration token is globally
@@ -281,11 +290,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H106 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H107 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's launch-worklist/pacing-state
   family, H102's wavetable-bass/effect-state encoding family,
   H104's instrument-kind state-encoding family,
   H105's record-transfer counter-width family,
+  H106's upload/diagnostic pointer-advance factoring family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -438,6 +448,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H103 | rejected | Keep `ptick_seen`: the exact lower-launch-prefix replacement removes one FF but adds two LUT4s in the complete isolated pacing consumer. |
 | H104 | rejected | Keep `{w_ins_on,w_ins_wt}`: direct one-hot `{SFX,wavetable}` mode state is exact but adds one LUT4 in the complete registered consumer. |
 | H105 | rejected | Keep the four-bit record-transfer counter: the exact three-bit form removes one FF/two carries but adds 24 LUT4s in the complete isolated consumer. |
+| H106 | rejected | Keep the separate upload-write and diagnostic-read pointer updates: exact factoring saves two LUT4s alone but adds 51 LUT4s, one unpackable FF, 52 floor cells, and 54 routed LCs globally. |
 
 ## Hypothesis H001
 
@@ -4997,6 +5008,48 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   hold compensation, tick-word addressing, record packing, or mapper counter
   lowering changes materially.
 
+## Hypothesis H106
+
+- **ID:** H106.
+- **Hypothesis:** main's later diagnostic ARAM composition added a second
+  `wraddr <= wraddr + 1` branch after the upload-data branch. CPU writes retain
+  priority, so exactly one predicate covers both cases: address `$02` on a CPU
+  write, or a diagnostic read when no CPU write is active. Factoring that
+  transaction should expose one pointer update/enable path and simplify the
+  source while preserving the write side effect and H005 address transform.
+- **Scope:** exhaustive pointer/control/address-class transition proof;
+  isolated synthesis of the complete registered pointer and memory-write
+  consumer; then `rtl/psg_aram.sv`, permanent `tools/psg_hw_forms.py` coverage,
+  canonical whole-PSG synthesis, and the complete H102 battery only after
+  deterministic isolated and global wins. No upload index/window, pointer
+  value, CPU priority, memory write, diagnostic read, ARAM replay/hold,
+  interface, EBR count, R.84 executor, or tolerance change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus H005 and H050:** those experiments predate main's
+  diagnostic CPU-read auto-increment and changed only the upload index/window
+  transform. H106 retains accepted H005 exactly and factors the newly composed
+  mutually exclusive pointer-update branches around it.
+- **Change:** defined one priority-correct upload-advance predicate,
+  perform the optional address-$02$ memory write inside that transaction, and
+  retain address-$00/$01$ partial pointer writes in the non-advance CPU-write
+  arm.
+- **Result:** exhaustive checking passes all 6,291,456 pointer/control/data
+  transitions, the ARAM hold test passes, and the Verilator readback verifies
+  all 4,608 actual bytes through `$42ff`. The complete registered pointer/write
+  consumer falls from 51 to 49 LUT4s with 17 carries and 16 FF unchanged; full
+  and PREVIEW lint pass. Canonical forced HX8K mapping then changes H102's
+  6,360 LUT4 / 1,321 carry / 1,458 FF / 508 unpackable / 14 EBR / floor 6,868 /
+  7,087 routed LCs to 6,411 / 1,321 / 1,458 / 509 / 14 / floor 6,920 / 7,141.
+  Both clocks still pass at 148.70/30.71 MHz. The complete fidelity battery is
+  skipped because the deterministic LUT/floor and placement gates fail.
+- **Decision:** rejected and reverted. Production RTL and permanent proof are
+  restored exactly; ignored evidence remains under `build/experiments/h106/`.
+- **Repeat only if:** if rejected, retry only after CPU-write/read priority,
+  diagnostic pointer semantics, pointer update consumers, or mapper enable/mux
+  lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5294,11 +5347,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h103/{first_launch_proof.py,first-launch-proof.log,first_launch_probe.sv,isolated-*}` | exhaustive first-launch ownership proof and complete registered pacing-consumer synthesis | Exact across all 256 launch/qualifier masks, but the candidate is +2 LUT4/-1 FF and fails the isolated gate. |
 | `build/experiments/h104/{instrument_kind_proof.py,instrument_kind_probe.sv,isolated-*}` | exhaustive semantic/record/consumer proof and complete registered instrument-kind synthesis | Exact across 53,254 checks, but the candidate is +1 LUT4 with eight carries/two FF unchanged. |
 | `build/experiments/h105/{vcnt_width_proof.py,vcnt_width_probe.sv,isolated-*}` | exhaustive transfer/hold/address proof and complete registered counter consumer synthesis | Exact across 960 checks and -1 FF/-2 carries, but the candidate adds 24 LUT4s and fails the isolated gate. |
+| `build/experiments/h106/{wraddr_advance_proof.py,wraddr_advance_probe.sv,isolated-*,candidate*}` | exhaustive upload/read pointer proof, complete registered-consumer synthesis, ARAM hold/readback checks, and forced whole-PSG synthesis | Exact across 6,291,456 transitions and -2 LUT4 alone, but the candidate is +51 LUT4/+52 floor/+54 routed LCs globally. |
 
 ## Handoff
 
-- Next allowed experiment: H106 on accepted H102 `ccfb2a0`, after a fresh
-  source/DNR audit; it must remain outside the Active DNR families and
+- Next allowed experiment: H107 on accepted H102 `ccfb2a0`, after a fresh
+  source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
