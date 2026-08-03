@@ -28,7 +28,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H147.
+- Next hypothesis ID: H148.
+- H147 hypothesis row: narrow reachable live/last/old gain history from
+  thirteen to twelve bits while preserving the oscillator-record bit
+  positions. Decision: rejected and reverted. Exact isolated synthesis saves
+  five LUT4s and two FFs, but the canonical whole PSG adds 26 LUT4s, two
+  carries, 27 floor cells and 33 routed LCs, and fails fast timing.
 - H146 hypothesis row: select the mutually exclusive `/64`, `/128`, or
   `/256` DQ ceiling operands before one eight-bit incrementer. Decision:
   rejected and reverted. Exact isolated synthesis saves thirteen LUT4s and
@@ -813,6 +818,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H138 | rejected | Keep signed-18 live/old pre-clamp noise registers: signed-17 storage is exact and -6 floor cells alone, but adds 29 whole-PSG LUT4s and 28 floor cells despite removing seven carries and two flops. |
 | H145 | rejected | Keep the parallel dampen path: sharing the widened fold ALU is exact and removes 35 carries/19 unpackable FFs alone, but adds 31 LUT4s and worsens the complete isolated floor 434 -> 446 cells; an `fmc`-encoded finish worsens it to 485. |
 | H146 | rejected | Keep the three DQ ceiling incrementers: explicit selection is -13 LUT4/-11 carry alone, but adds 36 whole-PSG LUT4s, one carry, 36 floor cells and 43 routed LCs. |
+| H147 | rejected | Keep 13-bit gain history: the 12-bit boundary is -5 LUT4/-2 FF alone, but globally +26 LUT4/+2 carry/+27 floor/+33 routed LCs and misses fast timing. |
 
 ## Hypothesis H001
 
@@ -1070,6 +1076,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - W84 dampen accumulation/rounding through the fold ALU and dead
   `{mxs_old,smp_a}` scratch: H145.
 - DQ `/64`/`/128`/`/256` selected ceiling incrementer: H146.
+- Live/last/old gain-history width contraction: H147.
 
 ## Hypothesis H006
 
@@ -7440,6 +7447,58 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   correction widths, quotient/remainder boundaries, consumer selection, or
   mapper selected-adder lowering changes materially.
 
+## Hypothesis H147
+
+- **ID:** H147.
+- **Hypothesis:** the accepted volume-domain proof bounds `s_eff_a` to
+  0..1,792. The boosted gain ladder therefore reaches at most 3,360, so
+  `g_live[12]`, `s_last_G[12]`, and `s_old_G[12]` are invariant zero. The
+  multiplier already consumes `12'(g_live)`. Narrow only the live/last/old
+  gain-history boundary to twelve bits while preserving the two zero bit-12
+  positions in the streamed oscillator record; this may retire two flops and
+  high-bit compare/mux logic without changing arithmetic or memory layout.
+- **Scope:** reuse and extend the complete reachable volume proof through the
+  boosted gain ladder; exhaust history store/reload/restart/zero decisions;
+  prove the registered consumer under the reachable amplitude contract; and
+  synthesize that complete consumer in isolation. Only after a deterministic
+  isolated LUT/FF/floor win may `rtl/psg_walk.sv` change, followed by full and
+  PREVIEW lint and a forced canonical whole-PSG map. Route and run the H139
+  fidelity/cadence battery only after a whole-PSG mapped/floor win. Preserve
+  every gain, restart, state-record bit position, multiplier request, schedule,
+  interface, 14-EBR topology, R.84/B2 file, Tang path, image and tolerance.
+- **Baseline:** accepted H139 production at commit `d76241f` and docs commit
+  `8904bdc`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed in 7,018
+  LCs at 142.63/31.17 MHz. The complete isolated gain-history consumer will
+  be recorded before any production edit.
+- **Changed condition versus H038, H083 and H118:** H038/H083 respelled the
+  boosted gain arithmetic and added LUTs; H147 leaves both accepted adders
+  unchanged and removes only their proved-zero stored high bit. H118 narrowed
+  the upstream sequencer volume/interpolation state to eleven bits and
+  regressed globally; H147 keeps that 12-bit interface and uses H118's
+  retained 0..1,792 proof only to bound the downstream gain-history payload.
+  No prior row prices this 13-to-12-bit streamed-state boundary.
+- **Change:** proof-first gain-history width contraction and complete
+  registered-consumer synthesis; production remains unchanged until both
+  gates pass.
+- **Result:** the stronger complete eleven-bit amplitude domain proves
+  `g_live` is 0..3,837, so bit 12 is zero; streamed record positions,
+  store/reload/restart, zero test, comparison and multiplier payload checks
+  pass, as does arbitrary-input SAT over the valid twelve-bit history domain.
+  The complete isolated consumer improves 80 -> 75 LUT4s and 26 -> 24 packed
+  FFs with 22 carries unchanged, reducing floor 80 -> 75. Full and PREVIEW
+  lint contain no errors. The forced canonical whole PSG instead changes
+  6,302 -> 6,328 LUT4s, 1,291 -> 1,293 carries, 1,450 -> 1,448 FFs, 498 ->
+  499 unpackable FFs, keeps 14 EBRs, and worsens floor 6,800 -> 6,827.
+  Seed-1 routing completes at 7,051 LCs versus 7,018; the PSG clock passes at
+  31.93 MHz but the fast clock reaches only 112.13 MHz against 112.50 MHz.
+- **Decision:** rejected and reverted before fidelity work. `rtl/psg_walk.sv`
+  is byte-identical to accepted H139, so no render, cadence, recovery, click,
+  smoke, image, Tang, tolerance or R.84/B2 file changed.
+- **Repeat only if:** if rejected, retry only after the published-amplitude
+  bound, boosted gain ladder, last/old history consumers, streamed-record
+  layout, or mapper high-bit pruning changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7781,12 +7840,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h144/{aligned_offset_proof.py,aligned_offset_probe.sv,formal.log,isolated-*}` | exhaustive record/offset proof, arbitrary scheduled-address SAT and complete registered-consumer synthesis | Exact and mapping-identical at 38 LUT4/16 carry/13 packed FF; production remains unchanged. |
 | `build/experiments/h145/*` | exhaustive/SAT arithmetic, scratch, fold, timing and complete-consumer evidence | Exact; -35 carries/-19 unpackable FFs, but +31 LUT4s worsens floor 434 -> 446. |
 | `build/experiments/h146/*` | exhaustive/SAT DQ proof, focused service test, lint, isolated synthesis and canonical map/route | Exact and -13 LUT4/-11 carry alone, but globally +36 LUT4/+1 carry/+36 floor/+43 routed LCs. |
+| `build/experiments/h147/*` | exhaustive/SAT gain bound/history proof, lint, isolated synthesis and canonical map/route | Exact and -5 LUT4/-2 FF alone, but globally +26 LUT4/+2 carry/+27 floor/+33 routed LCs with fast timing failure. |
 
 ## Handoff
 
-- Next allowed experiment: H147 on accepted H139 after a fresh source/DNR
-  audit. H146 is exact but rejected after its isolated win reversed globally;
-  do not retry selected DQ ceilings without a repeat-condition change.
+- Next allowed experiment: H148 on accepted H139 after a fresh source/DNR
+  audit. H147 is exact but rejected after its isolated width win reversed
+  globally and failed timing; do not retry without a repeat-condition change.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -8090,6 +8150,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H146's selected DQ ceiling incrementer is exact and wins thirteen isolated
   LUT4s plus eleven carries, but globally adds 36 LUT4s, one carry, 36 floor
   cells and 43 routed LCs; production is restored byte-for-byte and no
-  fidelity gate remains.
+  fidelity gate remains. H147's twelve-bit gain-history boundary is exact and
+  wins five isolated LUT4s plus two FFs, but globally adds 26 LUT4s, two
+  carries, 27 floor cells and 33 routed LCs while failing fast timing;
+  production is restored byte-for-byte and no fidelity gate remains.
 - Files to avoid staging after H139: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
