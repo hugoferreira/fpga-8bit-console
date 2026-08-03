@@ -27,7 +27,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H112.
+- Next hypothesis ID: H113.
+- H112 hypothesis row: packing pending trigger row and length into one 11-bit
+  FF array preserves all 6,291,456 field/priority transitions, but the complete
+  separate and packed consumers both map to 61 LUT4s and 44 flops. Decision:
+  rejected before production RTL.
 - H111 hypothesis row: every non-reset readback branch assigns
   `aram_rd_pending_next=aram_cpu_rd`; hoisting that assignment is exact, but
   the complete registered baseline and candidate both synthesize to 14 LUT4s
@@ -158,15 +162,17 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h101/`, the accepted `build/experiments/h102/`, and the
   rejected `build/experiments/h106/`, `build/experiments/h107/`, and
   `build/experiments/h108/`, `build/experiments/h109/`, and the rejected
-  `build/experiments/h110/` and `build/experiments/h111/`, plus
+  `build/experiments/h110/`, `build/experiments/h111/`, and
+  `build/experiments/h112/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H111 rejected before production because its exact
-  pending-valid hoist maps identically to the accepted readback consumer. I003
-  remains the accepted H102 source-contract v5 integration, and H102 remains
-  the best accepted generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H111's exact pending-valid hoist is already
+- Latest completed decision: H112 rejected before production because its exact
+  packed trigger-metadata FF array maps identically to the separate arrays.
+  I003 remains the accepted H102 source-contract v5 integration, and H102
+  remains the best accepted generic RTL/proof point at `ccfb2a0`.
+- Latest rejected variants: H112's exact trigger-metadata packing is already
+  recovered by Yosys. H111's exact pending-valid hoist is already
   recovered by Yosys. H110's join-mode reconstruction loses historical
   state on a same-edge bank publication/pass start. H109's one-hot sequencer state lowers mapped floor
   and placed LCs slightly but cannot route. H108's `REVERB=0` restart specialization is
@@ -392,7 +398,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H112 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H113 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -404,6 +410,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H109's sequencer-FSM synthesis-encoding family,
   H110's inactive-bank join-mode reconstruction family,
   H111's registered readback pending-valid factoring family,
+  H112's pending-trigger FF-array packing family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -562,6 +569,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H109 | rejected | Keep the sequencer FSM in binary encoding: forced one-hot is -6 LUT4/-5 unpackable/-11 floor and places three LCs lower, but adds 57 FF/four carries and cannot complete canonical routing. |
 | H110 | rejected | Keep the explicit `join_stage` history bit: a same-edge `tick_en_d` publication plus join-pass start clears `bank_ready` while preserving `join_stage=1`. |
 | H111 | rejected | Keep the readback pending assignments in their control arms: the unconditional next-state spelling is exact but maps identically at 14 LUT4s/nine flops. |
+| H112 | rejected | Keep separate pending-trigger row/length arrays: one packed 11-bit FF array is exact but maps identically at 61 LUT4s/44 flops. |
 
 ## Hypothesis H001
 
@@ -791,6 +799,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Reverb comb post-shift rounding: H079.
 - Inactive-bank join-mode reconstruction: H110.
 - Registered readback pending-valid factoring: H111.
+- Pending-trigger FF-array packing: H112.
 
 ## Hypothesis H006
 
@@ -5352,6 +5361,42 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   priority, audio-RAM response latency, pending-valid consumers, or mapper
   sequential lowering changes materially.
 
+## Hypothesis H112
+
+- **ID:** H112.
+- **Hypothesis:** pending trigger row and length are stored in two separately
+  indexed four-entry FF arrays, but the sequencer reads and clears both fields
+  together for the same foreground slot. Packing each channel's fields into
+  one 11-bit metadata entry may share index/clear decoding and reduce the 44
+  currently unpackable trigger flops without changing independent CPU writes.
+- **Scope:** exhaustive field-write/consume-priority proof and isolated
+  synthesis of the complete registered dynamic-index consumer first. Only
+  after a deterministic isolated win may `rtl/psg_seq.sv` pack the FF arrays,
+  followed by canonical whole-PSG synthesis and the full acceptance battery.
+  Do not move pending metadata into EBR, change same-edge CPU priority, trigger
+  semantics, interfaces, R.84, images, Tang paths, or tolerances.
+- **Baseline:** accepted H102/I003 at `b17aa4d` reproduces 6,360 LUT4s, 1,321
+  carries, 1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, and
+  7,087 routed LCs at 140.92/32.65 MHz. The mapped unpackable census attributes
+  24 flops to `trg_len` and 20 to `trg_row`.
+- **Changed condition versus H101:** H101 moved the tuple into synchronous EBR
+  and required costly forwarding to preserve immediate CPU-write visibility.
+  H112 keeps the exact asynchronous FF read and same-edge field priority; only
+  the two source arrays' FF packing and shared dynamic-index decode change.
+- **Change:** pack each entry as `{trg_len,trg_row}`, retain field-selective CPU
+  writes, and clear the whole entry on foreground-trigger consumption.
+- **Result:** exhaustive checking passes all 6,291,456 row/length/data,
+  field-write, same-index, and consume-priority transitions. Both complete
+  registered baseline and packed dynamic-index consumers map identically to
+  61 LUT4s and 44 flops. Production RTL is untouched and no broader fidelity
+  or physical gate is warranted.
+- **Decision:** rejected before production; Yosys already shares the available
+  FF-array decode. Ignored proof/probe evidence remains under
+  `build/experiments/h112/`.
+- **Repeat only if:** if rejected, retry only after pending-trigger field
+  ownership, CPU/consume priority, dynamic-index consumers, or mapper array
+  lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5657,10 +5702,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h109/{candidate.json,candidate.synth.log,candidate.pnr.log}` | forced one-hot sequencer mapping and bounded canonical seed-1 route | -6 LUT4/-5 unpackable/-11 floor and -3 placed LCs, but +57 FF/+4 carries and one unresolved wire through 29,349 router2 iterations. |
 | `build/experiments/h110/{join_stage_proof.py,join_stage_probe.sv}` | reachable reduced-controller proof and unrun synthesis probe | Refuted by same-edge bank publication plus join-pass start before production RTL or synthesis. |
 | `build/experiments/h111/{readback_pending_proof.py,readback_pending_probe.sv,isolated-*}` | exhaustive bit/control proof and complete registered readback synthesis | Exact across 128 transitions; both forms map identically at 14 LUT4s/nine flops. |
+| `build/experiments/h112/{trigger_meta_proof.py,trigger_meta_probe.sv,isolated-*}` | exhaustive field/priority proof and complete registered dynamic-index synthesis | Exact across 6,291,456 transitions; both forms map identically at 61 LUT4s/44 flops. |
 
 ## Handoff
 
-- Next allowed experiment: H112 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H113 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
