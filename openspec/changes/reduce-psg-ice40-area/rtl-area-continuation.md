@@ -27,7 +27,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H107.
+- Next hypothesis ID: H108.
+- H107 hypothesis row: `psg_seq` stores playback activity in an unpacked
+  `playing[]` array and continuously repacks it into the dynamically indexed
+  output `play_bits`. Use `play_bits` as the sole packed storage to remove the
+  duplicate representation and simplify source/array lowering. Whole-PSG
+  mapping adds 79 LUT4s, two carries, 73 floor cells, and 79 routed LCs despite
+  six fewer unpackable FFs. Decision: rejected and reverted.
 - H106 hypothesis row: after diagnostic readback was composed on main, upload
   data writes and CPU reads contain two priority-separated copies of the same
   16-bit pointer increment. Factor one exact advance transaction without
@@ -128,16 +134,17 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   rejected `build/experiments/h097/`, `build/experiments/h098/`, and
   `build/experiments/h099/`, `build/experiments/h100/`,
   `build/experiments/h101/`, the accepted `build/experiments/h102/`, and the
-  rejected `build/experiments/h106/`, plus
+  rejected `build/experiments/h106/` and `build/experiments/h107/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H106 rejected and reverted because its exact
-  two-LUT4 isolated pointer simplification adds 51 LUT4s and 52 deterministic
-  floor cells globally. H102 remains the best accepted generic RTL/proof point
-  at `ccfb2a0`, four LUT4s, one FF, one unpackable FF, and five floor cells below
-  H096.
-- Latest rejected variants: H106's exact factored upload/read pointer advance
+- Latest completed decision: H107 rejected and reverted because removing the
+  live unpacked/packed playback-state alias adds 79 LUT4s, two carries, and 73
+  deterministic floor cells despite six fewer unpackable FFs. H102 remains the
+  best accepted generic RTL/proof point at `ccfb2a0`.
+- Latest rejected variants: H107's packed playback register is globally much
+  worse despite simpler source and fewer unpackable FFs. H106's exact factored
+  upload/read pointer advance
   is globally much worse despite its two-LUT4 isolated saving. H101's pending-
   trigger EBR is inexact without
   forwarding and locally worse with it. H100's unreachable music release bits are already
@@ -290,12 +297,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H107 on accepted H102 `ccfb2a0`, only after a fresh source
-  and DNR audit. It must not repeat H096/H103's launch-worklist/pacing-state
-  family, H102's wavetable-bass/effect-state encoding family,
+- Next experiment: H108 on accepted H102 `ccfb2a0`, only after a fresh source
+  and DNR audit. It must not repeat H096/H103's
+  launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
+  encoding family,
   H104's instrument-kind state-encoding family,
   H105's record-transfer counter-width family,
   H106's upload/diagnostic pointer-advance factoring family,
+  H107's unpacked/packed playback-state representation family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -449,6 +458,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H104 | rejected | Keep `{w_ins_on,w_ins_wt}`: direct one-hot `{SFX,wavetable}` mode state is exact but adds one LUT4 in the complete registered consumer. |
 | H105 | rejected | Keep the four-bit record-transfer counter: the exact three-bit form removes one FF/two carries but adds 24 LUT4s in the complete isolated consumer. |
 | H106 | rejected | Keep the separate upload-write and diagnostic-read pointer updates: exact factoring saves two LUT4s alone but adds 51 LUT4s, one unpackable FF, 52 floor cells, and 54 routed LCs globally. |
+| H107 | rejected | Keep the unpacked `playing[]` storage plus exported packed view: direct `play_bits` storage removes six unpackable FFs but adds 79 LUT4s, two carries, 73 floor cells, and 79 routed LCs globally. |
 
 ## Hypothesis H001
 
@@ -5050,6 +5060,42 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   diagnostic pointer semantics, pointer update consumers, or mapper enable/mux
   lowering changes materially.
 
+## Hypothesis H107
+
+- **ID:** H107.
+- **Hypothesis:** `psg_seq` stores eight playback-active bits in the unpacked
+  `playing[]` array, then continuously repacks the same bits into the exported
+  `play_bits` vector. Internal and external consumers dynamically index those
+  two source spellings. Making `play_bits` the sole packed register should
+  remove the redundant representation, simplify the RTL, and may give Yosys a
+  cheaper common mux/storage form.
+- **Scope:** replace only `playing[i]`, `playing[c]`, and `playing[fg_sl]` with
+  the identically indexed `play_bits` storage and remove the repacking assign;
+  then canonical whole-PSG synthesis before any broader proof/fidelity battery.
+  No playback transition, status/debug output, slot selection, trigger, stop,
+  release, R.84 executor, image, Tang, tolerance, or interface change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus H100:** H100 restricted unreachable elements of
+  the separate `released[]` array, which Yosys already pruned. H107 instead
+  removes the live unpacked-to-packed alias used by both dynamic internal
+  indexing and module outputs; no state domain is restricted.
+- **Change:** used the output `play_bits` vector itself as the canonical
+  eight-bit playback register and eliminate `playing[]` plus its repacking
+  assignment.
+- **Result:** full and PREVIEW lint pass. Canonical forced HX8K mapping changes
+  H102's 6,360 LUT4 / 1,321 carry / 1,458 FF / 508 unpackable / 14 EBR /
+  floor 6,868 / 7,087 routed LCs to 6,439 / 1,323 / 1,458 / 502 / 14 /
+  floor 6,941 / 7,166. Both clocks still pass at 151.17/33.76 MHz. The six-
+  unpackable-FF improvement does not offset 79 added LUT4s, two carries, 73
+  floor cells, or 79 routed LCs, so the complete fidelity battery is skipped.
+- **Decision:** rejected and reverted. `psg_seq.sv` is restored exactly;
+  ignored synthesis evidence remains under `build/experiments/h107/`.
+- **Repeat only if:** if rejected, retry only after the playback-state domain,
+  dynamic slot consumers, module interface, or Yosys array/vector lowering
+  changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5348,10 +5394,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h104/{instrument_kind_proof.py,instrument_kind_probe.sv,isolated-*}` | exhaustive semantic/record/consumer proof and complete registered instrument-kind synthesis | Exact across 53,254 checks, but the candidate is +1 LUT4 with eight carries/two FF unchanged. |
 | `build/experiments/h105/{vcnt_width_proof.py,vcnt_width_probe.sv,isolated-*}` | exhaustive transfer/hold/address proof and complete registered counter consumer synthesis | Exact across 960 checks and -1 FF/-2 carries, but the candidate adds 24 LUT4s and fails the isolated gate. |
 | `build/experiments/h106/{wraddr_advance_proof.py,wraddr_advance_probe.sv,isolated-*,candidate*}` | exhaustive upload/read pointer proof, complete registered-consumer synthesis, ARAM hold/readback checks, and forced whole-PSG synthesis | Exact across 6,291,456 transitions and -2 LUT4 alone, but the candidate is +51 LUT4/+52 floor/+54 routed LCs globally. |
+| `build/experiments/h107/candidate*` | forced whole-PSG synthesis of direct packed playback-state storage | Source-exact alias removal and -6 unpackable FF, but +79 LUT4/+2 carry/+73 floor/+79 routed LCs globally. |
 
 ## Handoff
 
-- Next allowed experiment: H107 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H108 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
