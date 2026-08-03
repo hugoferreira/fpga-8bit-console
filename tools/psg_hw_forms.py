@@ -969,6 +969,60 @@ def sec_seq() -> None:
     report("seq.trigger_length_prefix", length_ok,
            "high prefix equals saturate(byte, 32) for all 256 input values")
 
+    # A pattern launch marks the four music channels that actually started.
+    # The first marked non-looping channel owns the pattern-length product;
+    # the first marked channel independently supplies the fallback speed.  In
+    # the old protocol tch_seen inhibited later products while leaving all
+    # launch marks set.  The replacement consumes the worklist at the winning
+    # product.  Compare every launch/qualifier pattern over the ordered scan.
+    launch_protocol_ok = True
+    cases = 0
+    for launch_mask in range(1 << 4):
+        for qualifies_mask in range(1 << 4):
+            old_seen = False
+            old_ptick_seen = False
+            old_fallback = None
+            old_requests = []
+
+            new_launch = launch_mask
+            new_ptick_seen = False
+            new_fallback = None
+            new_requests = []
+
+            for channel in range(4):
+                old_marked = bool(launch_mask & (1 << channel))
+                qualifies = bool(qualifies_mask & (1 << channel))
+                old_request = old_marked and not old_seen and qualifies
+                if old_marked and not old_ptick_seen:
+                    old_ptick_seen = True
+                    old_fallback = channel
+                if old_request:
+                    old_seen = True
+                    old_requests.append(channel)
+
+                new_marked = bool(new_launch & (1 << channel))
+                new_request = new_marked and qualifies
+                if new_marked and not new_ptick_seen:
+                    new_ptick_seen = True
+                    new_fallback = channel
+                if new_request:
+                    new_launch = 0
+                    new_requests.append(channel)
+
+            launch_protocol_ok &= old_requests == new_requests
+            launch_protocol_ok &= old_fallback == new_fallback
+            launch_protocol_ok &= old_ptick_seen == new_ptick_seen
+            launch_protocol_ok &= bool(old_requests) == bool(new_requests)
+            # If there was no owner, the launch marks remain available exactly
+            # as before.  If there was one, only the now-dead marks differ.
+            launch_protocol_ok &= (
+                new_launch == launch_mask if not old_requests
+                else new_launch == 0
+            )
+            cases += 1
+    report("seq.launch_worklist_consume", launch_protocol_ok,
+           f"request and fallback traces match for all {cases} launch/qualifier masks")
+
 
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
             "svc": sec_svc, "tzpow": sec_tzpow, "blend": sec_blend,

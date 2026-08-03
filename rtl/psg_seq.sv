@@ -154,7 +154,7 @@ module psg_seq (input  bit   clk,
 
   logic        mus_launch;
   logic [PSG_NV-1:0] launched;
-  logic        tch_seen, ptick_seen, f_lb, f_stop;
+  logic        ptick_seen, f_lb, f_stop;
 
   logic [12:0] pticks, ptick_tgt;
   logic        ptick_pend;
@@ -606,7 +606,7 @@ module psg_seq (input  bit   clk,
 
   wire [2:0] note_wave = {seq_q[0], note_lo[7:6]};
 
-  wire tnl_len_launch = launched[c] && !tch_seen && !(acc[7:0] < seq_q);
+  wire tnl_len_launch = launched[c] && !(acc[7:0] < seq_q);
 
   task cur_note_load();
     w_cur_pitch <= note_lo[5:0];
@@ -649,7 +649,6 @@ module psg_seq (input  bit   clk,
       clr_tog <= 0;
       mus_playing <= 0;
       mus_launch <= 0;
-      tch_seen <= 0;
       ptick_seen <= 0;
       mus_pat <= 0;
       launched <= 0;
@@ -837,8 +836,10 @@ module psg_seq (input  bit   clk,
               ptick_tgt <= {wrd[7:0], 5'b0};
             end
             if (tnl_len_launch) begin
-              tch_seen <= 1;
-
+              // The left-most launched non-looping channel owns pacing.  Its
+              // acceptance consumes the launch worklist: ptick_seen already
+              // captured the fallback speed, and no later mark remains live.
+              launched <= 0;
               ptick_pend <= 1;
             end
           end
@@ -1207,7 +1208,6 @@ module psg_seq (input  bit   clk,
         ML_L3: begin
           ml_launch(2'd3);
           mus_playing <= 1;
-          tch_seen <= 0;
           ptick_seen <= 0;
           pticks <= 0;
           sst <= S_IDLE;
