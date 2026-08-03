@@ -23,11 +23,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: H133; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H133.
+- Next hypothesis ID: H134.
 - H131 hypothesis row: replace the `aud_sl(...) == c` row-owner relation with
   the exact foreground-play XOR. All 65,536 slot/play/phase tuples and
   arbitrary-state SAT pass, but both complete row writers map identically at
@@ -987,7 +987,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - `sfx_id` foreground/music FF-bank partitioning: H129.
 - CPU status channel/slot selection order: H130.
 - Audible-row owner predicate spelling: H131.
-- Reciprocal spare-bit tail token via reserved address: H132.
+- Reciprocal spare-bit tail token via reserved address/plane: H132--H133.
 
 ## Hypothesis H006
 
@@ -6600,8 +6600,18 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   final current spare-bit-token form under the two-variant stop rule.
 - **Change:** proof-first one-bit address-MSB token plane; production RTL
   remains unchanged until exactness and isolated physical gates pass.
-- **Result:** active.
-- **Decision:** active.
+- **Result:** the all-context proof again covers 2,097,152 tuples and proves
+  the complete output unchanged. Ordinary addresses remain exactly 0..118;
+  token transactions map to 128..203 with the low seven address bits
+  preserved. Address-domain and registered `t_div` SAT proofs pass. Both
+  complete consumers retain one EBR. The candidate retires one FF and one
+  carry, but grows 696 -> 699 LUT4s; unpackable FFs fall 66 -> 65, so the
+  deterministic floor worsens 762 -> 764 cells.
+- **Decision:** rejected before production RTL. The one-bit address overlay
+  recovers two of H132's four lost floor cells but remains a net regression.
+  Production RTL, lint, whole-PSG mapping, routing and fidelity are skipped at
+  the failed isolated gate. H132 and H133 close the current reciprocal
+  spare-bit tail-token family under the two-variant stop rule.
 - **Repeat only if:** if rejected, close reciprocal spare-bit tail tokens until
   reciprocal EBR width, reachable address domains, tail-result ownership,
   pipeline alignment, or mapper EBR-output lowering changes materially.
@@ -6933,11 +6943,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h130/{status_select_probe.sv,status_select_proof.py,exhaustive.log,formal.log,isolated-*}` | control/index proof, arbitrary-payload SAT, and complete registered readback synthesis | Exact, but direct selection grows 61 -> 63 LUT4s with seven packed FF in both. |
 | `build/experiments/h131/{aud_row_owner_probe.sv,aud_row_owner_proof.py,exhaustive.log,formal.log,isolated-*}` | exhaustive ownership proof, arbitrary-state SAT, and complete row-writer synthesis | Exact and mapping-identical at 18 LUT4s/20 unpackable FF. |
 | `build/experiments/h132/{tail_token_proof.py,tail_token_formal.sv,wave_consumer_probe.sv,exhaustive.log,formal-*,isolated-*}` | all-context exhaustive proof, address and registered-token SAT, and complete registered waveform-consumer synthesis | Exact with one EBR in both forms, but -1 carry/-1 FF changes 696 -> 701 LUT4s and worsens the floor 762 -> 766 cells. |
+| `build/experiments/h133/{tail_plane_proof.py,tail_plane_formal.sv,wave_consumer_probe.sv,exhaustive.log,formal-*,isolated-*}` | all-context high-half-plane proof, address and registered-token SAT, and complete registered waveform-consumer synthesis | Exact with one EBR in both forms, but -1 carry/-1 FF changes 696 -> 699 LUT4s and worsens the floor 762 -> 764 cells. |
 
 ## Handoff
 
-- Next allowed experiment: H133 on accepted H102 `ccfb2a0`, using the
-  one-bit reciprocal address-MSB token plane recorded above.
+- Next allowed experiment: H134 on accepted H102 `ccfb2a0`, after a fresh
+  source/DNR audit outside the now-closed reciprocal spare-bit token family.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -7200,6 +7211,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   unchanged and no downstream gate remains. H132's spare reciprocal-EBR tail
   token is exact and retains one EBR, but adds five LUT4s for one fewer carry,
   FF, and unpackable cell; production is unchanged and no downstream gate
-  remains.
+  remains. H133's one-bit address-MSB token plane is also exact and recovers
+  two of H132's lost floor cells, but still adds three LUT4s for one fewer
+  carry, FF, and unpackable cell; production is unchanged, no downstream gate
+  remains, and the current spare-bit token family is closed.
 - Files to avoid staging after I003: executor/controller proof files beyond the
   accepted source-boundary tools and ledger, plus unrelated changes.
