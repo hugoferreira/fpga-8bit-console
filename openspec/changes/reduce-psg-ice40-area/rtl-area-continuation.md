@@ -27,7 +27,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H126.
+- Next hypothesis ID: H127.
+- H126 hypothesis row: `ctrl_displaced` remembers whether a `$22` fade-table
+  lookup displaced a live walker control read, while `crom_replay` remembers
+  only the lookup. Deriving the replay stall as `crom_replay && prun` observes
+  post-edge walker validity instead of the prior `ctrl_read`: an idle
+  `sample_en + $22` edge therefore invents a stall and leaves the new walk one
+  phase behind. Decision: rejected before synthesis or RTL.
 - H125 hypothesis row: `s_ch_noiz` is loaded on the same edge as the
   unreachable `s_eff_a[11]` bit and maps as a separate unpackable flop whose
   named fanout cone contains 92 LUT4s. Pack this materially higher-fanout
@@ -246,9 +252,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H120 rejected after inductive/SAT validity proof
-  and complete isolated registered-consumer synthesis. Removing 29 payload
-  reset assignments adds one LUT4 while retaining all 41 FFs and the same 13
+- Latest completed decision: H126 rejected after exhaustive edge-order proof.
+  Across full multi-pumped, compatibility single-clock, and PREVIEW schedules,
+  3,750 transition classes agree, while ten accepted same-edge walk starts
+  produce a false candidate stall and eight terminal closures lose the
+  baseline history bit. Adjacent `$22/$20` writes retain the fade value, but
+  the start collision changes walker phase and control-ROM prefetch. No RTL or
+  synthesis gate ran. H120 was rejected after inductive/SAT validity proof and
+  complete isolated registered-consumer synthesis. Removing 29 payload reset
+  assignments adds one LUT4 while retaining all 41 FFs and the same 13
   unpackable cells. H119 was rejected after exact three-mode schedule
   proof, lint, and canonical whole-PSG place-and-route. The elaboration-
   specific `pph` width removes one FF and five carries but adds 35 LUT4s and
@@ -259,7 +271,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   bits into inactive P_W2 but added 20/51 LUT4s and 30/53 routed LCs.
   I003 remains the accepted H102 source-contract v5 integration, and H102
   remains the best accepted generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H120's exact fade-payload reset removal is locally
+- Latest rejected variants: H126's replay/live-valid reconstruction loses the
+  prior-edge collision fact on walker start/finish transitions. H125's
+  high-fanout amplitude-bit packing and H124's low-fanout form both save a
+  local flop/cone but regress the global map. H123's bank-history
+  reconstruction mishandles same-edge publication and dropped PREVIEW starts.
+  H120's exact fade-payload reset removal is locally
   worse despite simpler source. H119's exact elaboration-specific walk-phase
   width is globally worse despite one fewer FF and five fewer carries. H118's
   exact volume-width contraction is globally
@@ -924,6 +941,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Fade-payload reset removal behind `fade_dir`: H120.
 - Sequencer-credit state representation: H121.
 - PC3 copy-zero live-state reconstruction: H122.
+- Shared constants/control-ROM collision-token reconstruction: H126.
 
 ## Hypothesis H006
 
@@ -6173,6 +6191,62 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   amplitude domain, P_W2/P_W3 load order, walker consumer set, or mapper
   register/enable lowering changes materially.
 
+## Hypothesis H126
+
+- **ID:** H126.
+- **Hypothesis:** `psg_seq.ctrl_displaced` is set only by
+  `fade_issue && ctrl_read` and is consumed one cycle later as the walker's
+  `ctrl_stall`. The companion `crom_replay` bit already records
+  `fade_issue`; derive the stall as `crom_replay && prun` on the replay cycle
+  and retire the separate history flop while preserving every real displaced
+  control read.
+- **Scope:** exhaustively model reset, idle and existing walks, every phase
+  including terminal close, a sample walk starting on the same edge as the
+  fade lookup, accepted and dropped PREVIEW starts, replay, arbitrary holds,
+  and adjacent `$22/$20` writes. Compare the registered baseline stall,
+  walker phase/address evolution, ROM owner/address, `crom_q`, `fstep_q`, and
+  `$20` fade-step consumption against the derived form before any RTL edit.
+  Only if every trace is identical, synthesize the complete registered
+  collision consumer in isolation and then change only `rtl/psg_seq.sv`.
+  Retain shared-ROM priority, sequencer holds, sample/tick cadence, full and
+  PREVIEW schedules, interfaces, EBRs, R.84 files and tolerances. Whole-PSG
+  mapping, routing and the H102 fidelity battery remain conditional on a
+  deterministic mapped/floor win.
+- **Baseline:** accepted H102/I003 RTL at commit `f9669f9` maps 6,360 LUT4s,
+  1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor 6,868, and
+  routes in 7,087 LCs at 140.92/32.65 MHz. `ctrl_displaced` is one registered
+  collision-history bit; `crom_replay` independently records every fade-table
+  lookup so the following cycle captures `fstep_q` and holds the sequencer.
+- **Changed condition versus H058, H110, H117, H121 and the control-encoding
+  DNRs:** H058 tested a state-RAM replay token, H110 reconstructed bank/join
+  history, H117 removed validity-dominated walk payload resets, and H121
+  recoded the sequencer-credit state. H126 changes none of those domains and
+  does not alter a control word or schedule encoding. It tests only whether
+  the existing fade-replay bit plus the live walker-valid bit contains the
+  exact prior-cycle collision fact.
+- **Change:** proof-first replacement of the registered collision-history bit
+  with `crom_replay && prun`; production RTL remains unchanged until the
+  edge-order model passes.
+- **Result:** exhaustive one-edge enumeration covers every phase of the
+  61-phase multi-pumped, 67-phase compatibility, and 23-phase PREVIEW walks,
+  both replay values, accepted/dropped starts, terminal close, fold-busy
+  state, and no-op/`$22`/`$20` commands. Of 3,768 comparable transition
+  classes, 3,750 agree. Ten accepted idle-start classes refute the candidate:
+  pre-edge `prun=0` means the fade lookup displaced no control read, but the
+  same edge starts the walk, so next-cycle `crom_replay && prun=1` invents a
+  stall. In the concrete adjacent-write trace, the baseline advances phase
+  0 -> 1 and prefetches control word 1 while the candidate holds phase 0 and
+  fetches the empty word 0. Both forms correctly consume the fade word on the
+  adjacent `$20`, localizing the mismatch to walker cadence/control prefetch.
+  Eight terminal-close classes show the converse history mismatch. Synthesis
+  and production RTL are skipped.
+- **Decision:** rejected before synthesis or production RTL. The executable
+  edge-order counterexample remains under `build/experiments/h126/`.
+- **Repeat only if:** if rejected, retry only after sample-walk start/finish
+  ordering, `ctrl_read` ownership, fade lookup priority, replay duration,
+  adjacent `$22/$20` consumption, or mapper sequential lowering changes
+  materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6492,10 +6566,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h123/bank_history_counterexample.py` | exhaustive same-edge publication and dropped-PREVIEW history model | Refutes a live bank delta before RTL: same-edge flips move restart early and dropped starts leave stale history. |
 | `build/experiments/h124/{packed_clear_proof.py,packed_clear_probe.sv,formal.log,isolated-*,candidate*}` | complete legal-domain proof, SAT, registered-consumer synthesis, full/PREVIEW lint, and two forced whole-PSG maps | Exact and locally -29 LUT4/-1 carry/-1 FF, but both global spellings are +39 LUT4/+2 carry/+39 floor; production reverted. |
 | `build/experiments/h125/{packed_noiz_proof.py,packed_noiz_probe.sv,formal.log,isolated-*,candidate*}` | split-load proof, SAT, registered-consumer synthesis, full/PREVIEW lint, and forced whole-PSG mapping | Exact and locally -31 LUT4/-1 carry/-1 FF, but globally +45 LUT4/+2 carry/+45 floor; production reverted. |
+| `build/experiments/h126/ctrl_displaced_counterexample.py` | exhaustive three-schedule edge-order and adjacent `$22/$20` model | Refutes `crom_replay && prun` before RTL: a same-edge walk start invents a replay stall and shifts control prefetch by one phase. |
 
 ## Handoff
 
-- Next allowed experiment: H126 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H127 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
