@@ -28,7 +28,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H152.
+- Next hypothesis ID: H153.
+- H152 hypothesis row: retire the duplicate eight-bit effective-filter tuple
+  by letting the existing base-filter working tuple hold the effective value.
+  Preserve the base tuple in its existing record fields, refresh those fields
+  during trigger setup, and recover them through otherwise-idle scheduled
+  state reads only when a note transition leaves or retriggers an instrument.
+  Decision: rejected and reverted. Exact proof and isolated synthesis retire
+  eight flops and five floor cells, but the canonical whole PSG adds 72 LUT4s,
+  four carries and 72 floor cells while leaving unpackable flops unchanged.
 - H151 hypothesis row: retire the divider's eight-bit captured divisor and
   consume the stable live `eff_sp`, with the sole `/7` request identified by
   its existing `K_FX/xs=10` wait state. Decision: rejected and reverted. The
@@ -7780,6 +7788,72 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `eff_sp` lifetime, constant-seven ownership, hold/busy ordering, divider
   latency, or mapper cross-module operand lowering changes materially.
 
+## Hypothesis H152
+
+- **ID:** H152.
+- **Hypothesis:** `w_bf_{damp,rev,det,buzz,noiz}` and
+  `w_ch_{damp,rev,det,buzz,noiz}` retain separate eight-bit base and effective
+  filter tuples for a slot. The base tuple already has persistent ownership in
+  record words 4/5, while only the effective tuple is needed between note
+  transitions and P_W2 publication. Let the existing `w_bf_*` working tuple
+  hold the effective value, preserve the base fields in their existing record
+  words during V_ST, and pre-read those words during K_NL/K_NH so K_LD can
+  restore base only when a note exits or retriggers an instrument. Fresh
+  triggers refresh the record fields during existing T_SP/T_LS/T_LE cycles.
+  This should retire all eight `w_ch_*` flops and their duplicate load/copy/join
+  cones without a new state, EBR, persistent register, or sequencer cycle.
+- **Scope:** prove reset/load, fresh trigger, ordinary note, same-instrument
+  continuation, instrument exit/retrigger, base/instrument maximum, V_ST
+  preservation, P_W2 publication, synchronous state-read timing, holds and
+  same-cycle write precedence. Synthesize the complete registered base/effective
+  ownership consumer in isolation. Only after exactness and a deterministic
+  isolated floor win may `rtl/psg_seq.sv` change, followed by full/PREVIEW
+  lint and a forced canonical whole-PSG map. Route and run the H139
+  fidelity/cadence/recovery/click/Celeste battery only after a whole-PSG
+  mapped/floor win. Preserve all filter values, note/instrument decisions,
+  record and sounding layouts, five V_ST cycles, publication timing, state
+  ports, schedules, 14 EBRs, interfaces, R.84/B2 files, Tang paths, images and
+  tolerances.
+- **Baseline:** accepted H139 production at commit `d76241f` and docs commit
+  `860f117`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed in 7,018
+  LCs at 142.63/31.17 MHz. The H139 census attributes 152 LUT4s to
+  `w_ch_rev`'s flattened family; the complete ownership consumer will be
+  measured before any production edit.
+- **Changed condition versus H099, H115 and H116:** H099 retained both tuples
+  and changed only base-copy/publication selection; H115 retained both tuples
+  and respelled the bounded maxima; H116 moved the effective lifetime into
+  inactive P_W2 and paid new bank-read/replay selection. H152 instead removes
+  the duplicate tuple, makes no P_W2 read, and uses the existing persistent
+  base record plus otherwise-idle note-transition read slots. The sole
+  temporary base-word capture reuses `acc`, which is dead after EA5 and is
+  overwritten before its next ordinary consumer.
+- **Change:** the source-bound ownership model was proved first and the complete
+  registered ownership consumer was synthesized in isolation. After both gates
+  passed, the production candidate removed `w_ch_*`, published `w_bf_*`, kept
+  the persistent base tuple in record words 4/5, refreshed it during T_SP/T_LS,
+  recovered it through K_NL/K_NH/K_LD reads using dead `acc[5:0]`, and merged
+  the persistent fields during V_ST without changing the five-cycle store.
+- **Result:** 10,089,360 semantic ownership cases and 1,024 hold/replay
+  timelines pass. The complete isolated baseline maps to 51 LUT4s, 32 flops
+  and floor 67; the candidate maps to 46 LUT4s, 24 flops and floor 62. Full and
+  PREVIEW lint reach only the established warning classes. Forced canonical
+  whole-PSG synthesis at RTL fingerprint `a70eddb86252` reverses the isolated
+  result: H139's 6,302 LUT4s, 1,291 carries, 1,450 flops, 498 unpackable flops,
+  14 EBRs and floor 6,800 become **6,374 LUT4s, 1,295 carries, 1,442 flops,
+  498 unpackable flops, 14 EBRs and floor 6,872**. The eight removed flops were
+  all packed, while the added state-port/replay and record-merge selection
+  raises both binding mapped metrics by 72 cells. Production RTL is restored
+  byte-identically to H139; routing and the fidelity/cadence battery are skipped
+  after the hard mapped-area failure.
+- **Decision:** rejected and reverted at the whole-PSG area gate. The persistent
+  record reads avoid duplicate storage locally, but their global address,
+  replay and merge cones cost substantially more than the eight packed flops.
+- **Repeat only if:** if rejected, retry only after base/effective tuple
+  ownership, note-transition states, record-word layout, state-port schedule,
+  V_ST merge timing, instrument-retrigger topology, or mapper state-read/FF
+  lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -8126,16 +8200,19 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h149/*` | 6,594,000-transition relation, 16,155 command traces, SAT, complete isolated port synthesis, full/PREVIEW lint and canonical map/route | Exact and -1 FF/-12 floor alone, but globally +58 LUT4/+5 carry/-1 FF/-11 unpackable/+47 floor/+58 routed LCs; production reverted. |
 | `build/experiments/h150/*` | source-bound domain proof, 4,063,232 active arithmetic cases, 4,536 command cases, SAT and complete isolated fade-state synthesis | Exact and -1 FF/-1 unpackable, but +3 LUT4 worsens the isolated floor 92 -> 94; production unchanged. |
 | `build/experiments/h151/*` | seven-class transaction proof, 30-cycle arbitrary-input SAT, complete provider/divider synthesis, full/PREVIEW lint and canonical map/route | Exact and -8 FF/-3 floor alone, but globally +31 LUT4/+4 carry/-8 FF/-6 unpackable/+25 floor/+32 routed LCs; production reverted. |
+| `build/experiments/h152/*` | 10,089,360-case ownership proof, 1,024 hold/replay timelines, complete registered ownership synthesis, full/PREVIEW lint and forced canonical whole-PSG mapping | Exact and -5 LUT4/-8 FF/-5 floor alone, but globally +72 LUT4/+4 carries/-8 packed FF/+72 floor with unpackable FF and EBR counts unchanged; production reverted and route/fidelity skipped. |
 
 ## Handoff
 
-- Next allowed experiment: H152 on accepted H139 after a fresh source/DNR
-  audit. H149 and H151 improve their isolated floors but add 47 and 25
-  whole-PSG floor cells respectively; H150 retires one unpackable flop but its
-  isolated floor grows by two cells. Do not retry any of them without its
+- Next allowed experiment: H153 on accepted H139 after a fresh source/DNR
+  audit. H149, H151 and H152 improve their isolated floors but add 47, 25 and
+  72 whole-PSG floor cells respectively; H150 retires one unpackable flop but
+  its isolated floor grows by two cells. Do not retry any of them without its
   repeat-condition change.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
+- `build/targets/psg.*` now contains rejected H152 measurement output; use
+  `build/experiments/h139/candidate.*` as the accepted physical baseline.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
   H004 and H006 were rejected before production RTL; H005's timing-failing
   spelling remains rejected. H008 was rejected before production RTL. H009
@@ -8452,6 +8529,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   live divider operand is exact and retires eight flops with a three-cell
   isolated floor win, but globally adds 31 LUT4s, four carries, 25 floor cells
   and 32 routed LCs; production is restored byte-for-byte and no fidelity gate
-  remains.
+  remains. H152's unified filter tuple is exact and retires eight packed flops
+  with a five-cell isolated floor win, but globally adds 72 LUT4s, four carries
+  and 72 floor cells while leaving the unpackable count unchanged; production
+  is restored byte-for-byte and no route or fidelity gate remains.
 - Files to avoid staging after H139: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
