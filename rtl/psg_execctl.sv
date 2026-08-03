@@ -51,9 +51,9 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
     OP_DONE   = 3'd6,
     OP_EXEC   = 3'd7;
 
-  // Atomic R.84 integration retires the walker's and sequencer's two control
-  // EBRs.  Reusing both here preserves the accepted whole-PSG EBR count while
-  // avoiding another PC bit or a wider branch target.
+  // The 512x16 control store occupies two EBRs as two owner-selected 256-word
+  // banks. Keeping owner outside the logical PC leaves branch and jump targets
+  // eight bits wide.
   (* ram_style = "block" *) logic [15:0] ucode[0:511];
   initial begin
     if (TEST_PROGRAM) begin

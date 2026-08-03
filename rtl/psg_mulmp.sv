@@ -1,4 +1,4 @@
-// Related-clock, closed-loop multi-pumped PSG multiplier experiment.
+// Related-clock, closed-loop multi-pumped PSG multiplier.
 //
 // The request/result buses are bundled multi-cycle paths: the PSG domain
 // captures them before toggling req and keeps them stable until the returned
@@ -33,17 +33,17 @@ module psg_mulmp_core #(parameter int RADIX_BITS = 1) (
       $error("psg_mulmp: RADIX_BITS must be 1 or 2");
   end
 
-  // Slow-domain integration contract for the accepted six-fast-clocks-per-
-  // PSG-clock boundary. The result is consumed only after the returned
+  // Slow-domain contract for the six-fast-clocks-per-PSG-clock boundary. The
+  // result is consumed only after the returned
   // acknowledge: normal requests are safe at launch+5, short requests at
   // launch+4. Keep these named values source-visible so schedule tooling and
   // the transaction bench verify the same CDC contract.
   localparam int NORMAL_CONSUME_GAP = 5;
   localparam int SHORT_CONSUME_GAP  = 4;
 
-  // Source-domain transaction storage. req_a replaces the old core-local A
-  // register: it is stable for the complete transaction, so the fast
-  // recurrence needs no duplicate A flop bank. req_b is the initial 13-bit
+  // Source-domain transaction storage. req_a is stable for the complete
+  // transaction, so the fast recurrence needs no duplicate A flop bank. req_b
+  // is the initial 13-bit
   // multiplier field (mode 3 uses B<<1 only in radix 4), and req_steps is the
   // exact number of fast iterations.
   logic [17:0] req_a;
@@ -97,8 +97,8 @@ module psg_mulmp_core #(parameter int RADIX_BITS = 1) (
                      : (mul_start_mode == 2'd3) ? 4'd9
                      : 4'd8;
 
-        // Preserve the shipped radix-4 busy duration for the sequencer. The
-        // true acknowledge is allowed to arrive earlier but never later.
+        // Present a fixed radix-4-equivalent busy duration to the sequencer.
+        // The true acknowledge may arrive earlier but never later.
         seq_pad <= mul_start_short ? 3'd3
                  : (mul_start_mode == 2'd2) ? 3'd6
                  : (mul_start_mode == 2'd1) ? 3'd5
@@ -118,9 +118,9 @@ module psg_mulmp_core #(parameter int RADIX_BITS = 1) (
                       + (m_p[0] ? {2'b0, req_a} : 20'd0);
   wire [33:0] r2_next = {3'b0, r2_sum, m_p[11:1]};
 
-  // Shipped radix-4 recurrence: two bits per fast clock. This variant is the
-  // control that prices the CDC wrapper before testing the smaller radix-2
-  // core under the same boundary.
+  // Radix-4 consumes two multiplier bits per fast clock. RADIX_BITS selects it
+  // through the same request/acknowledge boundary as the radix-2 recurrence,
+  // so both modes share transaction storage and CDC timing.
   wire [18:0] r4_acc = m_p[30:12];
   wire [1:0]  r4_d   = m_p[1:0];
   wire [19:0] r4_add = (r4_d == 2'd0) ? 20'd0
@@ -171,9 +171,9 @@ module psg_mulmp_core #(parameter int RADIX_BITS = 1) (
 
 endmodule
 
-// The legacy PSG has no executor-wide external hold.  Keep its interface and
-// named consume-gap constants stable while H-D instantiates the freeze-aware
-// core so both related clock domains stop on one transaction boundary.
+// Always-enabled adapter for the top-level PSG. Hold-aware composition uses
+// the core directly so both clock domains freeze at one transaction boundary.
+// Consume-gap constants remain visible to schedule tooling and tests.
 module psg_mulmp #(parameter int RADIX_BITS = 1) (
     input  bit                 clk,
     input  bit                 fastclk,

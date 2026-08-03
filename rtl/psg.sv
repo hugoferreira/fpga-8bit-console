@@ -68,16 +68,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire         prun, fold_busy;
   wire         walk_busy = seq_frozen | prun | state_replay | fold_busy;
 
-  // A fixed sequencer credit makes the program position at each sample
-  // boundary a function of the sample index, not of clocks-per-sample.  The
-  // The R.75 530-clock full walk plus 272 credits needs 802 clocks/sample;
-  // 112.5/6 = 18.75 MHz provides at least 850, leaving 48 clocks. A sweep
-  // found 272 is the first
-  // credit that keeps all 59 accepted renders byte-identical. There is no
-  // minimum-interval margin at /6, so the simulation assertion below is part
-  // of the clock contract rather than advisory. Preview
-  // is deliberately exempt: it runs in the simulator's single 3.5 MHz domain
-  // and has its own compact schedule.
+  // A fixed 272-credit sequencer window makes the program position at each
+  // sample boundary a function of the sample index rather than the number of
+  // clocks in that sample. The full walk and credits need 802 clocks/sample.
+  // At the /6 clock ratio, 112.5/6 = 18.75 MHz provides at least 850 clocks,
+  // leaving 48 clocks. Only cycles not owned by the sample walk consume this
+  // window; its terminal state freezes the sequencer until the next sample.
+  // There is no minimum-interval margin, so the simulation assertion below is
+  // part of the clock contract rather than advisory.
+  // Preview is exempt because it runs in the simulator's single 3.5 MHz
+  // domain with its own compact schedule.
   logic seq_starved;
   generate
     if (!REALTIME_PREVIEW && SEQ_BUDGET == 272) begin : g_seq_budget_272
@@ -272,10 +272,10 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   // Multi-pumping is an explicit board/bench contract, not something inferred
   // from CLK_HZ. Only the iCE40 /6 configuration has the required 112.5 MHz
   // fast clock and six-fast-clocks-per-PSG-clock service bound. PREVIEW,
-  // historical oracle clocks, and boards whose PSG already runs at the PLL
-  // rate retain the single-clock service. The walker sees true readiness; the
-  // sequencer sees the padded shipped radix-4 duration so multiplication
-  // throughput cannot move audible tick-program timing.
+  // single-clock simulation, and boards whose PSG runs at the PLL rate use the
+  // single-clock service. The walker sees true readiness; the sequencer sees a
+  // fixed radix-4-equivalent duration so multiplier throughput cannot move
+  // audible tick-program timing.
   generate
     if (!MULTIPUMP || REALTIME_PREVIEW) begin : g_mul_single
       wire single_busy;

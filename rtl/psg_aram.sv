@@ -88,9 +88,9 @@ module psg_aram_core(input  bit          clk,
 endmodule
 /* verilator lint_on DECLFILENAME */
 
-// The accepted PSG keeps the historical always-running synthesis-borrow
-// state.  The full executor instantiates psg_aram_core directly so an external
-// hold can freeze the borrowed byte and its pending sequencer replay together.
+// Top-level adapter for the continuously running sample walk. It ties the
+// core's external freeze low; hold-aware executors instantiate psg_aram_core
+// directly so a hold freezes both the borrowed byte and pending replay.
 module psg_aram (input  bit          clk,
                  input  bit          reset,
 

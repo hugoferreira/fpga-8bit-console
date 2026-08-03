@@ -5,10 +5,10 @@
 //     floor(K * dp / 256),
 //
 // where dp is 13 bits and K is one of 193, 250, 254, 255, 256, 384, or 508.
-// One five-step radix-4 recurrence therefore replaces the parallel correction
-// network. A new request may be accepted on the terminal step, allowing the
-// live and preceding-voice transactions to occupy consecutive five-cycle
-// windows without changing the sample schedule.
+// One five-step radix-4 recurrence computes the correction. Its terminal step
+// may also accept the next request, allowing the live and preceding-voice
+// transactions to occupy consecutive five-cycle windows without an idle
+// cycle between them.
 
 `ifndef PSG_DQSVC_SV
 `define PSG_DQSVC_SV
@@ -89,9 +89,9 @@ module psg_dqsvc_core (
 
 endmodule
 
-// The legacy walker has no external executor hold.  Keep its source-visible
-// interface unchanged while the memory-native executor uses the enabled core
-// to freeze the recurrence on the same edges as PC, IR and state_q.
+// Always-enabled adapter for psg_walk. Hold-aware executors instantiate the
+// core directly and drive ce so the recurrence freezes with PC, IR, and
+// state_q.
 module psg_dqsvc (
     input  bit          clk,
     input  bit          reset,

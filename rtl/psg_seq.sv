@@ -546,9 +546,9 @@ module psg_seq (input  bit   clk,
   end
 
   // The final increment is available before volume/instrument post-processing
-  // finishes. Publish its two words immediately, then resume K_FX. This keeps
-  // the value in address-selected storage instead of a 13-bit holding
-  // register and leaves the atomic bank flip unchanged.
+  // finishes. Publish its two words immediately, then resume K_FX. The value
+  // stays in address-selected storage, and both writes finish before the
+  // inactive sounding bank flips atomically.
   logic [12:0] fxi_pub;
   always_comb begin
     fxi_pub = base_inc;

@@ -3,8 +3,8 @@
 // One synchronous state-memory word is the only operand and acc is the only
 // result register.  Wider operations chain through carry; there is no source
 // register index, context bundle or destination selector.  Owner-specific
-// macro actions use families 0..6.  Family 7 is the common primitive substrate
-// measured by R.84D.
+// macro actions use families 0..6. Family 7 provides the common load,
+// arithmetic, bitwise, shift, and compare primitives.
 
 `timescale 1ns/1ps
 

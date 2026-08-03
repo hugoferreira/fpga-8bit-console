@@ -1,10 +1,10 @@
 // Synchronous state-memory movement for the shared PSG executor.
 //
-// R.84E lowers the complete tick record load/store stream.  R.84G-F extends
-// the same fixed-address movement decoder with the normalized advance actions.
-// R.84H-B adds only the owner-zero active-parameter address selection.  Each
-// action has one fixed projection, merge or address; no general register
-// index, arithmetic chain or result register is introduced here.
+// Tick-owner actions stream complete records, advance actions normalize row
+// and counter fields, and sample-owner actions select active-parameter words.
+// Each action has one fixed projection, merge, or address. The decoder owns no
+// general register index, arithmetic chain, or result register; state movement
+// stays visible as an address-selected transaction.
 
 `timescale 1ns/1ps
 

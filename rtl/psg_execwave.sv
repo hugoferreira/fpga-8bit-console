@@ -1,10 +1,10 @@
 // Fixed owner-zero waveform and wavetable cadence for the shared PSG executor.
 //
-// The core accepts H-D's explicit post-update W1/W2/W3 phases and old
-// wave/mode/alternate tuple while the H-C compatibility wrapper below
-// reconstructs them from the old addressed stream.  Fixed live-wave controls
-// and one six-bit phase index survive in the core.  Wave and ARAM results
-// remain streaming events; neither boundary owns a result register or
+// The core accepts explicit post-update W1/W2/W3 phases and the preceding
+// wave/mode/alternate tuple. The address-stream adapter below reconstructs
+// those inputs from synchronous state words. Fixed live-wave controls and one
+// six-bit phase index live in the core. Wave and ARAM results remain streaming
+// events across both interfaces; neither boundary owns a result register or
 // scratch-memory write.
 
 `timescale 1ns/1ps
@@ -50,9 +50,9 @@ module psg_execwave_core(input  logic        clk,
     CAP_W4      = 7'h26,
     CAP_W5      = 7'h27;
 
-  // The explicit phase inputs remove old-q from this boundary.  The legacy
-  // wrapper below adds those sixteen bits back; H-D supplies the three values
-  // after its exact restart/noise/phase nonblocking-assignment sequence.
+  // Explicit phase inputs keep addressed-state lifetime out of the core. The
+  // adapter below retains the preceding word and derives these values after
+  // the restart/noise/phase update ordering.
   logic [5:0]  phase_index_hold;
   logic [2:0]  snd_id;
   logic        snd_wt;
@@ -144,10 +144,10 @@ module psg_execwave_core(input  logic        clk,
 
 endmodule
 
-// H-C compatibility wrapper.  It retains the original old-q lifetime and
-// action-derived physical primes, then feeds the explicit core with the
-// pre-H-D synchronous state stream.  H-D instantiates the core directly and
-// lets each instruction's stored word field select every physical prime.
+// Address-stream adapter. It retains the preceding synchronous word, derives
+// physical phase inputs from action timing, and feeds the explicit core.
+// Hold-aware executor composition may instantiate the core directly and use
+// each instruction's state-word field to select the physical inputs.
 module psg_execwave(input  logic        clk,
                     input  logic        active,
                     input  logic        hold,

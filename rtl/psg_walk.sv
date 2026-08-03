@@ -74,9 +74,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   logic [6:0]  pph;
   logic [15:0] sosc_wd;
 
-  // Schedule landmarks. The R.75 full schedule streams 14 oscillator words
-  // and closes at phase 61 after recompacting the acknowledged R.74 multiply
-  // chain; preview streams seven words and closes at phase 23.
+  // Schedule landmarks. Full mode streams 14 oscillator words and closes at
+  // phase 61 with multi-pumping or 67 with the single-clock multiplier.
+  // Preview streams seven words and closes at phase 23.
   localparam int PLOSC = REALTIME_PREVIEW ? 7  : PSG_SOSC;
 
   localparam int PWORK = REALTIME_PREVIEW ? 12 : 29;
@@ -219,11 +219,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
                          : (!prun || pph == 7'(PLAST)) ? 7'd0 : pph + 7'd1;
   always_comb ctrl_addr = 8'd144 + {1'b0, pph_nxt};
 
-  // R.75 recompacts only the multi-pumped /6 implementation. Historical
-  // full-schedule renderers deliberately retain the single-clock service and
-  // therefore need the accepted R.74 action spacing. Keep that compatibility
-  // schedule as elaboration-only decode: MULTIPUMP=1 still uses the compact
-  // shared control ROM, so this logic is absent from the iCE40 netlist.
+  // Single-clock multiplication needs wider action spacing than the compact
+  // multi-pumped schedule. This elaboration-only decoder supplies that
+  // spacing when MULTIPUMP=0. Its return value is the capture-action mask for
+  // the current phase. The iCE40 MULTIPUMP=1 netlist uses the shared control
+  // ROM directly and contains none of this decode.
   function automatic logic [15:0] single_clock_cap(input logic [6:0] phase);
     begin
       single_clock_cap = 16'd0;
@@ -710,9 +710,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       && clr_tog[pc_ch] != clr_ack_pv[pc_ch];
   wire preview_zero_edge = s_eff_a == 0 && old_q0[4:0] == 0 && s_lp != 0;
   // PREVIEW's gain multiply consumes s_eff_a[10:4] (bit 11 is unreachable
-  // for the published 0..7 note-volume range), so retain those exact seven
-  // audible bits.  The former five-bit coarse gain plus detune signature
-  // aliased adjacent effect-volume steps and let them snap at tick edges.
+  // for the published 0..7 note-volume range). All seven bits are audible:
+  // dropping either low bit aliases adjacent effect-volume steps and creates
+  // tick-edge snaps.
   wire preview_restart = REALTIME_PREVIEW && play_bits[pc_ch]
       && (({s_eff_a[10:4], s_snd_wave}
            != {s_old_G[6:0], old_q0[7:5]})
@@ -779,8 +779,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
 
   // Exact fold quotient after a base-256 split:
   //   x/5 = 51*(x>>8) + ((x>>8) + x[7:0])/5.
-  // The second term has a 0..414 domain, so one EBR replaces the original
-  // excess lifetime and corrected shift series.
+  // The second term has a 0..414 domain, so one EBR evaluates it directly
+  // without carrying quotient-correction state through the fold pipeline.
   (* ram_style = "block" *) logic [6:0] fdiv5[0:511];
   logic [6:0] fdiv5_q;
   wire [8:0] fdiv5_addr = {1'b0, phase_alu_y[15:8]}
@@ -837,10 +837,10 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
     logic [15:0] ring_rd;
     initial for (int i = 0; i < PSG_NV * 732; i++) ringm[i] = 16'd0;
 
-    // The two reads must complete before W75 snapshots blend_diff. Anchor
-    // them to the store window so both elaborated schedules preserve that
-    // dependency: 57/58/59 for the R.74 single-clock schedule and 52/53/54
-    // for the compact R.75 multi-pumped schedule.
+    // The two reads must complete before W75 snapshots blend_diff. Anchor them
+    // to the store window so the dependency is explicit in both schedules:
+    // phases 57/58/59 in single-clock mode and 52/53/54 in compact
+    // multi-pumped mode.
     wire [1:0] ring_lvl = (pph == 7'(PSTOR + 6)) ? s_ch_rev : old_rev_r;
     wire [9:0] ring_tap =
         (ring_lvl == 2'd1)
@@ -1300,8 +1300,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
             else
               mx_old <= mx_old_w51;
           end
-          // Consume the blend on its first readable phase and feed dampen from
-          // the combinational result. The former smp_a staging phase is gone.
+          // Consume the blend on its first readable phase; the same
+          // combinational result feeds the dampen filter directly.
           cap[CAP_W84]: begin
 `ifndef SYNTHESIS
             if (bl_cnt != 7'd64 && bl_res != blend_prod_check[22:0])
@@ -1337,9 +1337,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
     end
   end
 
-  // Keep the value-lineage trace schema source-compatible without perturbing
-  // synthesis ordering.  These are simulation-only wires, not restored
-  // lifetimes: W2 observes x1 as p1 and W4 observes it after it becomes q1.
+  // Value-lineage tooling names the two observation phases of wt_x1
+  // separately: W2 observes p1 and W4 observes q1. Both are simulation-only
+  // aliases of the same storage and do not add a hardware lifetime.
 `ifndef SYNTHESIS
   wire signed [7:0] wt_p1 = wt_x1;
   wire signed [7:0] wt_q1 = wt_x1;
