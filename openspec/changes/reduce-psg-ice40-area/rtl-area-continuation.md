@@ -27,7 +27,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H111.
+- Next hypothesis ID: H112.
+- H111 hypothesis row: every non-reset readback branch assigns
+  `aram_rd_pending_next=aram_cpu_rd`; hoisting that assignment is exact, but
+  the complete registered baseline and candidate both synthesize to 14 LUT4s
+  and nine flops. Decision: rejected before production RTL.
 - H110 hypothesis row: `join_stage` cannot be reconstructed from live
   `bank_ready`, `walk_tick`, and controller state. If `tick_en_d` publishes a
   pending bank on the same `S_IDLE` edge that a trigger starts a join pass, the
@@ -153,17 +157,17 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h099/`, `build/experiments/h100/`,
   `build/experiments/h101/`, the accepted `build/experiments/h102/`, and the
   rejected `build/experiments/h106/`, `build/experiments/h107/`, and
-  `build/experiments/h108/`, `build/experiments/h109/`, and the refuted
-  `build/experiments/h110/`, plus
+  `build/experiments/h108/`, `build/experiments/h109/`, and the rejected
+  `build/experiments/h110/` and `build/experiments/h111/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H110 rejected before production because a
-  simultaneous pending-bank publication and join-pass start refutes the
-  proposed live-state reconstruction. I003 remains the accepted H102
-  source-contract v5 integration, and H102 remains the best accepted generic
-  RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H110's join-mode reconstruction loses historical
+- Latest completed decision: H111 rejected before production because its exact
+  pending-valid hoist maps identically to the accepted readback consumer. I003
+  remains the accepted H102 source-contract v5 integration, and H102 remains
+  the best accepted generic RTL/proof point at `ccfb2a0`.
+- Latest rejected variants: H111's exact pending-valid hoist is already
+  recovered by Yosys. H110's join-mode reconstruction loses historical
   state on a same-edge bank publication/pass start. H109's one-hot sequencer state lowers mapped floor
   and placed LCs slightly but cannot route. H108's `REVERB=0` restart specialization is
   globally much worse before equivalence work. H107's packed playback register is globally much
@@ -388,7 +392,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H111 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H112 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -399,6 +403,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H108's disabled-reverb restart specialization family,
   H109's sequencer-FSM synthesis-encoding family,
   H110's inactive-bank join-mode reconstruction family,
+  H111's registered readback pending-valid factoring family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -556,6 +561,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H108 | rejected | Keep the reverb-mode term in `blend_restart` even for `REVERB=0`: parameter-gating it adds 39 LUT4s, four carries, one unpackable FF, 40 floor cells, and 47 routed LCs globally. |
 | H109 | rejected | Keep the sequencer FSM in binary encoding: forced one-hot is -6 LUT4/-5 unpackable/-11 floor and places three LCs lower, but adds 57 FF/four carries and cannot complete canonical routing. |
 | H110 | rejected | Keep the explicit `join_stage` history bit: a same-edge `tick_en_d` publication plus join-pass start clears `bank_ready` while preserving `join_stage=1`. |
+| H111 | rejected | Keep the readback pending assignments in their control arms: the unconditional next-state spelling is exact but maps identically at 14 LUT4s/nine flops. |
 
 ## Hypothesis H001
 
@@ -784,6 +790,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Soft-add threshold-probe fusion: H078.
 - Reverb comb post-shift rounding: H079.
 - Inactive-bank join-mode reconstruction: H110.
+- Registered readback pending-valid factoring: H111.
 
 ## Hypothesis H006
 
@@ -5309,6 +5316,42 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   protocol, join-pass entry/exit states, tick-boundary handling, or mapper
   sequential lowering changes materially.
 
+## Hypothesis H111
+
+- **ID:** H111.
+- **Hypothesis:** every non-reset branch of the registered CPU readback assigns
+  `aram_rd_pending` to the current `aram_cpu_rd`, even though the source spells
+  that same next state in three control arms. Hoisting the assignment to one
+  unconditional site should remove redundant pending-valid mux logic while
+  preserving synchronous `$02` capture and every other readback value.
+- **Scope:** exhaustive next-state/output proof and isolated synthesis of the
+  complete registered readback consumer first. Only after a deterministic
+  isolated win may `rtl/psg.sv` change, followed by canonical whole-PSG
+  synthesis and the full acceptance battery. Do not change CPU address/data
+  semantics, audio-RAM arbitration or pointer advancement, channel readback,
+  interfaces, R.84, images, Tang paths, or tolerances.
+- **Baseline:** accepted H102/I003 at `c4f7c2b` reproduces 6,360 LUT4s, 1,321
+  carries, 1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, and
+  7,087 routed LCs at 140.92/32.65 MHz.
+- **Changed condition versus H033/H106:** H033 respelled the audible activity
+  bit selected into ordinary channel reads; H106 factored upload/write and
+  diagnostic/read pointer advancement inside `psg_aram`. H111 changes neither:
+  it targets only the top-level registered one-cycle `$02` response-valid
+  next-state spelling.
+- **Change:** hoist `aram_rd_pending<=aram_cpu_rd` into the common non-reset
+  branch while preserving the existing output priority and hold behavior.
+- **Result:** exhaustive bitwise checking passes all 128 control/data
+  transitions. Both complete registered baseline and candidate consumers map
+  identically to 14 LUT4s and nine flops, so the source-only simplification
+  cannot improve the whole PSG. Production RTL is untouched and no broader
+  fidelity or physical gate is warranted.
+- **Decision:** rejected before production; Yosys already recovers the common
+  pending-valid next state. Ignored proof/probe evidence remains under
+  `build/experiments/h111/`.
+- **Repeat only if:** if rejected, retry only after the registered readback
+  priority, audio-RAM response latency, pending-valid consumers, or mapper
+  sequential lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5613,10 +5656,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h108/candidate*` | forced whole-PSG synthesis of the `REVERB=0` restart specialization | Enabled-reverb source remains unchanged, but the HX8K candidate is +39 LUT4/+4 carry/+1 unpackable/+40 floor/+47 routed LCs. |
 | `build/experiments/h109/{candidate.json,candidate.synth.log,candidate.pnr.log}` | forced one-hot sequencer mapping and bounded canonical seed-1 route | -6 LUT4/-5 unpackable/-11 floor and -3 placed LCs, but +57 FF/+4 carries and one unresolved wire through 29,349 router2 iterations. |
 | `build/experiments/h110/{join_stage_proof.py,join_stage_probe.sv}` | reachable reduced-controller proof and unrun synthesis probe | Refuted by same-edge bank publication plus join-pass start before production RTL or synthesis. |
+| `build/experiments/h111/{readback_pending_proof.py,readback_pending_probe.sv,isolated-*}` | exhaustive bit/control proof and complete registered readback synthesis | Exact across 128 transitions; both forms map identically at 14 LUT4s/nine flops. |
 
 ## Handoff
 
-- Next allowed experiment: H111 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H112 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
