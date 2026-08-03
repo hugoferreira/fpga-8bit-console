@@ -27,7 +27,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H132.
+- Next hypothesis ID: H133.
 - H131 hypothesis row: replace the `aud_sl(...) == c` row-owner relation with
   the exact foreground-play XOR. All 65,536 slot/play/phase tuples and
   arbitrary-state SAT pass, but both complete row writers map identically at
@@ -987,6 +987,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - `sfx_id` foreground/music FF-bank partitioning: H129.
 - CPU status channel/slot selection order: H130.
 - Audible-row owner predicate spelling: H131.
+- Reciprocal spare-bit tail token via reserved address: H132.
 
 ## Hypothesis H006
 
@@ -6512,6 +6513,59 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `V_ST` publication timing, row-mirror storage, or mapper dynamic-index/equality
   lowering changes materially.
 
+## Hypothesis H132
+
+- **ID:** H132.
+- **Hypothesis:** the reciprocal lookup is physically one 256x16 iCE40 EBR but
+  stores only fifteen quotient bits. All non-tail `/3`, `/7`, and `/15`
+  second-fold addresses are at most 118, while the direct tilted/triangle tail
+  ignores the lookup result. Override only a live non-organ tail lookup to
+  unused address 255 and store a one there in the spare EBR output bit. That
+  stage-aligned bit can replace `tilt_tail_r` without adding a memory, port,
+  register, result selector, or decoded arithmetic-payload sentinel.
+- **Scope:** prove every wave/alternate/secondary/phase context, the complete
+  reciprocal address bound, one-cycle token alignment, and unchanged waveform
+  output with exhaustive and SAT checks; synthesize the complete registered
+  waveform consumer in isolation first. Only after exactness and a
+  deterministic isolated floor win may `rtl/psg_wave.sv` change, followed by
+  full/PREVIEW lint and a forced canonical whole-PSG map. Route and run the
+  H102 fidelity battery only after a deterministic whole-PSG mapped/floor win.
+  Preserve the reciprocal quotient contents and latency, all waveform values,
+  DQ logic, schedule, interfaces, 14-EBR topology, R.84/B2 files, images, Tang
+  paths, and tolerances.
+- **Baseline:** accepted H102/I003 RTL at docs commit `5c31106`; production RTL
+  is byte-identical to H102 `ccfb2a0`. H113's source-identical
+  `build/experiments/h113/baseline.json` maps 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs and floor 6,868, and routes in
+  7,087 LCs at 140.92/32.65 MHz. A fresh all-context source audit bounds every
+  ordinary reciprocal address to 0..118 and confirms address 255 is unused.
+- **Changed condition versus H066 and R.67:** H066 encoded the token in
+  `rc_h2_r=7'h7f`, paid a new all-bits decoder on a live arithmetic payload,
+  and globally added 42 LUT4s/four carries/40 floor cells. R.67 added a second
+  registered reciprocal port and two EBRs. H132 changes neither payload nor
+  port topology: it uses the existing EBR's otherwise-unused sixteenth data
+  bit and an address whose quotient outputs are don't-care on the tail path,
+  directly targeting both physical costs that rejected H066/R.67.
+- **Change:** proof-first spare-bit EBR token with reserved address 255;
+  production RTL remains unchanged until exactness and isolated physical gates
+  pass.
+- **Result:** the exhaustive model covers all 2,097,152
+  wave/alternate/secondary/phase contexts and proves the complete output
+  unchanged. Ordinary addresses are exactly 0..118, discarded tail addresses
+  are 0..75, and address 255 is unreachable without the token override. The
+  combinational address SAT proof and one-edge registered `t_div` SAT proof
+  both pass. Both complete consumers retain one EBR. The candidate retires one
+  FF and one carry, but grows 696 -> 701 LUT4s; unpackable FFs fall only
+  66 -> 65, so the deterministic floor worsens 762 -> 766 cells.
+- **Decision:** rejected before production RTL. The spare EBR output bit is
+  physically available and exact, but moving the non-organ predicate onto the
+  reciprocal address plus consuming the new EBR bit costs four net floor
+  cells. Production RTL, lint, whole-PSG mapping, routing and fidelity are
+  skipped at the failed isolated gate.
+- **Repeat only if:** if rejected, retry only after reciprocal EBR width,
+  reachable address domains, tail-result ownership, pipeline alignment, or
+  mapper EBR-output lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6838,10 +6892,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h129/{sfx_partition_probe.sv,sfx_partition_proof.py,exhaustive.log,formal.log,isolated-*}` | control/index proof, arbitrary-state SAT, and complete registered storage/read synthesis | Exact, but candidate retains 48 unpackable FFs and grows 76 -> 86 LUT4s. |
 | `build/experiments/h130/{status_select_probe.sv,status_select_proof.py,exhaustive.log,formal.log,isolated-*}` | control/index proof, arbitrary-payload SAT, and complete registered readback synthesis | Exact, but direct selection grows 61 -> 63 LUT4s with seven packed FF in both. |
 | `build/experiments/h131/{aud_row_owner_probe.sv,aud_row_owner_proof.py,exhaustive.log,formal.log,isolated-*}` | exhaustive ownership proof, arbitrary-state SAT, and complete row-writer synthesis | Exact and mapping-identical at 18 LUT4s/20 unpackable FF. |
+| `build/experiments/h132/{tail_token_proof.py,tail_token_formal.sv,wave_consumer_probe.sv,exhaustive.log,formal-*,isolated-*}` | all-context exhaustive proof, address and registered-token SAT, and complete registered waveform-consumer synthesis | Exact with one EBR in both forms, but -1 carry/-1 FF changes 696 -> 701 LUT4s and worsens the floor 762 -> 766 cells. |
 
 ## Handoff
 
-- Next allowed experiment: H132 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H133 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
@@ -7103,6 +7158,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   two LUT4s in the complete registered readback; production is unchanged and
   no downstream gate remains. H131's direct row-owner XOR is exact but
   mapping-identical at 18 LUT4s/twenty unpackable flops; production is
-  unchanged and no downstream gate remains.
+  unchanged and no downstream gate remains. H132's spare reciprocal-EBR tail
+  token is exact and retains one EBR, but adds five LUT4s for one fewer carry,
+  FF, and unpackable cell; production is unchanged and no downstream gate
+  remains.
 - Files to avoid staging after I003: executor/controller proof files beyond the
   accepted source-boundary tools and ledger, plus unrelated changes.
