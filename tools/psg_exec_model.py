@@ -122,6 +122,15 @@ H102_COMBINED_SOURCE_SHA256 = {
     "tools/psg_hw_forms.py":
         "7cde39590661f5879c076639f55e422e04c499fe0755cd77b3683fa4f92e1205",
 }
+H139_PARENT_REVISION = H102_RTL_REVISION
+H139_RTL_REVISION = \
+    "d76241fc466759cc2349356d3fd8ddf18c2c40da"
+H139_CHANGED_SOURCES = ("rtl/psg_walk.sv",)
+H139_COMBINED_SOURCE_SHA256 = {
+    **H102_COMBINED_SOURCE_SHA256,
+    "rtl/psg_walk.sv":
+        "be6a2fa58ef4db8851ad0ed0efa3b63eb18e1535ffb1462a77e0b7420c9e5a0f",
+}
 MODEL_LIVE_SOURCES = (
     "rtl/psg_common.svh", "rtl/psg_seq.sv", "rtl/psg_walk.sv",
 )
@@ -159,29 +168,43 @@ def configure_live_rtl(revision: str | None) -> dict[str, str]:
         ("git", "rev-parse", "--verify", f"{revision}^{{commit}}"),
         cwd=ROOT, check=True, stdout=subprocess.PIPE, text=True,
     ).stdout.strip()
-    assert full == H102_RTL_REVISION, \
-        f"expected canonical H102 {H102_RTL_REVISION}, got {full}"
+    assert full == H139_RTL_REVISION, \
+        f"expected canonical H139 {H139_RTL_REVISION}, got {full}"
     observed = {
         relative: hashlib.sha256(git_blob(full, relative)).hexdigest()
-        for relative in H102_COMBINED_SOURCE_SHA256
+        for relative in H139_COMBINED_SOURCE_SHA256
     }
-    assert observed == H102_COMBINED_SOURCE_SHA256, \
-        "canonical H102 source hash drift"
+    assert observed == H139_COMBINED_SOURCE_SHA256, \
+        "canonical H139 source hash drift"
     LIVE_RTL_REVISION = full
     return observed
 
 
-def write_h102_r84_source_contract(path: Path,
+def write_h139_r84_source_contract(path: Path,
                                    source_hashes: dict[str, str],
                                    state_count: int, node_count: int) -> str:
-    assert LIVE_RTL_REVISION == H102_RTL_REVISION
-    assert source_hashes == H102_COMBINED_SOURCE_SHA256
+    assert LIVE_RTL_REVISION == H139_RTL_REVISION
+    assert source_hashes == H139_COMBINED_SOURCE_SHA256
     combined = {
         relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+        for relative in H139_COMBINED_SOURCE_SHA256
+    }
+    assert combined == H139_COMBINED_SOURCE_SHA256, \
+        "accepted H139 combined source hash drift"
+    h139_committed = {
+        relative: hashlib.sha256(
+            git_blob(H139_RTL_REVISION, relative)).hexdigest()
+        for relative in H139_COMBINED_SOURCE_SHA256
+    }
+    assert h139_committed == H139_COMBINED_SOURCE_SHA256, \
+        "accepted H139 git-object source drift"
+    h139_parent_committed = {
+        relative: hashlib.sha256(
+            git_blob(H139_PARENT_REVISION, relative)).hexdigest()
         for relative in H102_COMBINED_SOURCE_SHA256
     }
-    assert combined == H102_COMBINED_SOURCE_SHA256, \
-        "accepted H102 combined source hash drift"
+    assert h139_parent_committed == H102_COMBINED_SOURCE_SHA256, \
+        "accepted H139 parent source drift"
     h102_committed = {
         relative: hashlib.sha256(
             git_blob(H102_RTL_REVISION, relative)).hexdigest()
@@ -233,10 +256,13 @@ def write_h102_r84_source_contract(path: Path,
     assert {relative for relative in H102_COMBINED_SOURCE_SHA256
             if H102_COMBINED_SOURCE_SHA256[relative]
             != H096_COMBINED_SOURCE_SHA256[relative]} == set(H102_CHANGED_SOURCES)
+    assert {relative for relative in H139_COMBINED_SOURCE_SHA256
+            if H139_COMBINED_SOURCE_SHA256[relative]
+            != H102_COMBINED_SOURCE_SHA256[relative]} == set(H139_CHANGED_SOURCES)
     assert all(combined[relative] == source_hashes[relative]
                for relative in MODEL_LIVE_SOURCES)
     contract = {
-        "schema": "psg_exec_h102_r84_source_contract_v5",
+        "schema": "psg_exec_h139_r84_source_contract_v6",
         "h095_revision": H095_RTL_REVISION,
         "i001_revision": I001_RTL_REVISION,
         "main_revision": MAIN_COMBINED_REVISION,
@@ -244,11 +270,15 @@ def write_h102_r84_source_contract(path: Path,
         "h096_revision": H096_RTL_REVISION,
         "h102_parent_revision": H102_PARENT_REVISION,
         "h102_revision": H102_RTL_REVISION,
+        "h139_parent_revision": H139_PARENT_REVISION,
+        "h139_revision": H139_RTL_REVISION,
         "h095_generic_source_sha256": H095_SOURCE_SHA256,
         "h096_combined_source_sha256": H096_COMBINED_SOURCE_SHA256,
         "h096_changed_sources": list(H096_CHANGED_SOURCES),
-        "h102_combined_source_sha256": combined,
+        "h102_combined_source_sha256": H102_COMBINED_SOURCE_SHA256,
         "h102_changed_sources": list(H102_CHANGED_SOURCES),
+        "h139_combined_source_sha256": combined,
+        "h139_changed_sources": list(H139_CHANGED_SOURCES),
         "model_live_sources": list(MODEL_LIVE_SOURCES),
         "r84_combined_overrides": list(R84_COMBINED_OVERRIDES),
         "counts": {
@@ -258,9 +288,9 @@ def write_h102_r84_source_contract(path: Path,
             "normalized_transactions": 131_087,
         },
         "boundary": [
-            "H102 changes only wavetable bass state and its exhaustive form",
-            "H096 and R.84 source boundaries remain exact lineage anchors",
-            "source certificate relies on I001, main, H096, and H102 gates",
+            "H139 changes only rtl/psg_walk.sv relative to canonical H102",
+            "H102, H096, and R.84 source boundaries remain exact lineage anchors",
+            "source certificate relies on I001, main, H096, H102, H134, and H139 gates",
         ],
     }
     output = path.resolve()
@@ -268,8 +298,8 @@ def write_h102_r84_source_contract(path: Path,
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n")
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
-    return f"{output}: H102 {len(source_hashes)} combined sources / " \
-           f"{len(H102_CHANGED_SOURCES)} changed from H096; sha256 {digest}"
+    return f"{output}: H139 {len(source_hashes)} combined sources / " \
+           f"{len(H139_CHANGED_SOURCES)} changed from H102; sha256 {digest}"
 
 PAGE_SAMPLE = range(0x00, 0x100)
 PAGE_TICK = range(0x40, 0xC0)
@@ -2661,20 +2691,23 @@ def validate_sample_b3b2a_slice_map(program: list[int], d2fa: list[int],
     assert (sum(base_counts), base_counts[int(Op.READ)],
             base_counts[int(Op.WRITE)]) == (782, 172, 158)
 
-    # Source facts that force the two explicit interpolation sideband tokens.
-    # W2's adjacent byte is the pre-edge seq_q; wt_p1 cannot be consumed until
-    # the following edge.  The magnitude-only service retains neither sign nor
-    # the signed base used by wt_z.
+    # Source facts that force the two interpolation sideband observations.
+    # H134 shares their non-overlapping physical byte as wt_x1 while preserving
+    # the W2/W4 trace aliases.  The magnitude-only service retains neither sign
+    # nor the signed base used by wt_z.
     walk = live_source_text(WALK)
     mulmp = (ROOT / "rtl" / "psg_mulmp.sv").read_text()
     for spelling in (
             "smp_a <= 18'($signed(seq_q));",
-            "wt_p1 <= $signed(seq_q);",
             "smp_b <= 18'($signed(seq_q));",
-            "wt_q1 <= $signed(seq_q);",
-            "mxs_new <= wt_pd[8];",
-            "mxs_new <= wt_qd[8];"):
+            "logic signed [7:0] wt_x1;",
+            "wire signed [8:0] wt_delta_base = cap[CAP_W4]",
+            "$signed({wt_x1[7], wt_x1}) - wt_delta_base;",
+            "wire signed [7:0] wt_p1 = wt_x1;",
+            "wire signed [7:0] wt_q1 = wt_x1;"):
         assert spelling in walk
+    assert walk.count("wt_x1 <= $signed(seq_q);") == 2
+    assert walk.count("mxs_new <= wt_d[8];") == 2
     assert "callers retain the sign" in mulmp
     assert "wt_op = wt_mag ^ $signed({20{mxs_new}})" in walk
     assert "wt_sum = $signed({wt_base[9:0], 10'b0})" in walk
@@ -8005,7 +8038,7 @@ def parse_args() -> argparse.Namespace:
         help="read generic live-source RTL from this exact git revision")
     parser.add_argument(
         "--rtl-source-contract-out", type=Path,
-        help="write the exact H102-to-R.84 combined source boundary")
+        help="write the exact H139-to-R.84 combined source boundary")
     args = parser.parse_args()
     event_inputs = (args.d1_controller_edges_in, args.d1_requirements_in,
                     args.d1_binding_manifest_in)
@@ -8227,7 +8260,7 @@ def main() -> int:
             args.d1_requirements_in, args.d1_binding_manifest_in,
             sample_b3b2a_candidate + tick_program))
     if args.rtl_source_contract_out:
-        print("RTL source contract: " + write_h102_r84_source_contract(
+        print("RTL source contract: " + write_h139_r84_source_contract(
             args.rtl_source_contract_out, source_hashes,
             len(states), len(seq_nodes)))
     print("warning: owner-zero actions and remaining owner-one actions are "

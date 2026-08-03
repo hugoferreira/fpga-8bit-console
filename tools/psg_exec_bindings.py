@@ -122,6 +122,15 @@ H102_COMBINED_SOURCE_SHA256 = {
     "tools/psg_hw_forms.py":
         "7cde39590661f5879c076639f55e422e04c499fe0755cd77b3683fa4f92e1205",
 }
+H139_PARENT_REVISION = H102_RTL_REVISION
+H139_RTL_REVISION = \
+    "d76241fc466759cc2349356d3fd8ddf18c2c40da"
+H139_CHANGED_SOURCES = ("rtl/psg_walk.sv",)
+H139_COMBINED_SOURCE_SHA256 = {
+    **H102_COMBINED_SOURCE_SHA256,
+    "rtl/psg_walk.sv":
+        "be6a2fa58ef4db8851ad0ed0efa3b63eb18e1535ffb1462a77e0b7420c9e5a0f",
+}
 MODEL_LIVE_SOURCES = (
     "rtl/psg_common.svh", "rtl/psg_seq.sv", "rtl/psg_walk.sv",
 )
@@ -182,7 +191,7 @@ def git_blob(revision: str, relative: str) -> bytes:
         check=True, stdout=subprocess.PIPE).stdout
 
 
-def validate_h102_r84_source_contract(contract: Json,
+def validate_h139_r84_source_contract(contract: Json,
                                        recompute: bool = True) -> None:
     expected_fields = {
         "schema", "h095_revision", "i001_revision", "main_revision",
@@ -191,13 +200,15 @@ def validate_h102_r84_source_contract(contract: Json,
         "h096_changed_sources",
         "h102_parent_revision", "h102_revision",
         "h102_combined_source_sha256", "h102_changed_sources",
+        "h139_parent_revision", "h139_revision",
+        "h139_combined_source_sha256", "h139_changed_sources",
         "model_live_sources", "r84_combined_overrides", "counts", "boundary",
     }
     require(set(contract) == expected_fields,
-            "H102/R.84 source-contract fields changed")
+            "H139/R.84 source-contract fields changed")
     require(contract["schema"]
-            == "psg_exec_h102_r84_source_contract_v5",
-            "H102/R.84 source-contract schema")
+            == "psg_exec_h139_r84_source_contract_v6",
+            "H139/R.84 source-contract schema")
     require(contract["h095_revision"] == H095_RTL_REVISION,
             "H095 source-contract revision")
     require(contract["i001_revision"] == I001_RTL_REVISION,
@@ -212,6 +223,10 @@ def validate_h102_r84_source_contract(contract: Json,
             "H102 parent source-contract revision")
     require(contract["h102_revision"] == H102_RTL_REVISION,
             "H102 source-contract revision")
+    require(contract["h139_parent_revision"] == H139_PARENT_REVISION,
+            "H139 parent source-contract revision")
+    require(contract["h139_revision"] == H139_RTL_REVISION,
+            "H139 source-contract revision")
     require(contract["h095_generic_source_sha256"] == H095_SOURCE_SHA256,
             "H095 generic source hashes")
     require(contract["h096_combined_source_sha256"]
@@ -224,8 +239,13 @@ def validate_h102_r84_source_contract(contract: Json,
             "H102 combined source hashes")
     require(contract["h102_changed_sources"] == list(H102_CHANGED_SOURCES),
             "H102 changed-source boundary")
+    require(contract["h139_combined_source_sha256"]
+            == H139_COMBINED_SOURCE_SHA256,
+            "H139 combined source hashes")
+    require(contract["h139_changed_sources"] == list(H139_CHANGED_SOURCES),
+            "H139 changed-source boundary")
     require(contract["model_live_sources"] == list(MODEL_LIVE_SOURCES),
-            "H102/R.84 model-live source boundary")
+            "H139/R.84 model-live source boundary")
     require(contract["r84_combined_overrides"]
             == list(R84_COMBINED_OVERRIDES),
             "R.84 combined override boundary")
@@ -238,12 +258,12 @@ def validate_h102_r84_source_contract(contract: Json,
     require(contract["counts"] == expected_counts
             and all(type(value) is int
                     for value in contract["counts"].values()),
-            "H102/R.84 source-contract counts")
+            "H139/R.84 source-contract counts")
     require(contract["boundary"] == [
-        "H102 changes only wavetable bass state and its exhaustive form",
-        "H096 and R.84 source boundaries remain exact lineage anchors",
-        "source certificate relies on I001, main, H096, and H102 gates",
-    ], "H102/R.84 source-contract boundary")
+        "H139 changes only rtl/psg_walk.sv relative to canonical H102",
+        "H102, H096, and R.84 source boundaries remain exact lineage anchors",
+        "source certificate relies on I001, main, H096, H102, H134, and H139 gates",
+    ], "H139/R.84 source-contract boundary")
     if not recompute:
         return
     h095_observed = {
@@ -295,12 +315,26 @@ def validate_h102_r84_source_contract(contract: Json,
     }
     require(h102_observed == H102_COMBINED_SOURCE_SHA256,
             "H102 git-object source drift")
-    worktree_observed = {
-        relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+    h139_parent_observed = {
+        relative: hashlib.sha256(
+            git_blob(H139_PARENT_REVISION, relative)).hexdigest()
         for relative in H102_COMBINED_SOURCE_SHA256
     }
-    require(worktree_observed == H102_COMBINED_SOURCE_SHA256,
-            "H102 combined worktree drift")
+    require(h139_parent_observed == H102_COMBINED_SOURCE_SHA256,
+            "H139 parent git-object source drift")
+    h139_observed = {
+        relative: hashlib.sha256(
+            git_blob(H139_RTL_REVISION, relative)).hexdigest()
+        for relative in H139_COMBINED_SOURCE_SHA256
+    }
+    require(h139_observed == H139_COMBINED_SOURCE_SHA256,
+            "H139 git-object source drift")
+    worktree_observed = {
+        relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+        for relative in H139_COMBINED_SOURCE_SHA256
+    }
+    require(worktree_observed == H139_COMBINED_SOURCE_SHA256,
+            "H139 combined worktree drift")
     changed = {relative for relative in H096_COMBINED_SOURCE_SHA256
                if H096_COMBINED_SOURCE_SHA256[relative]
                != COMBINED_SOURCE_SHA256[relative]}
@@ -311,14 +345,19 @@ def validate_h102_r84_source_contract(contract: Json,
                     != H096_COMBINED_SOURCE_SHA256[relative]}
     require(h102_changed == set(H102_CHANGED_SOURCES),
             "H102 changed-source set drift")
-    require(all(h102_observed[relative] == worktree_observed[relative]
+    h139_changed = {relative for relative in H139_COMBINED_SOURCE_SHA256
+                    if H139_COMBINED_SOURCE_SHA256[relative]
+                    != H102_COMBINED_SOURCE_SHA256[relative]}
+    require(h139_changed == set(H139_CHANGED_SOURCES),
+            "H139 changed-source set drift")
+    require(all(h139_observed[relative] == worktree_observed[relative]
                 for relative in MODEL_LIVE_SOURCES),
-            "model live sources differ between H102 and worktree")
+            "model live sources differ between H139 and worktree")
 
 
-def check_h102_r84_source_contract(path: Path) -> int:
+def check_h139_r84_source_contract(path: Path) -> int:
     contract = load_json(path)
-    validate_h102_r84_source_contract(contract)
+    validate_h139_r84_source_contract(contract)
     mutations: list[Json] = []
     mutation = copy.deepcopy(contract)
     mutation["i001_revision"] = "0" * 40
@@ -354,6 +393,18 @@ def check_h102_r84_source_contract(path: Path) -> int:
     mutation["h102_changed_sources"] = ["tools/psg_hw_forms.py"]
     mutations.append(mutation)
     mutation = copy.deepcopy(contract)
+    mutation["h139_parent_revision"] = "0" * 40
+    mutations.append(mutation)
+    mutation = copy.deepcopy(contract)
+    mutation["h139_revision"] = "0" * 40
+    mutations.append(mutation)
+    mutation = copy.deepcopy(contract)
+    mutation["h139_combined_source_sha256"]["rtl/psg_walk.sv"] = "0" * 64
+    mutations.append(mutation)
+    mutation = copy.deepcopy(contract)
+    mutation["h139_changed_sources"] = ["tools/psg_hw_forms.py"]
+    mutations.append(mutation)
+    mutation = copy.deepcopy(contract)
     mutation["unknown"] = 1
     mutations.append(mutation)
     mutation = copy.deepcopy(contract)
@@ -361,10 +412,10 @@ def check_h102_r84_source_contract(path: Path) -> int:
     mutations.append(mutation)
     for index, changed in enumerate(mutations):
         try:
-            validate_h102_r84_source_contract(changed, recompute=False)
+            validate_h139_r84_source_contract(changed, recompute=False)
         except AssertionError:
             continue
-        raise AssertionError(f"H102 source mutation {index} survived")
+        raise AssertionError(f"H139 source mutation {index} survived")
     return len(mutations)
 
 
@@ -2200,9 +2251,9 @@ def main() -> int:
     result.update(check_dq(dq))
     result.update(check_execwave(execwave))
     if args.rtl_source_contract is not None:
-        result["rtl_source_mutations"] = check_h102_r84_source_contract(
+        result["rtl_source_mutations"] = check_h139_r84_source_contract(
             args.rtl_source_contract)
-        result["rtl_source_files"] = len(H102_COMBINED_SOURCE_SHA256)
+        result["rtl_source_files"] = len(H139_COMBINED_SOURCE_SHA256)
     if args.d1_controller_edges is not None:
         controller = load_json(args.d1_controller_edges)
         candidate = load_d1_candidate(args.candidate)

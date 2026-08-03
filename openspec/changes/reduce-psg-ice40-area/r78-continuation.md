@@ -3449,6 +3449,41 @@ git history; do not repeat them without the recorded changed condition.
   consumes no B2 work and relies on H102's separately accepted generic render,
   recovery, click, Celeste, and two-build physical gates rather than
   reinterpreting the source certificate as physical proof.
+- **C2-C-D1-C-B1-H139-I004 integration:** accepted source/proof composition
+  for canonical H139 `d76241f` before the optimization branch fast-forward to
+  `main`. Schema `psg_exec_h139_r84_source_contract_v6` retains every
+  H095/I001/main/H096/H102 anchor and proves that only `rtl/psg_walk.sv`
+  changes in the complete twelve-file source set. Independent A/B contracts
+  are byte-identical at SHA-256 `777dc20e...`; all seventeen source mutations
+  are convicted. Candidate `6f5713e2...`, manifest `438d85a0...`, control
+  `a9233d6d...`, requirements `5a7b9809...`, controller `f86698f6...`, event
+  dictionary `5b178017...`, inventory `95619e61...`, and the accepted image
+  remain byte-identical to H102. Both 152,893-row structural audits pass; the
+  structural stream is byte-identical to I001/H095. Both value audits pass
+  192,896 pairs / 43,459 service transactions with H134's shared `wt_x1`
+  storage and trace-only `wt_p1`/`wt_q1` lineage aliases.
+
+  Complete hardware forms, the default model, Python compilation,
+  `make test-psg`, `make test-clocks`, strict OpenSpec, diff checks, and
+  full/PREVIEW lint at the established 52/49 warning counts pass. All 59
+  frozen renders are byte-identical. Ordinary `/4`, `/5`, `/6` cadence remains
+  572 clocks and multi-pumped cadence remains 524; the `/6` multi-pumped tick
+  pre-run remains 4,008/5,103 with 1,095 spare and zero late flips. Both
+  1,275- and 159-clock PREVIEW checks pass at 93% combined voiced-window
+  agreement. Synthetic and Celeste recovery have no coalesced, delayed, or
+  dropped samples. Four-second hardware/PREVIEW SFX-10 renders have zero
+  `click-v1` events. The five-frame Celeste smoke remains byte-identical at
+  SHA-256 `3d4933a9...`, with 2,079/3,668 off-centre samples, range
+  -21,544..7,711 and 1,014 levels.
+
+  Two forced canonical builds reproduce 6,302 LUT4s, 1,291 carries, 1,450
+  flops, 498 unpackable flops, 14 EBRs, floor 6,800 and 7,018 routed LCs at
+  142.63 MHz fast / 31.17 MHz PSG. Their JSON and ASC files are byte-identical
+  to accepted H139 at SHA-256 `4f7c4af1...` / `cca305c1...`. Evidence is in
+  `build/integration-h139-r84/`. This starts no B2 literal-slice work and makes
+  no new area hypothesis. Decision: accepted. Repeat only if the accepted H139
+  revision, its complete source set, an R.84 prerequisite, the C2-C-C lineage,
+  or an integration gate changes.
 - **C2-C-D1-C-B2 boundary:** only after B1 closes, attach literal
   pool definitions/uses and service issue/result/take roots to exact enabled
   occurrences with pre/post phase.  Repair fold assembly, STEP8, result-write

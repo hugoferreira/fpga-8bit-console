@@ -28,7 +28,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H155.
+- Next hypothesis ID: none under the current goal. H155 is reserved but
+  unstarted. The area loop closes at H139 while the next goal improves source
+  clarity, ergonomics, organisation, DRYness, modularity, and current-design
+  documentation without regressing H139's area or fidelity envelope.
+- H139 integration status: I004 accepts the R.84 source rebinding and complete
+  merge battery. The v6 contract binds canonical `d76241f`; both structural
+  and value audits, complete forms, functional/cadence/render/PREVIEW/recovery/
+  click/Celeste gates, and two forced canonical physical builds pass. The
+  reproducible retained result remains 6,302 LUT4s, 1,291 carries, 1,450
+  flops, 14 EBRs, floor 6,800 and 7,018 routed LCs at 142.63/31.17 MHz.
 - H154 hypothesis row: encode the production radix-2 multiplier's five fast-
   step classes in prefix bits above each request class's proved live `B`
   width. Preserve all twelve `B` bits for the sole twelve-step class, use the
@@ -8343,17 +8352,21 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Handoff
 
-- Next allowed experiment: H155 on accepted H139 after a fresh source/DNR
-  audit. H149, H151, H152 and H154 improve their isolated floors but add 47,
-  25, 72 and 52 whole-PSG floor cells respectively; H150 and H153 fail their
-  isolated floors. Do not retry any of them without its repeat-condition
-  change.
+- Area optimization is closed at accepted and R.84-bound H139. H155 remains a
+  reserved, unstarted ID rather than the next task. The next goal is a
+  behavior- and area-preserving source-clarity refactor; it must keep the H139
+  physical, fidelity, cadence, render, PREVIEW, recovery, click and Celeste
+  gates as its acceptance envelope. H149, H151, H152 and H154 improve their
+  isolated floors but add 47, 25, 72 and 52 whole-PSG floor cells respectively;
+  H150 and H153 fail their isolated floors. Do not retry any of them without
+  its repeat-condition change.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - `build/targets/psg.{json,synth.log}` now contains H154's forced restored H139
   map, while `build/targets/psg.{asc,pnr.log}` still contains the accepted H139
   route; use `build/experiments/h139/candidate.*` as the durable accepted
-  physical baseline.
+  physical baseline. I004's complete regenerated merge evidence is in
+  `build/integration-h139-r84/` and reproduces those accepted JSON/ASC bytes.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
   H004 and H006 were rejected before production RTL; H005's timing-failing
   spelling remains rejected. H008 was rejected before production RTL. H009
