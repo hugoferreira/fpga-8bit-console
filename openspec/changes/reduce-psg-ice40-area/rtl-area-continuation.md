@@ -27,7 +27,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H128.
+- Next hypothesis ID: H129.
+- H128 hypothesis row: `psg_seq` rechecks `rw` after receiving the already
+  qualified `cs_wr` pulse. Removing that redundant term is exact over all
+  2,048 bus/address tuples and with SAT, but both complete registered event
+  decoders map to nine LUT4s and four packed flops. Decision: rejected before
+  production RTL.
 - H127 hypothesis row: phaser detune-1 currently computes both low-six-bit
   threshold predicates (`>=43` and `>=22`) even though `dp13[6]` selects only
   one. Select the threshold first, compute one predicate, and reconstruct the
@@ -720,6 +725,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H114 | rejected | Keep the implicit reciprocal-output width: an explicit exact signed-16-bit subtract adds 27 LUT4s, four carries, 25 floor cells, and 28 routed LCs globally. |
 | H115 | rejected | Keep the comparator/mux filter joins: the exact bounded 0..2 max formula maps identically at six LUT4s/six flops in the complete three-field registered consumer. |
 | H127 | rejected | Keep both phaser remainder thresholds: shared Boolean selection is +2 isolated LUT4s; a direct selected comparator is -3 LUT4/+6 carry locally but +50 LUT4/+49 floor cells globally. |
+| H128 | rejected | Keep the repeated `rw` qualifiers inside `psg_seq`: the top-level write pulse makes them redundant, but Yosys already absorbs the implication and both registered decoders map identically at 9 LUT4s/4 FF. |
 
 ## Hypothesis H001
 
@@ -6317,6 +6323,50 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   formula/domain, R.57 quotient split, downstream DQ correction selection, or
   mapper threshold/comparator lowering changes materially.
 
+## Hypothesis H128
+
+- **ID:** H128.
+- **Hypothesis:** `psg_seq` receives the already-qualified one-cycle write
+  pulse `cs_wr = cs && rw && !cs_wr_q`, but every foreground, music, fade and
+  mask decoder tests `cs && rw` again. At this module boundary `cs -> rw` is
+  invariant, so removing only the redundant internal `rw` terms and port may
+  simplify the shared write-decode cone without changing any accepted bus
+  edge, address, data, priority, or sequencer action.
+- **Scope:** prove the top-level implication and all five write-event classes
+  for every `cs/rw/cs_wr_q/addr` tuple with exhaustive enumeration and a Yosys
+  SAT miter; synthesize the complete registered event decoder in isolation.
+  Only if that deterministic isolated gate improves may `rtl/psg_seq.sv` and
+  its `rtl/psg.sv` instantiation change, followed by full/PREVIEW lint and a
+  forced canonical whole-PSG map. Routing and the H102 fidelity battery remain
+  conditional on deterministic mapped/floor improvement. Keep the public PSG
+  bus, `psg_aram` wrapper, state/ARAM ownership, schedule, EBRs, R.84/B2 files,
+  images, Tang paths, and all tolerances unchanged.
+- **Baseline:** accepted H102/I003 RTL at commit `4cbd3bb`; H113's
+  source-identical `build/experiments/h113/baseline.json` maps 6,360 LUT4s,
+  1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor 6,868, and
+  routes in 7,087 LCs at 140.92/32.65 MHz. The live source has five
+  `psg_seq` write-decode sites that all repeat `rw` after `cs_wr` qualification.
+- **Changed condition versus H106, H111 and H126:** H106 factored ARAM pointer
+  updates, H111 hoisted a registered readback next-state assignment, and H126
+  tested control-ROM replay history. H128 changes no pointer, readback, replay,
+  or control-history mechanism; it tests only a Boolean implication created by
+  the composed top-level write-pulse boundary.
+- **Change:** proof-first registered event-decoder comparison; production RTL
+  remains unchanged until the isolated deterministic gate passes.
+- **Result:** exhaustive enumeration covers all 2,048
+  `cs/rw/cs_wr_q/addr` tuples and proves `cs_wr -> rw` plus equality of all
+  five event classes; the unconstrained Yosys SAT miter also passes. The
+  complete registered baseline and candidate event decoders both map to nine
+  LUT4s, zero carries and four packed flops. Yosys already absorbs the repeated
+  `rw` through the composed pulse expression, so production RTL, lint,
+  whole-PSG mapping, routing and fidelity gates are skipped.
+- **Decision:** rejected before production RTL. Keep the explicit qualifiers;
+  removing them changes source and module shape without changing a
+  deterministic mapped resource.
+- **Repeat only if:** if rejected, retry only after the PSG bus write-pulse
+  contract, `psg_seq` module boundary, write-event classes, or mapper
+  cross-module Boolean simplification changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6639,10 +6689,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h126/ctrl_displaced_counterexample.py` | exhaustive three-schedule edge-order and adjacent `$22/$20` model | Refutes `crom_replay && prun` before RTL: a same-edge walk start invents a replay stall and shifts control prefetch by one phase. |
 | `build/experiments/h127/{phaser_threshold_proof.py,phaser_threshold_probe.sv,formal*,isolated-*}` | exhaustive/SAT proof and two complete registered phaser-decoder maps | Both candidates are exact; Boolean sharing is +2 LUT4, direct comparison is -3 LUT4/+6 carry locally. |
 | `build/experiments/h127/candidate-v2.{json,synth.log}` | canonical H102 whole-PSG map of the direct selected comparator | Candidate is +50 LUT4/-1 unpackable/+49 floor cells with carry/FF/EBR counts unchanged; production reverted and no route ran. |
+| `build/experiments/h128/{write_qualifier_probe.sv,write_qualifier_proof.py,exhaustive.log,formal.log,isolated-*}` | exhaustive/SAT proof and complete registered event-decoder synthesis | All 2,048 tuples and SAT pass; baseline/candidate are mapping-identical at 9 LUT4s/4 packed FF. |
 
 ## Handoff
 
-- Next allowed experiment: H128 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H129 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
@@ -6896,5 +6947,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   claim is made. H127's selected phaser-threshold forms are exact but one is
   locally larger and the locally smaller comparator adds 50 whole-PSG LUT4s
   and 49 floor cells; production is restored and no downstream gate remains.
+  H128's redundant write qualifier is exact but mapping-identical in the
+  complete registered decoder; production is unchanged and no downstream gate
+  remains.
 - Files to avoid staging after I003: executor/controller proof files beyond the
   accepted source-boundary tools and ledger, plus unrelated changes.
