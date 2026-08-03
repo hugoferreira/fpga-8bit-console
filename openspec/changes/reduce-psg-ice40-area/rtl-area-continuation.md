@@ -27,7 +27,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H129.
+- Next hypothesis ID: H130.
+- H129 hypothesis row: split the live 48-bit `sfx_id` FF array into its fixed
+  foreground/music banks. Full-domain SAT and 16,384 control/index cases pass,
+  but both forms retain 48 unpackable flops and the split consumer grows from
+  76 to 86 LUT4s. Decision: rejected before production RTL.
 - H128 hypothesis row: `psg_seq` rechecks `rw` after receiving the already
   qualified `cs_wr` pulse. Removing that redundant term is exact over all
   2,048 bus/address tuples and with SAT, but both complete registered event
@@ -726,6 +730,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H115 | rejected | Keep the comparator/mux filter joins: the exact bounded 0..2 max formula maps identically at six LUT4s/six flops in the complete three-field registered consumer. |
 | H127 | rejected | Keep both phaser remainder thresholds: shared Boolean selection is +2 isolated LUT4s; a direct selected comparator is -3 LUT4/+6 carry locally but +50 LUT4/+49 floor cells globally. |
 | H128 | rejected | Keep the repeated `rw` qualifiers inside `psg_seq`: the top-level write pulse makes them redundant, but Yosys already absorbs the implication and both registered decoders map identically at 9 LUT4s/4 FF. |
+| H129 | rejected | Keep one eight-entry `sfx_id` FF array: fixed foreground/music bank partitioning is exact, but retains 48 unpackable FFs and adds ten LUT4s in the complete storage/read consumer. |
 
 ## Hypothesis H001
 
@@ -968,6 +973,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - PC3 copy-zero live-state reconstruction: H122.
 - Shared constants/control-ROM collision-token reconstruction: H126.
 - Phaser remainder selected-threshold reconstruction: H127.
+- `sfx_id` foreground/music FF-bank partitioning: H129.
 
 ## Hypothesis H006
 
@@ -6367,6 +6373,50 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   contract, `psg_seq` module boundary, write-event classes, or mapper
   cross-module Boolean simplification changes materially.
 
+## Hypothesis H129
+
+- **ID:** H129.
+- **Hypothesis:** all `sfx_id` accesses encode the slot bank in index bit two:
+  CPU writes target foreground slots, music launches target music slots, the
+  trigger path reads the current bank, and status selects one member of each
+  channel pair. Splitting the live eight-entry FF array into foreground and
+  music four-entry banks may replace eight-way read/write steering with two
+  four-entry banks and a final bank mux, reducing the 45 unpackable `sfx_id`
+  flops or its selection cone without changing any stored bit.
+- **Scope:** prove reset, independent/simultaneous foreground and music writes,
+  current-slot reads, and all four audible channel reads over arbitrary stored
+  values; synthesize the complete registered storage/read consumer in
+  isolation. Only after exactness and a deterministic isolated floor win may
+  `rtl/psg_seq.sv` change, followed by full/PREVIEW lint and forced canonical
+  whole-PSG mapping. Route and run the H102 fidelity battery only after a
+  deterministic mapped/floor win. Preserve all IDs, write priorities, status
+  timing, public interfaces, schedule, EBRs, R.84/B2 files, images, Tang paths,
+  and tolerances.
+- **Baseline:** accepted H102/I003 RTL at docs commit `af9e2a2`; H113's
+  source-identical `build/experiments/h113/baseline.json` maps 6,360 LUT4s,
+  1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs and floor 6,868;
+  `sfx_id` accounts for 45 unpackable flops and 20 named LUT4s.
+- **Changed condition versus R.6b/R.38 and H100:** R.6b/R.38 priced moving or
+  serializing `sfx_id` through the state record, while H100 partitioned four
+  invariant-zero `released` entries that Yosys had already pruned. H129 keeps
+  all 48 live `sfx_id` bits in FFs and every combinational observation; it only
+  exposes the fixed foreground/music bank already present in every index.
+- **Change:** proof-first two-bank storage/read consumer; production RTL remains
+  unchanged until the isolated deterministic gate passes.
+- **Result:** the control/index model passes 16,384 reset, independent and
+  simultaneous write, current-slot, and audible-select cases. The Yosys SAT
+  miter proves next-state and all reads equal for arbitrary 48-bit stored
+  state and arbitrary six-bit write data. The complete registered baseline
+  maps to 76 LUT4s, zero carries, 48 flops and 48 unpackable cells; the split
+  candidate maps to 86 LUT4s, zero carries, 48 flops and 48 unpackable cells.
+  Production RTL, lint, whole-PSG mapping, routing and fidelity are skipped at
+  the failed deterministic isolated gate.
+- **Decision:** rejected before production RTL. Keep one eight-entry array;
+  the bank split adds ten LUT4s without retiring any mapped or unpackable flop.
+- **Repeat only if:** if rejected, retry only after `sfx_id` access topology,
+  slot-bank ownership, read/write collision classes, or mapper array lowering
+  changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6690,10 +6740,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h127/{phaser_threshold_proof.py,phaser_threshold_probe.sv,formal*,isolated-*}` | exhaustive/SAT proof and two complete registered phaser-decoder maps | Both candidates are exact; Boolean sharing is +2 LUT4, direct comparison is -3 LUT4/+6 carry locally. |
 | `build/experiments/h127/candidate-v2.{json,synth.log}` | canonical H102 whole-PSG map of the direct selected comparator | Candidate is +50 LUT4/-1 unpackable/+49 floor cells with carry/FF/EBR counts unchanged; production reverted and no route ran. |
 | `build/experiments/h128/{write_qualifier_probe.sv,write_qualifier_proof.py,exhaustive.log,formal.log,isolated-*}` | exhaustive/SAT proof and complete registered event-decoder synthesis | All 2,048 tuples and SAT pass; baseline/candidate are mapping-identical at 9 LUT4s/4 packed FF. |
+| `build/experiments/h129/{sfx_partition_probe.sv,sfx_partition_proof.py,exhaustive.log,formal.log,isolated-*}` | control/index proof, arbitrary-state SAT, and complete registered storage/read synthesis | Exact, but candidate retains 48 unpackable FFs and grows 76 -> 86 LUT4s. |
 
 ## Handoff
 
-- Next allowed experiment: H129 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H130 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
@@ -6949,6 +7000,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   and 49 floor cells; production is restored and no downstream gate remains.
   H128's redundant write qualifier is exact but mapping-identical in the
   complete registered decoder; production is unchanged and no downstream gate
-  remains.
+  remains. H129's fixed-bank `sfx_id` partition is exact but adds ten isolated
+  LUT4s without changing 48 unpackable flops; production is unchanged and no
+  downstream gate remains.
 - Files to avoid staging after I003: executor/controller proof files beyond the
   accepted source-boundary tools and ledger, plus unrelated changes.
