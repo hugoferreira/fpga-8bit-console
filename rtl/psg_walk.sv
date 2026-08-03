@@ -69,8 +69,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
 
                   output wire signed [15:0] dry16,
                   output logic        dry_valid);
-
-  // Per-voice phase within the current serialized visit.
+  // ---- Visit schedule and phase control ----
+  // pph is the phase within one slot visit; pc_ch is the current slot index.
   logic [6:0]  pph;
   logic [15:0] sosc_wd;
 
@@ -87,8 +87,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   // Full-schedule shared-multiplier phases for previous/live noise steps.
   localparam int PNZ_OLD  = 19;
   localparam int PNZ_LIVE = 24;
-
-  // Working copy of the current slot's sounding and oscillator records.
+  // ---- Current-slot sounding and oscillator working set ----
+  // s_* is current-slot state; old_*/last_* retain transition-arm context.
   logic [2:0]  s_snd_id;
   logic        s_ch_noiz;
   logic [1:0]  s_ch_rev, s_ch_damp;
@@ -184,7 +184,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       endcase
     end
   end
-
+  // ---- State-memory stream and writeback schedule ----
   // State-memory addresses stream oscillator words followed by the selected
   // sounding bank. Late full-schedule writes commit dampen state.
   logic [4:0] wlk_roff;
@@ -207,7 +207,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       wlk_wd = sosc_wd;
     end
   end
-
+  // ---- Capture-action schedule ----
   // Control-ROM bits name actions, not absolute phases. pph_nxt prefetches the
   // synchronous word consumed on the next cycle.
   localparam int
@@ -254,7 +254,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
                        && (pph == 7'(PNZ_OLD));
   wire nz_req_live = !REALTIME_PREVIEW && !ctrl_stall
                        && (pph == 7'(PNZ_LIVE));
-
+  // ---- Built-in waveform context and shared phase ALU ----
   // Context requests into psg_wave.
   assign iss_sec = REALTIME_PREVIEW ? (pph == 7'(PWORK))
                                   : prun && cap[CAP_W1];
@@ -300,7 +300,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   wire [17:0] phase_alu_y =
       fold_a + (fold_sub ? ~fold_b : fold_b)
              + {17'b0, fold_sub | fold_cin};
-
+  // ---- Wavetable fetch and interpolation ----
   // Wavetable samples are signed bytes in the selected SFX record. Full mode
   // reads adjacent points for interpolation; preview reads one point per arm.
   always_comb begin
@@ -350,7 +350,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   wire signed [19:0] wt_sum = $signed({wt_base[9:0], 10'b0})
                             + wt_op + $signed({19'b0, mxs_new});
   wire signed [17:0] wt_z = 18'(wt_sum >>> 3);
-
+  // ---- Live and preceding-arm pitched noise ----
   // Pitched-noise recurrence. lfsr supplies the held sample and random step;
   // lfsr2 supplies the independent kick and previous-arm step.
   wire  [12:0] nz_dp   = einc[13:1];
@@ -414,7 +414,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       ? ((nz_scale_r6 <<< 6) + (nz_scale_r6 <<< 2))
       : ((nz_scale_r6 <<< 6) + (nz_scale_r6 <<< 4));
   wire signed [17:0] nz_z = nz_scale_z;
-
+  // ---- Transition detection and secondary-increment service ----
   // A changed sounding tuple starts a 64-sample previous-to-current blend.
   wire blend_restart =
       play_bits[pc_ch]
@@ -545,8 +545,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   wire signed [15:0] nz_old_next = noise_clamp(nz_old_pre);
   wire signed [17:0] nz_old_z = nz_scale_z;
   wire signed [17:0] z_old_sel = old_nz_r_on ? nz_old_z : z_old_c;
-
-  // Convert note volume to the oscillator gain used by the integer renderer.
+  // ---- Gain, reverb, crossfade, and dampen datapath ----
+  // g* builds note gain; mx* holds signed arms; cmb* applies the reverb comb.
   wire g_boost = (s_ch_det != 2'd0) && !s_snd_wt
                  && !(s_snd_wave[2] & s_snd_wave[1]);
   wire [12:0] g_a = g_boost ? ({1'b0, s_eff_a} + {3'b0, s_eff_a[11:2]})
@@ -627,7 +627,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
                                     ? 18'(-blend_diff) : 18'(blend_diff);
   wire [23:0] blend_prod_check = blend_mag_check * bl_cnt[5:0];
 `endif
-
+  // ---- Shared multiplier request schedule ----
   // Full-schedule multiplier requests are grouped by operand shape:
   // noise step, wavetable lerp, gain pass, reciprocal /3 limb, and crossfade.
   always_comb begin
@@ -684,7 +684,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       end
     end
   end
-
+  // ---- Compact PREVIEW-only sample and transition path ----
   // Preview keeps its local sample-by-volume multiply; the full schedule uses
   // only the shared multiplier above.
   wire [20:0]  pv_mag   = z_new_c[17] ? (21'd0 - 21'(z_new_c)) : 21'(z_new_c);
@@ -732,7 +732,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       ? (mx_aud ? {gz_filt_r[16], gz_filt_r} : 18'sd0) : mix_leaf;
 
   localparam signed [22:0] SA_TH = 23'sd24576;
-
+  // ---- Eight-leaf PICO-8 soft-add reduction ----
   // PICO-8 soft addition: linear inside +/-24576, then 5:1 compression with
   // nearest rounding. Preview evaluates it combinationally.
   function automatic signed [17:0] soft_add(input signed [17:0] a,
@@ -828,7 +828,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       default: ;
     endcase
   end
-
+  // ---- Optional reverb history memory ----
   // Per-slot 732-sample history. Level 1 taps 366 samples back; level 2 uses
   // the write position, which is read before it is overwritten.
   generate
@@ -864,7 +864,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
     always_comb ring_q_old = 16'sd0;
   end
   endgenerate
-
+  // ---- Visit actions shared by PREVIEW and full mode ----
   // Advance noise and filter state once for the current slot, with trigger
   // clear requests taking priority over accumulated filter state.
   task noise_filt_step(input logic run);
@@ -929,7 +929,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       fmc   <= 4'd1;
     end
   endtask
-
+  // ---- Sequential walk, writeback, and fold controller ----
   // Walk controller, streamed state load/store, synthesis actions, and fold
   // completion. Datapath registers are overwritten before use; reset initializes
   // only control/validity and persistent oscillator state.
@@ -1336,7 +1336,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       end
     end
   end
-
+  // ---- Simulation-only value-lineage observations ----
   // Value-lineage tooling names the two observation phases of wt_x1
   // separately: W2 observes p1 and W4 observes q1. Both are simulation-only
   // aliases of the same storage and do not add a hardware lifetime.

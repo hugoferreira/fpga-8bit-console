@@ -23,12 +23,12 @@ clarity is useful only when that contract remains intact.
 
 ## Current State
 
-- Active hypothesis: C002, make the sequencer and sample-walk organisation
-  readable from current operation and ownership rather than terse local names.
-- Next hypothesis ID: C003.
+- Active hypothesis: C003, make service and executor boundaries navigable and
+  inventory real duplication before any token-level abstraction.
+- Next hypothesis ID: C004.
 - Current baseline artifacts: `build/integration-h139-r84/synth-1.{json,asc}`.
-- Latest decision: C001 accepted; production comments now describe current
-  contracts and the canonical netlist/route remain byte-identical to H139.
+- Latest decision: C002 accepted; the sequencer and walk now expose their
+  current stage/ownership maps and remain byte-identical to H139.
 - Best accepted result: H139 at JSON SHA-256
   `4f7c4af1678ebbaf203cc63088855ec16bc44ebaa92e0f529e5d7961f0e554ff`
   and ASC SHA-256
@@ -51,9 +51,9 @@ clarity is useful only when that contract remains intact.
 
 - [ ] Audit top-level composition and shared services for consistent request,
   busy, hold, replay, address, and result naming.
-- [ ] Audit `psg_seq.sv` working-record and FSM names; explain or replace opaque
+- [x] Audit `psg_seq.sv` working-record and FSM names; explain or replace opaque
   abbreviations without creating synthesized aliases.
-- [ ] Audit `psg_walk.sv` phase, capture, oscillator, noise, filter, mix, and
+- [x] Audit `psg_walk.sv` phase, capture, oscillator, noise, filter, mix, and
   fold names; give every retained short name a nearby domain explanation.
 - [ ] Replace repeated magic phase/action values with named constants only when
   the generated physical result remains exact.
@@ -101,8 +101,8 @@ clarity is useful only when that contract remains intact.
 | `psg_dqsvc.sv` | C001 accepted | pending | exact JSON/ASC |
 | `psg_divsvc.sv` | C001 accepted | pending | exact JSON/ASC |
 | `psg_wave.sv` | C001 accepted | pending | exact JSON/ASC |
-| `psg_walk.sv` | C001 accepted | C002 active | exact JSON/ASC |
-| `psg_seq.sv` | C001 accepted | C002 active | exact JSON/ASC |
+| `psg_walk.sv` | C001 accepted | C002 accepted | exact JSON/ASC |
+| `psg_seq.sv` | C001 accepted | C002 accepted | exact JSON/ASC |
 | `psg_execctl.sv` | C001 accepted | pending | comment/source audit |
 | `psg_execdp.sv` | C001 accepted | pending | comment/source audit |
 | `psg_execmove.sv` | C001 accepted | pending | comment/source audit |
@@ -110,10 +110,10 @@ clarity is useful only when that contract remains intact.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: C002, audit and improve the `psg_seq.sv` and
-  `psg_walk.sv` reader path without changing operation, state, or timing.
-- Proof required before editing: inventory each declaration/FSM/schedule group,
-  and classify proposed changes as comment-only, rename-only, or structural.
+- Next permitted experiment: C003, audit and clarify the top-level, common
+  layouts, arithmetic/memory services, waveform pipeline, and executor modules.
+- Proof required before editing: map each public interface, core/adapter split,
+  state owner, and repeated mechanism; classify any code change separately.
 - Required verification: comment-only changes need exact canonical JSON/ASC;
   any RTL-token change needs focused proof plus the complete H139 battery.
 - Blocked repeat families: no source-level refactor is accepted from LOC,
@@ -124,7 +124,8 @@ clarity is useful only when that contract remains intact.
 | ID | Decision | Resume effect |
 | -- | -- | -- |
 | C001 | accepted | Current-contract comments; exact H139 JSON/ASC and timing. |
-| C002 | active | Audit and clarify sequencer/walk organisation and naming. |
+| C002 | accepted | Sequencer/walk source maps and short-name guides; exact JSON/ASC. |
+| C003 | active | Clarify smaller-module boundaries and inventory duplication. |
 
 ## Hypothesis C001
 
@@ -166,6 +167,36 @@ clarity is useful only when that contract remains intact.
 - **Repeat only if:** the source map or later reader audit still requires
   reconstructing ownership or schedule order from terse local names alone.
 
+### C002 Result
+
+- **Change:** line-stable section maps divide `psg_seq.sv` into persistent
+  state, working record, tick program, memory schedules, arithmetic,
+  publication, controller, and adapters; `psg_walk.sv` now exposes visit state,
+  waveform, wavetable, noise, transition, mix, multiplier, PREVIEW, fold,
+  reverb, and controller stages. Local guides define the retained short names.
+- **Result:** the diff changes comments only and preserves every source-token
+  line. Full/PREVIEW lint passes at 52/49 warnings. Canonical JSON and ASC are
+  byte-identical to H139 at the hashes in Current State, including 7,018 routed
+  LCs and 142.63/31.17 MHz timing.
+- **Decision:** accepted.
+
+## Hypothesis C003
+
+- **ID:** C003.
+- **Hypothesis:** consistent interface-group, ownership, and transaction-stage
+  maps across the smaller modules will make composition understandable and
+  reveal which apparent repetitions are genuine abstractions versus deliberate
+  timing-local logic.
+- **Scope:** `rtl/psg.sv`, `rtl/psg_common.svh`, all service/memory/wave modules,
+  and the four `psg_exec*.sv` modules. Comments and a duplication inventory
+  first; any identifier or logic change becomes a later hypothesis.
+- **Baseline:** accepted C002, byte-identical to H139 JSON/ASC.
+- **Change:** pending module/interface and duplication audit.
+- **Result:** pending.
+- **Decision:** active.
+- **Repeat only if:** a later reader audit cannot identify a module's state
+  owner, handshake, or relationship to its adapter/core from the source.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -174,6 +205,8 @@ clarity is useful only when that contract remains intact.
 | `build/integration-h139-r84/synth-1.asc` | retained I004 seed-1 route | Accepted H139 ASC baseline. |
 | `build/experiments/c001/candidate.json` | `/opt/homebrew/bin/yosys` canonical synthesis | Byte-identical to H139. |
 | `build/experiments/c001/candidate.asc` | `/opt/homebrew/bin/nextpnr-ice40` canonical seed-1 route | Byte-identical to H139. |
+| `build/experiments/c001/c002.json` | canonical C002 synthesis | Byte-identical to H139. |
+| `build/experiments/c001/c002.asc` | canonical C002 seed-1 route | Byte-identical to H139. |
 
 ## Archive
 
@@ -184,9 +217,9 @@ clarity is useful only when that contract remains intact.
 
 ## Handoff
 
-- Next allowed experiment: C002 only.
+- Next allowed experiment: C003 only.
 - Blocked/rejected mechanisms: all new area work and any clarity abstraction
   that changes H139 resources or relies on local/source-only evidence.
-- Verification still missing: C002 onward and final source rebinding/battery.
+- Verification still missing: C003 onward and final source rebinding/battery.
 - Files to avoid staging: non-PSG RTL, Tang files, unrelated OpenSpec changes,
   build products, and existing area-loop evidence.

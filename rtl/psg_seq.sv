@@ -71,7 +71,7 @@ module psg_seq (input  bit   clk,
                 input  logic [7:0]  ctrl_addr,
                 output logic [15:0] ctrl_q,
                 output logic        ctrl_stall);
-
+  // ---- Tables, persistent slot state, and CPU-visible status ----
   // Pitch increments, slide/fade constants, and synthesis control words.
   logic [15:0] crom[0:255];
   initial begin
@@ -106,9 +106,9 @@ module psg_seq (input  bit   clk,
   // per-slot because both foreground and music records can loop.
   logic [5:0]  trg_len[0:PSG_NCH-1];
   logic        released[0:PSG_NV-1];
-
-  // Working copy of the register-resident fields for one slot. Counter, loop,
-  // and speed words are modified in place by the engine below.
+  // ---- Current-slot record working set ----
+  // w_* mirrors the current slot record; vcnt selects each load/store word.
+  // acc/wrd hold counter, loop, and speed fields modified by the engine below.
   logic        join_stage;
   logic [15:0] vwdata;
   logic [3:0]  vcnt;
@@ -146,7 +146,7 @@ module psg_seq (input  bit   clk,
 
   logic        w_ch_noiz, w_ch_buzz;
   logic [1:0]  w_ch_det, w_ch_rev, w_ch_damp;
-
+  // ---- Bank publication, stop timing, music flow, and fades ----
   // Stops are delayed to the sample where the corresponding parameter bank is
   // visible. pend_stop2 is the one-sample-later music-flow class.
   logic [PSG_NV-1:0] pend_stop, pend_stop2;
@@ -155,7 +155,7 @@ module psg_seq (input  bit   clk,
   logic        mus_launch;
   logic [PSG_NV-1:0] launched;
   logic        ptick_seen, f_lb, f_stop;
-
+  // ptick_* is the music-pattern pacing accumulator and pending product.
   logic [12:0] pticks, ptick_tgt;
   logic        ptick_pend;
 
@@ -165,9 +165,9 @@ module psg_seq (input  bit   clk,
   logic [12:0] fade_step;
 
   logic [12:0] fstep_q;
-
-  // T: trigger fetch; K/EA/ES: row and effect work; I: instrument fetch;
-  // P/PC: parameter publication; V: record load/store; ML/MS: music flow.
+  // ---- Serialized tick program and current-slot control ----
+  // State families: T trigger; K/EA/ES row/effect; I instrument; P/PC publish.
+  // V loads/stores; ML/MS handle music. c=slot, vcnt=record word, xs=substep.
   typedef enum logic [5:0] {
     S_IDLE,
     T_FL, T_SP, T_LS, T_LE, T_NL, T_NH, T_LD,
@@ -218,7 +218,7 @@ module psg_seq (input  bit   clk,
 
   wire [12:0] ch_base  = rec_base(sfx_id[c]);
   wire [12:0] ins_base = rec_base({3'b0, w_ins_id});
-
+  // ---- Effective instrument and effect selection ----
   // A custom instrument is an SFX playhead unless marked as a wavetable.
   wire ins_use = w_ins_on & ~w_ins_wt;
 
@@ -235,7 +235,7 @@ module psg_seq (input  bit   clk,
     else
       arp_idx = (eff_sp <= 8) ? eff_tcnt[2:1] : eff_tcnt[3:2];
   end
-
+  // ---- Audio-RAM and control-ROM synchronous read schedules ----
   // Audio-RAM address generation is a synchronous schedule keyed by FSM state.
   // seq_hold preserves the state/address while another shared owner is active.
   logic [12:0] sa_base;
@@ -326,7 +326,7 @@ module psg_seq (input  bit   clk,
 
   wire         seq_hold = walk_frozen | fade_issue | crom_replay;
   assign ctrl_stall = ctrl_displaced;
-
+  // ---- Pitch, effect, slide, volume, and shared-service arithmetic ----
   // Effect intermediates persist across shared multiply/divide requests.
   wire [12:0] pinc_q = crom_q[12:0];
   // Slide setup and pitch-ROM address generation never consume the ordinary
@@ -452,10 +452,10 @@ module psg_seq (input  bit   clk,
     endcase
   end
 
-  // Vibrato scales the phase increment only by |lfo| = 0, 1, or 2.  Spell
-  // that product as wiring so it does not occupy a wide shared-service
-  // request arm.  vib_cb is the discarded /128 remainder, matching the old
-  // m_res[10:4] test after the service's fixed four-bit landing shift.
+  // Vibrato scales the phase increment only by |lfo| = 0, 1, or 2. Spell that
+  // product as wiring so it does not occupy a wide shared-service request arm.
+  // vib_cb records whether the discarded /128 remainder is non-zero and
+  // therefore supplies the signed rounding correction in fxp_res.
   wire [13:0] vib_full = lfo_mag[1] ? {base_inc, 1'b0}
                          : lfo_mag[0] ? {1'b0, base_inc} : 14'd0;
   wire        vib_cb  = |vib_full[6:0];
@@ -559,7 +559,7 @@ module psg_seq (input  bit   clk,
       default: ;
     endcase
   end
-
+  // ---- Inactive sounding-bank publication ----
   // Four words form the inactive sounding-parameter bank consumed by psg_walk.
   // Published increments use units of 2^7. Ordinary pitches append one zero;
   // the custom-instrument bass flag divides by two without losing its residue.
@@ -631,7 +631,7 @@ module psg_seq (input  bit   clk,
         default: pend_stop2[i] <= 1;
       endcase
   endtask
-
+  // ---- Sequential controller, boundary handshakes, and CPU commands ----
   // Main controller. FSM advancement and sequencer-owned stores pause under
   // seq_hold; boundary stop/flip handshakes remain active outside that guard.
   always_ff @(posedge clk) begin
@@ -1087,8 +1087,8 @@ module psg_seq (input  bit   clk,
             sst <= K_SL0;
           end else if (xs == 4'd7 && e_fx != 3'd1) begin
 
-            // The phase result is final. Move the existing P_W0/P_W1 writes
-            // here, then resume volume/instrument work at xs 8.
+            // The phase result is final. Publish it through P_W0/P_W1, then
+            // resume volume and instrument processing at substep xs=8.
             xs <= 4'd8;
             sst <= P_W0;
           end else if (xs == 4'd11) begin
@@ -1298,7 +1298,7 @@ module psg_seq (input  bit   clk,
         mus_mask <= di[3:0];
     end
   end
-
+  // ---- State-memory load/store and replay adapter ----
   // Register-resident record words visited by V_LD and V_ST.
   function automatic logic [5:0] tick_load_word(
       input logic [3:0] n, input logic bank);
@@ -1434,7 +1434,7 @@ module psg_seq (input  bit   clk,
       etk_wd = vwdata;
     end
   end
-
+  // ---- Zero-idle multiplier request adapter ----
   // Multiply request bundle. It is zero while held, allowing the top-level OR
   // merge with the mutually exclusive synthesis-walk request.
   always_comb begin
