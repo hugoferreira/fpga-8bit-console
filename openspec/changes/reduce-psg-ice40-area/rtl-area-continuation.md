@@ -27,7 +27,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H121.
+- Next hypothesis ID: H122.
+- H121 hypothesis row: the canonical 272-credit limiter's sticky
+  `{seq_phase,seq_count}` representation visits exactly the same nine-bit
+  states as a counter seeded at 239 and stopped at 511. The single-register
+  form saves two isolated floor cells but adds thirteen whole-PSG LUT4s, five
+  carries and nine floor cells. Decision: rejected and reverted.
 - H120 hypothesis row: `fade_dir` is the reset-valid bit for `fade_acc` and
   `fade_step`; every transition from idle to an active fade initializes both
   payloads on the same edge, and every payload read is guarded by active
@@ -5887,6 +5892,58 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   priority, table replay/capture, payload initialization, pre-tick arithmetic,
   reset semantics, or mapper reset-control lowering changes materially.
 
+## Hypothesis H121
+
+- **ID:** H121.
+- **Hypothesis:** the canonical `SEQ_BUDGET == 272` limiter stores nine bits as
+  an eight-bit `seq_count` plus sticky `seq_phase`, seeds them as `{0,239}` at
+  every reset/sample boundary, and stops at `{1,255}`. Its complete reachable
+  progression is therefore exactly the ordinary nine-bit sequence 239..511.
+  One nine-bit counter seeded at 239 and stopped on reduction-AND should
+  preserve every credit, freeze, reset and terminal cycle while removing the
+  sticky-phase update mux and its separate decode ownership.
+- **Scope:** exhaustively prove the baseline/candidate transition relation for
+  reset, sample restart, arbitrary `walk_busy` freezes, all 272 permitted
+  advances and terminal hold. Synthesize the complete registered limiter and
+  a registered terminal consumer in isolation before changing production. If
+  it improves a deterministic isolated resource, replace only the specialized
+  `g_seq_budget_272` representation in `rtl/psg.sv`; retain `SEQ_BUDGET`, all
+  clocks, walk ownership, sequencer cadence, interfaces, arithmetic, EBRs,
+  PREVIEW behavior, R.84 executor files and tolerances. Run full/PREVIEW lint
+  and canonical forced whole-PSG synthesis/census; route and run fidelity only
+  after a deterministic mapped/floor win.
+- **Baseline:** accepted H102/I003 RTL at docs checkpoint `ff38782` maps 6,360
+  LUT4s, 1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor
+  6,868, and routes in 7,087 LCs at 140.92/32.65 MHz. The specialized limiter
+  uses eight `seq_count` flops and one `seq_phase` flop, seeds count 239, sets
+  phase on count wrap, and decodes terminal as phase plus count all-ones.
+- **Changed condition versus H051, H090, and the R.54 clock contract:** H051
+  recoded the detune service's private six-state iteration token; H090 tested
+  the unrelated multiplier request step-count decoder. R.54 established the
+  exact 272-credit behavior and introduced the current split representation
+  but did not record an isolated physical comparison against the algebraically
+  identical single nine-bit register. H121 changes no credit or sample clock.
+- **Change:** replace the split state with one nine-bit counter seeded at 239;
+  after the isolated win, apply the same representation only inside
+  `g_seq_budget_272` for canonical mapping, then revert it byte-for-byte when
+  the whole-design area gate fails.
+- **Result:** all 4,096 state/input transition classes pass, including every
+  raw nine-bit state, reset/sample priority, arbitrary freeze, the 272-advance
+  reachable run and terminal hold. A four-edge reset-bounded Yosys SAT miter
+  passes. The complete isolated limiter changes 16 LUT4 / 6 carry / 9 FF / one
+  unpackable FF / floor 17 to 15 LUT4 / 7 carry / 9 FF / zero unpackable FF /
+  floor 15. Full and PREVIEW lint pass. Canonical whole-PSG mapping changes
+  6,360 LUT4 / 1,321 carry / 1,458 FF / 508 unpackable / floor 6,868 to 6,373
+  LUT4 / 1,326 carry / 1,458 FF / 504 unpackable / floor 6,877, with 14 EBRs
+  unchanged. Routing and fidelity are intentionally skipped because every
+  deterministic combinational/floor gate regresses.
+- **Decision:** rejected and reverted byte-for-byte. Ignored proof, SAT,
+  isolated synthesis and whole-PSG mapping evidence remains under
+  `build/experiments/h121/`.
+- **Repeat only if:** if rejected, retry only after the 272-credit value,
+  sample-boundary seed, freeze/terminal behavior, or mapper counter/reset/decode
+  lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6201,10 +6258,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h118/{volume_width_proof.py,candidate*,candidate-v2*}` | 2,707,216-case range proof, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact and -1 FF, but variants add 35/60 LUT4s, 35/57 floor cells, and 41/66 routed LCs. |
 | `build/experiments/h119/{pph_width_proof.py,candidate*}` | 79,040 schedule/transition checks, all three lint modes, and canonical forced whole-PSG synthesis/route | Exact and -1 FF/-5 carries, but +35 LUT4s, +34 floor cells, and +32 routed LCs. |
 | `build/experiments/h120/{fade_reset_proof.py,fade_reset_probe.sv,formal.log,isolated-*,sources-probe.json}` | inductive validity proof, reset-bounded SAT miter, complete registered-consumer synthesis, and fresh v5 source audit | Exact, but reset removal adds one isolated LUT4 with 41 FFs, 13 unpackable flops, and all carries unchanged. |
+| `build/experiments/h121/{seq_credit_proof.py,seq_credit_probe.sv,formal.log,isolated-*,candidate*}` | all-state transition proof, reset-bounded SAT miter, complete limiter synthesis, full/PREVIEW lint, and canonical whole-PSG mapping | Exact and -2 floor cells locally, but +13 LUT4/+5 carry/+9 floor cells globally; production reverted. |
 
 ## Handoff
 
-- Next allowed experiment: H121 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H122 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
