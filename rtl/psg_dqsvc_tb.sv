@@ -1,3 +1,9 @@
+// Detune-quotient service regression.
+//
+// Exhausts every reachable coefficient/input pair, checks terminal-cycle
+// request chaining, and freezes each recurrence stage through the core's ce
+// boundary to prove that work resumes at the interrupted step.
+
 `timescale 1ns/1ps
 
 module psg_dqsvc_tb;
@@ -112,8 +118,8 @@ module psg_dqsvc_tb;
     end
 
     // Freeze each nonterminal recurrence state and the terminal chained
-    // handoff.  The core must neither age nor accept a new request while its
-    // executor is held, and must resume on the exact interrupted step.
+    // handoff. The core must neither age nor accept a new request while the
+    // recurrence is held, and must resume on the exact interrupted step.
     for (freeze_index = 0; freeze_index < 5; freeze_index++) begin
       freeze_count = freeze_states[freeze_index];
       trace_case = 10 + freeze_count;

@@ -1,3 +1,9 @@
+// Waveform core and walk-facing adapter regression.
+//
+// Exhaustively compares fixed-context waveform results with the full and
+// PREVIEW adapters, checks preceding-arm context selection, and proves that
+// disabling the core holds every pipeline boundary.
+
 `timescale 1ns/1ps
 `include "psg_common.svh"
 `include "psg_wave.sv"
@@ -41,7 +47,7 @@ module psg_wave_ctx_tb;
     .ctx_phase(ctx_phase), .ctx_wave(ctx_wave), .ctx_alt(ctx_alt),
     .ctx_secondary(ctx_secondary), .z_eval(ctx_z));
 
-  psg_wave #(.REALTIME_PREVIEW(0)) full_legacy(
+  psg_wave #(.REALTIME_PREVIEW(0)) full_adapter_dut(
     .clk(clk),
     .iss_sec(iss_sec), .iss_om(iss_om), .iss_os(iss_os),
     .dq_old_ctx(dq_old_ctx),
@@ -54,7 +60,7 @@ module psg_wave_ctx_tb;
     .old_alt_r(old_alt_r), .old_q0_lo(old_q0_lo),
     .z_eval(full_z), .dq17(full_dq17), .q16(full_q16));
 
-  psg_wave #(.REALTIME_PREVIEW(1)) preview_legacy(
+  psg_wave #(.REALTIME_PREVIEW(1)) preview_adapter_dut(
     .clk(clk),
     .iss_sec(iss_sec), .iss_om(iss_om), .iss_os(iss_os),
     .dq_old_ctx(dq_old_ctx),
@@ -151,8 +157,8 @@ module psg_wave_ctx_tb;
     if (hold_z !== 18'sd6143)
       $fatal(1, "new context missing on second resumed edge: got %0d", hold_z);
 
-    // Prove that the compatibility wrapper still selects the old primary
-    // context, including its independent wave and alternate controls.
+    // The walk-facing adapter selects the preceding primary context,
+    // including its independent wave and alternate controls.
     @(negedge clk);
     ctx_phase = 16'h8123;
     ctx_wave = 3'd2;
@@ -169,10 +175,10 @@ module psg_wave_ctx_tb;
     old_alt_r = 1'b1;
     step();
     step();
-    check_outputs(16'h8123, 3'd2, 1'b1, 1'b0, "old primary");
+    check_outputs(16'h8123, 3'd2, 1'b1, 1'b0, "preceding primary");
 
-    // Old secondary uses old_q0_lo in full mode and the compact phase2 view
-    // in PREVIEW.  Drive both representations to the same direct context.
+    // The preceding secondary uses old_q0_lo in full mode and the compact
+    // phase2 view in PREVIEW. Drive both representations to the same context.
     @(negedge clk);
     ctx_phase = 16'h9234;
     ctx_wave = 3'd5;
@@ -188,7 +194,7 @@ module psg_wave_ctx_tb;
     preview_phase2 = {16'h9234, 8'd0};
     step();
     step();
-    check_outputs(16'h9234, 3'd5, 1'b1, 1'b1, "old secondary");
+    check_outputs(16'h9234, 3'd5, 1'b1, 1'b1, "preceding secondary");
 
     // Stream every direct first-stage tuple.  Full mode presents phase2 in
     // bits 15:0; PREVIEW presents it in bits 23:8.  One final edge drains the
@@ -232,7 +238,7 @@ module psg_wave_ctx_tb;
     if (context_checks != 32'd2097152)
       $fatal(1, "wrong exhaustive count: %0d", context_checks);
 
-    $display("psg_wave_ctx_tb: PASS (%0d exhaustive contexts + old contexts + hold)",
+    $display("psg_wave_ctx_tb: PASS (%0d exhaustive contexts + preceding contexts + hold)",
              context_checks);
     $finish;
   end

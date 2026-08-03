@@ -1,9 +1,11 @@
+// Related-clock multiplier phase regression.
+//
+// Sweeps the relative phase which the board PLL can impose between its 112.5
+// MHz output and divided /6 output. Each configured offset checks that the
+// multi-pumped result and padded busy window match the single-clock service.
+
 `timescale 1ns/1ps
 
-// Sweep the relative phase which the board PLL can impose between its 112.5
-// MHz output and divided /6 output. The shipped transaction test fixes the PSG
-// rising edge to a fast-clock falling edge; this probe asks whether the same
-// deadline remains valid at every possible relative phase.
 module psg_mulmp_phase_tb #(parameter integer SLOW_OFFSET_NS = 0);
   bit fastclk = 1'b0;
   bit clk = 1'b0;
@@ -59,7 +61,7 @@ module psg_mulmp_phase_tb #(parameter integer SLOW_OFFSET_NS = 0);
 
   always @(negedge clk) begin
     if (!reset && mp_seq_busy !== ref_busy) begin
-      $error("phase %0d: padded busy differs ref=%0b candidate=%0b",
+      $error("phase %0d: padded busy differs reference=%0b multi-pumped=%0b",
              SLOW_OFFSET_NS, ref_busy, mp_seq_busy);
       $fatal;
     end

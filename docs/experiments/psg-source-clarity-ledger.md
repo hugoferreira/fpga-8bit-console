@@ -23,13 +23,13 @@ clarity is useful only when that contract remains intact.
 
 ## Current State
 
-- Active hypothesis: none; C010 closes the second production-source pass.
+- Active hypothesis: none; C011 closes the focused testbench pass.
 - Next hypothesis ID: none.
 - Current baseline artifacts: `build/integration-h139-r84/synth-1.{json,asc}`
   and `build/experiments/c008/`.
-- Latest decision: C010 accepted. All twelve live sources now expose their
-  data flow, port ownership, state vocabulary, hold boundaries, and record
-  layout without changing the synthesized token stream or H139 behavior.
+- Latest decision: C011 accepted. The maintained benches now describe DUT
+  roles, comparison paths, holds, and context selection in current interface
+  terms without changing stimulus, checks, timing, or pass criteria.
 - Best accepted result: H139 at JSON SHA-256
   `4f7c4af1678ebbaf203cc63088855ec16bc44ebaa92e0f529e5d7961f0e554ff`
   and ASC SHA-256
@@ -91,6 +91,8 @@ clarity is useful only when that contract remains intact.
 - [x] C009 passes live regressions and preserves the accepted physical image.
 - [x] C010's second reader pass preserves synthesized-token, behavioral,
   render, cadence, and physical identity.
+- [x] C011's focused benches retain their exact behavioral checks while using
+  current core, adapter, service, context, and multi-pump vocabulary.
 
 ## Source Audit Matrix
 
@@ -116,7 +118,7 @@ second architecture on the live source tree.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: none; C010 is accepted.
+- Next permitted experiment: none; C011 is accepted.
 - Reopen source refactoring only if a maintained PSG source or H139 acceptance
   gate changes.
 - Blocked repeat families: no source-level refactor is accepted from LOC,
@@ -136,6 +138,7 @@ second architecture on the live source tree.
 | C008 | accepted | v7 binds all 16 sources; normalized proofs and H139 envelope exact. |
 | C009 | accepted | Removed the disconnected executor research/proof stack; live PSG remains H139. |
 | C010 | accepted | Second reader pass; synthesized tokens and full H139 behavior exact. |
+| C011 | accepted | Current testbench roles; focused arithmetic, memory, waveform, and clock gates pass. |
 
 ## Hypothesis C001
 
@@ -421,6 +424,34 @@ second architecture on the live source tree.
 - **Repeat only if:** the post-pass source still requires a reader to infer a
   live ownership, timing, state-transition, or data-shape contract from logic.
 
+## Hypothesis C011
+
+- **ID:** C011.
+- **Hypothesis:** focused PSG benches will be easier to maintain if their DUT
+  roles and comparison paths use current interface vocabulary instead of
+  "legacy", "new", or "historical" provenance.
+- **Scope:** the eight maintained `rtl/psg*_tb.sv` benches. Rename only local
+  bench signals/instances/messages and improve purpose/ownership comments;
+  preserve DUT ports, stimulus, checks, timing, and pass criteria.
+- **Baseline:** accepted C010 production sources and the current focused bench
+  results.
+- **Change:** added concise purpose headers to the audio-RAM, DQ, multiplier,
+  and waveform benches; renamed bench-local `legacy` instances and outputs by
+  their core/adapter roles; replaced provenance-shaped comments and failures
+  with current production-adapter, recurrence, context, and multi-pump terms.
+  `psg_tb.sv` and `psg_budget_tb.sv` already had complete current-purpose
+  headers and required no edits. Production RTL is untouched.
+- **Result:** `git diff --check` and the focused provenance-vocabulary scan
+  pass. Audio-RAM hold/replay passes, and top-level readback verifies all 4,608
+  bytes. DQ passes 57,344 exhaustive, chained, and held transactions. The
+  multiplier passes 6,020 transactions; relative clock offsets 0 through 9
+  all pass. Waveform evaluation passes 2,097,152 exhaustive contexts plus
+  preceding-context selection and whole-pipeline hold checks.
+- **Decision:** accepted.
+- **Repeat only if:** a maintained PSG bench still describes a current
+  interface relative to a superseded implementation instead of stating its
+  present contract.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -439,6 +470,7 @@ second architecture on the live source tree.
 | `build/experiments/c007/` | C007 executor/physical evidence | Named actions pass; JSON/ASC exact. |
 | `build/experiments/c008/` | independent v7 model, source, structural and value proof | 16 sources, 152,893 rows, 192,896 pairs; all exact. |
 | `build/obj_psg_budget_c009_{full,preview}/` | fresh Verilator builds | Both remaining budget-testbench forms compile after proof-trace removal. |
+| `build/experiments/c011/` | focused Icarus/Verilator bench builds | Audio RAM, DQ, multiplier, ten clock phases, and 2,097,152 waveform contexts pass. |
 
 ## Archive
 
@@ -452,6 +484,6 @@ second architecture on the live source tree.
 - Next allowed experiment: none; the clarity and executor-cleanup work is complete.
 - Blocked/rejected mechanisms: all new area work and any clarity abstraction
   that changes H139 resources or relies on local/source-only evidence.
-- Verification still missing: none for C001--C010.
+- Verification still missing: none for C001--C011.
 - Files to avoid staging: non-PSG RTL, Tang files, unrelated OpenSpec changes,
   build products, and existing area-loop evidence.

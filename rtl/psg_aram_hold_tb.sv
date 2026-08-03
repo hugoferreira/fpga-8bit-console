@@ -1,3 +1,9 @@
+// Audio-RAM port-borrow and hold regression.
+//
+// Exercises the freezeable core directly, including borrowed synthesis reads,
+// replay, and CPU writes during a hold. It also checks that the production
+// adapter matches the core when the core's explicit freeze input is low.
+
 `timescale 1ns/1ps
 `include "psg_aram.sv"
 
@@ -8,26 +14,26 @@ module psg_aram_hold_tb;
   logic [7:0] addr, di;
   logic [12:0] seq_addr, syn_addr;
   logic syn_rd, syn_freeze, seq_hold;
-  logic [7:0] seq_q, legacy_seq_q;
-  logic seq_frozen, legacy_seq_frozen;
+  logic [7:0] core_seq_q, adapter_seq_q;
+  logic core_seq_frozen, adapter_seq_frozen;
 
-  psg_aram_core dut(
+  psg_aram_core core_dut(
     .clk(clk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di),
     .cpu_rd(1'b0), .cpu_q(),
     .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
     .syn_freeze(syn_freeze), .seq_hold(seq_hold),
-    .seq_q(seq_q), .seq_frozen(seq_frozen));
+    .seq_q(core_seq_q), .seq_frozen(core_seq_frozen));
 
-  // This instance proves that the existing public interface still elaborates
-  // and behaves exactly like the core when its new freeze input is low.
-  psg_aram legacy(
+  // The production adapter exposes top-level arbitration through seq_hold and
+  // fixes the core's explicit synthesis-freeze input low.
+  psg_aram adapter_dut(
     .clk(clk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di),
     .cpu_rd(1'b0), .cpu_q(),
     .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
-    .seq_hold(seq_hold), .seq_q(legacy_seq_q),
-    .seq_frozen(legacy_seq_frozen));
+    .seq_hold(seq_hold), .seq_q(adapter_seq_q),
+    .seq_frozen(adapter_seq_frozen));
 
   always #5 clk = ~clk;
 
@@ -39,9 +45,9 @@ module psg_aram_hold_tb;
   task automatic held_step(input logic [7:0] expected_q);
     begin
       step();
-      if (seq_q !== expected_q || !seq_frozen)
+      if (core_seq_q !== expected_q || !core_seq_frozen)
         $fatal(1, "freeze changed borrow state q=%h frozen=%b expected=%h/1",
-               seq_q, seq_frozen, expected_q);
+               core_seq_q, core_seq_frozen, expected_q);
     end
   endtask
 
@@ -94,9 +100,9 @@ module psg_aram_hold_tb;
     seq_addr = 13'h100;
     seq_hold = 1'b0;
     step();
-    if (seq_q !== 8'h5c || seq_frozen)
+    if (core_seq_q !== 8'h5c || core_seq_frozen)
       $fatal(1, "ordinary sequencer read failed q=%h frozen=%b",
-             seq_q, seq_frozen);
+             core_seq_q, core_seq_frozen);
     seq_hold = 1'b1;
 
     // W0-like synthesis borrow.  Its byte and pending replay must survive an
@@ -104,9 +110,9 @@ module psg_aram_hold_tb;
     syn_addr = 13'h020;
     syn_rd = 1'b1;
     step();
-    if (seq_q !== 8'ha1 || !seq_frozen)
+    if (core_seq_q !== 8'ha1 || !core_seq_frozen)
       $fatal(1, "first synthesis borrow failed q=%h frozen=%b",
-             seq_q, seq_frozen);
+             core_seq_q, core_seq_frozen);
     syn_rd = 1'b0;
     syn_freeze = 1'b1;
     upload(13'h101, 8'hd4, 1'b1, 8'ha1);
@@ -119,27 +125,27 @@ module psg_aram_hold_tb;
     syn_addr = 13'h021;
     syn_rd = 1'b1;
     step();
-    if (seq_q !== 8'hb2 || !seq_frozen)
+    if (core_seq_q !== 8'hb2 || !core_seq_frozen)
       $fatal(1, "adjacent synthesis borrow failed q=%h frozen=%b",
-             seq_q, seq_frozen);
+             core_seq_q, core_seq_frozen);
 
     // The first non-borrow edge performs exactly one forced replay, even
     // though the sequencer is otherwise held.  It also observes the CPU byte
     // written while the synthesis side was frozen.
     syn_rd = 1'b0;
     seq_addr = 13'h101;
-    if (!seq_frozen)
+    if (!core_seq_frozen)
       $fatal(1, "pending replay disappeared before replay edge");
     step();
-    if (seq_q !== 8'hd4 || seq_frozen)
+    if (core_seq_q !== 8'hd4 || core_seq_frozen)
       $fatal(1, "sequencer replay failed q=%h frozen=%b",
-             seq_q, seq_frozen);
+             core_seq_q, core_seq_frozen);
     step();
-    if (seq_q !== 8'hd4 || seq_frozen)
+    if (core_seq_q !== 8'hd4 || core_seq_frozen)
       $fatal(1, "held sequencer output changed after replay");
 
-    // Reset only the borrow state, then compare the historical wrapper with
-    // the freezeable core under the wrapper's tied-low operating mode.
+    // Reset only the borrow state, then compare the production adapter with
+    // the core in the adapter's fixed-low synthesis-freeze mode.
     reset = 1'b1;
     step();
     reset = 1'b0;
@@ -147,18 +153,21 @@ module psg_aram_hold_tb;
     seq_addr = 13'h100;
     seq_hold = 1'b0;
     step();
-    if (seq_q !== legacy_seq_q || seq_frozen !== legacy_seq_frozen)
-      $fatal(1, "legacy wrapper differs on ordinary read");
+    if (core_seq_q !== adapter_seq_q ||
+        core_seq_frozen !== adapter_seq_frozen)
+      $fatal(1, "audio-RAM adapter differs on ordinary read");
     seq_hold = 1'b1;
     syn_addr = 13'h020;
     syn_rd = 1'b1;
     step();
-    if (seq_q !== legacy_seq_q || seq_frozen !== legacy_seq_frozen)
-      $fatal(1, "legacy wrapper differs on synthesis borrow");
+    if (core_seq_q !== adapter_seq_q ||
+        core_seq_frozen !== adapter_seq_frozen)
+      $fatal(1, "audio-RAM adapter differs on synthesis borrow");
     syn_rd = 1'b0;
     step();
-    if (seq_q !== legacy_seq_q || seq_frozen !== legacy_seq_frozen)
-      $fatal(1, "legacy wrapper differs on sequencer replay");
+    if (core_seq_q !== adapter_seq_q ||
+        core_seq_frozen !== adapter_seq_frozen)
+      $fatal(1, "audio-RAM adapter differs on sequencer replay");
 
     $display("psg_aram_hold_tb: PASS");
     $finish;

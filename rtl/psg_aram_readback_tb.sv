@@ -1,3 +1,9 @@
+// Top-level audio-RAM readback regression.
+//
+// Writes all 4,608 PICO-8 audio-image bytes through the PSG register bus, then
+// reads them back through the synchronous diagnostic path. Changing di before
+// the read pass ensures the check observes inferred RAM rather than bus state.
+
 `timescale 1ns/1ps
 
 module psg_aram_readback_tb;

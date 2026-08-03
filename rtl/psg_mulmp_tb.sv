@@ -1,3 +1,9 @@
+// Multi-pumped multiplier transaction regression.
+//
+// Compares radix-2 and radix-4 fast-clock implementations with the shared
+// single-clock service, checks their sequencer-visible busy windows, and
+// freezes every transaction stage and acknowledge crossing through the core.
+
 `timescale 1ns/1ps
 
 module psg_mulmp_tb;
@@ -120,12 +126,12 @@ module psg_mulmp_tb;
   always @(negedge clk) begin
     if (!reset) begin
       if (r2_seq_busy !== ref_busy) begin
-        $error("radix-2 padded busy differs: ref=%0b candidate=%0b",
+        $error("radix-2 padded busy differs: reference=%0b multi-pumped=%0b",
                ref_busy, r2_seq_busy);
         errors++;
       end
       if (r4_seq_busy !== ref_busy) begin
-        $error("radix-4 padded busy differs: ref=%0b candidate=%0b",
+        $error("radix-4 padded busy differs: reference=%0b multi-pumped=%0b",
                ref_busy, r4_seq_busy);
         errors++;
       end
