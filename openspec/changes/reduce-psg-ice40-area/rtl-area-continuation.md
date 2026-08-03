@@ -28,7 +28,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H146.
+- Next hypothesis ID: H147.
+- H146 hypothesis row: select the mutually exclusive `/64`, `/128`, or
+  `/256` DQ ceiling operands before one eight-bit incrementer. Decision:
+  rejected and reverted. Exact isolated synthesis saves thirteen LUT4s and
+  eleven carries, but the canonical whole PSG adds 36 LUT4s, one carry, 36
+  floor cells and 43 routed LCs.
 - H145 hypothesis row: serialize W84 dampen accumulation and rounding through
   the idle fold ALU, storing the signed-19 intermediate in dead `mxs_old` plus
   `smp_a` storage before the late state write. Decision: rejected before
@@ -807,6 +812,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H137 | rejected | Keep the shared-EBR fade-step lookup and replay boundary: direct 32-entry decode is -8 floor cells alone but adds 84 whole-PSG LUT4s, one carry and 72 floor cells. |
 | H138 | rejected | Keep signed-18 live/old pre-clamp noise registers: signed-17 storage is exact and -6 floor cells alone, but adds 29 whole-PSG LUT4s and 28 floor cells despite removing seven carries and two flops. |
 | H145 | rejected | Keep the parallel dampen path: sharing the widened fold ALU is exact and removes 35 carries/19 unpackable FFs alone, but adds 31 LUT4s and worsens the complete isolated floor 434 -> 446 cells; an `fmc`-encoded finish worsens it to 485. |
+| H146 | rejected | Keep the three DQ ceiling incrementers: explicit selection is -13 LUT4/-11 carry alone, but adds 36 whole-PSG LUT4s, one carry, 36 floor cells and 43 routed LCs. |
 
 ## Hypothesis H001
 
@@ -1063,6 +1069,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Aligned record-base byte-offset addition: H144.
 - W84 dampen accumulation/rounding through the fold ALU and dead
   `{mxs_old,smp_a}` scratch: H145.
+- DQ `/64`/`/128`/`/256` selected ceiling incrementer: H146.
 
 ## Hypothesis H006
 
@@ -7382,6 +7389,57 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   ranges or rounding, scratch lifetimes, late-write slack, fold-ALU width, or
   mapper selected-operand lowering changes materially.
 
+## Hypothesis H146
+
+- **ID:** H146.
+- **Hypothesis:** `psg_wave` computes three separate narrow ceiling values for
+  `ceil(dp/64)`, `ceil(dp/128)`, and `ceil(dp/256)`, but the DQ mode/wave
+  decode selects exactly one of them for `dq_corr`. Select the matching
+  quotient and remainder-nonzero predicate first, then use one eight-bit
+  incrementer and zero-extend its selected result. This may retire two carry
+  chains without changing the existing `dq_193` or phaser-mode-1 arithmetic.
+- **Scope:** exhaust every 13-bit increment, wavetable bit, wave and detune
+  mode; prove arbitrary-input correction/result equivalence with SAT; and
+  synthesize the complete registered DQ correction consumer in isolation.
+  Only after a deterministic isolated LUT/carry/floor win may
+  `rtl/psg_wave.sv` change, followed by full/PREVIEW lint and a forced
+  canonical whole-PSG map. Route and run the complete H139 fidelity/cadence
+  battery only after a deterministic whole-PSG mapped/floor win. Preserve
+  every DQ value, phase, schedule, interface, 14-EBR topology, R.84/B2 file,
+  Tang path, image and tolerance.
+- **Baseline:** accepted H139 production at commit `d76241f` and docs commit
+  `dda16f5`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed in 7,018
+  LCs at 142.63/31.17 MHz. The complete isolated DQ consumer will be recorded
+  before any production edit.
+- **Changed condition versus H001, H081 and selected-adder DNRs:** H001 made
+  each tilted-wave ceiling narrow but did not share DQ corrections. H081
+  selected two registered slide accumulations with unrelated operands and
+  added twenty LUT4s. H146 targets three combinational ceiling incrementers
+  sourced from adjacent slices of the same `dp13`, after the existing
+  mutually exclusive wave/mode decision and before the existing `dq_corr`
+  extension. No prior row tests this complete DQ correction selection.
+- **Change:** proof-first selected ceiling incrementer and complete registered-
+  consumer synthesis; production remains unchanged until both gates pass.
+- **Result:** exhaustive comparison passes all 524,288
+  `{dp13,wavetable,wave,mode}` cases and arbitrary-input SAT proves the
+  complete DQ result. `make test-psg-dq` passes 524,288 model cases plus
+  57,344 exhaustive/chained/held service transactions; full and PREVIEW lint
+  contain no errors. The complete registered consumer improves 190 -> 177
+  LUT4s and 73 -> 62 carries with fourteen packed FFs unchanged, so the
+  isolated floor falls 190 -> 177. The forced canonical whole PSG reverses
+  that result: 6,302 -> 6,338 LUT4s, 1,291 -> 1,292 carries, 1,450 FFs and 498
+  unpackable FFs unchanged, 14 EBRs unchanged, and floor 6,800 -> 6,836.
+  Seed-1 routing completes at 7,061 LCs versus 7,018 and passes timing at
+  146.07/31.28 MHz. The netlist scope attribution also changes broadly, so
+  the isolated selected-adder win does not survive flattening.
+- **Decision:** rejected and reverted before fidelity work. `rtl/psg_wave.sv`
+  is byte-identical to accepted H139 and no render, cadence, recovery, click,
+  smoke, image, Tang, tolerance or R.84/B2 file changed.
+- **Repeat only if:** if rejected, retry only after DQ mode/wave ownership,
+  correction widths, quotient/remainder boundaries, consumer selection, or
+  mapper selected-adder lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7721,14 +7779,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h142/{old_noise_role_proof.py,old_noise_role_formal.sv,old_noise_role_probe.sv,formal.log,isolated-*}` | source-derived lifetime/range audit, exhaustive scale/role proof, arbitrary-state SAT and complete registered-consumer synthesis | Exact and -11 FF/-11 unpackable locally, but +17 LUT4 worsens the isolated floor 130 -> 136 cells; production remains unchanged. |
 | `build/experiments/h143/{pcm_reset_proof.py,pcm_reset_probe.sv,formal.log,isolated-*}` | exhaustive bitwise transition proof, arbitrary-16-bit sequential SAT and complete registered output/parity-sink synthesis | Exact, but +2 LUT4/+1 FF/+1 unpackable worsens the isolated floor 22 -> 25 cells; production remains unchanged. |
 | `build/experiments/h144/{aligned_offset_proof.py,aligned_offset_probe.sv,formal.log,isolated-*}` | exhaustive record/offset proof, arbitrary scheduled-address SAT and complete registered-consumer synthesis | Exact and mapping-identical at 38 LUT4/16 carry/13 packed FF; production remains unchanged. |
-| `build/experiments/h145/{dampen_fold_proof.py,dampen_fold_formal.sv,dampen_fold_probe.sv,exhaustive.log,formal-*,isolated-*}` | exhaustive/SAT arithmetic, scratch, fold, timing and complete-consumer evidence | Exact and -35 carries/-19 unpackable FFs alone, but +31 LUT4s worsens floor 434 -> 446; `fmc=10` worsens it to 485. Production is unchanged. |
+| `build/experiments/h145/*` | exhaustive/SAT arithmetic, scratch, fold, timing and complete-consumer evidence | Exact; -35 carries/-19 unpackable FFs, but +31 LUT4s worsens floor 434 -> 446. |
+| `build/experiments/h146/*` | exhaustive/SAT DQ proof, focused service test, lint, isolated synthesis and canonical map/route | Exact and -13 LUT4/-11 carry alone, but globally +36 LUT4/+1 carry/+36 floor/+43 routed LCs. |
 
 ## Handoff
 
-- Next allowed experiment: H146 on accepted H139 after a fresh source/DNR
-  audit. H145 is exact but rejected at its complete isolated floor gate; do
-  not retry its widened fold-ALU/scratch shape without a repeat-condition
-  change.
+- Next allowed experiment: H147 on accepted H139 after a fresh source/DNR
+  audit. H146 is exact but rejected after its isolated win reversed globally;
+  do not retry selected DQ ceilings without a repeat-condition change.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -8029,5 +8087,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   35 carries plus nineteen unpackable FFs in isolation, but adds 31 LUT4s and
   worsens the complete floor by twelve cells; the `fmc`-encoded variant is
   larger again, production remains unchanged, and no downstream gate remains.
+  H146's selected DQ ceiling incrementer is exact and wins thirteen isolated
+  LUT4s plus eleven carries, but globally adds 36 LUT4s, one carry, 36 floor
+  cells and 43 routed LCs; production is restored byte-for-byte and no
+  fidelity gate remains.
 - Files to avoid staging after H139: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
