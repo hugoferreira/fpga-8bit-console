@@ -27,7 +27,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H103.
+- Next hypothesis ID: H104.
+- H103 hypothesis row: the post-H096 launched mask and ascending T_NL scan do
+  identify the fallback-speed owner exactly, but spelling that ownership as a
+  lower-bit priority predicate changes the complete isolated consumer from 26
+  to 28 LUT4s while retiring only one FF. Decision: rejected before production.
 - H102 hypothesis row: encode wavetable bass in `w_ins_fx[0]`, which is forced
   zero and otherwise dead whenever `w_ins_wt=1`, and retire the dedicated
   `w_ins_bass` working flop. The 1,024-tuple mode/store/reload proof and complete
@@ -267,8 +271,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H102 on accepted H096 `a647185`, only after a fresh source
-  and DNR audit. It must not repeat H096's launch-worklist/pacing-state family,
+- Next experiment: H104 on accepted H102 `ccfb2a0`, only after a fresh source
+  and DNR audit. It must not repeat H096/H103's launch-worklist/pacing-state
+  family, H102's wavetable-bass/effect-state encoding family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -417,6 +422,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H099 | rejected | Keep the explicit filter base-copy writes: publication ownership saves 17 LUT4s alone, but both whole-PSG variants regress deterministic floor and placement. |
 | H100 | rejected | Keep the eight-entry source array: music release bits are invariant zero, but Yosys already prunes them and the explicit four-entry form maps identically at 17 LUT4s/four FF. |
 | H101 | rejected | Keep pending trigger row/length in FFs: a plain EBR is one cycle stale after a CPU write, while exact one-/two-EBR forwarding forms raise the isolated floor from 97 to 107/104 cells. |
+| H102 | accepted | Encode wavetable bass in otherwise-dead `w_ins_fx[0]`; this removes four global LUT4s, one FF, one unpackable FF, and five deterministic floor cells. |
+| H103 | rejected | Keep `ptick_seen`: the exact lower-launch-prefix replacement removes one FF but adds two LUT4s in the complete isolated pacing consumer. |
 
 ## Hypothesis H001
 
@@ -630,6 +637,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Square/pulse threshold forms: H004 and H049.
 - Audio-upload page transform: H050.
 - State-RAM replay-flop retirement: H058.
+- Launch/pacing fallback-state retirement: H103.
 - Organ quotient-byte reconstruction: H059.
 - Alternate-triangle `/4` payload reconstruction: H060.
 - Fade-progress high-byte reconstruction: H061.
@@ -4852,6 +4860,45 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   exclusivity, record packing, trigger stage ordering, effect consumers, or
   mapper D-input lowering changes materially.
 
+## Hypothesis H103
+
+- **ID:** H103.
+- **Hypothesis:** H096 leaves the launch mask unchanged until the first
+  non-looping pacing owner and then clears it completely. Because T_NL visits
+  music slots in ascending order, a marked channel with no lower marked music
+  slot is exactly the first launched channel and therefore the unique fallback-
+  speed owner. Deriving that priority certificate from the existing mask should
+  retire `ptick_seen` without adding state or changing pacing.
+- **Scope:** exhaustive launch/qualifier/scan proof over all 256 masks;
+  isolated synthesis of the complete registered launch/pacing consumer; then
+  `rtl/psg_seq.sv`, permanent `tools/psg_hw_forms.py` coverage, canonical
+  whole-PSG synthesis, and the complete H102 battery only after deterministic
+  isolated and global wins. No pattern speed/length, channel order, launch
+  mask, multiplier request, schedule, interface, memory, EBR, diagnostic ARAM,
+  R.84 executor, or tolerance change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus H096's launch-worklist/state family:** H096 is now
+  accepted and permanently proves that the mask remains intact before the
+  owner and becomes zero after it. H103 consumes that new post-H096 mask
+  contract to replace the separate fallback one-shot; it does not retry the
+  accepted request-ownership transform or a rejected spelling.
+- **Change:** in an isolated probe, replace `!ptick_seen` with an exact lower-
+  launch-prefix predicate for music slots 4--7 and remove the flag's reset,
+  set, and launch-clear assignments.
+- **Result:** exhaustive evaluation passes all 256 launch/qualifier masks. The
+  complete registered launch/pacing consumer changes from 26 LUT4s and 18 FFs
+  to 28 LUT4s and 17 FFs. Retiring the flag therefore costs two LUT4s and fails
+  the deterministic isolated area gate; no production RTL, permanent proof,
+  whole-PSG synthesis, or fidelity run is warranted.
+- **Decision:** rejected before production; the probe remains ignored under
+  `build/experiments/h103/`, and no production or permanent-proof residue
+  remains.
+- **Repeat only if:** if rejected, retry only after music-slot ordering, T_NL
+  visitation, launch-mask clearing, fallback-speed ownership, or mapper dynamic-
+  index/prefix lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5146,10 +5193,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h100/{released_domain_proof.py,released-domain-proof.log,released_domain_probe.sv,isolated-*-v2.*}` | exhaustive transition proof, source-matched release-array synthesis, and explicit foreground-only synthesis | Exact across 2,560 transition/consumer cases; both forms map identically at 17 LUT4s/four FF. |
 | `build/experiments/h101/{trigger_pending_probe.sv,isolated-*,write_read_counterexample.py,write-read-counterexample.log}` | complete source/one-EBR/two-EBR storage synthesis and exact write/read timing counterexample | Plain EBR floor is smaller but stale for one cycle; exact forwarding raises the 97-cell reference floor to 107/104 cells. |
 | `build/experiments/h102/{bass_fx_proof.py,bass-fx-proof.log,bass_fx_probe.sv,isolated-*,candidate*,forms*,test-psg.log,bytecheck.log,budget-*,preview-*,recovery.log,clicks*,celeste-*}` plus `build/targets/psg.{json,asc}` | exhaustive mode/store/reload proof, isolated synthesis, two forced whole-PSG builds, and complete H096 acceptance battery | Accepted `ccfb2a0` at -4 LUT4/-1 FF/-1 unpackable/-5 floor cells; all fidelity, timing, and reproducibility gates pass. |
+| `build/experiments/h103/{first_launch_proof.py,first-launch-proof.log,first_launch_probe.sv,isolated-*}` | exhaustive first-launch ownership proof and complete registered pacing-consumer synthesis | Exact across all 256 launch/qualifier masks, but the candidate is +2 LUT4/-1 FF and fails the isolated gate. |
 
 ## Handoff
 
-- Next allowed experiment: H103 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H104 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit; it must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
