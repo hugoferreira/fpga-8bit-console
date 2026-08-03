@@ -23,12 +23,12 @@ clarity is useful only when that contract remains intact.
 
 ## Current State
 
-- Active hypothesis: C004, put each top-level interface declaration before its
-  first consumer so composition can be read in source order.
-- Next hypothesis ID: C005.
+- Active hypothesis: C005, express the duplicated current/preceding reverb comb
+  as one explicitly signed operation.
+- Next hypothesis ID: C006.
 - Current baseline artifacts: `build/integration-h139-r84/synth-1.{json,asc}`.
-- Latest decision: C003 accepted; all smaller service/executor boundaries are
-  mapped, real duplication is classified, and H139 remains byte-identical.
+- Latest decision: C004 accepted; every top-level interface is declared before
+  its first consumer and the routed H139 image remains byte-identical.
 - Best accepted result: H139 at JSON SHA-256
   `4f7c4af1678ebbaf203cc63088855ec16bc44ebaa92e0f529e5d7961f0e554ff`
   and ASC SHA-256
@@ -64,7 +64,7 @@ clarity is useful only when that contract remains intact.
   control ROM, waveform evaluation, arithmetic services, sequencer, and walk.
 - [x] Keep wrappers only where they express a live interface or hold boundary;
   state that boundary directly.
-- [ ] Group declarations and logic by transaction or pipeline stage so readers
+- [x] Group declarations and logic by transaction or pipeline stage so readers
   can follow each operation without reconstructing revision history.
 - [x] Audit include guards, textual include order, and public interfaces for a
   single obvious source of shared constants and layouts.
@@ -91,7 +91,7 @@ clarity is useful only when that contract remains intact.
 
 | Source | Current contract | Naming/organisation/DRY | Evidence |
 | -- | -- | -- | -- |
-| `psg.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
+| `psg.sv` | C001 accepted | C004 accepted | exact area/ASC + full battery |
 | `psg_common.svh` | C001 accepted | C003 audited | exact JSON/ASC |
 | `psg_aram.sv` | C001 accepted | C003 audited | exact JSON/ASC |
 | `psg_timing.sv` | C001 accepted | C003 audited | exact JSON/ASC |
@@ -110,12 +110,12 @@ clarity is useful only when that contract remains intact.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: C004, move top-level interface declarations ahead
-  of the instances that consume them without renaming or changing expressions.
-- Proof required before editing: record the declaration/consumer map and keep
-  every interface bundle with its owning composition section.
-- Required verification: full/PREVIEW lint, focused top-level tests, complete
-  H139 fidelity battery, and exact physical metrics and route/timing.
+- Next permitted experiment: C005, replace the duplicated current/preceding
+  reverb-comb arithmetic with one module-local helper of the same widths.
+- Proof required before editing: prove the helper inlines the same signed
+  double-plus-history and negative-rounding operation for both arms.
+- Required verification: exhaustive helper equivalence, full/PREVIEW lint,
+  complete H139 fidelity battery, and exact physical metrics and route/timing.
 - Blocked repeat families: no source-level refactor is accepted from LOC,
   readability, isolated synthesis, or generated-code size alone.
 
@@ -126,7 +126,8 @@ clarity is useful only when that contract remains intact.
 | C001 | accepted | Current-contract comments; exact H139 JSON/ASC and timing. |
 | C002 | accepted | Sequencer/walk source maps and short-name guides; exact JSON/ASC. |
 | C003 | accepted | Smaller-module maps and duplication audit; exact JSON/ASC. |
-| C004 | active | Put top-level interface declarations before their consumers. |
+| C004 | accepted | Top-level declarations precede consumers; exact H139 ASC. |
+| C005 | active | Share the identical current/preceding reverb-comb operation. |
 
 ## Hypothesis C001
 
@@ -224,11 +225,36 @@ clarity is useful only when that contract remains intact.
   any identifier, width, expression, instance connection, or behavior.
 - **Scope:** declaration order and adjacent ownership comments in `rtl/psg.sv`.
 - **Baseline:** accepted C003, byte-identical to H139 JSON/ASC.
-- **Change:** pending declaration/consumer reordering.
-- **Result:** pending.
-- **Decision:** active.
+- **Change:** move the existing state-memory, tick-sequencer, walk-service,
+  waveform-context, and streaming-result declarations into ownership groups
+  before the instances or arbitration blocks that first consume them. No
+  identifier, width, expression, instance connection, or behavior changes.
+- **Result:** full/PREVIEW lint remains 52/49. Canonical synthesis preserves
+  6,302 LUT4s, 1,291 carries, 1,450 FFs, 498 unpackable FFs, and 14 EBRs; JSON
+  differs only in moved source locations. Seed-1 routing is byte-identical to
+  H139 at the accepted ASC hash, with 7,018 LCs and 142.63/31.17 MHz timing.
+  Hardware forms, `make test-psg`, `make test-clocks`, all 59 frozen renders,
+  six cadence profiles, both PREVIEW rates, synthetic/Celeste recovery, both
+  click renders, and the byte-identical Celeste smoke all pass.
+- **Decision:** accepted.
 - **Repeat only if:** a later top-level edit again leaves an interface declared
   below the instance or arbitration block that first consumes it.
+
+## Hypothesis C005
+
+- **ID:** C005.
+- **Hypothesis:** a module-local `reverb_comb` helper can state the signed comb
+  operation once for current and preceding arms, remove four duplicated
+  intermediate expressions, and inline to the exact H139 physical result.
+- **Scope:** the current/preceding comb expressions in `rtl/psg_walk.sv` plus a
+  source-derived exhaustive equivalence check; no state, schedule, or interface
+  changes.
+- **Baseline:** accepted C004 with exact H139 area and routed ASC.
+- **Change:** pending shared-helper implementation.
+- **Result:** pending.
+- **Decision:** active.
+- **Repeat only if:** a helper spelling that fails the physical gate is retried
+  only after its signed-width or inlining behavior is materially different.
 
 ## Saved Artifacts
 
@@ -242,6 +268,9 @@ clarity is useful only when that contract remains intact.
 | `build/experiments/c001/c002.asc` | canonical C002 seed-1 route | Byte-identical to H139. |
 | `build/experiments/c001/c003.json` | canonical C003 synthesis | Byte-identical to H139. |
 | `build/experiments/c001/c003.asc` | canonical C003 seed-1 route | Byte-identical to H139. |
+| `build/experiments/c001/c004.json` | canonical C004 synthesis | Exact H139 area; moved source metadata. |
+| `build/experiments/c001/c004.asc` | canonical C004 seed-1 route | Byte-identical to H139. |
+| `build/experiments/c004/` | C004 live-source acceptance logs | Full H139 functional/fidelity battery passes. |
 
 ## Archive
 
@@ -252,9 +281,9 @@ clarity is useful only when that contract remains intact.
 
 ## Handoff
 
-- Next allowed experiment: C004 only.
+- Next allowed experiment: C005 only.
 - Blocked/rejected mechanisms: all new area work and any clarity abstraction
   that changes H139 resources or relies on local/source-only evidence.
-- Verification still missing: C004 onward and final source rebinding/battery.
+- Verification still missing: C005 onward and final source rebinding/battery.
 - Files to avoid staging: non-PSG RTL, Tang files, unrelated OpenSpec changes,
   build products, and existing area-loop evidence.

@@ -175,6 +175,16 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire  [7:0]  d_rem;
   wire         d_busy;
 
+  // State-memory ports. The walk owns wlk_* while it runs; the tick
+  // sequencer owns etk_* in the remaining clocks.
+  wire         state_sample_read, state_sample_we;
+  wire [PSG_VADR-1:0] wlk_ra, wlk_wa;
+  wire [15:0]  wlk_wd;
+  wire [PSG_VADR-1:0] etk_ra, etk_wa;
+  wire [15:0]  etk_wd;
+  wire         etk_we;
+  wire [15:0]  state_q;
+
   psg_divsvc u_div(
     .clk(clk), .reset(reset),
     .div_start(div_start), .div_n(div_n), .div_d(div_d),
@@ -188,6 +198,47 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .prun(prun), .state_replay(state_replay),
     .state_q(state_q));
   // ---- Sample-rate walk and waveform pipeline ----
+  // Tick-sequencer publication and arithmetic requests consumed by the walk
+  // or by the shared top-level services.
+  wire [PSG_NV-1:0] play_bits, trig_req, clr_tog;
+  wire [PSG_NCH*6-1:0] aud_sfx_bits;
+  wire [PSG_NCH*5-1:0] aud_row_bits;
+  wire         mus_playing, spar_bank, bank_ready;
+  wire [5:0]   mus_pat;
+  wire [3:0]   mus_mask;
+  wire [7:0]   fade_len;
+  wire         smul_start;
+  wire signed [24:0] smul_a;
+  wire [11:0]  smul_b;
+  wire [1:0]   smul_mode;
+  wire         smul_short;
+
+  // Walk-owned service requests, waveform context, and completed sample.
+  wire         wmul_start;
+  wire signed [24:0] wmul_a;
+  wire [11:0]  wmul_b;
+  wire [1:0]   wmul_mode;
+  wire         wmul_short;
+  wire         iss_sec, iss_om, iss_os, dq_old_ctx;
+  wire [2:0]   s_snd_wave, s_old_wave;
+  wire         s_snd_wt, s_ch_buzz;
+  wire [1:0]   s_ch_det, old_mode_r;
+  wire         old_alt_r;
+  wire [15:0]  s_phase, s_old_phase;
+  wire [23:0]  s_phase2;
+  wire [13:0]  s_eff_inc, s_old_inc;
+  wire [16:0]  old_q0;
+  wire [15:0]  ctrl_q;
+  wire [7:0]   ctrl_addr;
+  wire         ctrl_stall;
+  wire signed [15:0] dry16;
+  wire         dry_valid;
+
+  // Streaming results from the waveform pipeline back into the walk.
+  wire signed [17:0] z_eval;
+  wire [16:0]  dq17;
+  wire [15:0]  q16;
+
   // The full schedule renders crossfades and reverb. Preview uses the compact
   // schedule and disables unreachable reverb phases at elaboration time.
   psg_walk #(.REVERB(REVERB && !REALTIME_PREVIEW),
@@ -215,29 +266,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .prun(prun), .fold_busy(fold_busy),
     .dry16(dry16), .dry_valid(dry_valid));
 
-  wire        state_sample_read, state_sample_we;
-  wire [PSG_VADR-1:0] wlk_ra, wlk_wa;
-  wire [15:0] wlk_wd;
-  wire        wmul_start;
-  wire signed [24:0] wmul_a;
-  wire [11:0] wmul_b;
-  wire [1:0]  wmul_mode;
-  wire        wmul_short;
-  wire        iss_sec, iss_om, iss_os, dq_old_ctx;
-  wire [2:0]  s_snd_wave, s_old_wave;
-  wire        s_snd_wt, s_ch_buzz;
-  wire [1:0]  s_ch_det, old_mode_r;
-  wire        old_alt_r;
-  wire [15:0] s_phase, s_old_phase;
-  wire [23:0] s_phase2;
-  wire [13:0] s_eff_inc, s_old_inc;
-  wire [16:0] old_q0;
-  wire [15:0] ctrl_q;
-  wire [7:0]  ctrl_addr;
-  wire        ctrl_stall;
-  wire signed [15:0] dry16;
-  wire        dry_valid;
-
   // Combinational waveform evaluation shared by the walk's live, secondary,
   // and previous-voice contexts.
   psg_wave #(.REALTIME_PREVIEW(REALTIME_PREVIEW)) u_wave(
@@ -251,10 +279,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .s_old_inc_hi(s_old_inc[13:1]), .old_mode_r(old_mode_r),
     .old_alt_r(old_alt_r), .old_q0_lo(old_q0[15:0]),
     .z_eval(z_eval), .dq17(dq17), .q16(q16));
-
-  wire signed [17:0] z_eval;
-  wire [16:0] dq17;
-  wire [15:0] q16;
   // ---- Mutually exclusive multiplier arbitration ----
   // Walk and sequencer requests are mutually exclusive under walk_frozen, so
   // their zero-when-idle bundles merge with OR gates. The assertion protects
@@ -319,23 +343,6 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .d_res(d_res), .d_rem(d_rem), .d_busy(d_busy),
     .ctrl_read(prun), .ctrl_addr(ctrl_addr), .ctrl_q(ctrl_q),
     .ctrl_stall(ctrl_stall));
-
-  wire [PSG_NV-1:0] play_bits, trig_req, clr_tog;
-  wire [PSG_NCH*6-1:0] aud_sfx_bits;
-  wire [PSG_NCH*5-1:0] aud_row_bits;
-  wire        mus_playing, spar_bank, bank_ready;
-  wire [5:0]  mus_pat;
-  wire [3:0]  mus_mask;
-  wire [7:0]  fade_len;
-  wire [15:0] state_q;
-  wire [PSG_VADR-1:0] etk_ra, etk_wa;
-  wire [15:0] etk_wd;
-  wire        etk_we;
-  wire        smul_start;
-  wire signed [24:0] smul_a;
-  wire [11:0] smul_b;
-  wire [1:0]  smul_mode;
-  wire        smul_short;
   // ---- PCM commit, CPU readback, and optional debug ----
   // dry_valid commits one completed eight-slot reduction.
   always_ff @(posedge clk) begin
