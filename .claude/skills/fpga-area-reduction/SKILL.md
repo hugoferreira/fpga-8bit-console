@@ -395,11 +395,26 @@ the next session from rediscovering +115.
   generator came to ignore note pitch under "59/59 byte-identical" after every
   change. Keep a separate gate that compares against the *external* reference,
   and prefer properties (trends across a sweep) over single-point tolerances.
-- **Latency changes are not render-neutral when a consumer stalls on them.** A
-  radix-4 multiplier that only got faster moved a music render 0.26%, because
-  the microprogram gates on `!busy` and so advanced its PC ~5 cycles earlier.
-  A fixed cycle budget does not fix this — a faster producer just lets the
-  consumer get further.
+- **Latency changes are not render-neutral when a consumer stalls on them, and
+  one input is not a check.** A radix-4 multiplier that only got *faster* moved
+  a music render 0.26%, because the microprogram gates on `!busy` and so
+  advanced its PC ~5 cycles earlier. A fixed cycle budget does not fix this — a
+  faster producer just lets the consumer get further. The mechanism was
+  correctly identified at the time, checked on one track, and recorded as
+  "every fidelity metric unchanged". A later bisect found that same commit is
+  the first bad one for two *other* tracks: lock_tracked 0.855 → 0.555 against
+  a 0.060 tolerance, and four spectral bands past 0.300. **When a change alters
+  timing that feeds a stateful consumer, the fidelity check has to span the
+  whole corpus** — the input you happen to pick decides whether you see it.
+
+- **Bisect assumes monotonicity, and a half-staged commit breaks it.** A bisect
+  over this history converged on a commit whose own message claimed the render
+  was byte-identical. It was: the *next* commit was titled "restore the half of
+  the increment narrowing I split off", and testing it directly returned GOOD.
+  The convergence was on a transiently broken tree, not the regression. After
+  any bisect through hand-split history, **test the commit immediately after
+  the reported first-bad**; if it is good, the assumption failed and the real
+  cause is later.
 
 ## 9. Knowing when to stop
 
