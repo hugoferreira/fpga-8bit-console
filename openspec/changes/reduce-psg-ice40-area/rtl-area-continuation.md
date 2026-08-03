@@ -23,7 +23,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: H135; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102.
@@ -6683,6 +6683,46 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   interpolation request timing, sample-byte persistence, subtract ownership,
   or mapper register-input/arithmetic sharing changes materially.
 
+## Hypothesis H135
+
+- **ID:** H135.
+- **Hypothesis:** `smp_b` is last consumed at phase 44, on the same edge that
+  the non-wavetable path first writes `mx_new`; the wavetable path does not
+  need `mx_new` until its phase-54 write, also after `smp_b` is dead. Store the
+  signed 17-bit current-arm result in `smp_b[16:0]`, sign-extend both result
+  writes into the existing 18-bit register, and expose the late role as its
+  signed low slice. This should retire the complete 17-bit `mx_new` lifetime
+  without adding a new control phase or downstream result selector.
+- **Scope:** prove every full/PREVIEW wavetable, non-wavetable, audible and
+  hidden path across the phase-44 same-edge consume/write boundary and the
+  phase-54 delayed write; synthesize a complete registered sample/result
+  consumer in isolation first. Only after an exact proof and deterministic
+  isolated floor win may `rtl/psg_walk.sv` change, followed by full/PREVIEW
+  lint and a forced canonical whole-PSG map. Route and run the H134 battery
+  only after a deterministic whole-PSG mapped/floor win. Preserve sample and
+  gain arithmetic, stage-leaf timing, current/old-arm selection, reverb,
+  filtering, mixing, schedule, interfaces, 14-EBR topology, R.84/B2 files,
+  Tang paths, images and tolerances.
+- **Baseline:** accepted H134 commit `b96536d`: 6,360 LUT4s, 1,317 carries,
+  1,450 flops, 500 unpackable flops, 14 EBRs and floor 6,860, routed in 7,086
+  LCs at 133.92/33.04 MHz. The fresh isolated registered consumer baseline
+  will be recorded before any production edit.
+- **Changed condition versus R.40--R.42:** R.40 merged late `mx_filt` into
+  `smp_b`, R.41 merged `mx_new` into `nz_old_out_r`, and the three failures
+  closed unchanged register/fanout pairings. None tested `mx_new` in `smp_b`.
+  H134 has now replaced `smp_b`'s dedicated wavetable subtract with a shared
+  selected-base subtract, materially changing the host cone, and proved that
+  a same-edge adjacent lifetime can retire both state and arithmetic. H135 is
+  therefore a new host/guest pair under a changed fanout condition, not a
+  retry of the rejected spellings.
+- **Change:** proof-first adjacent `smp_b`/`mx_new` storage role; production
+  RTL remains unchanged until exactness and isolated physical gates pass.
+- **Result:** active.
+- **Decision:** active.
+- **Repeat only if:** if rejected, retry only after `smp_b` or `mx_new` write/
+  consume phases, current-arm result width, wavetable/non-wavetable ownership,
+  or mapper register-input/fanout lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7015,8 +7055,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Handoff
 
-- Next allowed experiment: H135 on accepted H134. Record a concrete row before
-  changing RTL, and select a mechanism outside the Active DNR index.
+- Next allowed experiment: H135 on accepted H134, using the adjacent
+  `smp_b`/`mx_new` lifetime and isolated gate above.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
