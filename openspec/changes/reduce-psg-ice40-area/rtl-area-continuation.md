@@ -28,7 +28,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H141.
+- Next hypothesis ID: H142.
+- H141 hypothesis row: encode the serial soft-add underflow path in unused
+  `fmc` states 12--15 instead of the separate `f_under` flop. Decision:
+  rejected and reverted. The exact isolated controller removes one unpackable
+  flop/floor cell, but the canonical whole PSG adds 24 LUT4s, four carries, 20
+  floor cells and 31 routed LCs.
 - H140 hypothesis row: select the live CAP_W0 or old CAP_W1 signed-18 noise
   accumulation inputs before one shared add/clamp cone. Decision: rejected and
   reverted. The exact isolated consumer saves eight LUT4s, seventeen carries
@@ -1029,6 +1034,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H137.
 - Live/old pre-clamp noise-register width contraction: H138.
 - Live/old noise recurrence add/clamp sharing: H140.
+- Soft-add underflow history in unused `fmc` states: H141.
 
 ## Hypothesis H006
 
@@ -7073,6 +7079,64 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   transition snapshot ownership, live/old recurrence formulas, clamp bounds,
   or mapper mux/add/clamp lowering changes materially.
 
+## Hypothesis H141
+
+- **ID:** H141.
+- **Hypothesis:** full-mode soft-add microsteps 4--7 follow the same arithmetic
+  sequence for positive overflow and negative underflow; only the transition
+  after microstep 7 differs, with underflow taking correction step 8. The
+  four-bit `fmc` has unused states 12--15 whose low bits already name steps
+  4--7. Encoding the underflow path there should retire `f_under` without
+  changing an operand, write, cycle, destination or publication edge.
+- **Scope:** exhaustively prove the related baseline/candidate controller
+  states, operation labels, write enables, busy/done events and next-state
+  relation for both comparator outcomes; prove the relation with unconstrained
+  SAT; synthesize the complete registered fold controller and operand decode in
+  isolation. Only after a deterministic isolated floor win may
+  `rtl/psg_walk.sv` change, followed by full/PREVIEW lint and a forced
+  canonical whole-PSG map. Route and run the H139 fidelity battery only after
+  a deterministic whole-PSG mapped/floor win. Preserve fold arithmetic,
+  `fdiv5` contents/read phase, stack values/destinations, visit schedule,
+  `fold_busy`, `dry_valid`, interfaces, 14-EBR topology, R.84/B2 files, Tang
+  paths, images and tolerances.
+- **Baseline:** accepted H139 production at commit `d76241f` and current docs
+  commit `55f47f5`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291
+  carries, 1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed
+  in 7,018 LCs at 142.63/31.17 MHz. The complete fold-controller baseline
+  will be recorded before any production edit.
+- **Changed condition versus H052, H053 and H078:** H052 encoded final-fold
+  ownership in `fsel`; H053 encoded publication in state 10; H078 fused the
+  positive/negative threshold probes and changed the arithmetic decode. H141
+  changes none of those boundaries. It uses four still-unused encodings only
+  while an already-active fold executes the identical steps 4--7, replacing a
+  one-bit history flop with the existing state's high bit.
+- **Change:** map baseline underflow states 4--7 to candidate states 12--15;
+  decode the same operations from both state ranges, transition state 15 to
+  correction state 8, transition positive state 7 directly to state 9, and
+  remove `f_under`.
+- **Result:** exhaustive related-state checking covers all 40 legal
+  state/history/comparator transitions, operation labels, writes, busy/done
+  events and next-state relations; the unconstrained Yosys SAT miter passes.
+  The complete registered fold controller keeps 93 LUT4s and zero carries,
+  changes 23 -> 22 flops and 19 -> 18 unpackable flops, and improves its
+  estimated floor 112 -> 111 cells.
+
+  Canonical whole-PSG mapping at RTL fingerprint `55b5904db174` instead
+  changes H139's 6,302 LUT4s, 1,291 carries, 1,450 flops, 498 unpackable flops
+  and 6,800-cell floor to **6,326 LUT4s, 1,295 carries, 1,449 flops, 494
+  unpackable flops and floor 6,820**, with 14 EBRs unchanged. Seed-1 router2
+  completes in **7,049 LCs (+31)** at 123.30 MHz fast / 31.77 MHz PSG; both
+  clocks pass, but every authoritative area measure except state count
+  regresses. Production is reverted byte-for-byte to H139. The hard physical
+  gate fails, so structural, render, cadence, PREVIEW-recovery, click and smoke
+  batteries are intentionally skipped.
+- **Decision:** rejected and reverted. Activating four additional state codes
+  expands the flattened controller/operand covering more than the single
+  history flop saves.
+- **Repeat only if:** if rejected, retry only after the soft-add microstep
+  sequence, state width/occupancy, underflow correction, operand decode, or
+  mapper FSM/stack covering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7408,10 +7472,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h138/{noise_width_proof.py,noise_width_formal.sv,noise_width_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*}` | source-derived range proof, SAT, complete registered-consumer synthesis, full/PREVIEW lint and canonical whole-PSG mapping | Exact and -6 floor cells alone, but globally +29 LUT4/-7 carries/-2 FF/-1 unpackable/+28 floor; production reverted and route/fidelity skipped. |
 | `build/experiments/h139/{noise_scale_proof.py,noise_scale_formal.sv,noise_scale_probe.sv,formal.log,lint-*,isolated-*,candidate*,repro*}` plus complete acceptance logs, `clicks/`, and `celeste-smoke.ppm` | exhaustive/SAT proof, two registered-consumer probes, canonical map/route reproducibility and full H134 fidelity/cadence/PREVIEW/recovery/click/smoke battery | Accepted: -58 LUT4/-26 carry/-2 unpackable/-60 floor/-68 routed LCs, unchanged FF/EBR, exact renders and passing timing. |
 | `build/experiments/h140/{noise_recurrence_proof.py,noise_recurrence_formal.sv,noise_recurrence_probe.sv,formal.log,isolated-*,candidate*}` | exhaustive clamp/selection proof, arbitrary-input SAT, complete registered-consumer synthesis, full/PREVIEW lint and canonical whole-PSG map/route | Exact and -8 LUT4/-17 carry/-5 floor cells alone, but globally +30 LUT4/+3 unpackable/+33 floor/+36 routed LCs; production reverted and fidelity skipped. |
+| `build/experiments/h141/{fold_under_state_proof.py,fold_under_state_formal.sv,fold_under_state_probe.sv,formal.log,isolated-*,candidate*}` | exhaustive related-state proof, arbitrary-state SAT, complete registered fold-controller synthesis, full/PREVIEW lint and canonical whole-PSG map/route | Exact and -1 FF/-1 unpackable/floor cell alone, but globally +24 LUT4/+4 carry/+20 floor/+31 routed LCs; production reverted and fidelity skipped. |
 
 ## Handoff
 
-- Next allowed experiment: H141 on accepted H139. Record a concrete row before
+- Next allowed experiment: H142 on accepted H139. Record a concrete row before
   changing RTL, and select a mechanism outside the Active DNR index.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
