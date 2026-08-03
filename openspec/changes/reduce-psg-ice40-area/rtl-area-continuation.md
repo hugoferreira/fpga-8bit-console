@@ -28,7 +28,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H153.
+- Next hypothesis ID: H154.
+- H153 hypothesis row: retire the standalone `cpz` copy-zero flag into
+  `note_lo[7]`, which is dead after the note consumer on every K_ADV/EA5 route
+  that can reach PC3. Preserve the captured historical decision that H122
+  proved cannot be reconstructed from live `playing`. Decision: rejected
+  before production; one unpackable FF becomes one LUT4 and floor stays 33.
 - H152 hypothesis row: retire the duplicate eight-bit effective-filter tuple
   by letting the existing base-filter working tuple hold the effective value.
   Preserve the base tuple in its existing record fields, refresh those fields
@@ -7854,6 +7859,57 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   V_ST merge timing, instrument-retrigger topology, or mapper state-read/FF
   lowering changes materially.
 
+## Hypothesis H153
+
+- **ID:** H153.
+- **Hypothesis:** `cpz` is a one-bit historical copy-zero decision written only
+  on K_ADV's skipped-slot route or EA5's two stop routes and consumed only at
+  PC3. `note_lo[7:0]` is written at T_NH/K_NH/I_NH, consumed completely at the
+  immediately following T_LD/K_LD/I_LD state, and then dead on every route to
+  K_ADV/EA5 and PC3. Store the copy-zero decision in dead `note_lo[7]` instead
+  of a standalone flop. This should retire one unpackable FF and its independent
+  write-enable cone without reconstructing the historical value.
+- **Scope:** prove all trigger/ordinary/instrument note-load and consumer pairs,
+  K_ADV skip classes, both EA5 stop classes, evaluation continuations, holds,
+  intervening CPU `playing` changes, and PC3 zero/nonzero publication. Synthesize
+  the complete registered note/copy consumer in isolation. Only after exactness
+  and a deterministic isolated floor win may `rtl/psg_seq.sv` change, followed
+  by full/PREVIEW lint and a forced canonical whole-PSG map. Route and run the
+  H139 fidelity/cadence/recovery/click/Celeste battery only after a whole-PSG
+  mapped/floor win. Preserve every note field, copy value, stop/playing timing,
+  state-port operation, sequencer state/cycle, interface, 14-EBR topology,
+  R.84/B2 file, Tang path, image and tolerance.
+- **Baseline:** accepted H139 production at commit `d76241f` and docs commit
+  `c904c25`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed in 7,018
+  LCs at 142.63/31.17 MHz. The H139 census attributes eight unpackable flops
+  to `note_lo`, one unpackable flop and 38 LUT4-family labels to `cpz`.
+- **Changed condition versus H102, H122 and R.40--R.42:** H102 successfully
+  reused a mode-dead working bit but did not touch copy publication. H122 tried
+  to remove `cpz` by reconstructing it from live `playing`/`pend_stop`; a CPU
+  stop between K_ADV and PC3 made that inexact. H153 retains the captured value
+  and changes only its physical bit. R.40--R.42 joined wide arithmetic roles
+  with different fanout and closed that mechanism family after three losses;
+  H153 aliases one adjacent sequencer flag into a byte whose note role is fully
+  consumed before any copy-zero write and whose PC role has one consumer.
+- **Change:** the proof models note load/consume, K_ADV capture, both EA5 stop
+  classes, hold/replay intervals, PC3 consumption and arbitrary intervening
+  live-playing changes. The complete registered probe compares the standalone
+  flag with the phase-disjoint `note_lo[7]` role under the production reset and
+  enable shapes. Production RTL remains unchanged.
+- **Result:** 1,441,792 semantic note/copy cases and 245,760 hold/CPU-change
+  timelines pass. The complete isolated baseline maps to 25 LUT4s, 25 flops,
+  eight unpackable flops and floor 33. The candidate maps to 26 LUT4s, 24
+  flops, seven unpackable flops and the same floor 33. Reusing the bit retires
+  `cpz`, but adds exactly one LUT4 to select its additional writes; no binding
+  deterministic resource improves.
+- **Decision:** rejected before production RTL. Keep the explicit historical
+  flag because its one unpackable cell is exchanged one-for-one for a LUT cell
+  in the complete mapper-visible consumer.
+- **Repeat only if:** if rejected, retry only after note-load/consume ordering,
+  K_ADV/EA5-to-PC3 routing, copy-zero consumers, `note_lo` storage/packing,
+  CPU stop visibility, or mapper register-enable lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -8201,14 +8257,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h150/*` | source-bound domain proof, 4,063,232 active arithmetic cases, 4,536 command cases, SAT and complete isolated fade-state synthesis | Exact and -1 FF/-1 unpackable, but +3 LUT4 worsens the isolated floor 92 -> 94; production unchanged. |
 | `build/experiments/h151/*` | seven-class transaction proof, 30-cycle arbitrary-input SAT, complete provider/divider synthesis, full/PREVIEW lint and canonical map/route | Exact and -8 FF/-3 floor alone, but globally +31 LUT4/+4 carry/-8 FF/-6 unpackable/+25 floor/+32 routed LCs; production reverted. |
 | `build/experiments/h152/*` | 10,089,360-case ownership proof, 1,024 hold/replay timelines, complete registered ownership synthesis, full/PREVIEW lint and forced canonical whole-PSG mapping | Exact and -5 LUT4/-8 FF/-5 floor alone, but globally +72 LUT4/+4 carries/-8 packed FF/+72 floor with unpackable FF and EBR counts unchanged; production reverted and route/fidelity skipped. |
+| `build/experiments/h153/*` | 1,441,792 semantic note/copy cases, 245,760 hold/CPU-change timelines and complete registered note/copy consumer synthesis | Exact and -1 FF/-1 unpackable, but +1 LUT4 leaves the isolated floor unchanged at 33; production never changed. |
 
 ## Handoff
 
-- Next allowed experiment: H153 on accepted H139 after a fresh source/DNR
+- Next allowed experiment: H154 on accepted H139 after a fresh source/DNR
   audit. H149, H151 and H152 improve their isolated floors but add 47, 25 and
-  72 whole-PSG floor cells respectively; H150 retires one unpackable flop but
-  its isolated floor grows by two cells. Do not retry any of them without its
-  repeat-condition change.
+  72 whole-PSG floor cells respectively; H150 and H153 fail their isolated
+  floors. Do not retry any of them without its repeat-condition change.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - `build/targets/psg.*` now contains rejected H152 measurement output; use
@@ -8532,6 +8588,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   remains. H152's unified filter tuple is exact and retires eight packed flops
   with a five-cell isolated floor win, but globally adds 72 LUT4s, four carries
   and 72 floor cells while leaving the unpackable count unchanged; production
-  is restored byte-for-byte and no route or fidelity gate remains.
+  is restored byte-for-byte and no route or fidelity gate remains. H153's
+  `cpz` lifetime in dead `note_lo[7]` is exact and retires one unpackable flop,
+  but adds one LUT4 and leaves the complete isolated floor unchanged;
+  production never changed and no downstream gate remains.
 - Files to avoid staging after H139: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
