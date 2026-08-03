@@ -27,7 +27,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H120.
+- Next hypothesis ID: H121.
+- H120 hypothesis row: `fade_dir` is the reset-valid bit for `fade_acc` and
+  `fade_step`; every transition from idle to an active fade initializes both
+  payloads on the same edge, and every payload read is guarded by active
+  direction. The exact reset removal adds one isolated LUT4 and retires no FF
+  or unpackable cell. Decision: rejected before production.
 - H119 hypothesis row: PREVIEW and the canonical multi-pumped schedule need
   only six `pph` bits, while the compatibility single-clock schedule retains
   seven. The exact width derivation removes one FF and five carries, but adds
@@ -213,7 +218,10 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H119 rejected after exact three-mode schedule
+- Latest completed decision: H120 rejected after inductive/SAT validity proof
+  and complete isolated registered-consumer synthesis. Removing 29 payload
+  reset assignments adds one LUT4 while retaining all 41 FFs and the same 13
+  unpackable cells. H119 was rejected after exact three-mode schedule
   proof, lint, and canonical whole-PSG place-and-route. The elaboration-
   specific `pph` width removes one FF and five carries but adds 35 LUT4s and
   32 routed LCs. H118 bounded the volume cone to eleven bits, but narrowing it
@@ -223,7 +231,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   bits into inactive P_W2 but added 20/51 LUT4s and 30/53 routed LCs.
   I003 remains the accepted H102 source-contract v5 integration, and H102
   remains the best accepted generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H119's exact elaboration-specific walk-phase
+- Latest rejected variants: H120's exact fade-payload reset removal is locally
+  worse despite simpler source. H119's exact elaboration-specific walk-phase
   width is globally worse despite one fewer FF and five fewer carries. H118's
   exact volume-width contraction is globally
   worse despite one fewer FF. H117's validity-dominated reset removal is
@@ -459,7 +468,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H120 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H121 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -479,6 +488,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H117's walk-controller payload-reset family,
   H118's sequencer volume-width family,
   H119's elaboration-specific walk-phase counter-width family,
+  H120's fade-payload reset-removal family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -878,6 +888,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Walk-controller payload reset removal: H117.
 - Sequencer volume-cone width contraction: H118.
 - Elaboration-specific walk-phase counter width: H119.
+- Fade-payload reset removal behind `fade_dir`: H120.
 
 ## Hypothesis H006
 
@@ -5824,6 +5835,58 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   elaboration-mode contract, phase consumer, controller reset/stall behavior,
   or mapper counter/decode lowering changes materially.
 
+## Hypothesis H120
+
+- **ID:** H120.
+- **Hypothesis:** `psg_seq.fade_acc` and `fade_step` are transaction payloads
+  whose sole validity state is `fade_dir != 0`. Reset clears `fade_dir`; every
+  CPU `$20` path that changes `fade_dir` from idle to fade-in or fade-out also
+  assigns `fade_acc = 0` and the complete table-derived `fade_step` on that
+  same edge. The only payload reads occur inside the `pre_tick && fade_dir !=
+  0` arm. Removing their 29 synchronous-reset bits may simplify the sequencer
+  reset/control cover without exposing an uninitialized value.
+- **Scope:** exhaustively prove reset, arbitrary idle clocks, `$22` table
+  capture, immediate and delayed `$20` fade starts, active pre-tick advances,
+  terminal stop, and restart for the complete `{fade_dir,fade_acc,fade_step}`
+  transition. Synthesize the complete registered fade consumer in isolation
+  before changing production. If it improves, remove only `fade_acc <= 0` and
+  `fade_step <= 0` from the reset arm in `rtl/psg_seq.sv`; retain `fade_dir`
+  reset, every non-reset assignment, arithmetic, table port/replay, CPU
+  priority, state schedule, publication, interfaces, EBRs, R.84 executor and
+  tolerances. Run full multi-pump and PREVIEW lint, then canonical forced
+  whole-PSG synthesis/census. Route and run the complete H102 fidelity battery
+  only after a deterministic mapped/floor win.
+- **Baseline:** accepted H102/I003 RTL at docs checkpoint `8a14afc` maps 6,360
+  LUT4s, 1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor
+  6,868, and routes in 7,087 LCs at 140.92/32.65 MHz. Fresh H120 generation
+  reproduces source-contract v5 byte-for-byte at SHA-256 `d54dde5d...`; all
+  twelve live source hashes match. The accepted census attributes thirteen
+  unpackable flops to `fade_step`; `fade_acc` feeds the 17-bit fade update.
+- **Changed condition versus H117 and the historical reset audit:** H117
+  removed reset from the walk controller's `pc_ch`/`pph` payload and regressed
+  globally. H120 touches a disjoint 29-bit sequencer transaction payload with
+  an explicit `fade_dir` validity bit and same-edge initialization of every
+  payload bit before its first consumer. The earlier streamed/datapath reset
+  audit predates this isolated continuation and does not record a physical
+  test of this complete fade-validity boundary. No active DNR row tests it.
+- **Change:** remove the reset assignments only in the isolated complete fade
+  consumer; production RTL remains unchanged because the early gate fails.
+- **Result:** the inductive model covers all 60 direction/pre-tick/terminal/CPU
+  command classes and proves the invariant that visible state is equal and
+  payloads are equal whenever `fade_dir` is active. A four-edge Yosys SAT
+  miter independently proves arbitrary post-reset command sequences. The
+  complete isolated baseline maps 79 LUT4s, 16 carries and 41 FFs, with 13
+  unpackable `fade_step` flops and a 92-cell floor. The resetless candidate
+  maps 80 LUT4s, 16 carries and the same 41 FFs/13 unpackable flops, for a
+  93-cell floor. No physical reset cell retires, so production lint, global
+  synthesis, routing, and fidelity gates are intentionally skipped.
+- **Decision:** rejected before production RTL. Ignored proof, SAT, source-
+  contract, and isolated synthesis evidence remains under
+  `build/experiments/h120/`.
+- **Repeat only if:** if rejected, retry only after fade validity, CPU command
+  priority, table replay/capture, payload initialization, pre-tick arithmetic,
+  reset semantics, or mapper reset-control lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6137,10 +6200,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h117/{reset_dominance_proof.py,candidate*,candidate-v2*}` | exhaustive validity/reset proof, source-gate audit, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact with unchanged state count, but variants add 34/56 LUT4s, 40/56 floor cells, and 44/64 routed LCs. |
 | `build/experiments/h118/{volume_width_proof.py,candidate*,candidate-v2*}` | 2,707,216-case range proof, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact and -1 FF, but variants add 35/60 LUT4s, 35/57 floor cells, and 41/66 routed LCs. |
 | `build/experiments/h119/{pph_width_proof.py,candidate*}` | 79,040 schedule/transition checks, all three lint modes, and canonical forced whole-PSG synthesis/route | Exact and -1 FF/-5 carries, but +35 LUT4s, +34 floor cells, and +32 routed LCs. |
+| `build/experiments/h120/{fade_reset_proof.py,fade_reset_probe.sv,formal.log,isolated-*,sources-probe.json}` | inductive validity proof, reset-bounded SAT miter, complete registered-consumer synthesis, and fresh v5 source audit | Exact, but reset removal adds one isolated LUT4 with 41 FFs, 13 unpackable flops, and all carries unchanged. |
 
 ## Handoff
 
-- Next allowed experiment: H120 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H121 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
