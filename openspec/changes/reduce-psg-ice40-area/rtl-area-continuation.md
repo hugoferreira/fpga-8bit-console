@@ -27,7 +27,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H117.
+- Next hypothesis ID: H118.
+- H117 hypothesis row: `prun` is the reset-valid bit for the walk controller,
+  and the first accepted sample initializes `pc_ch` and `pph` before any
+  prun-gated read, write, request, or action can observe them. Remove only
+  their redundant synchronous-reset bits while retaining their ordinary
+  assignments, controller encoding, and schedule. The exact combined and
+  channel-only variants add 34/56 LUT4s, 40/56 floor cells, and 44/64 routed
+  LCs. Decision: rejected and reverted.
 - H116 hypothesis row: retire the eight `w_ch_{damp,rev,det,buzz,noiz}`
   effective-filter flops into the existing inactive parameter-bank word. Copy
   active P_W2 to inactive at V_LD outside join passes, overwrite its filter
@@ -190,16 +197,18 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h110/`, `build/experiments/h111/`,
   `build/experiments/h112/`, `build/experiments/h113/`,
   `build/experiments/h114/`, `build/experiments/h115/`, and
-  `build/experiments/h116/`, plus
+  `build/experiments/h116/`, `build/experiments/h117/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H116 rejected after two exact whole-PSG variants.
-  Moving the eight effective-filter bits into inactive P_W2 retires eight FFs,
-  but its extra state-port ownership adds 20/51 LUT4s and 30/53 routed LCs.
+- Latest completed decision: H117 rejected after two exact whole-PSG variants.
+  Removing reset from validity-dominated walk payloads preserves behavior but
+  adds 34/56 LUT4s and 44/64 routed LCs. H116 moved the eight effective-filter
+  bits into inactive P_W2 but added 20/51 LUT4s and 30/53 routed LCs.
   I003 remains the accepted H102 source-contract v5 integration, and H102
   remains the best accepted generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H116's EBR-owned effective-filter lifetime is
+- Latest rejected variants: H117's validity-dominated reset removal is
+  globally worse despite unchanged state count. H116's EBR-owned effective-filter lifetime is
   globally worse despite eight fewer FFs. H115's bounded filter max is already recovered by
   Yosys. H114's exact narrow reciprocal subtract defeats
   Yosys's better implicit width reduction. H113's owner-selected multiplier request payload
@@ -431,7 +440,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H116 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H117 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -447,6 +456,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H113's top-level walker/sequencer multiplier-payload merge family,
   H114's reciprocal-output subtract-width family,
   H115's bounded instrument/base filter-max spelling family,
+  H116's effective-filter inactive-bank lifetime family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -843,6 +853,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Reciprocal-output subtract width: H114.
 - Bounded instrument/base filter-max spelling: H115.
 - Effective-filter lifetime in inactive P_W2: H116.
+- Walk-controller payload reset removal: H117.
 
 ## Hypothesis H006
 
@@ -5628,6 +5639,56 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   inactive-bank ownership, join-pass authority, P_W2 layout/timing, state-port
   replay, or mapper EBR/FF lowering changes materially.
 
+## Hypothesis H117
+
+- **ID:** H117.
+- **Hypothesis:** `prun` is reset to zero and gates every walk-controller side
+  effect. On the first accepted sample edge, the same sequential block sets
+  `prun=1`, `pc_ch=0`, and `pph=0`; the old values of `pc_ch`/`pph` are not
+  consumed on that edge. Their explicit reset assignments therefore add ten
+  synchronous-reset controls without defining observable behavior. Removing
+  only those assignments may improve iCE40 FF packing/control fanout while the
+  validity reset remains unchanged.
+- **Scope:** prove reset-to-first-sample dominance and all side-effect gates,
+  then remove only `pc_ch <= 0` and `pph <= 0` from the reset arm in
+  `rtl/psg_walk.sv`. Run full/PREVIEW lint and canonical forced whole-PSG
+  mapping first. Route and run the complete H102 fidelity battery only after a
+  deterministic mapped/floor win. Do not change `prun`, controller states or
+  widths, schedule/control ROM, sample acceptance, arithmetic, persistent
+  oscillator state, interfaces, EBRs, R.84 executor/proofs, images, Tang
+  paths, or tolerances.
+- **Baseline:** accepted H102/I003 RTL at docs checkpoint `9c3a523` maps 6,360
+  LUT4s, 1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor
+  6,868, and routes in 7,087 LCs at 140.92/32.65 MHz. Fresh source-contract v5
+  validation convicts all thirteen mutations; SHA-256 remains
+  `d54dde5d...`, with all twelve live source hashes matching.
+- **Changed condition versus controller/schedule DNR families:** H109 changed
+  the synthesis encoding of the 60-state sequencer, and R.68--R.69 changed
+  partial schedule/control representations. H117 changes no encoding, state
+  transition, or valid cycle; it removes reset only from payload counters whose
+  complete consumer cone is dominated by the separately reset `prun` valid
+  bit. No active DNR row tests this reset-control boundary.
+- **Change:** variant one removes reset from all ten `pc_ch`/`pph` bits.
+  Variant two restores the seven-bit `pph` reset and removes only the three-bit
+  `pc_ch` reset, attributing variant one's six-new-unpackable-FF result.
+- **Result:** exhaustive exploration passes 48,144 transitions from every
+  arbitrary post-reset `pc_ch`/`pph` payload across repeated reset, sample, and
+  stall sequences; seven source gates confirm that no payload side effect is
+  visible outside `prun`. Full and PREVIEW lint pass for both variants.
+  Variant one maps 6,394 LUT4 / 1,325 carry / 1,458 FF / 514 unpackable /
+  14 EBR / floor 6,908 and routes in 7,131 LCs at 151.17/32.61 MHz: +34
+  LUT4, +4 carries, +6 unpackable, +40 floor cells, and +44 routed LCs.
+  Variant two maps 6,416 / 1,326 / 1,458 / 508 / 14 / floor 6,924 and routes
+  in 7,151 LCs at 150.42/33.00 MHz: +56 LUT4, +5 carries, +56 floor cells,
+  and +64 routed LCs. Both clocks pass; the fidelity battery is skipped because
+  every binding physical area gate fails.
+- **Decision:** rejected after the two permitted variants. Production RTL is
+  restored byte-for-byte; ignored proof and physical evidence remains under
+  `build/experiments/h117/`.
+- **Repeat only if:** if rejected, retry only after walk validity, first-sample
+  initialization, controller side-effect gating, reset topology, or mapper
+  reset/enable lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5938,10 +5999,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h114/{div_out_proof.py,div_out_formal.sv,formal.log,baseline.*,candidate.*}` | 65,536-case exhaustive proof, all-domain SAT proof, full/PREVIEW lint, and canonical forced whole-PSG synthesis/route | Exact signed-16-bit range, but +27 LUT4/+4 carry/+25 floor/+28 routed LCs globally. |
 | `build/experiments/h115/{filter_max_proof.py,filter_max_probe.sv,isolated-*}` | complete decoder-domain proof, exhaustive bounded-max proof, and isolated three-field registered-consumer synthesis | Exact over levels 0..2; both forms map identically at six LUT4s/six flops. |
 | `build/experiments/h116/{filter_bank_proof.py,candidate*,candidate-v2*}` | exhaustive bank-lifetime/replay proof, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact and -8 FF, but variants add 20/51 LUT4s, 21/52 floor cells, and 30/53 routed LCs. |
+| `build/experiments/h117/{reset_dominance_proof.py,candidate*,candidate-v2*}` | exhaustive validity/reset proof, source-gate audit, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact with unchanged state count, but variants add 34/56 LUT4s, 40/56 floor cells, and 44/64 routed LCs. |
 
 ## Handoff
 
-- Next allowed experiment: H117 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H118 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
