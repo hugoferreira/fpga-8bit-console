@@ -27,7 +27,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H118.
+- Next hypothesis ID: H119.
+- H118 hypothesis row: every `vol_r` producer stays in 0..1,792, but the
+  mapped design retains all twelve declared bits. Narrow the complete stored
+  volume/interpolation/instrument-scaling cone to eleven bits and explicitly
+  zero-extend only at the unchanged 12-bit publication/service boundaries.
+  Both exact variants save one FF but add 35/60 LUT4s, 35/57 floor cells,
+  and 41/66 routed LCs. Decision: rejected and reverted.
 - H117 hypothesis row: `prun` is the reset-valid bit for the walk controller,
   and the first accepted sample initializes `pc_ch` and `pph` before any
   prun-gated read, write, request, or action can observe them. Remove only
@@ -197,17 +203,21 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h110/`, `build/experiments/h111/`,
   `build/experiments/h112/`, `build/experiments/h113/`,
   `build/experiments/h114/`, `build/experiments/h115/`, and
-  `build/experiments/h116/`, `build/experiments/h117/`, plus
+  `build/experiments/h116/`, `build/experiments/h117/`, and
+  `build/experiments/h118/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H117 rejected after two exact whole-PSG variants.
-  Removing reset from validity-dominated walk payloads preserves behavior but
-  adds 34/56 LUT4s and 44/64 routed LCs. H116 moved the eight effective-filter
+- Latest completed decision: H118 rejected after two exact whole-PSG variants.
+  The volume cone is bounded to eleven bits, but narrowing it saves one FF
+  while adding 35/60 LUT4s and 41/66 routed LCs. H117 removed reset from
+  validity-dominated walk payloads but added 34/56 LUT4s and 44/64 routed LCs.
+  H116 moved the eight effective-filter
   bits into inactive P_W2 but added 20/51 LUT4s and 30/53 routed LCs.
   I003 remains the accepted H102 source-contract v5 integration, and H102
   remains the best accepted generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H117's validity-dominated reset removal is
+- Latest rejected variants: H118's exact volume-width contraction is globally
+  worse despite one fewer FF. H117's validity-dominated reset removal is
   globally worse despite unchanged state count. H116's EBR-owned effective-filter lifetime is
   globally worse despite eight fewer FFs. H115's bounded filter max is already recovered by
   Yosys. H114's exact narrow reciprocal subtract defeats
@@ -440,7 +450,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H117 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H118 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -457,6 +467,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H114's reciprocal-output subtract-width family,
   H115's bounded instrument/base filter-max spelling family,
   H116's effective-filter inactive-bank lifetime family,
+  H117's walk-controller payload-reset family,
+  H118's sequencer volume-width family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -854,6 +866,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Bounded instrument/base filter-max spelling: H115.
 - Effective-filter lifetime in inactive P_W2: H116.
 - Walk-controller payload reset removal: H117.
+- Sequencer volume-cone width contraction: H118.
 
 ## Hypothesis H006
 
@@ -5689,6 +5702,61 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   initialization, controller side-effect gating, reset topology, or mapper
   reset/enable lowering changes materially.
 
+## Hypothesis H118
+
+- **ID:** H118.
+- **Hypothesis:** every direct note/instrument volume endpoint is `0..7 << 8`,
+  hence at most 1,792. Effect-1 interpolation stays between its two endpoints;
+  fade effects 4/5 multiply by `fcnt` or `sp-fcnt` and divide by `sp`;
+  instrument scaling multiplies by a `0..7` volume and divides by seven; and
+  music gain multiplies by `1..256` then divides by 256. Therefore `vol_r`,
+  `fxv_next`, `a_post`, and their direct endpoint wires fit unsigned eleven
+  bits, while Yosys retains all twelve declared `vol_r` flops. Narrowing that
+  complete cone may remove one FF and the high limb from several shared-
+  service operand/select paths.
+- **Scope:** prove all direct, interpolation, fade, instrument, and music-gain
+  ranges; synthesize a complete registered volume cone if useful; then narrow
+  only the volume-local wires/register and explicitly zero-extend at the
+  unchanged 12-bit service/publication boundaries in `rtl/psg_seq.sv`. Run
+  full/PREVIEW lint and canonical forced whole-PSG mapping first. Route and run
+  the complete H102 fidelity battery only after a deterministic mapped/floor
+  win. Do not change rounding, effect counters, divider/multiplier semantics,
+  amplitude publication width, sample datapath widths, schedule, interfaces,
+  EBRs, R.84 executor/proofs, images, Tang paths, or tolerances.
+- **Baseline:** accepted H102/I003 RTL at docs checkpoint `449e3fc` maps 6,360
+  LUT4s, 1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor
+  6,868, and routes in 7,087 LCs at 140.92/32.65 MHz. Fresh source-contract v5
+  validation convicts all thirteen mutations; SHA-256 remains
+  `d54dde5d...`, with all twelve live source hashes matching. The accepted
+  JSON contains twelve physical `vol_r` flops, so this is not an already-
+  pruned source-only bit.
+- **Changed condition versus H065 and width DNR families:** H065 narrowed the
+  signed sample registers feeding waveform/noise arithmetic and regressed
+  globally. H118 leaves every sample/arithmetic register untouched and closes
+  a separate unsigned sequencer volume invariant across all of its producers
+  and unchanged 12-bit boundaries. No active DNR row tests this volume cone.
+- **Change:** variant one narrows `vol_r`, direct/previous endpoints,
+  interpolation, fade and instrument post-scale wires to eleven bits and
+  zero-extends only at the original service/publication boundaries. Variant
+  two restores every arithmetic wire to twelve bits and narrows only the
+  physical `vol_r` register, explicitly slicing/zero-extending its assignments.
+- **Result:** the bound proof passes 2,707,216 direct, interpolation, fade,
+  instrument-scaling, and music-gain checks with a hard maximum of 1,792.
+  Full and PREVIEW lint pass for both variants. Variant one maps 6,395 LUT4 /
+  1,323 carry / 1,457 FF / 508 unpackable / 14 EBR / floor 6,903 and routes in
+  7,128 LCs at 143.88/33.55 MHz: +35 LUT4, +2 carries, -1 FF, +35 floor cells,
+  and +41 routed LCs. Variant two maps 6,420 / 1,323 / 1,457 / 505 / 14 /
+  floor 6,925 and routes in 7,153 LCs at 139.57/33.16 MHz: +60 LUT4, +2
+  carries, -1 FF, -3 unpackable, +57 floor cells, and +66 routed LCs. Both
+  clocks pass; the fidelity battery is skipped because every binding physical
+  area gate fails.
+- **Decision:** rejected after the two permitted variants. Production RTL is
+  restored byte-for-byte; ignored proof and physical evidence remains under
+  `build/experiments/h118/`.
+- **Repeat only if:** if rejected, retry only after note/instrument volume
+  range, effect counter invariant, scaling divisors, music-gain landing,
+  publication width, or mapper volume-cone lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6000,10 +6068,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h115/{filter_max_proof.py,filter_max_probe.sv,isolated-*}` | complete decoder-domain proof, exhaustive bounded-max proof, and isolated three-field registered-consumer synthesis | Exact over levels 0..2; both forms map identically at six LUT4s/six flops. |
 | `build/experiments/h116/{filter_bank_proof.py,candidate*,candidate-v2*}` | exhaustive bank-lifetime/replay proof, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact and -8 FF, but variants add 20/51 LUT4s, 21/52 floor cells, and 30/53 routed LCs. |
 | `build/experiments/h117/{reset_dominance_proof.py,candidate*,candidate-v2*}` | exhaustive validity/reset proof, source-gate audit, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact with unchanged state count, but variants add 34/56 LUT4s, 40/56 floor cells, and 44/64 routed LCs. |
+| `build/experiments/h118/{volume_width_proof.py,candidate*,candidate-v2*}` | 2,707,216-case range proof, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact and -1 FF, but variants add 35/60 LUT4s, 35/57 floor cells, and 41/66 routed LCs. |
 
 ## Handoff
 
-- Next allowed experiment: H118 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H119 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
