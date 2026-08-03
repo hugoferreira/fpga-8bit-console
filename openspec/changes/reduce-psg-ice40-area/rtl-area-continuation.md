@@ -28,7 +28,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H148.
+- Next hypothesis ID: H149.
+- H148 hypothesis row: give the fade-step lookup its own 32x13 synchronous
+  ROM, preserving the accepted two-cycle sequencer hold and displaced-control
+  stall while removing the shared constants-port address arm and external
+  `fstep_q` lifetime. Decision: rejected and reverted. Exact proof and isolated
+  synthesis save 22 LUT4s, thirteen flops and 35 floor cells, but the canonical
+  whole PSG adds nineteen LUT4s, four carries, five floor cells and thirteen
+  routed LCs while spending the fifteenth EBR.
 - H147 hypothesis row: narrow reachable live/last/old gain history from
   thirteen to twelve bits while preserving the oscillator-record bit
   positions. Decision: rejected and reverted. Exact isolated synthesis saves
@@ -1067,6 +1074,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Reciprocal spare-bit tail token via reserved address/plane: H132--H133.
 - Direct combinational fade-step decode replacing the constants-EBR borrow:
   H137.
+- Dedicated fade-step EBR reversing the constants-port consolidation: H148.
 - Live/old pre-clamp noise-register width contraction: H138.
 - Live/old noise recurrence add/clamp sharing: H140.
 - Soft-add underflow history in unused `fmc` states: H141.
@@ -7499,6 +7507,69 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   bound, boosted gain ladder, last/old history consumers, streamed-record
   layout, or mapper high-bit pruning changes materially.
 
+## Hypothesis H148
+
+- **ID:** H148.
+- **Hypothesis:** the current 14-EBR design has one block available under the
+  OpenSpec 15-EBR ceiling. Reversing only the fade-step part of design section
+  9's constants-port consolidation should let a dedicated 32x13 synchronous
+  ROM retain its result internally, removing the external thirteen-bit
+  `fstep_q` lifetime and the fade/address mux while preserving every accepted
+  CPU/sequencer/walker edge.
+- **Scope:** exhaust all 32 quantized fade lengths, adjacent and delayed
+  `$22`/`$20` writes, ordinary pitch/control reads, and sample-walk control-port
+  collisions; prove the externally observed step, sequencer hold, displaced
+  walker stall, and post-replay control word cycle-exact. Synthesize the
+  complete baseline and candidate port/controller in isolation before any
+  production edit. Only after an isolated LUT/FF/floor win may
+  `rtl/psg_seq.sv` and a generated fade-table artifact change, followed by
+  full/PREVIEW lint and a forced canonical whole-PSG map. Route and run the
+  H139 fidelity/cadence battery only after a whole-PSG mapped/floor win.
+  Preserve all fade values and visibility, the accepted hold/replay timing,
+  schedules, interfaces, R.84/B2 files, Tang paths, images and tolerances.
+- **Baseline:** accepted H139 production at commit `d76241f` and docs commit
+  `52a19e9`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed in 7,018
+  LCs at 142.63/31.17 MHz. The complete isolated shared-port consumer will be
+  measured before production changes.
+- **Changed condition versus design section 9, R.67, H126 and H137:** design
+  section 9 accepted one extra block of headroom in exchange for 29 LUT4s,
+  fourteen flops and 47 placed cells when the then-binding EBR count fell;
+  H139 now has a measured spare block under the normative 15-EBR ceiling.
+  R.67 added a parallel partial `/7` reciprocal port while retaining most of
+  the old quotient selection and regressed; H148 removes a complete fade-port
+  selection and result lifetime. H126 tried to derive a displaced-control
+  token with wrong same-edge semantics, and H137 replaced the complete lookup
+  with a large combinational decoder. H148 preserves both accepted tokens and
+  uses a synchronous table, changing neither collision timing nor arithmetic.
+- **Change:** proof and isolated synthesis first, followed by the minimal
+  production port split only after both gates passed.
+- **Result:** the source-derived table matches constants words 112..143, and
+  exhaustive checking passes all 81,920 adjacent/delayed command and
+  control-collision edge sequences. The complete isolated baseline maps to 33
+  LUT4s, 28 flops (27 unpackable), one EBR and a 60-cell floor; the dedicated
+  ROM candidate maps to 11 LUT4s, 15 flops (14 unpackable), two EBRs and a
+  25-cell floor. This is -22 LUT4s, -13 flops and -35 floor cells for one
+  additional EBR. Full multi-pump and PREVIEW lint retain only the established
+  warning classes.
+
+  Forced canonical whole-PSG synthesis at RTL fingerprint `d4d9e96b3d62`
+  reverses the isolated result. H139's 6,302 LUT4s, 1,291 carries, 1,450 flops,
+  498 unpackable flops, 14 EBRs and floor 6,800 become **6,321 LUT4s, 1,295
+  carries, 1,437 flops, 484 unpackable flops, 15 EBRs and floor 6,805**.
+  Seed-1 router2 completes in **7,031 LCs (+13)** at 130.28 MHz fast / 34.26
+  MHz PSG; both clocks pass, but mapped LUT, carry, floor and routed area all
+  regress. Production RTL, the generator and generated files are restored
+  byte-for-byte to H139. The hard physical gate fails, so `make test-psg`,
+  render/cadence, PREVIEW/recovery/click and Celeste smoke gates are
+  intentionally skipped.
+- **Decision:** rejected and reverted. The dedicated block removes the local
+  read-address mux and output lifetime, but flattening re-covers the remaining
+  constants/control port and wider design five floor cells larger.
+- **Repeat only if:** if rejected, retry only after the fade-step table
+  contents, constants/control port arbitration, accepted EBR ceiling,
+  hold/replay timing, or mapper RAM-output lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7841,12 +7912,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h145/*` | exhaustive/SAT arithmetic, scratch, fold, timing and complete-consumer evidence | Exact; -35 carries/-19 unpackable FFs, but +31 LUT4s worsens floor 434 -> 446. |
 | `build/experiments/h146/*` | exhaustive/SAT DQ proof, focused service test, lint, isolated synthesis and canonical map/route | Exact and -13 LUT4/-11 carry alone, but globally +36 LUT4/+1 carry/+36 floor/+43 routed LCs. |
 | `build/experiments/h147/*` | exhaustive/SAT gain bound/history proof, lint, isolated synthesis and canonical map/route | Exact and -5 LUT4/-2 FF alone, but globally +26 LUT4/+2 carry/+27 floor/+33 routed LCs with fast timing failure. |
+| `build/experiments/h148/*` | 81,920-sequence fade/control proof, isolated port synthesis, full/PREVIEW lint and canonical map/route | Exact and -22 LUT4/-13 FF/-35 floor alone, but globally +19 LUT4/+4 carry/-13 FF/+5 floor/+13 routed LCs while spending EBR 15. |
 
 ## Handoff
 
-- Next allowed experiment: H148 on accepted H139 after a fresh source/DNR
+- Next allowed experiment: H149 on accepted H139 after a fresh source/DNR
   audit. H147 is exact but rejected after its isolated width win reversed
-  globally and failed timing; do not retry without a repeat-condition change.
+  globally and failed timing; H148 is exact and wins decisively in isolation,
+  but is rejected after adding five whole-PSG floor cells and thirteen routed
+  LCs while consuming the last permitted EBR. Do not retry either without its
+  repeat-condition change.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
