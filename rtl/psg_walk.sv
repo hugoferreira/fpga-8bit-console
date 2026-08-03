@@ -401,9 +401,19 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   endfunction
   wire signed [15:0] noise_next = noise_clamp(nz_pre);
 
-  wire  signed [17:0] nz_r6 = nz_out_r >>> 6;
-  wire  signed [17:0] nz_z  = einc[13] ? ((nz_r6 <<< 6) + (nz_r6 <<< 2))
-                                       : ((nz_r6 <<< 6) + (nz_r6 <<< 4));
+  // The full-mode live and old noise scales are consumed on disjoint phases:
+  // live at W4, old at W15/W27. Select their registered payload before one
+  // exact x68/x80 shift-add tree. PREVIEW and wavetable W27 remain live.
+  wire nz_scale_old = !REALTIME_PREVIEW && !s_snd_wt
+      && (cap[CAP_W15] || cap[CAP_W27]);
+  wire signed [17:0] nz_scale_value = nz_scale_old
+      ? nz_old_out_r : nz_out_r;
+  wire nz_scale_hi = nz_scale_old ? s_old_inc[13] : einc[13];
+  wire signed [17:0] nz_scale_r6 = nz_scale_value >>> 6;
+  wire signed [17:0] nz_scale_z = nz_scale_hi
+      ? ((nz_scale_r6 <<< 6) + (nz_scale_r6 <<< 2))
+      : ((nz_scale_r6 <<< 6) + (nz_scale_r6 <<< 4));
+  wire signed [17:0] nz_z = nz_scale_z;
 
   // A changed sounding tuple starts a 64-sample previous-to-current blend.
   wire blend_restart =
@@ -533,10 +543,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       $signed({{2{s_old_phase[15]}}, s_old_phase})
       + (nz_tog ? {mx_old[16], mx_old} : 18'sd0);
   wire signed [15:0] nz_old_next = noise_clamp(nz_old_pre);
-  wire signed [17:0] nz_old_r6 = nz_old_out_r >>> 6;
-  wire signed [17:0] nz_old_z = s_old_inc[13]
-      ? ((nz_old_r6 <<< 6) + (nz_old_r6 <<< 2))
-      : ((nz_old_r6 <<< 6) + (nz_old_r6 <<< 4));
+  wire signed [17:0] nz_old_z = nz_scale_z;
   wire signed [17:0] z_old_sel = old_nz_r_on ? nz_old_z : z_old_c;
 
   // Convert note volume to the oscillator gain used by the integer renderer.

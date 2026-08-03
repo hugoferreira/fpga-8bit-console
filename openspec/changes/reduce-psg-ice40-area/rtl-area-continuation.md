@@ -23,16 +23,19 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: H139; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
-  main; H102 accepted atop H096; H134 accepted atop H102.
+  main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
+  H134.
 - Next hypothesis ID: H140.
 - H139 hypothesis row: select the live W4 or old W15/W27 registered pre-clamp
   noise value and increment before one exact shared post-shift scale tree,
   replacing the two parallel `nz_z`/`nz_old_z` trees without changing either
-  register. Decision: active; prove the consume-phase contract and complete
-  registered consumer before production RTL.
+  register. Decision: accepted. Exactness, canonical physical, complete
+  fidelity/cadence/PREVIEW/recovery/click/smoke, and forced-reproducibility
+  gates pass; the retained result saves 58 LUT4s, 26 carries, two floor cells
+  from packing, 60 deterministic floor cells, and 68 routed LCs.
 - H138 hypothesis row: narrow the two registered live/old pre-clamp noise
   values from signed 18 to 17 bits, retaining explicit signed-18 views at
   their output-scaling consumers. Decision: rejected and reverted. The exact
@@ -6968,11 +6971,39 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   consumers before one identical shift/add tree, so a complete arithmetic
   instance leaves with the selection rather than merely shortening a width or
   retiring a register.
-- **Change:** proof-first live/old noise-scale selection and sharing;
-  production RTL remains unchanged until exactness and isolated physical gates
-  pass.
-- **Result:** active.
-- **Decision:** active.
+- **Change:** select the old scale only in full mode, for non-wavetable W15 or
+  W27; otherwise select the live scale. Feed the selected registered signed-18
+  value and only the selected increment bit 13 through one arithmetic-right-
+  shift and exact x68/x80 tree, then retain the original `nz_z`/`nz_old_z`
+  consumer names and phases.
+- **Result:** the exhaustive model checks all 262,144 signed-18 values and
+  1,048,576 selected live/old/increment cases; the unconstrained Yosys SAT
+  miter passes. Full multi-pump and PREVIEW lint retain only the established
+  warning classes. A generic isolated spelling changes floor 108 -> 111
+  because its harness preserves duplicate destinations, while the complete
+  production-shaped registered consumer decisively improves 95 -> 52 LUT4s,
+  44 -> 22 carries, keeps 42 flops, and moves floor 120 -> 81 cells.
+
+  Canonical whole-PSG mapping at RTL fingerprint `41bf50aae6d2` changes H134's
+  6,360 LUT4s, 1,317 carries, 1,450 flops, 500 unpackable flops and 6,860-cell
+  floor to **6,302 LUT4s, 1,291 carries, 1,450 flops, 498 unpackable flops and
+  floor 6,800**, with 14 EBRs unchanged. Seed-1 router2 completes in **7,018
+  LCs (-68)** at **142.63 MHz fast / 31.17 MHz PSG**, clearing both clocks.
+
+  `make test-psg` passes with the unchanged 524/850 walk deadline and
+  4,008/5,103 tick pre-run, 1,095 spare and zero late flips. All 59 frozen
+  renders are byte-identical. Ordinary `/4`, `/5`, `/6` cadence remains 572
+  clocks and multi-pumped cadence remains 524, with every write, sample
+  boundary and tick window clean. All eight active PREVIEW checks at 1,275 and
+  159 clocks/sample pass; recovery reports no coalesced/delayed/dropped
+  samples; both four-second SFX-10 paths retain zero `click-v1` events and are
+  byte-identical to H134. Clock-divider checks pass. The rebuilt five-frame
+  Celeste smoke retains 2,079/3,668 off-centre samples, range -21,544..7,711,
+  1,014 levels, and a byte-identical frame. Forced repeat mapping and routing
+  reproduce JSON SHA-256 `4f7c4af1...` and ASC SHA-256 `cca305c1...` exactly.
+- **Decision:** accepted. One complete duplicate noise-scale arithmetic tree
+  retires with no state, schedule, sample, interface, EBR, R.84/B2, Tang,
+  image or tolerance change.
 - **Repeat only if:** if rejected, retry only after live/old scale formulas,
   W4/W15/W27 consumer phases, registered noise-value ownership, increment
   selection, or mapper mux/shift-add lowering changes materially.
@@ -7310,11 +7341,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h136/{sign_token_proof.py,sign_token_formal.sv,sign_token_probe.sv,exhaustive.log,formal-*,lint-*,isolated-*}` | exhaustive transaction/chaining proof, three SAT miters, lint and two complete isolated service/sign-consumer comparisons | Exact, but both isolated floors regress by one cell; the production-shaped form is +2 LUT4/-1 unpackable with carry/FF unchanged because two token flops replace two walker sign flops. |
 | `build/experiments/h137/{fade_decode_proof.py,fade_decode_formal.sv,fade_decode_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*}` | source-bound table/command proof, SAT, complete registered-consumer synthesis, full/PREVIEW lint and canonical whole-PSG mapping | Exact and -8 floor cells alone, but globally +84 LUT4/+1 carry/-2 FF/-12 unpackable/+72 floor; production reverted and route/fidelity skipped. |
 | `build/experiments/h138/{noise_width_proof.py,noise_width_formal.sv,noise_width_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*}` | source-derived range proof, SAT, complete registered-consumer synthesis, full/PREVIEW lint and canonical whole-PSG mapping | Exact and -6 floor cells alone, but globally +29 LUT4/-7 carries/-2 FF/-1 unpackable/+28 floor; production reverted and route/fidelity skipped. |
+| `build/experiments/h139/{noise_scale_proof.py,noise_scale_formal.sv,noise_scale_probe.sv,formal.log,lint-*,isolated-*,candidate*,repro*}` plus complete acceptance logs, `clicks/`, and `celeste-smoke.ppm` | exhaustive/SAT proof, two registered-consumer probes, canonical map/route reproducibility and full H134 fidelity/cadence/PREVIEW/recovery/click/smoke battery | Accepted: -58 LUT4/-26 carry/-2 unpackable/-60 floor/-68 routed LCs, unchanged FF/EBR, exact renders and passing timing. |
 
 ## Handoff
 
-- Active experiment: H139 on accepted H134 after a fresh DNR/source audit.
-  Do not start H140 until H139 is accepted or rejected and recorded.
+- Next allowed experiment: H140 on accepted H139. Record a concrete row before
+  changing RTL, and select a mechanism outside the Active DNR index.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -7597,6 +7629,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   downstream route/fidelity gate remains. H138's signed-17 live/old pre-clamp
   noise storage is exact and wins six isolated floor cells, but adds 29 global
   LUT4s and 28 floor cells; production is byte-identical to H134 after
-  reversion and no downstream route/fidelity gate remains.
-- Files to avoid staging after H134: executor/controller proof files, R.84/B2
+  reversion and no downstream route/fidelity gate remains. H139 shares the
+  schedule-exclusive live/old noise scale tree and passes every exactness,
+  physical, fidelity, cadence, preview, recovery, click, Celeste-smoke and
+  forced-reproducibility gate at 6,800 floor cells and 7,018 routed LCs. It
+  changes `rtl/psg_walk.sv`, so no R.84/B2 source-certificate or lineage
+  equivalence is claimed from this isolated loop.
+- Files to avoid staging after H139: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
