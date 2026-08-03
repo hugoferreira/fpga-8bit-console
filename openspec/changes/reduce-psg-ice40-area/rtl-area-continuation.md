@@ -26,7 +26,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted on merged main.
-- Next hypothesis ID: H098.
+- Next hypothesis ID: H099.
+- H098 hypothesis row: encode the fast multiplier's exact 3--12 active-step
+  durations as start points on one four-bit maximal-LFSR segment. The token is
+  exact and removes four LUT4s/two carries in isolation, but the whole PSG adds
+  20 LUT4s, 19 floor cells, and 16 routed LCs. Decision: rejected and reverted.
 - H097 hypothesis row: retire `ml_cpu` by reusing `walk_tick` as the
   `ML_STOP` provenance token. The invariant is exact and saves three LUT4s and
   one FF in isolation, but the whole PSG adds 18 LUT4s, four carries, 17 floor
@@ -81,7 +85,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Latest completed decision: H096 accepted as generic RTL/proof commit
   `a647185` after complete verification. Consuming the launch worklist removes
   31 global LUT4s, one FF, and 28 deterministic floor cells from merged main.
-- Latest rejected variants: H097's exact `ML_STOP` provenance reuse is globally
+- Latest rejected variants: H098's exact multiplier iteration token is globally
+  worse despite its isolated four-LUT4/two-carry saving. H097's exact `ML_STOP` provenance reuse is globally
   worse despite its isolated three-LUT4/one-FF saving. H094's packed transition inequality is globally
   worse despite its isolated one-LUT4 saving. H093's grouped DQ table is locally
   worse. H092's result-flop merge is globally worse despite
@@ -228,9 +233,10 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H098 on accepted H096 `a647185`, only after a fresh source
+- Next experiment: H099 on accepted H096 `a647185`, only after a fresh source
   and DNR audit. It must not repeat H096's launch-worklist/pacing-state family,
   H097's `ML_STOP` provenance/lifetime-alias family,
+  H098's fast multiplier iteration-token family,
   H095's now-composed foreground trigger-length
   prefix family, H094's now-closed packed transition-inequality
   family, H093's DQ coefficient-decoder spelling family, H092's EA2/EA4 result-
@@ -4559,6 +4565,53 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `walk_tick` lifetime, CPU-launch arbitration, loop-back scan, stop classes,
   or mapper sequential lowering changes materially.
 
+## Hypothesis H098
+
+- **ID:** H098.
+- **Hypothesis:** the multi-pumped multiplier needs exactly 3, 4, 5, 6, 8,
+  9, 10, or 12 active fast-clock steps across its two supported radix
+  parameters. Each duration can be a start point on one four-bit maximal-LFSR
+  segment ending at terminal state one, with zero retained as idle. A shift
+  plus one XOR should replace the private binary decrement carry chain without
+  changing any request, product, acknowledge, or slow-domain busy clock.
+- **Scope:** exhaustive token/duration proof, transaction equivalence for both
+  radix parameters and all request modes, isolated synthesis of the complete
+  registered count/load/terminal consumer, then `rtl/psg_mulmp.sv`, permanent
+  multiplier proofs, whole-PSG mapping, and the complete H096 battery only
+  after an isolated deterministic win. No multiplier recurrence, operand,
+  product, CDC synchronizer, request/acknowledge edge, sequencer padding,
+  schedule, interface, EBR, diagnostic ARAM, R.84 executor, or tolerance
+  change.
+- **Baseline:** accepted H096 commit `a647185` atop merged main: 6,364 LUT4s,
+  1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
+  seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks.
+- **Changed condition versus H006, H051, H070, and H090:** H006 and H090
+  respelled or shared the loaded duration decoder while retaining binary
+  decrement; H051 accepted a separate three-bit fixed-five-step DQ token;
+  H070's 24-state divider token was tested in a different service. H098 keeps
+  both existing duration decoders and `seq_pad` independent, changing only the
+  four-bit fast-domain multiplier iteration representation across its actual
+  variable duration set.
+- **Change:** the measured production probe used the primitive four-bit
+  `x^4+x^3+1` maximal-LFSR recurrence,
+  bind each legal duration to the unique start token that reaches one on its
+  final active edge, and retain the current terminal acknowledge action.
+- **Result:** 418,608 radix/mode/freeze traces preserve every busy and terminal
+  edge for both supported masks; the selected `x^4+x^3+1` form passes all
+  6,020 two-radix CDC transactions. Its complete isolated count consumer falls
+  from 14 to ten LUT4s and two to zero carries, with five FF unchanged.
+  Canonical whole-PSG mapping instead changes 6,364 to 6,384 LUT4s, 1,321 to
+  1,319 carries, 1,459 flops unchanged, 509 to 508 unpackable flops, floor
+  6,873 to 6,892, and seed-1 route 7,095 to 7,111 LCs. Timing passes at
+  137.14/32.70 MHz, but every authoritative area metric except carries
+  regresses.
+- **Decision:** rejected after whole-PSG synthesis. Production multiplier,
+  transaction bench, and conditional permanent proof are reverted byte-for-
+  byte; no fidelity gate or accepted area claim remains.
+- **Repeat only if:** if rejected, retry only after legal multiplier duration
+  set, fast recurrence, terminal acknowledge, radix parameter, request-load
+  decoder, or mapper sequential lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -4848,10 +4901,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h095/{forms*,equiv.log,isolated-*,candidate*,cadence-*,preview-*,recovery-*,click-*,celeste-smoke*}` | exhaustive/formal proof, isolated and two forced whole-PSG builds, and complete acceptance battery | Accepted direct composition at -4 LUT4/-3 carries/-4 floor cells; all fidelity, timing, and reproducibility gates pass. |
 | `build/experiments/h096/{budget-*,preview-*,recovery*,clicks*,celeste-smoke*,clocks*,bytecheck*}` plus `build/targets/psg.{json,asc}` | exhaustive protocol proof, two forced whole-PSG builds, and complete merged-main acceptance battery | Accepted `a647185` at -31 LUT4/-1 FF/-28 floor cells; all generic fidelity, timing, and reproducibility gates pass. |
 | `build/experiments/h097/{provenance_proof.py,provenance-proof.log,provenance_probe.sv,isolated-*,candidate.*}` | exact path proof, complete isolated provenance synthesis, and canonical whole-PSG synthesis | Exact and -3 LUT4/-1 FF alone, but globally +18 LUT4/+4 carries/+17 floor cells/+20 routed LCs. |
+| `build/experiments/h098/{count_proof.py,count-proof.log,count_probe.sv,count_*_r1.*,mulmp.log,candidate.*}` | exact token/freeze proof, isolated count synthesis, 6,020-transaction CDC bench, and canonical whole-PSG synthesis | Exact and -4 LUT4/-2 carries alone, but globally +20 LUT4/+19 floor cells/+16 routed LCs. |
 
 ## Handoff
 
-- Next allowed experiment: H098 on accepted H096 `a647185`, after a fresh
+- Next allowed experiment: H099 on accepted H096 `a647185`, after a fresh
   source/DNR audit; it must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
