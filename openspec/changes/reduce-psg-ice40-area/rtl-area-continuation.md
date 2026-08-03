@@ -27,7 +27,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H115.
+- Next hypothesis ID: H116.
+- H115 hypothesis row: the three instrument/base filter joins take the numeric
+  maximum of two-bit values whose reachable domain is only 0, 1, or 2. An
+  explicit bounded max may replace comparator/mux logic with one high-bit OR
+  and one low-bit predicate per field. The exact bounded and comparator forms
+  both map to six LUT4s and six flops. Decision: rejected before production.
 - H114 hypothesis row: the complete reciprocal output domain is 0..32767
   minus 8192 or 12286, so the current 18-bit subtract result always fits
   signed 16 bits. An explicit narrow subtract followed by sign extension is
@@ -175,18 +180,18 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   rejected `build/experiments/h106/`, `build/experiments/h107/`, and
   `build/experiments/h108/`, `build/experiments/h109/`, and the rejected
   `build/experiments/h110/`, `build/experiments/h111/`,
-  `build/experiments/h112/`, `build/experiments/h113/`, and
-  `build/experiments/h114/`, plus
+  `build/experiments/h112/`, `build/experiments/h113/`,
+  `build/experiments/h114/`, and `build/experiments/h115/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H114 rejected after exhaustive/formal range proof,
-  clean lint, and a completed canonical route because explicit 16-bit
-  reciprocal subtraction adds 27 LUT4s, four carries, 25 floor cells, and
-  28 routed LCs globally.
+- Latest completed decision: H115 rejected before production because its exact
+  bounded 0..2 filter-max formula maps identically to the three existing
+  comparator/mux joins at six LUT4s and six flops.
   I003 remains the accepted H102 source-contract v5 integration, and H102
   remains the best accepted generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H114's exact narrow reciprocal subtract defeats
+- Latest rejected variants: H115's bounded filter max is already recovered by
+  Yosys. H114's exact narrow reciprocal subtract defeats
   Yosys's better implicit width reduction. H113's owner-selected multiplier request payload
   shrinks `req_a`/`req_b` but globally expands downstream cones. H112's
   exact trigger-metadata packing is already
@@ -416,7 +421,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H115 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H116 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -431,6 +436,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H112's pending-trigger FF-array packing family,
   H113's top-level walker/sequencer multiplier-payload merge family,
   H114's reciprocal-output subtract-width family,
+  H115's bounded instrument/base filter-max spelling family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -592,6 +598,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H112 | rejected | Keep separate pending-trigger row/length arrays: one packed 11-bit FF array is exact but maps identically at 61 LUT4s/44 flops. |
 | H113 | rejected | Keep the zero-idle OR payload merge: owner selection is transaction-exact and shrinks `req_a`/`req_b`, but adds 66 LUT4s, four carries, 66 floor cells, and 73 routed LCs globally. |
 | H114 | rejected | Keep the implicit reciprocal-output width: an explicit exact signed-16-bit subtract adds 27 LUT4s, four carries, 25 floor cells, and 28 routed LCs globally. |
+| H115 | rejected | Keep the comparator/mux filter joins: the exact bounded 0..2 max formula maps identically at six LUT4s/six flops in the complete three-field registered consumer. |
 
 ## Hypothesis H001
 
@@ -824,6 +831,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Pending-trigger FF-array packing: H112.
 - Top-level walker/sequencer multiplier-payload merge: H113.
 - Reciprocal-output subtract width: H114.
+- Bounded instrument/base filter-max spelling: H115.
 
 ## Hypothesis H006
 
@@ -5513,6 +5521,47 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   subtract constants, signed result range, consumer width, or mapper carry
   lowering changes materially.
 
+## Hypothesis H115
+
+- **ID:** H115.
+- **Hypothesis:** `f_det`, `f_rev`, `f_damp` and their stored base-filter
+  counterparts are reachable only as 0, 1, or 2. At `I_TR1`, three separate
+  two-bit `>` comparator/mux expressions compute their numeric maxima. On
+  this closed domain, max has high bit `a[1] | b[1]` and low bit
+  `~high & (a[0] | b[0])`; spelling that bound explicitly may reduce the
+  complete registered join.
+- **Scope:** prove the 0..2 source domain from the complete `fdec` table and
+  base-field write/reload cycle, exhaustively compare the bounded formula,
+  then synthesize all three registered joins in isolation. Touch
+  `rtl/psg_seq.sv` and run whole-PSG/fidelity gates only after a deterministic
+  isolated LUT/floor improvement. Do not change filter codes, stored record
+  layout, publication values, effect/instrument precedence, schedule, state,
+  interfaces, EBRs, R.84 executor/proofs, images, Tang paths, or tolerances.
+- **Baseline:** accepted H102/I003 RTL at docs checkpoint `95fe4cc` maps
+  6,360 LUT4s, 1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs,
+  floor 6,868, and routes in 7,087 LCs at 140.92/32.65 MHz. Source-contract
+  v5 remains SHA-256 `d54dde5d...` with all twelve live hashes matching.
+- **Changed condition versus H021 and H099:** H021 replaced the complete
+  32-entry base-3 filter decoder with arithmetic and was locally larger. H099
+  changed the source used for sounding-filter publication and regressed
+  globally. H115 preserves both the table and publication ownership and
+  changes only the three bounded maxima when a custom instrument joins its
+  base SFX filter tuple.
+- **Change:** conditionally add one `max_filter` function implementing the
+  proven 0..2 truth table and use it for detune, reverb, and dampen at
+  `I_TR1`.
+- **Result:** the complete 32-entry `fdec` table yields exactly levels
+  {0,1,2}; exhaustive comparison passes all nine operand pairs. The complete
+  three-field registered baseline and bounded candidates both synthesize to
+  six LUT4s and six flops, with no carries. Production RTL and downstream
+  physical/fidelity gates are not warranted.
+- **Decision:** rejected before production; Yosys already recovers the bounded
+  truth table from each comparator/mux join. Ignored proof/probe evidence
+  remains under `build/experiments/h115/`.
+- **Repeat only if:** if rejected, retry only after filter-level domain,
+  base-field writers, instrument join semantics, registered consumer context,
+  or mapper comparator lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5821,10 +5870,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h112/{trigger_meta_proof.py,trigger_meta_probe.sv,isolated-*}` | exhaustive field/priority proof and complete registered dynamic-index synthesis | Exact across 6,291,456 transitions; both forms map identically at 61 LUT4s/44 flops. |
 | `build/experiments/h113/{merge_capture_proof.sv,capture-proof.log,baseline.*,candidate.*}` | all-domain SAT proof, source-contract audit, full/PREVIEW lint, and canonical forced whole-PSG synthesis/route | Transaction-exact, but the candidate is +66 LUT4/+4 carry/+66 floor/+73 routed LCs and is rejected. |
 | `build/experiments/h114/{div_out_proof.py,div_out_formal.sv,formal.log,baseline.*,candidate.*}` | 65,536-case exhaustive proof, all-domain SAT proof, full/PREVIEW lint, and canonical forced whole-PSG synthesis/route | Exact signed-16-bit range, but +27 LUT4/+4 carry/+25 floor/+28 routed LCs globally. |
+| `build/experiments/h115/{filter_max_proof.py,filter_max_probe.sv,isolated-*}` | complete decoder-domain proof, exhaustive bounded-max proof, and isolated three-field registered-consumer synthesis | Exact over levels 0..2; both forms map identically at six LUT4s/six flops. |
 
 ## Handoff
 
-- Next allowed experiment: H115 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H116 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
