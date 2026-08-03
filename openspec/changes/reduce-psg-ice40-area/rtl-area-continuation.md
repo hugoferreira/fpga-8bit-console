@@ -23,7 +23,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: H136; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102.
@@ -31,8 +31,10 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - H136 hypothesis row: carry each multiplier request's arithmetic sign through
   the otherwise-dead `m_res[33]` result bit, preserving it across the chained
   reciprocal request, and retire full-schedule `mxs_new`/`mxs_old`. Decision:
-  active; prove the token and price the complete service/sign consumers before
-  production RTL.
+  rejected before production RTL. The token is exact, but the multi-pumped
+  boundary activates both `req_b[12]` and `m_p[33]`, replacing rather than
+  reducing the two sign flops; the production-shaped isolated floor worsens
+  274 -> 275 cells.
 - H135 hypothesis row: retire the adjacent 17-bit `mx_new` result into
   `smp_b`. Exhaustive and both full-path nine-step SAT miters pass, but the
   complete registered consumer changes 58 -> 95 LUT4s, 72 -> 55 flops and
@@ -751,6 +753,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H129 | rejected | Keep one eight-entry `sfx_id` FF array: fixed foreground/music bank partitioning is exact, but retains 48 unpackable FFs and adds ten LUT4s in the complete storage/read consumer. |
 | H130 | rejected | Keep the all-channel status buses before CPU selection: direct addressed-channel/slot selection is exact but adds two LUT4s in the complete registered readback. |
 | H131 | rejected | Keep `aud_sl(...) == c` at the row writer: the direct foreground-play XOR is exact but maps identically at 18 LUT4s/20 unpackable FF. |
+| H136 | rejected | Keep `mxs_new`/`mxs_old` in the walker: the result token is exact, but two newly active CDC/result flops replace the two retired sign flops and the production-shaped isolated floor worsens 274 -> 275 cells. |
 
 ## Hypothesis H001
 
@@ -6782,8 +6785,24 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - **Change:** proof-first multiplier result-token and full-schedule sign-state
   retirement; production RTL remains unchanged until the exactness and
   isolated physical gates pass.
-- **Result:** active.
-- **Decision:** active.
+- **Result:** the source-bound exhaustive proof covers all 262,144 signed-18
+  inputs, 12,582,912 transaction/mode/corner combinations and 524,288 chained
+  sign cases. Radix-2, radix-4 and request-load SAT miters pass, and both
+  isolated forms lint clean apart from expected scratch/source warnings. The
+  first shared-magnitude probe changes 194 -> 158 LUT4s, 75 -> 56 carries and
+  keeps 117 flops, but increases unpackable flops 25 -> 62 and the floor 219
+  -> 220. A second production-shaped probe gives the interpolation, live-gain
+  and old-gain consumers distinct arithmetic and one mutually exclusive
+  consume selector. It changes 249 -> 251 LUT4s, keeps 86 carries and 128
+  flops, reduces unpackable flops 25 -> 24, and still worsens the floor 274 ->
+  275. The missing state saving is structural: radix-2 baseline `req_b[12]`
+  and `m_p[33]` are both constant/pruned, while the candidate must activate
+  both to cross and retain the sign token, exactly replacing the two retired
+  walker sign flops.
+- **Decision:** rejected before production RTL. Exactness is established, but
+  neither complete isolated consumer meets the deterministic floor gate.
+  `rtl/psg_mulsvc.sv`, `rtl/psg_mulmp.sv`, `rtl/psg_walk.sv`, whole-PSG
+  synthesis, routing and the fidelity battery remain untouched/skipped.
 - **Repeat only if:** if rejected, retry only after multiplier result width,
   request signedness, reciprocal chaining, sign-consumer phases, or mapper
   cross-domain/result-bit lowering changes materially.
@@ -7118,10 +7137,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h133/{tail_plane_proof.py,tail_plane_formal.sv,wave_consumer_probe.sv,exhaustive.log,formal-*,isolated-*}` | all-context high-half-plane proof, address and registered-token SAT, and complete registered waveform-consumer synthesis | Exact with one EBR in both forms, but -1 carry/-1 FF changes 696 -> 699 LUT4s and worsens the floor 762 -> 764 cells. |
 | `build/experiments/h134/{wavetable_byte_proof.py,wavetable_byte_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*,postalias2*}` plus completed acceptance output and `clicks/`, `celeste-smoke.ppm` | source-bound exhaustive/SAT proof, complete registered-consumer synthesis, canonical map/route reproducibility and the full H102 fidelity/cadence/PREVIEW/recovery/click/smoke battery | Accepted: exact, -4 carries/-8 FF/-8 unpackable and floor cells, 7,086 routed LCs; final ASC is byte-identical after simulation-only trace aliases. |
 | `build/experiments/h135/{sample_result_proof.py,sample_result_probe.sv,exhaustive.log,formal-*,isolated-*}` | exhaustive representation proof, two full-path nine-step SAT miters and complete registered-consumer synthesis | Exact and -17 FF/-18 unpackable locally, but +37 LUT4 worsens the isolated floor 77 -> 96 cells; production remains unchanged. |
+| `build/experiments/h136/{sign_token_proof.py,sign_token_formal.sv,sign_token_probe.sv,exhaustive.log,formal-*,lint-*,isolated-*}` | exhaustive transaction/chaining proof, three SAT miters, lint and two complete isolated service/sign-consumer comparisons | Exact, but both isolated floors regress by one cell; the production-shaped form is +2 LUT4/-1 unpackable with carry/FF unchanged because two token flops replace two walker sign flops. |
 
 ## Handoff
 
-- Next allowed experiment: H136 on accepted H134. Record a concrete row before
+- Next allowed experiment: H137 on accepted H134. Record a concrete row before
   changing RTL, and select a mechanism outside the Active DNR index.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
@@ -7396,6 +7416,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   claimed from this isolated loop. H135's adjacent `smp_b`/`mx_new` role is
   exact and removes seventeen isolated flops, but adds 37 LUT4s and worsens
   the isolated floor by nineteen cells; production is unchanged and no
-  downstream gate remains.
+  downstream gate remains. H136's multiplier sign token is exact, but the
+  multi-pumped boundary activates two previously pruned token flops and the
+  production-shaped isolated floor worsens by one cell; production is
+  unchanged and no downstream gate remains.
 - Files to avoid staging after H134: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
