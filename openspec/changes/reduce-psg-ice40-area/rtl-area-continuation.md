@@ -23,11 +23,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: H135; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102.
-- Next hypothesis ID: H135.
+- Next hypothesis ID: H136.
+- H135 hypothesis row: retire the adjacent 17-bit `mx_new` result into
+  `smp_b`. Exhaustive and both full-path nine-step SAT miters pass, but the
+  complete registered consumer changes 58 -> 95 LUT4s, 72 -> 55 flops and
+  floor 77 -> 96 cells. Decision: rejected before production RTL.
 - H131 hypothesis row: replace the `aud_sl(...) == c` row-owner relation with
   the exact foreground-play XOR. All 65,536 slot/play/phase tuples and
   arbitrary-state SAT pass, but both complete row writers map identically at
@@ -6716,10 +6720,21 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   therefore a new host/guest pair under a changed fanout condition, not a
   retry of the rejected spellings.
 - **Change:** proof-first adjacent `smp_b`/`mx_new` storage role; production
-  RTL remains unchanged until exactness and isolated physical gates pass.
-- **Result:** active.
-- **Decision:** active.
-- **Repeat only if:** if rejected, retry only after `smp_b` or `mx_new` write/
+  RTL remained unchanged pending exactness and isolated physical gates.
+- **Result:** the exhaustive model passes all 262,144 sample representations
+  and 262,144 independent phase-44/phase-54 result transactions. Separate
+  nine-step non-wavetable and wavetable SAT miters prove the reset, sample
+  writes, same-edge phase-44 consume/result write, delayed phase-54 result
+  write and phase-59 mix output for arbitrary payloads. The complete isolated
+  registered consumer changes 58 -> 95 LUT4s, 34 carries unchanged and 72 ->
+  55 flops. Packing improves from 53 packed/19 unpackable to 54 packed/one
+  unpackable, but the deterministic floor still worsens 77 -> 96 cells.
+- **Decision:** rejected before production RTL. The shared host removes the
+  intended seventeen flops, but combining the early sample and late current-
+  arm fanout creates 37 LUT4s and nineteen net floor cells. Production RTL,
+  lint, whole-PSG mapping, routing and fidelity are skipped at the failed
+  isolated gate.
+- **Repeat only if:** retry only after `smp_b` or `mx_new` write/
   consume phases, current-arm result width, wavetable/non-wavetable ownership,
   or mapper register-input/fanout lowering changes materially.
 
@@ -7052,11 +7067,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h132/{tail_token_proof.py,tail_token_formal.sv,wave_consumer_probe.sv,exhaustive.log,formal-*,isolated-*}` | all-context exhaustive proof, address and registered-token SAT, and complete registered waveform-consumer synthesis | Exact with one EBR in both forms, but -1 carry/-1 FF changes 696 -> 701 LUT4s and worsens the floor 762 -> 766 cells. |
 | `build/experiments/h133/{tail_plane_proof.py,tail_plane_formal.sv,wave_consumer_probe.sv,exhaustive.log,formal-*,isolated-*}` | all-context high-half-plane proof, address and registered-token SAT, and complete registered waveform-consumer synthesis | Exact with one EBR in both forms, but -1 carry/-1 FF changes 696 -> 699 LUT4s and worsens the floor 762 -> 764 cells. |
 | `build/experiments/h134/{wavetable_byte_proof.py,wavetable_byte_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*,postalias2*}` plus completed acceptance output and `clicks/`, `celeste-smoke.ppm` | source-bound exhaustive/SAT proof, complete registered-consumer synthesis, canonical map/route reproducibility and the full H102 fidelity/cadence/PREVIEW/recovery/click/smoke battery | Accepted: exact, -4 carries/-8 FF/-8 unpackable and floor cells, 7,086 routed LCs; final ASC is byte-identical after simulation-only trace aliases. |
+| `build/experiments/h135/{sample_result_proof.py,sample_result_probe.sv,exhaustive.log,formal-*,isolated-*}` | exhaustive representation proof, two full-path nine-step SAT miters and complete registered-consumer synthesis | Exact and -17 FF/-18 unpackable locally, but +37 LUT4 worsens the isolated floor 77 -> 96 cells; production remains unchanged. |
 
 ## Handoff
 
-- Next allowed experiment: H135 on accepted H134, using the adjacent
-  `smp_b`/`mx_new` lifetime and isolated gate above.
+- Next allowed experiment: H136 on accepted H134. Record a concrete row before
+  changing RTL, and select a mechanism outside the Active DNR index.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -7327,6 +7343,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   exactness, physical, fidelity, cadence, preview, recovery, click and Celeste
   gate passes at 6,860 floor cells and 7,086 routed LCs. It changes
   `rtl/psg_walk.sv`, so no R.84/B2 source-certificate or lineage equivalence is
-  claimed from this isolated loop.
+  claimed from this isolated loop. H135's adjacent `smp_b`/`mx_new` role is
+  exact and removes seventeen isolated flops, but adds 37 LUT4s and worsens
+  the isolated floor by nineteen cells; production is unchanged and no
+  downstream gate remains.
 - Files to avoid staging after H134: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
