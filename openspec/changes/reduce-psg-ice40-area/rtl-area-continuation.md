@@ -26,7 +26,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted on merged main.
-- Next hypothesis ID: H100.
+- Next hypothesis ID: H101.
+- H100 hypothesis row: restrict `released` storage to the four foreground
+  slots. Music-slot bits have no set path and are therefore invariant zero;
+  their loop condition can bypass the foreground array. The proof passes
+  2,560 transitions, but Yosys already removes the upper elements and both
+  complete isolated forms map identically. Decision: rejected before
+  production RTL.
 - H099 hypothesis row: stop rewriting the effective channel-filter tuple from
   the base tuple and publish the already-live base tuple when `w_ins_on=0`.
   The ownership proof passes 4,224 legal paths and the isolated consumer falls
@@ -89,12 +95,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H099 rejected and reverted after both globally
-  tested variants regressed deterministic floor and seed-1 placement. H096
+- Latest completed decision: H100 rejected before production because the
+  explicit four-bit source maps identically to Yosys's optimized eight-entry
+  array. H096
   remains the accepted generic RTL/proof commit `a647185`; consuming the
   launch worklist removes 31 global LUT4s, one FF, and 28 deterministic floor
   cells from merged main.
-- Latest rejected variants: H099's exact filter-publication ownership change
+- Latest rejected variants: H100's unreachable music release bits are already
+  removed by Yosys. H099's exact filter-publication ownership change
   is globally worse despite its 17-LUT4 isolated saving. H098's exact multiplier iteration token is globally
   worse despite its isolated four-LUT4/two-carry saving. H097's exact `ML_STOP` provenance reuse is globally
   worse despite its isolated three-LUT4/one-FF saving. H094's packed transition inequality is globally
@@ -243,11 +251,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H100 on accepted H096 `a647185`, only after a fresh source
+- Next experiment: H101 on accepted H096 `a647185`, only after a fresh source
   and DNR audit. It must not repeat H096's launch-worklist/pacing-state family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
+  H100's foreground/music release-state partition family,
   H095's now-composed foreground trigger-length
   prefix family, H094's now-closed packed transition-inequality
   family, H093's DQ coefficient-decoder spelling family, H092's EA2/EA4 result-
@@ -388,6 +397,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H097 | rejected | Keep the dedicated `ml_cpu` provenance bit: `walk_tick` is equivalent and saves three LUT4s/one FF alone, but adds 18 LUT4s, four carries, 17 floor cells, and 20 routed LCs globally. |
 | H098 | rejected | Keep the binary multiplier countdown: an exact LFSR token saves four LUT4s/two carries alone, but adds 20 LUT4s, 19 floor cells, and 16 routed LCs globally. |
 | H099 | rejected | Keep the explicit filter base-copy writes: publication ownership saves 17 LUT4s alone, but both whole-PSG variants regress deterministic floor and placement. |
+| H100 | rejected | Keep the eight-entry source array: music release bits are invariant zero, but Yosys already prunes them and the explicit four-entry form maps identically at 17 LUT4s/four FF. |
 
 ## Hypothesis H001
 
@@ -4671,6 +4681,49 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   instrument-active state, trigger/exit topology, publication source, stored
   effective tuple, or mapper register-enable lowering changes materially.
 
+## Hypothesis H100
+
+- **ID:** H100.
+- **Hypothesis:** only CPU foreground slots can execute the sole
+  `released[...] <= 1` assignment. Music-slot triggers clear their dynamic
+  array element, but music slots can never make it non-zero. Restricting
+  `released` to four foreground bits and treating every music slot as not
+  released should remove four unreachable FFs and the upper dynamic-write
+  targets without changing loop/release behavior.
+- **Scope:** exhaustive state-transition proof across reset, trigger clear,
+  simultaneous CPU release, foreground/music slot selection, instrument-bank
+  selection, and the EA5 loop predicate; isolated synthesis of the complete
+  registered state/consumer; then `rtl/psg_seq.sv`, a permanent
+  `tools/psg_hw_forms.py` invariant, canonical whole-PSG synthesis, and the
+  complete H096 battery only after deterministic isolated and global wins. No
+  release command, loop condition, trigger ordering, slot count, schedule,
+  interface, EBR, diagnostic ARAM, R.84 executor, or tolerance change.
+- **Baseline:** accepted H096 commit `a647185` atop merged main: 6,364 LUT4s,
+  1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
+  seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks.
+- **Changed condition versus lifetime/storage DNR families:** H037 tested a
+  combinationally dead detune source bit; H062/H063 reconstructed live stored
+  waveform/noise values; H092 merged two reachable result flops. H100 instead
+  removes four array elements with no set transition and retains every
+  reachable foreground bit plus the exact same-edge CPU-write precedence.
+- **Change:** in the scratch consumer, replace the eight-entry `released`
+  array with four
+  foreground entries, clear it only on foreground trigger, and make the EA5
+  release guard true for every music slot.
+- **Result:** exhaustive induction covers 2,560 reset-reachable combinations
+  of current foreground state, foreground/music slot, trigger clear,
+  same-edge CPU release, and instrument-bank loop selection. The production
+  JSON contains only `released[0]` through `released[3]`: Yosys already proves
+  the four music elements constant. Source-matched isolated reference and
+  explicit four-entry candidate both map to 17 LUT4s / zero carries / four
+  FFs.
+- **Decision:** rejected before production RTL because the desired state and
+  logic pruning is already present in the mapped netlist; no permanent form or
+  production file changed.
+- **Repeat only if:** if rejected, retry only after slot partitioning, CPU
+  release addressing, trigger ordering, loop/release semantics, or mapper
+  dynamic-array lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -4962,10 +5015,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h097/{provenance_proof.py,provenance-proof.log,provenance_probe.sv,isolated-*,candidate.*}` | exact path proof, complete isolated provenance synthesis, and canonical whole-PSG synthesis | Exact and -3 LUT4/-1 FF alone, but globally +18 LUT4/+4 carries/+17 floor cells/+20 routed LCs. |
 | `build/experiments/h098/{count_proof.py,count-proof.log,count_probe.sv,count_*_r1.*,mulmp.log,candidate.*}` | exact token/freeze proof, isolated count synthesis, 6,020-transaction CDC bench, and canonical whole-PSG synthesis | Exact and -4 LUT4/-2 carries alone, but globally +20 LUT4/+19 floor cells/+16 routed LCs. |
 | `build/experiments/h099/{filter_owner_proof.py,filter-owner-proof.log,filter_owner_probe.sv,filter_owner_*.json,filter_owner_*.log,candidate*}` | exhaustive ownership proof, complete isolated registered-consumer synthesis, and two canonical whole-PSG variants | Exact across 4,224 legal paths and -17 LUT4 alone, but both whole-PSG variants regress deterministic floor and seed-1 placement. |
+| `build/experiments/h100/{released_domain_proof.py,released-domain-proof.log,released_domain_probe.sv,isolated-*-v2.*}` | exhaustive transition proof, source-matched release-array synthesis, and explicit foreground-only synthesis | Exact across 2,560 transition/consumer cases; both forms map identically at 17 LUT4s/four FF. |
 
 ## Handoff
 
-- Next allowed experiment: H100 on accepted H096 `a647185`, after a fresh
+- Next allowed experiment: H101 on accepted H096 `a647185`, after a fresh
   source/DNR audit; it must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
