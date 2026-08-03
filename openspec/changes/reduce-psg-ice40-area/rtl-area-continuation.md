@@ -27,7 +27,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H122.
+- Next hypothesis ID: H123.
+- H122 hypothesis row: the sole `cpz` consumer at PC3 is reached only from
+  K_ADV's skip path or EA5's two stop paths. Live-state reconstruction fails:
+  a CPU stop may change `playing[c]` during K_ROT..PC3 after `cpz=0` was
+  captured. Decision: rejected before synthesis or RTL.
 - H121 hypothesis row: the canonical 272-credit limiter's sticky
   `{seq_phase,seq_count}` representation visits exactly the same nine-bit
   states as a counter seeded at 239 and stopped at 511. The single-register
@@ -473,7 +477,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H121 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H123 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -494,6 +498,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H118's sequencer volume-width family,
   H119's elaboration-specific walk-phase counter-width family,
   H120's fade-payload reset-removal family,
+  H121's sequencer-credit state-representation family,
+  H122's PC3 copy-zero live-state reconstruction family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -894,6 +900,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Sequencer volume-cone width contraction: H118.
 - Elaboration-specific walk-phase counter width: H119.
 - Fade-payload reset removal behind `fade_dir`: H120.
+- Sequencer-credit state representation: H121.
+- PC3 copy-zero live-state reconstruction: H122.
 
 ## Hypothesis H006
 
@@ -5944,6 +5952,54 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   sample-boundary seed, freeze/terminal behavior, or mapper counter/reset/decode
   lowering changes materially.
 
+## Hypothesis H122
+
+- **ID:** H122.
+- **Hypothesis:** `psg_seq.cpz` has one consumer, the low-byte zeroing decision
+  in PC3, and exactly three routes to that consumer. K_ADV's copy/skip route
+  assigns `cpz=!playing[c]`; if `playing[c]` is true that route requires
+  `walk_tick=0`. The two EA5 stop routes are reachable only after K_ADV entered
+  evaluation with `walk_tick && playing[c]`, and both set `pend_stop[c]=1`
+  alongside `cpz=1`. Therefore the consumed value is exactly
+  `!playing[c] || (walk_tick && pend_stop[c])`; reconstructing it at PC3 may
+  remove the dedicated flag and its multi-state update cone.
+- **Scope:** prove all legal K_ADV/EA5-to-K_ROT/PC0..PC3 path classes, arbitrary
+  prior `pend_stop`, intervening holds, and the same-edge stop write. Synthesize
+  the complete registered route/consumer cone in isolation before changing
+  production. If it improves a deterministic isolated resource, remove only
+  `cpz` and its three assignments from `rtl/psg_seq.sv` and use the exact
+  derived predicate at PC3. Retain playing/stop semantics, bank ownership,
+  state-memory address/data and write clocks, sequencer schedule, interfaces,
+  EBRs, PREVIEW, R.84 executor files and tolerances. Run full/PREVIEW lint and
+  canonical forced whole-PSG synthesis/census; route and run the complete H102
+  fidelity battery only after a deterministic mapped/floor win.
+- **Baseline:** accepted H102/I003 RTL at commit `824a3cc` maps 6,360 LUT4s,
+  1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor 6,868, and
+  routes in 7,087 LCs at 140.92/32.65 MHz. `cpz` maps as one settable/enabled
+  flop and feeds only PC3's copied-amplitude low-byte mux.
+- **Changed condition versus H097, H110, and the lifetime DNR families:** H097
+  replaced `ml_cpu` with a different historical controller flag and regressed
+  globally; H110 attempted to reconstruct `join_stage` but lost a same-edge
+  bank-publication history bit. H122 does not alias storage or infer history
+  from bank state: every legal edge to its sole consumer establishes one of
+  two current-state predicates, and both EA5 stop paths preserve their value in
+  the already-required `pend_stop` vector.
+- **Change:** proof-only live-state reconstruction; production RTL unchanged.
+- **Result:** the static route inventory confirms only the three expected
+  K_ROT entries, but the time-domain proof refutes the hypothesis. A reachable
+  non-tick pass can take K_ADV's active-slot copy route and capture `cpz=0`;
+  foreground CPU control remains active while the PC chain runs, so a stop can
+  clear `playing[c]` before PC3. The candidate predicate then becomes one and
+  changes a nonzero copied amplitude byte from `0x55` to zero, while the
+  registered baseline deliberately preserves it. `pend_stop` does not repair
+  the case because this CPU stop path leaves it clear. Isolated synthesis and
+  every downstream gate are skipped.
+- **Decision:** rejected before synthesis or production RTL. The executable
+  counterexample remains under `build/experiments/h122/`.
+- **Repeat only if:** if rejected, retry only after K_ADV/EA5 route topology,
+  delayed-stop ownership, playing visibility, PC3 publication, or mapper
+  sequential/dynamic-index lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6259,10 +6315,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h119/{pph_width_proof.py,candidate*}` | 79,040 schedule/transition checks, all three lint modes, and canonical forced whole-PSG synthesis/route | Exact and -1 FF/-5 carries, but +35 LUT4s, +34 floor cells, and +32 routed LCs. |
 | `build/experiments/h120/{fade_reset_proof.py,fade_reset_probe.sv,formal.log,isolated-*,sources-probe.json}` | inductive validity proof, reset-bounded SAT miter, complete registered-consumer synthesis, and fresh v5 source audit | Exact, but reset removal adds one isolated LUT4 with 41 FFs, 13 unpackable flops, and all carries unchanged. |
 | `build/experiments/h121/{seq_credit_proof.py,seq_credit_probe.sv,formal.log,isolated-*,candidate*}` | all-state transition proof, reset-bounded SAT miter, complete limiter synthesis, full/PREVIEW lint, and canonical whole-PSG mapping | Exact and -2 floor cells locally, but +13 LUT4/+5 carry/+9 floor cells globally; production reverted. |
+| `build/experiments/h122/cpz_counterexample.py` | reachable K_ADV-to-PC3 control interleaving | Refutes live-state reconstruction when a CPU stop lands during the copy chain; no RTL changed. |
 
 ## Handoff
 
-- Next allowed experiment: H122 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H123 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
