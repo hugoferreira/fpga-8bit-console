@@ -23,15 +23,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: H138; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102.
 - Next hypothesis ID: H139.
 - H138 hypothesis row: narrow the two registered live/old pre-clamp noise
   values from signed 18 to 17 bits, retaining explicit signed-18 views at
-  their output-scaling consumers. Decision: active; prove the complete source
-  range and registered consumer before production RTL.
+  their output-scaling consumers. Decision: rejected and reverted. The exact
+  isolated floor improves six cells, but the canonical whole PSG adds 29
+  LUT4s and 28 floor cells despite removing seven carries and two flops.
 - H137 hypothesis row: replace the shared-EBR fade-step borrow with an exact
   32-entry combinational decode from the retained `fade_len[7:3]`, removing
   `fstep_q`, the lookup-port mux, and both replay/displacement tokens. Decision:
@@ -764,6 +765,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H131 | rejected | Keep `aud_sl(...) == c` at the row writer: the direct foreground-play XOR is exact but maps identically at 18 LUT4s/20 unpackable FF. |
 | H136 | rejected | Keep `mxs_new`/`mxs_old` in the walker: the result token is exact, but two newly active CDC/result flops replace the two retired sign flops and the production-shaped isolated floor worsens 274 -> 275 cells. |
 | H137 | rejected | Keep the shared-EBR fade-step lookup and replay boundary: direct 32-entry decode is -8 floor cells alone but adds 84 whole-PSG LUT4s, one carry and 72 floor cells. |
+| H138 | rejected | Keep signed-18 live/old pre-clamp noise registers: signed-17 storage is exact and -6 floor cells alone, but adds 29 whole-PSG LUT4s and 28 floor cells despite removing seven carries and two flops. |
 
 ## Hypothesis H001
 
@@ -1012,6 +1014,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Reciprocal spare-bit tail token via reserved address/plane: H132--H133.
 - Direct combinational fade-step decode replacing the constants-EBR borrow:
   H137.
+- Live/old pre-clamp noise-register width contraction: H138.
 
 ## Hypothesis H006
 
@@ -6905,10 +6908,24 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   keeps both clamp inputs and every sum at 18 bits, contracts only two
   post-sum/pre-scale registers to their distinct proved 17-bit domain, and
   restores the original width immediately at their sole consumers.
-- **Change:** proof-first noise pre-clamp register boundary; production RTL is
-  unchanged until exactness and isolated physical gates pass.
-- **Result:** active.
-- **Decision:** active.
+- **Change:** narrow both registered boundaries to signed 17 bits and restore
+  explicit signed-18 values only at the two unchanged shift/scale consumers.
+- **Result:** the source-derived exhaustive proof covers draws -880..881, the
+  maximum-magnitude step 33,324, the complete stored range
+  -45,627..45,634, and 182,524 scaled-consumer cases. Unconstrained SAT proves
+  signed-17 round-trip plus both shifted/scaled consumers, and full/PREVIEW
+  lint reaches only the baseline warning set. The complete isolated registered
+  consumer improves 78 -> 72 LUT4s, 44 -> 40 carries, 56 -> 54 flops and
+  floor 106 -> 100 cells. The forced canonical whole-PSG map instead changes
+  H134's 6,360 LUT4s, 1,317 carries, 1,450 flops, 500 unpackable flops and
+  6,860-cell floor to 6,389 LUT4s, 1,310 carries, 1,448 flops, 499 unpackable
+  flops and a 6,888-cell floor, with 14 EBRs unchanged. The +29 LUT4/+28 floor
+  regression rejects composition despite -7 carries/-2 flops; route and the
+  H134 fidelity battery are intentionally skipped. `rtl/psg_walk.sv` is
+  restored byte-identically to H134.
+- **Decision:** rejected and reverted at the whole-PSG area gate. The narrower
+  storage entangles signed-extension/scale selection with the full walker cone
+  more expensively than it saves state.
 - **Repeat only if:** if rejected, retry only after clamped-noise bounds,
   multiplier step range, kick range, stored pre-clamp consumers, or mapper
   signed-extension lowering changes materially.
@@ -7245,11 +7262,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h135/{sample_result_proof.py,sample_result_probe.sv,exhaustive.log,formal-*,isolated-*}` | exhaustive representation proof, two full-path nine-step SAT miters and complete registered-consumer synthesis | Exact and -17 FF/-18 unpackable locally, but +37 LUT4 worsens the isolated floor 77 -> 96 cells; production remains unchanged. |
 | `build/experiments/h136/{sign_token_proof.py,sign_token_formal.sv,sign_token_probe.sv,exhaustive.log,formal-*,lint-*,isolated-*}` | exhaustive transaction/chaining proof, three SAT miters, lint and two complete isolated service/sign-consumer comparisons | Exact, but both isolated floors regress by one cell; the production-shaped form is +2 LUT4/-1 unpackable with carry/FF unchanged because two token flops replace two walker sign flops. |
 | `build/experiments/h137/{fade_decode_proof.py,fade_decode_formal.sv,fade_decode_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*}` | source-bound table/command proof, SAT, complete registered-consumer synthesis, full/PREVIEW lint and canonical whole-PSG mapping | Exact and -8 floor cells alone, but globally +84 LUT4/+1 carry/-2 FF/-12 unpackable/+72 floor; production reverted and route/fidelity skipped. |
+| `build/experiments/h138/{noise_width_proof.py,noise_width_formal.sv,noise_width_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*}` | source-derived range proof, SAT, complete registered-consumer synthesis, full/PREVIEW lint and canonical whole-PSG mapping | Exact and -6 floor cells alone, but globally +29 LUT4/-7 carries/-2 FF/-1 unpackable/+28 floor; production reverted and route/fidelity skipped. |
 
 ## Handoff
 
-- Active experiment: H138 on accepted H134. Do not start H139 until H138 is
-  accepted or rejected and recorded.
+- Active experiment: none on accepted H134. H138 is rejected and recorded;
+  H139 is next only after a fresh DNR and source audit.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -7529,6 +7547,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   unchanged and no downstream gate remains. H137's direct fade-step decode is
   exact and wins eight isolated floor cells, but adds 84 global LUT4s and 72
   floor cells; production is byte-identical to H134 after reversion and no
-  downstream route/fidelity gate remains.
+  downstream route/fidelity gate remains. H138's signed-17 live/old pre-clamp
+  noise storage is exact and wins six isolated floor cells, but adds 29 global
+  LUT4s and 28 floor cells; production is byte-identical to H134 after
+  reversion and no downstream route/fidelity gate remains.
 - Files to avoid staging after H134: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
