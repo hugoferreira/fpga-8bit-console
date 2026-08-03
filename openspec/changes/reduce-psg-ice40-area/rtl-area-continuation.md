@@ -23,7 +23,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: H137; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102.
@@ -31,8 +31,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - H137 hypothesis row: replace the shared-EBR fade-step borrow with an exact
   32-entry combinational decode from the retained `fade_len[7:3]`, removing
   `fstep_q`, the lookup-port mux, and both replay/displacement tokens. Decision:
-  active; prove every table value and adjacent `$22`/`$20` transaction, then
-  price the complete registered command/control consumer before production RTL.
+  rejected and reverted. The isolated floor improves eight cells, but the
+  canonical whole PSG adds 84 LUT4s, one carry and 72 floor cells.
 - H136 hypothesis row: carry each multiplier request's arithmetic sign through
   the otherwise-dead `m_res[33]` result bit, preserving it across the chained
   reciprocal request, and retire full-schedule `mxs_new`/`mxs_old`. Decision:
@@ -759,6 +759,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H130 | rejected | Keep the all-channel status buses before CPU selection: direct addressed-channel/slot selection is exact but adds two LUT4s in the complete registered readback. |
 | H131 | rejected | Keep `aud_sl(...) == c` at the row writer: the direct foreground-play XOR is exact but maps identically at 18 LUT4s/20 unpackable FF. |
 | H136 | rejected | Keep `mxs_new`/`mxs_old` in the walker: the result token is exact, but two newly active CDC/result flops replace the two retired sign flops and the production-shaped isolated floor worsens 274 -> 275 cells. |
+| H137 | rejected | Keep the shared-EBR fade-step lookup and replay boundary: direct 32-entry decode is -8 floor cells alone but adds 84 whole-PSG LUT4s, one carry and 72 floor cells. |
 
 ## Hypothesis H001
 
@@ -1005,6 +1006,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - CPU status channel/slot selection order: H130.
 - Audible-row owner predicate spelling: H131.
 - Reciprocal spare-bit tail token via reserved address/plane: H132--H133.
+- Direct combinational fade-step decode replacing the constants-EBR borrow:
+  H137.
 
 ## Hypothesis H006
 
@@ -6848,8 +6851,21 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - **Change:** proof-first direct fade-step decoder and complete command/control
   consumer; production RTL remains unchanged until exactness and isolated
   physical gates pass.
-- **Result:** active.
-- **Decision:** active.
+- **Result:** the source-bound table proof confirms all 32 generated words,
+  2,560 adjacent/delayed start/stop command cases and 512 ordered control-word
+  cases; the all-index SAT miter passes after memory flattening. Both isolated
+  forms lint clean. The complete registered consumer keeps one EBR and 20
+  carries while changing 106 -> 125 LUT4s, 62 -> 47 flops and 28 -> one
+  unpackable flop, so its deterministic floor improves 134 -> 126 cells.
+  After the minimal `psg_seq.sv` patch, full/PREVIEW lint passes with only the
+  pre-existing warnings. The canonical whole-PSG map instead changes 6,360 ->
+  6,444 LUT4s, 1,317 -> 1,318 carries, 1,450 -> 1,448 flops, 500 -> 488
+  unpackable flops, keeps 14 EBRs, and worsens the floor 6,860 -> 6,932 cells.
+- **Decision:** rejected and reverted before routing or fidelity work. The
+  flattened sequencer/control cover pays 84 LUT4s for the small decode despite
+  the isolated state/packing win. `rtl/psg_seq.sv` is byte-identical to H134;
+  no generator, route, render, cadence, image, Tang, tolerance or R.84/B2 file
+  changed.
 - **Repeat only if:** if rejected, retry only after fade-step quantization,
   `$22`/`$20` command timing, constants/control-ROM port ownership, or mapper
   small-ROM lowering changes materially.
@@ -7185,11 +7201,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h134/{wavetable_byte_proof.py,wavetable_byte_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*,postalias2*}` plus completed acceptance output and `clicks/`, `celeste-smoke.ppm` | source-bound exhaustive/SAT proof, complete registered-consumer synthesis, canonical map/route reproducibility and the full H102 fidelity/cadence/PREVIEW/recovery/click/smoke battery | Accepted: exact, -4 carries/-8 FF/-8 unpackable and floor cells, 7,086 routed LCs; final ASC is byte-identical after simulation-only trace aliases. |
 | `build/experiments/h135/{sample_result_proof.py,sample_result_probe.sv,exhaustive.log,formal-*,isolated-*}` | exhaustive representation proof, two full-path nine-step SAT miters and complete registered-consumer synthesis | Exact and -17 FF/-18 unpackable locally, but +37 LUT4 worsens the isolated floor 77 -> 96 cells; production remains unchanged. |
 | `build/experiments/h136/{sign_token_proof.py,sign_token_formal.sv,sign_token_probe.sv,exhaustive.log,formal-*,lint-*,isolated-*}` | exhaustive transaction/chaining proof, three SAT miters, lint and two complete isolated service/sign-consumer comparisons | Exact, but both isolated floors regress by one cell; the production-shaped form is +2 LUT4/-1 unpackable with carry/FF unchanged because two token flops replace two walker sign flops. |
+| `build/experiments/h137/{fade_decode_proof.py,fade_decode_formal.sv,fade_decode_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*}` | source-bound table/command proof, SAT, complete registered-consumer synthesis, full/PREVIEW lint and canonical whole-PSG mapping | Exact and -8 floor cells alone, but globally +84 LUT4/+1 carry/-2 FF/-12 unpackable/+72 floor; production reverted and route/fidelity skipped. |
 
 ## Handoff
 
-- Active experiment: H137 on accepted H134. Do not start H138 until H137 is
-  accepted or rejected and recorded.
+- Next allowed experiment: H138 on accepted H134. Record a concrete row before
+  changing RTL, and select a mechanism outside the Active DNR index.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -7466,6 +7483,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   downstream gate remains. H136's multiplier sign token is exact, but the
   multi-pumped boundary activates two previously pruned token flops and the
   production-shaped isolated floor worsens by one cell; production is
-  unchanged and no downstream gate remains.
+  unchanged and no downstream gate remains. H137's direct fade-step decode is
+  exact and wins eight isolated floor cells, but adds 84 global LUT4s and 72
+  floor cells; production is byte-identical to H134 after reversion and no
+  downstream route/fidelity gate remains.
 - Files to avoid staging after H134: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
