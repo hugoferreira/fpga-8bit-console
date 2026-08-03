@@ -27,7 +27,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H104.
+- Next hypothesis ID: H105.
+- H104 hypothesis row: encode the three legal instrument-kind states directly
+  as one-hot `{wavetable, SFX}` rather than `{on, wavetable}`. This keeps two
+  flops but makes both hot mode predicates direct wires. The proof passes, but
+  the complete isolated consumer changes from 138 to 139 LUT4s with two FF and
+  eight carries unchanged. Decision: rejected before production.
 - H103 hypothesis row: the post-H096 launched mask and ascending T_NL scan do
   identify the fallback-speed owner exactly, but spelling that ownership as a
   lower-bit priority predicate changes the complete isolated consumer from 26
@@ -271,9 +276,10 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H104 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H105 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's launch-worklist/pacing-state
   family, H102's wavetable-bass/effect-state encoding family,
+  H104's instrument-kind state-encoding family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -424,6 +430,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H101 | rejected | Keep pending trigger row/length in FFs: a plain EBR is one cycle stale after a CPU write, while exact one-/two-EBR forwarding forms raise the isolated floor from 97 to 107/104 cells. |
 | H102 | accepted | Encode wavetable bass in otherwise-dead `w_ins_fx[0]`; this removes four global LUT4s, one FF, one unpackable FF, and five deterministic floor cells. |
 | H103 | rejected | Keep `ptick_seen`: the exact lower-launch-prefix replacement removes one FF but adds two LUT4s in the complete isolated pacing consumer. |
+| H104 | rejected | Keep `{w_ins_on,w_ins_wt}`: direct one-hot `{SFX,wavetable}` mode state is exact but adds one LUT4 in the complete registered consumer. |
 
 ## Hypothesis H001
 
@@ -638,6 +645,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Audio-upload page transform: H050.
 - State-RAM replay-flop retirement: H058.
 - Launch/pacing fallback-state retirement: H103.
+- Instrument-kind state encoding: H104.
 - Organ quotient-byte reconstruction: H059.
 - Alternate-triangle `/4` payload reconstruction: H060.
 - Fade-progress high-byte reconstruction: H061.
@@ -4899,6 +4907,47 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   visitation, launch-mask clearing, fallback-speed ownership, or mapper dynamic-
   index/prefix lowering changes materially.
 
+## Hypothesis H104
+
+- **ID:** H104.
+- **Hypothesis:** the instrument working state has only three legal kinds:
+  ordinary note/off, custom-SFX instrument, and wavetable instrument. The
+  current `{w_ins_on,w_ins_wt}` code makes the latter two hot predicates
+  `w_ins_on & ~w_ins_wt` and `w_ins_on & w_ins_wt`. Storing those predicates
+  directly as one-hot `{w_ins_wt,w_ins_use}` should keep the same two state bits
+  while removing repeated decoding and simplifying the record contract.
+- **Scope:** exhaustive kind-transition and store/reload proof; isolated
+  synthesis of the complete registered kind/record/publication consumer; then
+  `rtl/psg_common.svh`, `rtl/psg_seq.sv`, permanent `tools/psg_hw_forms.py`
+  coverage, canonical whole-PSG synthesis, and the complete H102 battery only
+  after deterministic isolated and global wins. No instrument semantics,
+  record width, effect priority, publication payload, schedule, interface,
+  memory/EBR count, diagnostic ARAM, R.84 executor, or tolerance change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus H100 and lifetime DNR families:** H100 partitioned
+  a release array whose dead music entries Yosys already pruned. H104 changes
+  neither array topology nor lifetime aliasing; it re-encodes a live three-state
+  scalar protocol so the two existing mutually exclusive consumers become the
+  stored bits themselves.
+- **Change:** in an isolated probe, replace stored `w_ins_on` with `w_ins_use`, retain
+  `w_ins_wt`, derive `w_ins_on = w_ins_use | w_ins_wt`, and store/reload the
+  one-hot pair without changing record width or visible publication values.
+- **Result:** 53,254 exhaustive transition, record, mode-control, and boundary-
+  data checks pass. The complete registered kind/record/publication consumer
+  changes from 138 LUT4s, eight carries, and two FFs to 139 LUT4s, eight carries,
+  and two FFs. Direct mode predicates do not repay the derived `on` decode and
+  changed state-input mux, so the candidate fails the deterministic isolated
+  area gate; no production RTL, permanent proof, whole-PSG synthesis, or
+  fidelity run is warranted.
+- **Decision:** rejected before production; all probe files remain ignored
+  under `build/experiments/h104/`, and no production or permanent-proof residue
+  remains.
+- **Repeat only if:** if rejected, retry only after instrument-kind reachability,
+  trigger/fetch transitions, record packing, mode consumers, or mapper decode
+  sharing changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5194,10 +5243,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h101/{trigger_pending_probe.sv,isolated-*,write_read_counterexample.py,write-read-counterexample.log}` | complete source/one-EBR/two-EBR storage synthesis and exact write/read timing counterexample | Plain EBR floor is smaller but stale for one cycle; exact forwarding raises the 97-cell reference floor to 107/104 cells. |
 | `build/experiments/h102/{bass_fx_proof.py,bass-fx-proof.log,bass_fx_probe.sv,isolated-*,candidate*,forms*,test-psg.log,bytecheck.log,budget-*,preview-*,recovery.log,clicks*,celeste-*}` plus `build/targets/psg.{json,asc}` | exhaustive mode/store/reload proof, isolated synthesis, two forced whole-PSG builds, and complete H096 acceptance battery | Accepted `ccfb2a0` at -4 LUT4/-1 FF/-1 unpackable/-5 floor cells; all fidelity, timing, and reproducibility gates pass. |
 | `build/experiments/h103/{first_launch_proof.py,first-launch-proof.log,first_launch_probe.sv,isolated-*}` | exhaustive first-launch ownership proof and complete registered pacing-consumer synthesis | Exact across all 256 launch/qualifier masks, but the candidate is +2 LUT4/-1 FF and fails the isolated gate. |
+| `build/experiments/h104/{instrument_kind_proof.py,instrument_kind_probe.sv,isolated-*}` | exhaustive semantic/record/consumer proof and complete registered instrument-kind synthesis | Exact across 53,254 checks, but the candidate is +1 LUT4 with eight carries/two FF unchanged. |
 
 ## Handoff
 
-- Next allowed experiment: H104 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H105 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit; it must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
