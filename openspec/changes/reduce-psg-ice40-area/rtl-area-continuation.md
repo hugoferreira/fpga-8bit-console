@@ -23,11 +23,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: H138; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102.
-- Next hypothesis ID: H138.
+- Next hypothesis ID: H139.
+- H138 hypothesis row: narrow the two registered live/old pre-clamp noise
+  values from signed 18 to 17 bits, retaining explicit signed-18 views at
+  their output-scaling consumers. Decision: active; prove the complete source
+  range and registered consumer before production RTL.
 - H137 hypothesis row: replace the shared-EBR fade-step borrow with an exact
   32-entry combinational decode from the retained `fade_len[7:3]`, removing
   `fstep_q`, the lookup-port mux, and both replay/displacement tokens. Decision:
@@ -6870,6 +6874,45 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `$22`/`$20` command timing, constants/control-ROM port ownership, or mapper
   small-ROM lowering changes materially.
 
+## Hypothesis H138
+
+- **ID:** H138.
+- **Hypothesis:** `nz_out_r` and `nz_old_out_r` store the live and old
+  pre-clamp noise sums only so their arithmetic-right-shifted values can be
+  scaled on the following phases. The clamped persistent state is within
+  +/-6,143, the exact shared-product noise step is within +/-33,324, and the
+  optional kick is within -6,160..+6,167. Even their conservative independent
+  sum is -45,627..45,634, which fits signed 17 bits. Narrow both registers and
+  sign-extend only at their unchanged signed-18 shift/scale consumers.
+- **Scope:** derive the bounds from the live RTL widths and exhaustive LFSR
+  draw domains, prove every signed-17 round trip and both shifted/scaled
+  consumers with SAT, and synthesize the complete registered boundary in
+  isolation. Only after exactness and a deterministic isolated floor win may
+  `rtl/psg_walk.sv` change, followed by full/PREVIEW lint and a forced
+  canonical whole-PSG map. Route and run the H134 fidelity battery only after
+  a deterministic whole-PSG mapped/floor win. Preserve noise arithmetic,
+  clamp limits, random sequences, request/consume phases, all sample values,
+  schedule, interfaces, 14-EBR topology, R.84/B2 files, Tang paths, images and
+  tolerances.
+- **Baseline:** accepted H134 commit `b96536d`: 6,360 LUT4s, 1,317 carries,
+  1,450 flops, 500 unpackable flops, 14 EBRs and floor 6,860, routed in 7,086
+  LCs at 133.92/33.04 MHz. The fresh isolated registered consumer baseline
+  will be recorded before any production edit.
+- **Changed condition versus H027, H062 and H065:** H027 retained the 18-bit
+  combinational inputs and replaced their signed clamp comparisons; H062
+  reconstructed only the old-noise activity flag; H065 narrowed the general
+  `smp_a`/`smp_b` waveform boundary to 16 bits and regressed globally. H138
+  keeps both clamp inputs and every sum at 18 bits, contracts only two
+  post-sum/pre-scale registers to their distinct proved 17-bit domain, and
+  restores the original width immediately at their sole consumers.
+- **Change:** proof-first noise pre-clamp register boundary; production RTL is
+  unchanged until exactness and isolated physical gates pass.
+- **Result:** active.
+- **Decision:** active.
+- **Repeat only if:** if rejected, retry only after clamped-noise bounds,
+  multiplier step range, kick range, stored pre-clamp consumers, or mapper
+  signed-extension lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7205,8 +7248,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Handoff
 
-- Next allowed experiment: H138 on accepted H134. Record a concrete row before
-  changing RTL, and select a mechanism outside the Active DNR index.
+- Active experiment: H138 on accepted H134. Do not start H139 until H138 is
+  accepted or rejected and recorded.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
