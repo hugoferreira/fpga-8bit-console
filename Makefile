@@ -206,9 +206,14 @@ bin/toplevel.json: ${TOP_LEVEL} ${INCLUDE_FILES} ${PLL_FILE} rtl/pll.v ${FONT_HE
 SIM_BIN = build/obj_dir/console
 # rtl/*.svh as well as rtl/*.sv: psg_common.svh is `include'd, so without it a
 # change to the PSG's shared parameters left the console binary stale.
+# -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC: the same established width-warning pair
+# the psg_wav and test-psg builds pass. Verilator 5 exits nonzero on the three
+# known WIDTHTRUNC warnings otherwise, so a clean rebuild of the console (run/
+# shot/psg-trace) fails; a stale prebuilt build/obj_dir masked that for months.
 $(SIM_BIN): sim/console.cpp rtl/*.sv rtl/*.svh rtl/*.bin rtl/*.hex
 	verilator --cc rtl/top_simulator.sv --top-module top -Irtl -O3 \
 		--x-assign fast --x-initial fast -Wno-DEFOVERRIDE \
+		-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
 		--exe $(abspath sim/console.cpp) -o console --build -j 8 \
 		-Mdir build/obj_dir \
 		-CFLAGS "-O2 $$(sdl2-config --cflags)" \
@@ -569,9 +574,17 @@ ppu-lint:
 # 87% of the line budget.
 WARMUP ?= 8
 PPU_PROBE = build/obj_probe/ppu_probe
+# Same established width-warning pair as the console rule above: without it a
+# clean rebuild of this top_simulator.sv build fatals on the three known
+# WIDTHTRUNC warnings. -Wno-MULTIDRIVEN is confined to this rule:
+# --public-flat-rw defeats the inlining that lets Verilator attribute a task's
+# NBA writes to its single calling always_ff, so the PSG's task-factored
+# writes read as multidriven here while every non-public build of the same
+# RTL is MULTIDRIVEN-clean.
 $(PPU_PROBE): sim/ppu_probe.cpp rtl/*.sv rtl/*.bin rtl/*.hex
 	verilator --cc rtl/top_simulator.sv --top-module top -Irtl -O2 \
 		--public-flat-rw --x-assign fast --x-initial fast -Wno-DEFOVERRIDE \
+		-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-MULTIDRIVEN \
 		--exe $(abspath sim/ppu_probe.cpp) -o ppu_probe --build -j 8 \
 		-Mdir build/obj_probe -CFLAGS "-O2"
 
