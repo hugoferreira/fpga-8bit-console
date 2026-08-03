@@ -4,8 +4,8 @@
 // program selects one per-slot state address at a time; the surrounding
 // executor supplies operation-specific logic and commits results through the
 // existing state-memory write port.  Sample and tick programs share this one
-// PC because their execution windows are mutually exclusive; owner selects
-// one of two physical program banks so each schedule has a full 256 words.
+// PC because their windows are mutually exclusive. owner=0 selects the sample
+// program and owner=1 the tick program, each with a full 256-word bank.
 
 `timescale 1ns/1ps
 
@@ -40,7 +40,7 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
                    output logic [2:0] op_dbg,
                    output logic [7:0] pc_dbg,
                    output logic [15:0] ir_dbg);
-
+  // ---- Instruction format ----
   localparam logic [2:0]
     OP_READ   = 3'd0,
     OP_WRITE  = 3'd1,
@@ -50,7 +50,7 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
     OP_OWNER  = 3'd5,
     OP_DONE   = 3'd6,
     OP_EXEC   = 3'd7;
-
+  // ---- Owner-banked control store ----
   // The 512x16 control store occupies two EBRs as two owner-selected 256-word
   // banks. Keeping owner outside the logical PC leaves branch and jump targets
   // eight bits wide.
@@ -83,7 +83,7 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
       $readmemh("./rtl/psg_exec.hex", ucode);
     end
   end
-
+  // ---- Prefetched instruction and successor selection ----
   logic [7:0] pc;
   logic [15:0] ir;
   wire [2:0] op = ir[15:13];
@@ -95,7 +95,7 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
   wire next_owner = op == OP_OWNER ? ir[0] : owner;
   wire [8:0] ucode_addr = launch ? {start_owner, start_pc}
                                  : {next_owner, next_pc};
-
+  // ---- Synchronous fetch and state-memory transaction ----
   // One reset-free sequential read site is the physical EBR output register.
   always_ff @(posedge clk)
     if (ucode_ce)
@@ -126,7 +126,7 @@ module psg_execctl #(parameter TEST_PROGRAM = 0)
     pc_dbg = pc;
     ir_dbg = ir;
   end
-
+  // ---- Run, owner, slot, and PC state ----
   always_ff @(posedge clk) begin
     if (reset) begin
       active <= 1'b0;

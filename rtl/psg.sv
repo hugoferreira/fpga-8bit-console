@@ -42,7 +42,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
 
            // Optional simulator trace: pattern, slot activity, SFX ids, rows.
            output logic [63:0] dbg);
-
+  // ---- Timing grid and per-sample sequencer budget ----
   // Timing grid. pre_tick precedes tick_en by six sample intervals;
   // tick_en_d marks the sample two intervals after tick_en.
   logic        sample_en;
@@ -146,7 +146,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   endgenerate
 
   wire         walk_frozen = walk_busy | seq_starved;
-
+  // ---- CPU edge adapter and shared memories ----
   // Convert a level-style bus write into one pulse in the PSG clock domain.
   // Reads retain level semantics.
   logic cs_wr_q;
@@ -162,7 +162,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .seq_addr(seq_addr), .syn_rd(syn_rd), .syn_addr(syn_addr),
     .seq_hold(prun | state_replay | fold_busy | seq_starved),
     .seq_q(seq_q), .seq_frozen(seq_frozen));
-
+  // ---- State memory and arithmetic services ----
   // Shared arithmetic services.
   wire  [33:0] m_res;
   wire         m_busy_walk;
@@ -187,7 +187,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
     .etk_ra(etk_ra), .etk_we(etk_we), .etk_wa(etk_wa), .etk_wd(etk_wd),
     .prun(prun), .state_replay(state_replay),
     .state_q(state_q));
-
+  // ---- Sample-rate walk and waveform pipeline ----
   // The full schedule renders crossfades and reverb. Preview uses the compact
   // schedule and disables unreachable reverb phases at elaboration time.
   psg_walk #(.REVERB(REVERB && !REALTIME_PREVIEW),
@@ -255,7 +255,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire signed [17:0] z_eval;
   wire [16:0] dq17;
   wire [15:0] q16;
-
+  // ---- Mutually exclusive multiplier arbitration ----
   // Walk and sequencer requests are mutually exclusive under walk_frozen, so
   // their zero-when-idle bundles merge with OR gates. The assertion protects
   // that interface invariant in simulation.
@@ -296,7 +296,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
         .m_res(m_res), .m_busy(m_busy_walk), .m_seq_busy(m_busy_seq));
     end
   endgenerate
-
+  // ---- Tick-rate note, effect, and music control ----
   // Tick-rate note/effect/music control.
   psg_seq u_seq(
     .clk(clk), .reset(reset),
@@ -336,7 +336,7 @@ module psg #(parameter CLK_HZ = 32'd3_506_580, parameter REVERB = 1,
   wire [11:0] smul_b;
   wire [1:0]  smul_mode;
   wire        smul_short;
-
+  // ---- PCM commit, CPU readback, and optional debug ----
   // dry_valid commits one completed eight-slot reduction.
   always_ff @(posedge clk) begin
     if (reset) pcm <= 16'sd0;

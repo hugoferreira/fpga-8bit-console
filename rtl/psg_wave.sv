@@ -31,7 +31,7 @@ module psg_wave_ctx(input  bit          clk,
       wsec_r <= ctx_secondary;
       walt_r <= ctx_alt;
     end
-
+  // ---- Stage 1: direct shapes and reciprocal address reduction ----
   // One block-RAM word supplies remainders for division by 3, 7, and 15.
   // The address folds each operand until it fits in eight bits; the matching
   // quotient field is selected after the synchronous read.
@@ -114,7 +114,7 @@ module psg_wave_ctx(input  bit          clk,
       default: z_lin = 18'sd0;
     endcase
   end
-
+  // ---- Stage 2: registered terms and reciprocal recombination ----
   // Pipeline boundary: linear shapes are complete; tilt/organ carry only the
   // terms needed to recombine the reciprocal lookup on the next stage.
   logic signed [17:0] z_lin_r;
@@ -183,7 +183,7 @@ module psg_wave_ctx(input  bit          clk,
   assign z_eval = tzs(z_prim, z_shift);
 
 endmodule
-
+// Walk-facing context selector, detune increment, and phase-view adapter.
 module psg_wave #(parameter REALTIME_PREVIEW = 0)
                  (input  bit   clk,
 
@@ -214,7 +214,7 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   logic [2:0]  wsel;
   logic [15:0] wx;
   logic        wsec;
-
+  // ---- Live/preceding and primary/secondary context selection ----
   // Select the evaluation context before the first pipeline register.
   always_comb begin
     wsel = s_snd_wave;
@@ -237,7 +237,7 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
     .clk(clk), .ce(1'b1), .ctx_phase(wx), .ctx_wave(wsel),
     .ctx_alt(w_old_ctx ? old_alt_r : s_ch_buzz), .ctx_secondary(wsec),
     .z_eval(z_eval));
-
+  // ---- Per-wave secondary-oscillator increment ----
   // Per-wave secondary-oscillator increments. All expressions implement the
   // integer forms directly, including their ceiling-biased corrections.
   wire [2:0] dq_wave = dq_old_ctx ? s_old_wave : s_snd_wave;
@@ -318,7 +318,7 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   end
   wire [13:0] dq_calc = dq_sub ? (dq_base - {5'b0, dq_corr}) : dq_base;
   always_comb dq17 = {3'b0, dq_calc};
-
+  // ---- Secondary phase presentation ----
   // Secondary phase presentation: triangle/phaser use the unshifted 17-bit
   // accumulator, detune mode 2 doubles the other built-in waves, and preview
   // retains its compact 24-bit phase representation.

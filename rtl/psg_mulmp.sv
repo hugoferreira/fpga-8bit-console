@@ -33,19 +33,19 @@ module psg_mulmp_core #(parameter int RADIX_BITS = 1) (
       $error("psg_mulmp: RADIX_BITS must be 1 or 2");
   end
 
-  // Slow-domain contract for the six-fast-clocks-per-PSG-clock boundary. The
-  // result is consumed only after the returned
-  // acknowledge: normal requests are safe at launch+5, short requests at
-  // launch+4. Keep these named values source-visible so schedule tooling and
-  // the transaction bench verify the same CDC contract.
+  // Slow-domain contract for the six-fast-clocks-per-PSG-clock boundary.
+  // Results are consumed only after the returned acknowledge: normal requests
+  // are safe at launch+5 and short requests at launch+4. These named gaps let
+  // schedule tooling and the transaction bench verify the same CDC contract.
+  //
   localparam int NORMAL_CONSUME_GAP = 5;
   localparam int SHORT_CONSUME_GAP  = 4;
 
-  // Source-domain transaction storage. req_a is stable for the complete
-  // transaction, so the fast recurrence needs no duplicate A flop bank. req_b
-  // is the initial 13-bit
-  // multiplier field (mode 3 uses B<<1 only in radix 4), and req_steps is the
-  // exact number of fast iterations.
+  // Source-domain transaction storage. req_a stays stable for the complete
+  // transaction, so the fast recurrence needs no duplicate A flop bank.
+  // req_b holds the initial 13-bit multiplier field; mode 3 uses B<<1 only for
+  // radix 4. req_steps is the exact number of fast-domain iterations.
+  //
   logic [17:0] req_a;
   logic [12:0] req_b;
   logic [3:0]  req_steps;

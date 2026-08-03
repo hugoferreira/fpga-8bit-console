@@ -24,7 +24,7 @@ module psg_execdp(input  bit          clk,
                   output logic [15:0] cond,
                   output logic [15:0] acc_dbg,
                   output logic [3:0]  flags_dbg);
-
+  // ---- Common-family action dictionary ----
   localparam logic [2:0] OP_EXEC = 3'd7;
   localparam logic [2:0] FAMILY_COMMON = 3'd7;
 
@@ -45,7 +45,7 @@ module psg_execdp(input  bit          clk,
     A_ASR  = 4'd13,
     A_NEG  = 4'd14,
     A_CMP  = 4'd15;
-
+  // ---- Accumulator, flags, and shared arithmetic inputs ----
   logic [15:0] acc;
   logic flag_z, flag_n, flag_c, flag_v;
   logic [15:0] result;
@@ -53,7 +53,7 @@ module psg_execdp(input  bit          clk,
   logic [16:0] wide;
   logic [15:0] arith_lhs, arith_operand, arith_rhs;
   logic arith_sub, arith_cin;
-
+  // ---- Combinational primitive execution ----
   wire exec = active && !hold && op == OP_EXEC
               && action[6:4] == FAMILY_COMMON;
   wire [3:0] fn = action[3:0];
@@ -135,7 +135,7 @@ module psg_execdp(input  bit          clk,
       end
     endcase
   end
-
+  // ---- Accumulator and flag commit ----
   always_ff @(posedge clk) begin
     if (reset) begin
       acc    <= 16'd0;
@@ -154,7 +154,7 @@ module psg_execdp(input  bit          clk,
       end
     end
   end
-
+  // ---- State writeback and branch predicates ----
   always_comb begin
     state_wd = acc;
     // Branches consume generic arithmetic flags or eight owner-specific

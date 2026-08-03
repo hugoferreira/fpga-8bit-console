@@ -25,7 +25,7 @@ module psg_execwave_core(input  logic        clk,
                          input  logic [1:0]  old_mode_raw,
                          input  logic        old_alt_raw,
                          input  logic        play,
-
+                         // Wave-pipeline issue/take transaction.
                          output logic        wave_ce,
                          output logic        wave_issue,
                          output logic        wave_take,
@@ -33,13 +33,13 @@ module psg_execwave_core(input  logic        clk,
                          output logic [2:0]  wave_sel,
                          output logic        wave_alt,
                          output logic        wave_secondary,
-
+                         // Wavetable audio-RAM issue/take transaction.
                          output logic        aram_req,
                          output logic [2:0]  aram_id,
                          output logic [5:0]  aram_index,
                          output logic        aram_adjacent,
                          output logic        aram_take);
-
+  // ---- Sample-owner action landmarks ----
   localparam logic [6:0]
     LOAD_PAR_1  = 7'h11,
     LOAD_PAR_2  = 7'h12,
@@ -49,7 +49,7 @@ module psg_execwave_core(input  logic        clk,
     CAP_W3      = 7'h25,
     CAP_W4      = 7'h26,
     CAP_W5      = 7'h27;
-
+  // ---- Visit-local waveform context ----
   // Explicit phase inputs keep addressed-state lifetime out of the core. The
   // adapter below retains the preceding word and derives these values after
   // the restart/noise/phase update ordering.
@@ -86,7 +86,7 @@ module psg_execwave_core(input  logic        clk,
                                     snd_mode, snd_wt);
   wire [15:0] phase_w3 = phase_view(phase_w3_raw[15:0], old_wave_raw,
                                     old_mode_raw, 1'b0);
-
+  // ---- Context capture from the synchronous state stream ----
   // The LOAD actions consume the preceding synchronous state word.  No reset
   // is required: every field is overwritten before the first W0 of a slot.
   always_ff @(posedge clk) begin
@@ -110,7 +110,7 @@ module psg_execwave_core(input  logic        clk,
         phase_index_hold <= phase_w1[15:10];
     end
   end
-
+  // ---- Streaming wave and ARAM issue/take decode ----
   always_comb begin
     wave_ce = !snd_wt && (at_w0 || at_w1 || at_w2 || at_w3 || at_w4);
     wave_issue = !snd_wt && (at_w0 || at_w1 || at_w2 || at_w3);
@@ -155,10 +155,10 @@ module psg_execwave(input  logic        clk,
                     input  logic [6:0]  action,
                     input  logic [15:0] state_q,
                     input  logic        play,
-
+                    // State-read override used to reconstruct phase context.
                     output logic        state_ra_override,
                     output logic [5:0]  state_ra_word,
-
+                    // Wave-pipeline issue/take transaction.
                     output logic        wave_ce,
                     output logic        wave_issue,
                     output logic        wave_take,
@@ -166,7 +166,7 @@ module psg_execwave(input  logic        clk,
                     output logic [2:0]  wave_sel,
                     output logic        wave_alt,
                     output logic        wave_secondary,
-
+                    // Wavetable audio-RAM issue/take transaction.
                     output logic        aram_req,
                     output logic [2:0]  aram_id,
                     output logic [5:0]  aram_index,
@@ -186,7 +186,7 @@ module psg_execwave(input  logic        clk,
   logic [1:0] old_mode;
   logic       old_alt;
   wire sample_step = active && !hold && !owner;
-
+  // ---- Address-stream context capture ----
   always_ff @(posedge clk)
     if (sample_step) begin
       if (action == LOAD_OSC_11)
@@ -200,7 +200,7 @@ module psg_execwave(input  logic        clk,
         old_wave <= state_q[10:8];
       end
     end
-
+  // ---- Physical state-word selection ----
   always_comb begin
     state_ra_override = 1'b0;
     state_ra_word = 6'd0;
@@ -215,7 +215,7 @@ module psg_execwave(input  logic        clk,
       state_ra_word = 6'd16;
     end
   end
-
+  // ---- Explicit-core adaptation ----
   psg_execwave_core u_core(
     .clk(clk), .active(active), .hold(hold), .owner(owner), .action(action),
     .state_q(state_q), .phase_w1_raw({1'b0, state_q}),

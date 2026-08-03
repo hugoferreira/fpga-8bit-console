@@ -23,12 +23,12 @@ clarity is useful only when that contract remains intact.
 
 ## Current State
 
-- Active hypothesis: C003, make service and executor boundaries navigable and
-  inventory real duplication before any token-level abstraction.
-- Next hypothesis ID: C004.
+- Active hypothesis: C004, put each top-level interface declaration before its
+  first consumer so composition can be read in source order.
+- Next hypothesis ID: C005.
 - Current baseline artifacts: `build/integration-h139-r84/synth-1.{json,asc}`.
-- Latest decision: C002 accepted; the sequencer and walk now expose their
-  current stage/ownership maps and remain byte-identical to H139.
+- Latest decision: C003 accepted; all smaller service/executor boundaries are
+  mapped, real duplication is classified, and H139 remains byte-identical.
 - Best accepted result: H139 at JSON SHA-256
   `4f7c4af1678ebbaf203cc63088855ec16bc44ebaa92e0f529e5d7961f0e554ff`
   and ASC SHA-256
@@ -45,11 +45,11 @@ clarity is useful only when that contract remains intact.
   explain current timing and hold contracts at their points of use.
 - [x] Production comments contain no experiment IDs, revision chronology,
   historical provenance, or claims framed around superseded implementations.
-- [ ] Comments distinguish architectural invariants from verification facts.
+- [x] Comments distinguish architectural invariants from verification facts.
 
 ### Naming and ergonomics
 
-- [ ] Audit top-level composition and shared services for consistent request,
+- [x] Audit top-level composition and shared services for consistent request,
   busy, hold, replay, address, and result naming.
 - [x] Audit `psg_seq.sv` working-record and FSM names; explain or replace opaque
   abbreviations without creating synthesized aliases.
@@ -60,18 +60,18 @@ clarity is useful only when that contract remains intact.
 
 ### Organisation and modular boundaries
 
-- [ ] Document the composition tree and ownership of audio RAM, state RAM,
+- [x] Document the composition tree and ownership of audio RAM, state RAM,
   control ROM, waveform evaluation, arithmetic services, sequencer, and walk.
-- [ ] Keep wrappers only where they express a live interface or hold boundary;
+- [x] Keep wrappers only where they express a live interface or hold boundary;
   state that boundary directly.
 - [ ] Group declarations and logic by transaction or pipeline stage so readers
   can follow each operation without reconstructing revision history.
-- [ ] Audit include guards, textual include order, and public interfaces for a
+- [x] Audit include guards, textual include order, and public interfaces for a
   single obvious source of shared constants and layouts.
 
 ### DRYness and modularity
 
-- [ ] Inventory duplicated arithmetic, address, action, and handshake logic.
+- [x] Inventory duplicated arithmetic, address, action, and handshake logic.
 - [ ] Consolidate duplication only when the abstraction makes ownership clearer
   and the whole-PSG physical result stays at H139 exactly.
 - [ ] Avoid helper layers that duplicate state, widen muxes, hide cycle timing,
@@ -79,7 +79,7 @@ clarity is useful only when that contract remains intact.
 
 ### Completion proof
 
-- [ ] Comment-only slices reproduce byte-identical canonical JSON and ASC.
+- [x] Comment-only slices reproduce byte-identical canonical JSON and ASC.
 - [ ] Every structural slice passes full/PREVIEW lint and its focused tests.
 - [ ] Final source rebinding passes the H139/R.84 structural and value proofs.
 - [ ] Final full battery passes all functional/render/cadence/PREVIEW/recovery/
@@ -91,31 +91,31 @@ clarity is useful only when that contract remains intact.
 
 | Source | Current contract | Naming/organisation/DRY | Evidence |
 | -- | -- | -- | -- |
-| `psg.sv` | C001 accepted | pending | exact JSON/ASC |
-| `psg_common.svh` | C001 accepted | pending | exact JSON/ASC |
-| `psg_aram.sv` | C001 accepted | pending | exact JSON/ASC |
-| `psg_timing.sv` | C001 accepted | pending | exact JSON/ASC |
-| `psg_state_mem.sv` | C001 accepted | pending | exact JSON/ASC |
-| `psg_mulsvc.sv` | C001 accepted | pending | exact JSON/ASC |
-| `psg_mulmp.sv` | C001 accepted | pending | exact JSON/ASC |
-| `psg_dqsvc.sv` | C001 accepted | pending | exact JSON/ASC |
-| `psg_divsvc.sv` | C001 accepted | pending | exact JSON/ASC |
-| `psg_wave.sv` | C001 accepted | pending | exact JSON/ASC |
+| `psg.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
+| `psg_common.svh` | C001 accepted | C003 audited | exact JSON/ASC |
+| `psg_aram.sv` | C001 accepted | C003 audited | exact JSON/ASC |
+| `psg_timing.sv` | C001 accepted | C003 audited | exact JSON/ASC |
+| `psg_state_mem.sv` | C001 accepted | C003 audited | exact JSON/ASC |
+| `psg_mulsvc.sv` | C001 accepted | C003 audited | exact JSON/ASC |
+| `psg_mulmp.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
+| `psg_dqsvc.sv` | C001 accepted | C003 audited | exact JSON/ASC |
+| `psg_divsvc.sv` | C001 accepted | C003 audited | exact JSON/ASC |
+| `psg_wave.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
 | `psg_walk.sv` | C001 accepted | C002 accepted | exact JSON/ASC |
 | `psg_seq.sv` | C001 accepted | C002 accepted | exact JSON/ASC |
-| `psg_execctl.sv` | C001 accepted | pending | comment/source audit |
-| `psg_execdp.sv` | C001 accepted | pending | comment/source audit |
-| `psg_execmove.sv` | C001 accepted | pending | comment/source audit |
-| `psg_execwave.sv` | C001 accepted | pending | comment/source audit |
+| `psg_execctl.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
+| `psg_execdp.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
+| `psg_execmove.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
+| `psg_execwave.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
 
 ## Next Experiment Gate
 
-- Next permitted experiment: C003, audit and clarify the top-level, common
-  layouts, arithmetic/memory services, waveform pipeline, and executor modules.
-- Proof required before editing: map each public interface, core/adapter split,
-  state owner, and repeated mechanism; classify any code change separately.
-- Required verification: comment-only changes need exact canonical JSON/ASC;
-  any RTL-token change needs focused proof plus the complete H139 battery.
+- Next permitted experiment: C004, move top-level interface declarations ahead
+  of the instances that consume them without renaming or changing expressions.
+- Proof required before editing: record the declaration/consumer map and keep
+  every interface bundle with its owning composition section.
+- Required verification: full/PREVIEW lint, focused top-level tests, complete
+  H139 fidelity battery, and exact physical metrics and route/timing.
 - Blocked repeat families: no source-level refactor is accepted from LOC,
   readability, isolated synthesis, or generated-code size alone.
 
@@ -125,7 +125,8 @@ clarity is useful only when that contract remains intact.
 | -- | -- | -- |
 | C001 | accepted | Current-contract comments; exact H139 JSON/ASC and timing. |
 | C002 | accepted | Sequencer/walk source maps and short-name guides; exact JSON/ASC. |
-| C003 | active | Clarify smaller-module boundaries and inventory duplication. |
+| C003 | accepted | Smaller-module maps and duplication audit; exact JSON/ASC. |
+| C004 | active | Put top-level interface declarations before their consumers. |
 
 ## Hypothesis C001
 
@@ -161,9 +162,9 @@ clarity is useful only when that contract remains intact.
   any rename or modular extraction separately before changing tokens.
 - **Baseline:** accepted C001, byte-identical to H139 JSON/ASC with 52/49 lint
   warnings and the full H139 physical metrics.
-- **Change:** pending source-map audit.
-- **Result:** pending.
-- **Decision:** active.
+- **Change:** line-stable source maps and short-name guides recorded below.
+- **Result:** full/PREVIEW lint and canonical physical artifacts remain exact.
+- **Decision:** accepted.
 - **Repeat only if:** the source map or later reader audit still requires
   reconstructing ownership or schedule order from terse local names alone.
 
@@ -191,11 +192,43 @@ clarity is useful only when that contract remains intact.
   and the four `psg_exec*.sv` modules. Comments and a duplication inventory
   first; any identifier or logic change becomes a later hypothesis.
 - **Baseline:** accepted C002, byte-identical to H139 JSON/ASC.
-- **Change:** pending module/interface and duplication audit.
-- **Result:** pending.
-- **Decision:** active.
+- **Change:** add line-stable section and interface maps to `psg.sv`,
+  `psg_wave.sv`, and the executor modules; tighten the multi-pump transaction
+  contract; classify the repeated mechanisms before attempting an abstraction.
+- **Result:** full/PREVIEW lint passes at the established 52/49 warnings.
+  Canonical JSON and ASC are byte-identical to H139 at the hashes in Current
+  State, with 7,018 routed LCs and 142.63/31.17 MHz timing.
+- **Decision:** accepted.
 - **Repeat only if:** a later reader audit cannot identify a module's state
   owner, handshake, or relationship to its adapter/core from the source.
+
+### C003 Duplication and boundary inventory
+
+- `psg_mulsvc`, `psg_mulmp`, and, structurally, `psg_dqsvc` each contain a
+  radix recurrence. Their operand shapes, clocks, completion rules, and held
+  state differ, so a shared helper would hide rather than clarify ownership.
+- Audio RAM, DQ, multi-pump multiplication, waveform evaluation, and executor
+  waveform logic use core/adapter pairs to express real hold, replay, context,
+  or clock-domain boundaries. The adapters are not accidental duplication.
+- The current/preceding reverb-comb arithmetic in `psg_walk` is the strongest
+  later DRY candidate because both arms apply the same signed comb operation.
+- `psg_execmove` deliberately spells fixed action projections as constants.
+  Replacing them with a general indexed mux would weaken the physical and
+  timing contract even if it shortened the source.
+
+## Hypothesis C004
+
+- **ID:** C004.
+- **Hypothesis:** moving top-level interface declarations before their first
+  consumers will make `psg.sv` readable from top to bottom without changing
+  any identifier, width, expression, instance connection, or behavior.
+- **Scope:** declaration order and adjacent ownership comments in `rtl/psg.sv`.
+- **Baseline:** accepted C003, byte-identical to H139 JSON/ASC.
+- **Change:** pending declaration/consumer reordering.
+- **Result:** pending.
+- **Decision:** active.
+- **Repeat only if:** a later top-level edit again leaves an interface declared
+  below the instance or arbitration block that first consumes it.
 
 ## Saved Artifacts
 
@@ -207,6 +240,8 @@ clarity is useful only when that contract remains intact.
 | `build/experiments/c001/candidate.asc` | `/opt/homebrew/bin/nextpnr-ice40` canonical seed-1 route | Byte-identical to H139. |
 | `build/experiments/c001/c002.json` | canonical C002 synthesis | Byte-identical to H139. |
 | `build/experiments/c001/c002.asc` | canonical C002 seed-1 route | Byte-identical to H139. |
+| `build/experiments/c001/c003.json` | canonical C003 synthesis | Byte-identical to H139. |
+| `build/experiments/c001/c003.asc` | canonical C003 seed-1 route | Byte-identical to H139. |
 
 ## Archive
 
@@ -217,9 +252,9 @@ clarity is useful only when that contract remains intact.
 
 ## Handoff
 
-- Next allowed experiment: C003 only.
+- Next allowed experiment: C004 only.
 - Blocked/rejected mechanisms: all new area work and any clarity abstraction
   that changes H139 resources or relies on local/source-only evidence.
-- Verification still missing: C003 onward and final source rebinding/battery.
+- Verification still missing: C004 onward and final source rebinding/battery.
 - Files to avoid staging: non-PSG RTL, Tang files, unrelated OpenSpec changes,
   build products, and existing area-loop evidence.

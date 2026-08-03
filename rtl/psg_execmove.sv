@@ -27,7 +27,7 @@ module psg_execmove(input  logic       active,
                     input  logic       ins_use,
                     input  logic       released,
                     input  logic       cpz,
-
+                    // Address/write overrides and emitted sequencer effects.
                     output logic       state_ra_override,
                     output logic [5:0] state_ra_word,
                     output logic       state_we_extra,
@@ -38,7 +38,7 @@ module psg_execmove(input  logic       active,
                     output logic       voice_stop,
                     output logic       cpz_we,
                     output logic       cpz_next);
-
+  // ---- Fixed movement-action dictionary ----
   localparam logic [2:0]
     OP_READ  = 3'd0,
     OP_WRITE = 3'd1;
@@ -79,7 +79,7 @@ module psg_execmove(input  logic       active,
     PC2             = 7'h59,
     PC3             = 7'h5a,
     K_ROT           = 7'h5e;
-
+  // ---- Owner, action-family, and parameter-bank decode ----
   wire sample = active && !hold && !owner;
   wire tick = active && !hold && owner;
   wire [2:0] family = action[6:4];
@@ -89,7 +89,7 @@ module psg_execmove(input  logic       active,
   wire [5:0] par_copy1 = copy_bank ? 6'd29 : 6'd25;
   wire [5:0] par_copy2 = copy_bank ? 6'd30 : 6'd26;
   wire [5:0] par_copy3 = copy_bank ? 6'd31 : 6'd27;
-
+  // ---- One-edge fixed write helper ----
   task automatic fixed_write(input logic [5:0] word,
                              input logic [15:0] data);
     begin
@@ -99,7 +99,7 @@ module psg_execmove(input  logic       active,
       state_wd_fixed = data;
     end
   endtask
-
+  // ---- Address-selected movement transaction ----
   always_comb begin
     state_ra_override = 1'b0;
     state_ra_word = 6'd0;
@@ -319,9 +319,9 @@ module psg_execmove(input  logic       active,
         default: ;
       endcase
 
-      // These are emitted effects.  Their future integration remains in the
-      // sequencer's existing arbitrated always_ff so boundary clears retain
-      // the exact same-edge nonblocking-assignment priority.
+      // These outputs are sequencer effects. The sequencer's arbitrated
+      // always_ff applies them so boundary clears retain explicit same-edge
+      // nonblocking-assignment priority.
       if (action == VOICE_STOP) begin
         voice_stop = 1'b1;
         cpz_we = 1'b1;
