@@ -28,7 +28,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H144.
+- Next hypothesis ID: H145.
+- H144 hypothesis row: exploit accepted H039's four-byte-aligned record base
+  at the final byte-offset addition, adding only `sa_off[7:2]` to the eleven-
+  bit word address and appending `sa_off[1:0]`. Decision: rejected before
+  production RTL; the identity and SAT proofs pass, but the complete registered
+  consumer is mapping-identical because Yosys already exploits the alignment.
 - H143 hypothesis row: preserve exact reset-zero PCM output with one resettable
   validity token and a resetless 16-bit committed payload, targeting the
   H139 census's sixteen unpackable `pcm` flops. Decision: rejected before
@@ -1048,6 +1053,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Soft-add underflow history in unused `fmc` states: H141.
 - Old-noise pre-clamp storage in `mx_old`'s middle lifetime: H142.
 - PCM reset-zero validity/payload representation: H143.
+- Aligned record-base byte-offset addition: H144.
 
 ## Hypothesis H006
 
@@ -7257,6 +7263,53 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   commit timing, output consumers, target sink, or mapper reset/enable packing
   changes materially.
 
+## Hypothesis H144
+
+- **ID:** H144.
+- **Hypothesis:** accepted H039 makes every `rec_base()` result explicitly
+  four-byte aligned, but `psg_seq` still forms record reads as a visible
+  thirteen-bit `sa_base + sa_off`. Since the base's low two bits are zero,
+  this is exactly `{sa_base[12:2] + sa_off[7:2], sa_off[1:0]}`. Exposing that
+  boundary should retire two carry stages from the record-address cone without
+  changing either precomputed base, the channel/instrument selector, or the
+  pattern-address branch.
+- **Scope:** exhaustively prove all 64 record numbers and 256 offsets, prove
+  arbitrary aligned bases and the complete pattern/record selector with SAT,
+  and synthesize the complete registered address consumer in isolation. Only
+  after a deterministic isolated LUT/carry/floor win may `rtl/psg_seq.sv`
+  change, followed by full multi-pump/PREVIEW lint and a forced canonical
+  whole-PSG map. Route and run the H139 fidelity/cadence battery only after a
+  deterministic whole-PSG mapped/floor win. Preserve every address, record
+  selection, state and audio-RAM cycle, synchronous-read timing, interfaces,
+  schedule, 14-EBR topology, R.84/B2 files, Tang paths, images and tolerances.
+- **Baseline:** accepted H139 production at commit `d76241f` and docs commit
+  `f60aea7`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed in 7,018
+  LCs at 142.63/31.17 MHz. The complete scheduled address consumer baseline
+  will be recorded before any production edit.
+- **Changed condition versus H032, H039 and the address/storage DNR:** H032
+  selected a record number before one `rec_base()` call and globally regressed;
+  H144 retains both accepted call sites and their existing 13-bit selector.
+  H039 accepted the aligned transform inside each pure base calculation but
+  deliberately left the final offset addition unchanged. H144 consumes that
+  newly explicit alignment at the distinct downstream byte-offset boundary;
+  it changes no RAM ownership, record storage, replay, or CPU-visible address.
+- **Change:** proof-first aligned byte-offset addition and complete registered-
+  consumer synthesis; production RTL remains unchanged until both gates pass.
+- **Result:** exhaustive checking covers all 16,384 record-number/offset pairs
+  and the complete address range 256..4,795; the arbitrary aligned-base,
+  channel/instrument, pattern/record selector SAT miter also passes. Both
+  complete registered consumers map to 38 LUT4s, 16 carries and 13 fully
+  packed flops, for the same 38-cell floor. Yosys already propagates the two
+  aligned low bits and performs the same narrowed carry lowering through the
+  accepted expression.
+- **Decision:** rejected before production RTL. `rtl/psg_seq.sv` remains
+  byte-identical to accepted H139, so no full/PREVIEW lint, whole-PSG map,
+  route, fidelity or cadence gate remains.
+- **Repeat only if:** if rejected, retry only after record-base alignment,
+  offset range/ownership, pattern/record selection, RAM address registering,
+  or mapper carry lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7595,10 +7648,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h141/{fold_under_state_proof.py,fold_under_state_formal.sv,fold_under_state_probe.sv,formal.log,isolated-*,candidate*}` | exhaustive related-state proof, arbitrary-state SAT, complete registered fold-controller synthesis, full/PREVIEW lint and canonical whole-PSG map/route | Exact and -1 FF/-1 unpackable/floor cell alone, but globally +24 LUT4/+4 carry/+20 floor/+31 routed LCs; production reverted and fidelity skipped. |
 | `build/experiments/h142/{old_noise_role_proof.py,old_noise_role_formal.sv,old_noise_role_probe.sv,formal.log,isolated-*}` | source-derived lifetime/range audit, exhaustive scale/role proof, arbitrary-state SAT and complete registered-consumer synthesis | Exact and -11 FF/-11 unpackable locally, but +17 LUT4 worsens the isolated floor 130 -> 136 cells; production remains unchanged. |
 | `build/experiments/h143/{pcm_reset_proof.py,pcm_reset_probe.sv,formal.log,isolated-*}` | exhaustive bitwise transition proof, arbitrary-16-bit sequential SAT and complete registered output/parity-sink synthesis | Exact, but +2 LUT4/+1 FF/+1 unpackable worsens the isolated floor 22 -> 25 cells; production remains unchanged. |
+| `build/experiments/h144/{aligned_offset_proof.py,aligned_offset_probe.sv,formal.log,isolated-*}` | exhaustive record/offset proof, arbitrary scheduled-address SAT and complete registered-consumer synthesis | Exact and mapping-identical at 38 LUT4/16 carry/13 packed FF; production remains unchanged. |
 
 ## Handoff
 
-- Next allowed experiment: H144 on accepted H139. Record a concrete row before
+- Next allowed experiment: H145 on accepted H139. Record a concrete row before
   changing RTL, and select a mechanism outside the Active DNR index.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
@@ -7893,6 +7947,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   cells; production remains unchanged and no downstream gate remains. H143's
   reset-valid PCM representation is exact, but adds two LUT4s plus one
   unpackable validity flop and worsens the isolated floor by three cells;
-  production remains unchanged and no downstream gate remains.
+  production remains unchanged and no downstream gate remains. H144's aligned
+  byte-offset spelling is exact but mapping-identical in the complete
+  registered address consumer; production remains unchanged and no downstream
+  gate remains.
 - Files to avoid staging after H139: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
