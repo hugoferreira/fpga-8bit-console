@@ -23,11 +23,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: H137; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102.
-- Next hypothesis ID: H137.
+- Next hypothesis ID: H138.
+- H137 hypothesis row: replace the shared-EBR fade-step borrow with an exact
+  32-entry combinational decode from the retained `fade_len[7:3]`, removing
+  `fstep_q`, the lookup-port mux, and both replay/displacement tokens. Decision:
+  active; prove every table value and adjacent `$22`/`$20` transaction, then
+  price the complete registered command/control consumer before production RTL.
 - H136 hypothesis row: carry each multiplier request's arithmetic sign through
   the otherwise-dead `m_res[33]` result bit, preserving it across the chained
   reciprocal request, and retire full-schedule `mxs_new`/`mxs_old`. Decision:
@@ -6807,6 +6812,48 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   request signedness, reciprocal chaining, sign-consumer phases, or mapper
   cross-domain/result-bit lowering changes materially.
 
+## Hypothesis H137
+
+- **ID:** H137.
+- **Hypothesis:** the constants EBR words 112..143 serve only the music fade
+  lookup. A `$22` write already stores the complete eight-bit `fade_len`, and
+  a later `$20` command only needs the exact function `4096 / fade_len[7:3]`
+  for values 1..31. Decode that 32-entry function directly at the `$20`
+  commit edge. This should retire the 13-bit `fstep_q`, `crom_replay`,
+  `ctrl_displaced`, the fade lookup address arm and the control-word replay
+  stall without adding persistent state or changing `fade_step` itself.
+- **Scope:** prove all 256 `$22` values, both `$20` start/stop forms, adjacent
+  and delayed writes, reset/readback state, and the absence of a control-ROM
+  collision once `$22` no longer borrows its port. Synthesize a complete
+  registered fade-command/control consumer in isolation first. Only after an
+  exact proof and deterministic isolated floor win may `rtl/psg_seq.sv` and
+  `tools/gen_psg_tables.py` change, followed by full/PREVIEW lint and a forced
+  canonical whole-PSG map. Route and run the H134 fidelity battery only after
+  a deterministic whole-PSG mapped/floor win. Preserve CPU-visible `$20`/
+  `$22` semantics, fade progression, sequencer/walker control words, sample
+  and tick cadence, interfaces, 14-EBR topology, R.84/B2 files, Tang paths,
+  images and tolerances.
+- **Baseline:** accepted H134 commit `b96536d`: 6,360 LUT4s, 1,317 carries,
+  1,450 flops, 500 unpackable flops, 14 EBRs and floor 6,860, routed in 7,086
+  LCs at 133.92/33.04 MHz. The fresh isolated registered consumer baseline
+  will be recorded before any production edit.
+- **Changed condition versus R.15 and H126:** R.15 retained the shared-EBR
+  lookup to eliminate a dedicated fade-table EBR, paying a borrow/replay mux
+  and `fstep_q`. H126 tried to reconstruct only `ctrl_displaced` while keeping
+  the collision; its same-edge counterexample therefore remains valid. H137
+  removes the fade lookup from the EBR entirely, so `$22` cannot displace a
+  walker control read and neither replay token has a remaining event to
+  represent. It keeps R.15's one-EBR topology and does not alter the walker's
+  control-store contents.
+- **Change:** proof-first direct fade-step decoder and complete command/control
+  consumer; production RTL remains unchanged until exactness and isolated
+  physical gates pass.
+- **Result:** active.
+- **Decision:** active.
+- **Repeat only if:** if rejected, retry only after fade-step quantization,
+  `$22`/`$20` command timing, constants/control-ROM port ownership, or mapper
+  small-ROM lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7141,8 +7188,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Handoff
 
-- Next allowed experiment: H137 on accepted H134. Record a concrete row before
-  changing RTL, and select a mechanism outside the Active DNR index.
+- Active experiment: H137 on accepted H134. Do not start H138 until H137 is
+  accepted or rejected and recorded.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
