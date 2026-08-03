@@ -27,7 +27,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H123.
+- Next hypothesis ID: H124.
+- H123 hypothesis row: `spar_last` and `nz_tick_r` retain a two-sample bank
+  history even though the pulse is consumed only during the following sample
+  walk. Holding `spar_last` through the walk and deriving the pulse from the
+  live bank observes a same-edge publication one sample too early; a dropped
+  PREVIEW start also has no terminal edge on which to advance history.
+  Decision: rejected before synthesis or RTL.
 - H122 hypothesis row: the sole `cpz` consumer at PC3 is reached only from
   K_ADV's skip path or EA5's two stop paths. Live-state reconstruction fails:
   a CPU stop may change `playing[c]` during K_ROT..PC3 after `cpz=0` was
@@ -5999,6 +6005,55 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - **Repeat only if:** if rejected, retry only after K_ADV/EA5 route topology,
   delayed-stop ownership, playing visibility, PC3 publication, or mapper
   sequential/dynamic-index lowering changes materially.
+
+## Hypothesis H123
+
+- **ID:** H123.
+- **Hypothesis:** `psg_walk.spar_last` is updated at every sample edge only to
+  generate the registered `nz_tick_r` bank-change pulse consumed during that
+  sample's eight-slot walk. Keep `spar_last` unchanged until the terminal slot
+  has consumed the pulse and derive the pulse live as
+  `spar_bank != spar_last`; this may retire `nz_tick_r`, its reset/update mux,
+  and part of its nineteen-LUT fanout cone while preserving the same
+  effect-noise restart samples.
+- **Scope:** exhaustively model reset, arbitrary legal between-sample and
+  same-sample-edge bank flips, accepted and skipped PREVIEW starts, held walk
+  cycles, all eight slot consumers, and terminal history commit before any
+  RTL edit. Only if every consumer sees the same pulse, synthesize an isolated
+  registered consumer and then change `rtl/psg_walk.sv`. Retain bank
+  publication, sample/tick cadence, noise arithmetic and alternation, restart
+  timing, state memory, interfaces, EBRs, R.84 files and tolerances. Whole-PSG
+  mapping, routing and the H102 fidelity battery remain conditional on a
+  deterministic area win.
+- **Baseline:** accepted H102/I003 RTL at commit `852e1b5` maps 6,360 LUT4s,
+  1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor 6,868, and
+  routes in 7,087 LCs at 140.92/32.65 MHz. `spar_last` is one unpackable flop;
+  `nz_tick_r` is one additional flop whose named fanout cone contains nineteen
+  LUT4s in H113's source-identical baseline JSON.
+- **Changed condition versus H009/H010, H058, H062 and H110:** H009/H010
+  recoded the timing module's delayed-tick generator; H058 removed a state-RAM
+  replay token; H062 reconstructed a per-slot old-noise activity flag; H110
+  reconstructed sequencer join history and lost a same-edge publication case.
+  H123 preserves all those states and tests only the walker's global sampled
+  parameter-bank history, explicitly including same-edge publication rather
+  than assuming it away.
+- **Change:** proof-first live bank-delta reconstruction; production RTL is
+  unchanged until the edge-order model passes.
+- **Result:** all eight reset/history/bank/same-edge-flip transition classes
+  confirm that the live delta matches only when no publication occurs on the
+  sample-start edge. A reachable `last=0`, pre-edge bank zero, same-edge flip
+  to bank one produces baseline pulse zero but live pulse one, moving the
+  noise restart one sample early. All sixteen two-sample dropped-PREVIEW
+  classes were also enumerated: if the bank changes before a dropped start,
+  baseline advances its history despite having no consumer, while the
+  terminal-commit candidate retains the old history and emits a stale restart
+  on the next accepted walk. Isolated synthesis and downstream gates are
+  skipped.
+- **Decision:** rejected before synthesis or production RTL. The executable
+  edge-order counterexample remains under `build/experiments/h123/`.
+- **Repeat only if:** if rejected, retry only after parameter-bank publication
+  sites, same-edge sample/start ordering, PREVIEW drop behavior, restart
+  consumption, or mapper sequential lowering changes materially.
 
 ## Saved Artifacts
 
