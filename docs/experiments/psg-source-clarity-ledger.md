@@ -8,13 +8,13 @@ clarity is useful only when that contract remains intact.
 
 - Topic: make the production PSG RTL understandable, ergonomic, organised,
   DRY, modular, and documented in terms of the current design.
-- Owner scope: `rtl/psg.sv`, `rtl/psg_common.svh`, the ten service/datapath
-  modules textually included by `psg.sv`, and the four shared-executor modules.
-  Testbenches and proof tooling change only when a production boundary
-  genuinely requires them.
-- Correctness gate: preserve the complete H139 functional, frozen-render,
-  cadence, PREVIEW, recovery, click, Celeste, clock, source-contract, and R.84
-  proof battery.
+- Owner scope: `rtl/psg.sv`, `rtl/psg_common.svh`, and the ten
+  service/datapath modules textually included by `psg.sv`. Testbenches and
+  tooling stay only when they exercise or explain this live production tree.
+- Correctness gate: preserve the complete live H139 functional, frozen-render,
+  cadence, PREVIEW, recovery, click, Celeste, and clock battery. C008's
+  source-contract and R.84 proofs are historical acceptance evidence, not a
+  second maintained implementation.
 - Physical gate: preserve 6,302 LUT4s, 1,291 carries, 1,450 FFs, 498
   unpackable FFs, 14 EBRs, floor 6,800, 7,018 routed LCs, and passing
   142.63/31.17 MHz seed-1 timing.
@@ -23,13 +23,13 @@ clarity is useful only when that contract remains intact.
 
 ## Current State
 
-- Active hypothesis: none; C008 closes the clarity refactor.
+- Active hypothesis: none; C009 closes the executor-stack cleanup.
 - Next hypothesis ID: none.
 - Current baseline artifacts: `build/integration-h139-r84/synth-1.{json,asc}`
   and `build/experiments/c008/`.
-- Latest decision: C008 accepted; source-contract v7 binds all sixteen
-  maintained sources at clarity revision `1251f49`, and the normalized model,
-  live structural/value traces, behavior, and physical image remain H139.
+- Latest decision: C009 accepted. The four disconnected executor sources and
+  their dedicated proof stack are removed; C008's sixteen-source proof remains
+  historical evidence in Git rather than a maintained second architecture.
 - Best accepted result: H139 at JSON SHA-256
   `4f7c4af1678ebbaf203cc63088855ec16bc44ebaa92e0f529e5d7961f0e554ff`
   and ASC SHA-256
@@ -82,11 +82,13 @@ clarity is useful only when that contract remains intact.
 
 - [x] Comment-only slices reproduce byte-identical canonical JSON and ASC.
 - [x] Every structural slice passes full/PREVIEW lint and its focused tests.
-- [x] Final source rebinding passes the H139/R.84 structural and value proofs.
+- [x] C008's final source rebinding passed the H139/R.84 structural and value
+  proofs; that historical evidence remains in Git after the proof stack retires.
 - [x] Final full battery passes all functional/render/cadence/PREVIEW/recovery/
   click/Celeste/clock gates and two byte-identical canonical physical builds.
-- [x] Final audit covers all 5,265 production-source lines and closes every
-  checklist item with evidence.
+- [x] C008 audited all 5,265 then-maintained lines. C009 narrows the live
+  production boundary to the actual 4,350-line, 12-source PSG tree.
+- [x] C009 passes live regressions and preserves the accepted physical image.
 
 ## Source Audit Matrix
 
@@ -104,16 +106,17 @@ clarity is useful only when that contract remains intact.
 | `psg_wave.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
 | `psg_walk.sv` | C001 accepted | C002 accepted | exact JSON/ASC |
 | `psg_seq.sv` | C001 accepted | C002 accepted | exact JSON/ASC |
-| `psg_execctl.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
-| `psg_execdp.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
-| `psg_execmove.sv` | C001 accepted | C007 accepted | movement/contract + exact ASC |
-| `psg_execwave.sv` | C001 accepted | C003 accepted | exact JSON/ASC |
+
+The maintained production set is 12 files and 4,350 lines. The former
+`psg_exec*` research implementation was disconnected from `psg.sv`; its C003,
+C007, and C008 evidence remains in repository history rather than imposing a
+second architecture on the live source tree.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: none; C008 is accepted and the goal is complete.
-- Reopen only if a maintained PSG source, source-aware proof pattern, normalized
-  artifact, or H139 acceptance gate changes.
+- Next permitted experiment: none; C009 is accepted and the cleanup is complete.
+- Reopen source refactoring only if a maintained PSG source or H139 acceptance
+  gate changes.
 - Blocked repeat families: no source-level refactor is accepted from LOC,
   readability, isolated synthesis, or generated-code size alone.
 
@@ -129,6 +132,7 @@ clarity is useful only when that contract remains intact.
 | C006 | rejected | Exact macro adds 31 LUT4s and 33 floor cells; reverted. |
 | C007 | accepted | Named record-load actions; exact movement and H139 ASC. |
 | C008 | accepted | v7 binds all 16 sources; normalized proofs and H139 envelope exact. |
+| C009 | accepted | Removed the disconnected executor research/proof stack; live PSG remains H139. |
 
 ## Hypothesis C001
 
@@ -348,6 +352,38 @@ clarity is useful only when that contract remains intact.
 - **Decision:** accepted.
 - **Repeat only if:** the accepted production/source-proof revision changes.
 
+## Hypothesis C009
+
+- **ID:** C009.
+- **Hypothesis:** deleting the disconnected R.84 executor model, RTL,
+  generated program, dedicated benches/targets, and proof-only budget-trace
+  paths will make the repository's maintained PSG boundary obvious without
+  changing production RTL, simulation behavior, or the H139 physical image.
+- **Scope:** `tools/psg_exec_*`, `rtl/psg_exec*`, the three executor synthesis
+  targets, and the `binding_only`/binding/value trace support in
+  `rtl/psg_budget_tb.sv`; retain `tools/gen_psg_ctrl.py` and the complete live
+  `psg.sv` source tree.
+- **Baseline:** accepted C008 production RTL and H139 artifacts; the removed
+  stack has no production, Makefile, script, or CI consumer.
+- **Change:** remove 16,909 lines of disconnected executor research and
+  proof-only infrastructure. Keep the historical R.84/OpenSpec record in Git.
+- **Result:** no live references remain outside the intentionally preserved
+  OpenSpec/ledger history. Full and PREVIEW production lint pass with only the
+  three established width warnings. Both full and PREVIEW budget-testbench
+  forms compile after trace removal. `make psg-viz` derives 62 hardware phases,
+  24 preview phases, 63 FSM states, and 90 transitions; all 13 visualizer tests
+  pass. `make test-psg` passes PICO-8 fidelity, exhaustive arithmetic/DQ gates,
+  93 audio-analysis tests, the visualizer tests, and the complete structural
+  PSG simulation at the exact 524/850 sample and 4,008/5,103 tick budgets.
+  `make test-clocks` passes `/4`, `/5`, and `/6`; the explicit 18.75 MHz frozen
+  render sweep is byte-identical 59/59. All twelve production synthesis inputs
+  are byte-unchanged, and the retained H139 JSON/ASC hashes remain
+  `4f7c4af1...` / `cca305c1...`, so the 6,302-LUT4, 7,018-routed-LC physical
+  image and 142.63/31.17 MHz timing are unchanged by construction.
+- **Decision:** accepted.
+- **Repeat only if:** a live consumer of the removed stack is found or the
+  production PSG's behavior or physical artifact differs after removal.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -365,6 +401,7 @@ clarity is useful only when that contract remains intact.
 | `build/experiments/c004/` | C004 live-source acceptance logs | Full H139 functional/fidelity battery passes. |
 | `build/experiments/c007/` | C007 executor/physical evidence | Named actions pass; JSON/ASC exact. |
 | `build/experiments/c008/` | independent v7 model, source, structural and value proof | 16 sources, 152,893 rows, 192,896 pairs; all exact. |
+| `build/obj_psg_budget_c009_{full,preview}/` | fresh Verilator builds | Both remaining budget-testbench forms compile after proof-trace removal. |
 
 ## Archive
 
@@ -375,9 +412,9 @@ clarity is useful only when that contract remains intact.
 
 ## Handoff
 
-- Next allowed experiment: none; the clarity goal is complete.
+- Next allowed experiment: none; the clarity and executor-cleanup work is complete.
 - Blocked/rejected mechanisms: all new area work and any clarity abstraction
   that changes H139 resources or relies on local/source-only evidence.
-- Verification still missing: none for C001--C008.
+- Verification still missing: none for C001--C009.
 - Files to avoid staging: non-PSG RTL, Tang files, unrelated OpenSpec changes,
   build products, and existing area-loop evidence.
