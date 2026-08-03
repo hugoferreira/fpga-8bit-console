@@ -26,7 +26,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted on merged main.
-- Next hypothesis ID: H099.
+- Next hypothesis ID: H100.
+- H099 hypothesis row: stop rewriting the effective channel-filter tuple from
+  the base tuple and publish the already-live base tuple when `w_ins_on=0`.
+  The ownership proof passes 4,224 legal paths and the isolated consumer falls
+  from 29 to 12 LUT4s, but both whole-PSG variants regress. Decision: rejected
+  and reverted.
 - H098 hypothesis row: encode the fast multiplier's exact 3--12 active-step
   durations as start points on one four-bit maximal-LFSR segment. The token is
   exact and removes four LUT4s/two carries in isolation, but the whole PSG adds
@@ -78,14 +83,19 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h089/`, `build/experiments/h090/`, and
   `build/experiments/h091/`, `build/experiments/h092/`, and the rejected
   `build/experiments/h093/`, the rejected `build/experiments/h094/`, and the
-  accepted `build/experiments/h095/` and `build/experiments/h096/`, plus
+  accepted `build/experiments/h095/` and `build/experiments/h096/`, the
+  rejected `build/experiments/h097/`, `build/experiments/h098/`, and
+  `build/experiments/h099/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H096 accepted as generic RTL/proof commit
-  `a647185` after complete verification. Consuming the launch worklist removes
-  31 global LUT4s, one FF, and 28 deterministic floor cells from merged main.
-- Latest rejected variants: H098's exact multiplier iteration token is globally
+- Latest completed decision: H099 rejected and reverted after both globally
+  tested variants regressed deterministic floor and seed-1 placement. H096
+  remains the accepted generic RTL/proof commit `a647185`; consuming the
+  launch worklist removes 31 global LUT4s, one FF, and 28 deterministic floor
+  cells from merged main.
+- Latest rejected variants: H099's exact filter-publication ownership change
+  is globally worse despite its 17-LUT4 isolated saving. H098's exact multiplier iteration token is globally
   worse despite its isolated four-LUT4/two-carry saving. H097's exact `ML_STOP` provenance reuse is globally
   worse despite its isolated three-LUT4/one-FF saving. H094's packed transition inequality is globally
   worse despite its isolated one-LUT4 saving. H093's grouped DQ table is locally
@@ -233,10 +243,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H099 on accepted H096 `a647185`, only after a fresh source
+- Next experiment: H100 on accepted H096 `a647185`, only after a fresh source
   and DNR audit. It must not repeat H096's launch-worklist/pacing-state family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
+  H099's filter-tuple ownership/publication-source family,
   H095's now-composed foreground trigger-length
   prefix family, H094's now-closed packed transition-inequality
   family, H093's DQ coefficient-decoder spelling family, H092's EA2/EA4 result-
@@ -374,6 +385,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H094 | rejected | Keep separate transition inequalities: one packed comparison saves one isolated LUT4 but adds three global LUT4/floor cells. |
 | H095 | accepted | Keep the exact foreground trigger-length overflow prefix on the direct lineage; it removes four global LUT4s, three carries, and four floor cells. |
 | H096 | accepted | Consume the launched-channel worklist after selecting the pacing owner; this removes 31 LUT4s, one FF, and 28 deterministic floor cells on merged main. |
+| H097 | rejected | Keep the dedicated `ml_cpu` provenance bit: `walk_tick` is equivalent and saves three LUT4s/one FF alone, but adds 18 LUT4s, four carries, 17 floor cells, and 20 routed LCs globally. |
+| H098 | rejected | Keep the binary multiplier countdown: an exact LFSR token saves four LUT4s/two carries alone, but adds 20 LUT4s, 19 floor cells, and 16 routed LCs globally. |
+| H099 | rejected | Keep the explicit filter base-copy writes: publication ownership saves 17 LUT4s alone, but both whole-PSG variants regress deterministic floor and placement. |
 
 ## Hypothesis H001
 
@@ -4612,6 +4626,51 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   set, fast recurrence, terminal acknowledge, radix parameter, request-load
   decoder, or mapper sequential lowering changes materially.
 
+## Hypothesis H099
+
+- **ID:** H099.
+- **Hypothesis:** `w_ch_{damp,rev,det,buzz,noiz}` is the effective filter tuple
+  only while a custom instrument is active. On trigger without an instrument
+  and on an instrument-to-ordinary-note exit, the tuple is synchronously
+  rewritten from `w_bf_*` and later published unchanged. Selecting `w_bf_*`
+  at `P_W2` whenever `w_ins_on=0` should remove both eight-bit register-write
+  arms while retaining the stored effective tuple and all instrument maxima.
+- **Scope:** exhaustive tuple/transition/publication proof over trigger,
+  ordinary-note, retained-instrument, and new-instrument paths; isolated
+  synthesis of the complete registered eight-bit filter/publication consumer;
+  then `rtl/psg_seq.sv`, a permanent `tools/psg_hw_forms.py` check, whole-PSG
+  mapping, and the complete H096 battery only after an isolated deterministic
+  win. No filter code, trit maximum, base/instrument precedence, active-bank
+  storage, publication format, schedule, interface, EBR, diagnostic ARAM,
+  R.84 executor, or tolerance change.
+- **Baseline:** accepted H096 commit `a647185` atop merged main: 6,364 LUT4s,
+  1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
+  seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks.
+- **Changed condition versus H045 and the lifetime DNR families:** H045 kept
+  all tuple writes and only respelled the three trit maxima, mapping
+  identically in isolation. H099 retains those relational maxima and every
+  stored bit. It changes ownership of two redundant base-copy writes and the
+  publication source, not an arithmetic/service payload lifetime alias.
+- **Change:** select `w_bf_*` at publication when `w_ins_on=0`. Variant one
+  removes the base-copy assignments in both `T_SP` and ordinary `K_LD`;
+  variant two restores `T_SP` initialization and removes only the ordinary
+  `K_LD` exit writes.
+- **Result:** the transition proof passes all 4,224 legal two-operation paths,
+  and the complete isolated registered consumer improves from 29 to 12 LUT4s
+  with 17 FF unchanged. Variant one maps at 6,371 LUT4s / 1,321 carries /
+  1,459 FF / 508 unpackable / floor 6,879 and routes at 7,100 LCs with
+  144.30/32.26 MHz timing: +7 LUT4s, -1 unpackable, +6 floor cells, and +5
+  routed LCs versus H096. Variant two maps at 6,398 LUT4s / 1,322 carries /
+  1,459 FF / 509 unpackable / floor 6,907 and routes at 7,128 LCs with
+  131.10/31.89 MHz timing: +34 LUT4s, +1 carry, +34 floor cells, and +33
+  routed LCs. Both pass timing but fail every authoritative deterministic area
+  gate except FF count.
+- **Decision:** rejected after the two permitted whole-PSG variants; production
+  RTL and the conditional permanent form are reverted byte-for-byte.
+- **Repeat only if:** if rejected, retry only after filter tuple ownership,
+  instrument-active state, trigger/exit topology, publication source, stored
+  effective tuple, or mapper register-enable lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -4902,10 +4961,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h096/{budget-*,preview-*,recovery*,clicks*,celeste-smoke*,clocks*,bytecheck*}` plus `build/targets/psg.{json,asc}` | exhaustive protocol proof, two forced whole-PSG builds, and complete merged-main acceptance battery | Accepted `a647185` at -31 LUT4/-1 FF/-28 floor cells; all generic fidelity, timing, and reproducibility gates pass. |
 | `build/experiments/h097/{provenance_proof.py,provenance-proof.log,provenance_probe.sv,isolated-*,candidate.*}` | exact path proof, complete isolated provenance synthesis, and canonical whole-PSG synthesis | Exact and -3 LUT4/-1 FF alone, but globally +18 LUT4/+4 carries/+17 floor cells/+20 routed LCs. |
 | `build/experiments/h098/{count_proof.py,count-proof.log,count_probe.sv,count_*_r1.*,mulmp.log,candidate.*}` | exact token/freeze proof, isolated count synthesis, 6,020-transaction CDC bench, and canonical whole-PSG synthesis | Exact and -4 LUT4/-2 carries alone, but globally +20 LUT4/+19 floor cells/+16 routed LCs. |
+| `build/experiments/h099/{filter_owner_proof.py,filter-owner-proof.log,filter_owner_probe.sv,filter_owner_*.json,filter_owner_*.log,candidate*}` | exhaustive ownership proof, complete isolated registered-consumer synthesis, and two canonical whole-PSG variants | Exact across 4,224 legal paths and -17 LUT4 alone, but both whole-PSG variants regress deterministic floor and seed-1 placement. |
 
 ## Handoff
 
-- Next allowed experiment: H099 on accepted H096 `a647185`, after a fresh
+- Next allowed experiment: H100 on accepted H096 `a647185`, after a fresh
   source/DNR audit; it must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
