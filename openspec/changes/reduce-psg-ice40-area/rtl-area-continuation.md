@@ -23,7 +23,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: H133; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
@@ -6566,6 +6566,46 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   reachable address domains, tail-result ownership, pipeline alignment, or
   mapper EBR-output lowering changes materially.
 
+## Hypothesis H133
+
+- **ID:** H133.
+- **Hypothesis:** H132 paid an eight-bit mux to force the reserved address
+  `8'hff`, even though every ordinary reciprocal address is below 128 and the
+  quotient payload is ignored on every token transaction. Preserve the seven
+  ordinary low address bits and set only the otherwise-unreachable address
+  MSB from the non-organ tail predicate. Program the reciprocal EBR's spare
+  data bit as the address MSB across addresses 128..255. The registered spare
+  output bit remains the exact tail token while the address override shrinks
+  from eight selected bits to one.
+- **Scope:** adapt H132's all-context exhaustive proof and registered SAT miter
+  to the high-half token plane, then synthesize the same complete registered
+  waveform consumer in isolation. Only after exactness and a deterministic
+  isolated floor win may `rtl/psg_wave.sv` change, followed by full/PREVIEW
+  lint and a forced canonical whole-PSG map. Route and run the H102 fidelity
+  battery only after a deterministic whole-PSG mapped/floor win. Preserve the
+  reciprocal quotient payloads for every ordinary address, pipeline latency,
+  all waveform values, DQ logic, schedule, interfaces, one-EBR topology,
+  R.84/B2 files, images, Tang paths, and tolerances.
+- **Baseline:** accepted H102/I003 production RTL at docs commit `03da590`;
+  H113's source-identical whole-PSG baseline is 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs and floor 6,868, routed in 7,087
+  LCs at 140.92/32.65 MHz. H132's complete isolated consumer is 696 LUT4s,
+  250 carries, 96 FF, 66 unpackable and floor 762 with one EBR.
+- **Changed condition versus H066, R.67, and H132:** H066 decoded a sentinel
+  in the live arithmetic payload; R.67 added a registered memory port and two
+  EBRs; H132 selected all eight address bits to one reserved word and worsened
+  the isolated floor by four. H133 changes only the existing address MSB and
+  uses all 128 unreachable high-half words as one token plane, directly
+  removing the seven low-bit muxes that made H132 lose. This is the second and
+  final current spare-bit-token form under the two-variant stop rule.
+- **Change:** proof-first one-bit address-MSB token plane; production RTL
+  remains unchanged until exactness and isolated physical gates pass.
+- **Result:** active.
+- **Decision:** active.
+- **Repeat only if:** if rejected, close reciprocal spare-bit tail tokens until
+  reciprocal EBR width, reachable address domains, tail-result ownership,
+  pipeline alignment, or mapper EBR-output lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6896,9 +6936,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Handoff
 
-- Next allowed experiment: H133 on accepted H102 `ccfb2a0`, after a fresh
-  source/DNR audit. It must remain outside the Active DNR families and
-  companion-owned R.84 work.
+- Next allowed experiment: H133 on accepted H102 `ccfb2a0`, using the
+  one-bit reciprocal address-MSB token plane recorded above.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
