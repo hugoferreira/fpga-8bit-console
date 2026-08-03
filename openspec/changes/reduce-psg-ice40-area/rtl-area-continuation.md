@@ -27,7 +27,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H109.
+- Next hypothesis ID: H110.
+- H109 hypothesis row: Yosys declines automatic recoding of the 60-state
+  sequencer FSM and leaves its many equality consumers on a six-bit binary
+  state. Force complete one-hot synthesis encoding and gate on the deterministic
+  LUT-plus-unpackable-FF floor, not LUT count alone. Mapping reduces that floor
+  by eleven cells and placement by three LCs, but canonical routing remains
+  stuck on one overused wire through 29,349 iterations. Decision: rejected and
+  reverted.
 - H108 hypothesis row: `REVERB=0` already folds both comb datapaths to the
   identity, but `blend_restart` still compares the live and prior reverb modes,
   retaining disabled-feature control/state in the HX8K build. Gate only that
@@ -141,15 +148,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h099/`, `build/experiments/h100/`,
   `build/experiments/h101/`, the accepted `build/experiments/h102/`, and the
   rejected `build/experiments/h106/`, `build/experiments/h107/`, and
-  `build/experiments/h108/`, plus
+  `build/experiments/h108/` and `build/experiments/h109/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H108 rejected and reverted because qualifying the
-  disabled-reverb restart term adds 39 LUT4s, four carries, one unpackable FF,
-  and 40 deterministic floor cells. H102 remains the best accepted generic
-  RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H108's `REVERB=0` restart specialization is
+- Latest completed decision: H109 rejected and reverted because its eleven-cell
+  deterministic floor reduction cannot complete canonical seed-1 routing.
+  H102 remains the best accepted generic RTL/proof point at `ccfb2a0`.
+- Latest rejected variants: H109's one-hot sequencer state lowers mapped floor
+  and placed LCs slightly but cannot route. H108's `REVERB=0` restart specialization is
   globally much worse before equivalence work. H107's packed playback register is globally much
   worse despite simpler source and fewer unpackable FFs. H106's exact factored
   upload/read pointer advance
@@ -305,7 +312,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H109 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H110 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -314,6 +321,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H106's upload/diagnostic pointer-advance factoring family,
   H107's unpacked/packed playback-state representation family,
   H108's disabled-reverb restart specialization family,
+  H109's sequencer-FSM synthesis-encoding family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -469,6 +477,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H106 | rejected | Keep the separate upload-write and diagnostic-read pointer updates: exact factoring saves two LUT4s alone but adds 51 LUT4s, one unpackable FF, 52 floor cells, and 54 routed LCs globally. |
 | H107 | rejected | Keep the unpacked `playing[]` storage plus exported packed view: direct `play_bits` storage removes six unpackable FFs but adds 79 LUT4s, two carries, 73 floor cells, and 79 routed LCs globally. |
 | H108 | rejected | Keep the reverb-mode term in `blend_restart` even for `REVERB=0`: parameter-gating it adds 39 LUT4s, four carries, one unpackable FF, 40 floor cells, and 47 routed LCs globally. |
+| H109 | rejected | Keep the sequencer FSM in binary encoding: forced one-hot is -6 LUT4/-5 unpackable/-11 floor and places three LCs lower, but adds 57 FF/four carries and cannot complete canonical routing. |
 
 ## Hypothesis H001
 
@@ -5144,6 +5153,43 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   blend-restart consumers, prior-tuple state, or mapper parameter folding
   changes materially.
 
+## Hypothesis H109
+
+- **ID:** H109.
+- **Hypothesis:** Yosys explicitly reports that it does not mark the sequencer's
+  60-state, six-bit `sst` register for automatic FSM recoding because its
+  heuristic predicts no benefit. The state nevertheless drives a large number
+  of equality-selected next-state and datapath cones. Forcing one-hot encoding
+  may trade roughly 54 extra flops for a larger LUT/decode reduction and a
+  lower iCE40 logic-cell floor.
+- **Scope:** add only a Yosys `fsm_encoding="one-hot"` attribute to `sst`; run
+  canonical whole-PSG mapping and judge `LUT4 + unpackable FF` before any long
+  correctness battery. No state transition, numeric enum value consumed by
+  RTL, state count, schedule, datapath, R.84 executor, image, Tang, tolerance,
+  or interface change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus R.68/R.69 and H104:** R.68/R.69 moved the walk's
+  phase decode into new or overlaid control-ROM payloads. H104 hand-reencoded a
+  two-flop instrument-kind state. H109 changes neither source protocol: it asks
+  the synthesizer to recode the complete, much larger sequencer FSM while
+  retaining the same RTL transitions and outputs.
+- **Change:** forced one-hot synthesis encoding on `sst` only.
+- **Result:** canonical mapping changes H102's 6,360 LUT4 / 1,321 carry /
+  1,458 FF / 508 unpackable / 14 EBR / floor 6,868 to 6,354 / 1,325 /
+  1,515 / 503 / 14 / floor 6,857. Placement uses 7,084 LCs versus H102's
+  7,087, explicitly below placement sensitivity, and its preliminary clocks
+  pass at 137.68/34.55 MHz. Router2 then plateaus on one overused wire and does
+  not complete through 29,349 canonical seed-1 iterations; the bounded run is
+  stopped after more than five minutes. No routed timing or ASC exists, so the
+  complete correctness/fidelity battery is skipped.
+- **Decision:** rejected and reverted. `psg_seq.sv` is restored exactly;
+  ignored mapping/routing evidence remains under `build/experiments/h109/`.
+- **Repeat only if:** if rejected, retry only after the sequencer state graph,
+  decoder fanout, state consumers, or Yosys FSM extraction/encoding changes
+  materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5444,10 +5490,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h106/{wraddr_advance_proof.py,wraddr_advance_probe.sv,isolated-*,candidate*}` | exhaustive upload/read pointer proof, complete registered-consumer synthesis, ARAM hold/readback checks, and forced whole-PSG synthesis | Exact across 6,291,456 transitions and -2 LUT4 alone, but the candidate is +51 LUT4/+52 floor/+54 routed LCs globally. |
 | `build/experiments/h107/candidate*` | forced whole-PSG synthesis of direct packed playback-state storage | Source-exact alias removal and -6 unpackable FF, but +79 LUT4/+2 carry/+73 floor/+79 routed LCs globally. |
 | `build/experiments/h108/candidate*` | forced whole-PSG synthesis of the `REVERB=0` restart specialization | Enabled-reverb source remains unchanged, but the HX8K candidate is +39 LUT4/+4 carry/+1 unpackable/+40 floor/+47 routed LCs. |
+| `build/experiments/h109/{candidate.json,candidate.synth.log,candidate.pnr.log}` | forced one-hot sequencer mapping and bounded canonical seed-1 route | -6 LUT4/-5 unpackable/-11 floor and -3 placed LCs, but +57 FF/+4 carries and one unresolved wire through 29,349 router2 iterations. |
 
 ## Handoff
 
-- Next allowed experiment: H109 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H110 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
