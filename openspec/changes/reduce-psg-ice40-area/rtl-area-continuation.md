@@ -25,8 +25,81 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 - Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
-  accepted; H095 accepted on the direct lineage; H096 accepted on merged main.
-- Next hypothesis ID: H097.
+  accepted; H095 accepted on the direct lineage; H096 accepted atop merged
+  main; H102 accepted atop H096.
+- Next hypothesis ID: H110.
+- H109 hypothesis row: Yosys declines automatic recoding of the 60-state
+  sequencer FSM and leaves its many equality consumers on a six-bit binary
+  state. Force complete one-hot synthesis encoding and gate on the deterministic
+  LUT-plus-unpackable-FF floor, not LUT count alone. Mapping reduces that floor
+  by eleven cells and placement by three LCs, but canonical routing remains
+  stuck on one overused wire through 29,349 iterations. Decision: rejected and
+  reverted.
+- H108 hypothesis row: `REVERB=0` already folds both comb datapaths to the
+  identity, but `blend_restart` still compares the live and prior reverb modes,
+  retaining disabled-feature control/state in the HX8K build. Gate only that
+  restart term with `REVERB`; preserve `REVERB=1` textually. Whole-PSG mapping
+  adds 39 LUT4s, four carries, one unpackable FF, 40 floor cells, and 47 routed
+  LCs. Decision: rejected and reverted before equivalence work.
+- H107 hypothesis row: `psg_seq` stores playback activity in an unpacked
+  `playing[]` array and continuously repacks it into the dynamically indexed
+  output `play_bits`. Use `play_bits` as the sole packed storage to remove the
+  duplicate representation and simplify source/array lowering. Whole-PSG
+  mapping adds 79 LUT4s, two carries, 73 floor cells, and 79 routed LCs despite
+  six fewer unpackable FFs. Decision: rejected and reverted.
+- H106 hypothesis row: after diagnostic readback was composed on main, upload
+  data writes and CPU reads contain two priority-separated copies of the same
+  16-bit pointer increment. Factor one exact advance transaction without
+  changing H005's index/window form. The 6,291,456-transition proof, hold test,
+  and 4,608-byte readback pass, and the isolated consumer falls from 51 to 49
+  LUT4s. Whole-PSG mapping instead adds 51 LUT4s, one unpackable FF, 52 floor
+  cells, and 54 routed LCs. Decision: rejected and reverted.
+- H105 hypothesis row: `vcnt` only visits 0--7 because V_LD terminates at 7
+  and V_ST terminates at 4, yet the accepted netlist maps all four declared
+  counter bits. A three-bit form is exact and removes one FF/two carries in the
+  complete isolated consumer, but adds 24 LUT4s. Decision: rejected before
+  production.
+- H104 hypothesis row: encode the three legal instrument-kind states directly
+  as one-hot `{wavetable, SFX}` rather than `{on, wavetable}`. This keeps two
+  flops but makes both hot mode predicates direct wires. The proof passes, but
+  the complete isolated consumer changes from 138 to 139 LUT4s with two FF and
+  eight carries unchanged. Decision: rejected before production.
+- H103 hypothesis row: the post-H096 launched mask and ascending T_NL scan do
+  identify the fallback-speed owner exactly, but spelling that ownership as a
+  lower-bit priority predicate changes the complete isolated consumer from 26
+  to 28 LUT4s while retiring only one FF. Decision: rejected before production.
+- H102 hypothesis row: encode wavetable bass in `w_ins_fx[0]`, which is forced
+  zero and otherwise dead whenever `w_ins_wt=1`, and retire the dedicated
+  `w_ins_bass` working flop. The 1,024-tuple mode/store/reload proof and complete
+  H096 battery pass; two forced builds reproduce 6,360 LUT4 / 1,321 carry /
+  1,458 FF / 508 unpackable / 14 EBR / floor 6,868 / 7,087 routed LCs at
+  140.92/32.65 MHz. Decision: accepted as generic RTL/proof commit `ccfb2a0`.
+- H101 hypothesis row: store the four pending trigger row/length tuples in one
+  prefetched block RAM, with resettable per-field valid bits preserving zeroed
+  state and same-edge CPU-write precedence. A plain EBR has a one-cycle stale
+  read counterexample; both exact forwarding variants exceed the 97-cell
+  isolated reference floor. Archive audit: this inadvertently duplicated
+  legacy R.44's already-closed mechanism; no production edit was repeated.
+  Decision: rejected before production RTL.
+- H100 hypothesis row: restrict `released` storage to the four foreground
+  slots. Music-slot bits have no set path and are therefore invariant zero;
+  their loop condition can bypass the foreground array. The proof passes
+  2,560 transitions, but Yosys already removes the upper elements and both
+  complete isolated forms map identically. Decision: rejected before
+  production RTL.
+- H099 hypothesis row: stop rewriting the effective channel-filter tuple from
+  the base tuple and publish the already-live base tuple when `w_ins_on=0`.
+  The ownership proof passes 4,224 legal paths and the isolated consumer falls
+  from 29 to 12 LUT4s, but both whole-PSG variants regress. Decision: rejected
+  and reverted.
+- H098 hypothesis row: encode the fast multiplier's exact 3--12 active-step
+  durations as start points on one four-bit maximal-LFSR segment. The token is
+  exact and removes four LUT4s/two carries in isolation, but the whole PSG adds
+  20 LUT4s, 19 floor cells, and 16 routed LCs. Decision: rejected and reverted.
+- H097 hypothesis row: retire `ml_cpu` by reusing `walk_tick` as the
+  `ML_STOP` provenance token. The invariant is exact and saves three LUT4s and
+  one FF in isolation, but the whole PSG adds 18 LUT4s, four carries, 17 floor
+  cells, and 20 routed LCs. Decision: rejected and reverted.
 - H096 hypothesis row: retire `tch_seen` by consuming the existing launched-
   channel worklist when the left-most qualifying music channel owns pattern
   pacing. Exhaustive scan equivalence covers all 256 launch/qualifier masks.
@@ -70,14 +143,32 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h089/`, `build/experiments/h090/`, and
   `build/experiments/h091/`, `build/experiments/h092/`, and the rejected
   `build/experiments/h093/`, the rejected `build/experiments/h094/`, and the
-  accepted `build/experiments/h095/` and `build/experiments/h096/`, plus
+  accepted `build/experiments/h095/` and `build/experiments/h096/`, the
+  rejected `build/experiments/h097/`, `build/experiments/h098/`, and
+  `build/experiments/h099/`, `build/experiments/h100/`,
+  `build/experiments/h101/`, the accepted `build/experiments/h102/`, and the
+  rejected `build/experiments/h106/`, `build/experiments/h107/`, and
+  `build/experiments/h108/` and `build/experiments/h109/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H096 accepted as generic RTL/proof commit
-  `a647185` after complete verification. Consuming the launch worklist removes
-  31 global LUT4s, one FF, and 28 deterministic floor cells from merged main.
-- Latest rejected variants: H094's packed transition inequality is globally
+- Latest completed decision: I003 accepted H102 source-contract v5 after
+  deterministic A/B generation and the complete structural/value/generic gate.
+  H109 remains rejected because its eleven-cell deterministic floor reduction
+  cannot complete canonical seed-1 routing. H102 remains the best accepted
+  generic RTL/proof point at `ccfb2a0`.
+- Latest rejected variants: H109's one-hot sequencer state lowers mapped floor
+  and placed LCs slightly but cannot route. H108's `REVERB=0` restart specialization is
+  globally much worse before equivalence work. H107's packed playback register is globally much
+  worse despite simpler source and fewer unpackable FFs. H106's exact factored
+  upload/read pointer advance
+  is globally much worse despite its two-LUT4 isolated saving. H101's pending-
+  trigger EBR is inexact without
+  forwarding and locally worse with it. H100's unreachable music release bits are already
+  removed by Yosys. H099's exact filter-publication ownership change
+  is globally worse despite its 17-LUT4 isolated saving. H098's exact multiplier iteration token is globally
+  worse despite its isolated four-LUT4/two-carry saving. H097's exact `ML_STOP` provenance reuse is globally
+  worse despite its isolated three-LUT4/one-FF saving. H094's packed transition inequality is globally
   worse despite its isolated one-LUT4 saving. H093's grouped DQ table is locally
   worse. H092's result-flop merge is globally worse despite
   its isolated one-LUT4/one-FF saving. H091's remaining-ticks compression changes
@@ -258,10 +349,53 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - **Repeat only if:** retry after rejection only if the accepted H096 revision,
   source-boundary schema, or an R.84 prerequisite changes.
 
+## Main Integration I003
+
+- **ID:** I003.
+- **Hypothesis:** accepted H102 `ccfb2a0` changes exactly
+  `rtl/psg_common.svh`, `rtl/psg_seq.sv`, and `tools/psg_hw_forms.py` relative
+  to the I002 H096 source boundary. A v5 certificate should bind this exact
+  revision while preserving every R.84 manifest, structural join, event, and
+  live-value result.
+- **Scope:** source-certificate tools, generated proof evidence, and the two PSG
+  continuation ledgers only. Do not alter H102 production RTL, the accepted
+  image/controller/manifest/events, tolerances, or begin R.84 B2.
+- **Baseline:** H102's two forced builds reproduce 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 14 EBRs, 6,868 floor cells and 7,087 routed LCs at
+  140.92/32.65 MHz. I002 source-contract v4 is `2af2c61f...` on H096.
+- **Change:** extend the exact lineage boundary through H102 and independently
+  convict revision, changed-source, hash, schema and type drift.
+- **Result:** independent A/B generation produces byte-identical v5 source
+  certificates at SHA-256 `d54dde5d...`; all thirteen source mutations are
+  convicted. Candidate `6f5713e2...`, manifest `438d85a0...`, control
+  `a9233d6d...`, requirements `5a7b9809...`, controller `f86698f6...`, events
+  `5b178017...`, inventory `95619e61...`, and the accepted image remain
+  byte-identical. Both structural audits pass 152,893 rows and both value
+  audits pass 192,896 pairs / 43,459 service transactions. Complete H102 forms,
+  `make test-psg`, `make test-clocks`, the default model, Python compilation,
+  strict OpenSpec and diff checks pass.
+- **Decision:** accepted. H102 is now source-bound to the accepted R.84 proof
+  lineage without starting B2 or changing production RTL/image artifacts.
+- **Repeat only if:** retry after rejection only if the accepted H102 revision,
+  source-boundary schema, or an R.84 prerequisite changes.
+
 ## Next Experiment Gate
 
-- Next experiment: H097 on accepted H096 `a647185`, only after a fresh source
-  and DNR audit. It must not repeat H096's launch-worklist/pacing-state family,
+- Next experiment: H110 on accepted H102 `ccfb2a0`, only after a fresh source
+  and DNR audit. It must not repeat H096/H103's
+  launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
+  encoding family,
+  H104's instrument-kind state-encoding family,
+  H105's record-transfer counter-width family,
+  H106's upload/diagnostic pointer-advance factoring family,
+  H107's unpacked/packed playback-state representation family,
+  H108's disabled-reverb restart specialization family,
+  H109's sequencer-FSM synthesis-encoding family,
+  H097's `ML_STOP` provenance/lifetime-alias family,
+  H098's fast multiplier iteration-token family,
+  H099's filter-tuple ownership/publication-source family,
+  H100's foreground/music release-state partition family,
+  H101's pending-trigger row/length memory family,
   H095's now-composed foreground trigger-length
   prefix family, H094's now-closed packed transition-inequality
   family, H093's DQ coefficient-decoder spelling family, H092's EA2/EA4 result-
@@ -293,7 +427,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
-- Blocked repeat families: R.40--R.42 lifetime aliases; R.63/R.64 multiplier
+- Blocked repeat families: R.40--R.42 lifetime aliases; R.44 pending-trigger
+  EBR migration; R.63/R.64 multiplier
   adder sharing; R.67 parallel reciprocal port; R.68/R.69 partial schedule
   encodings; R.76--R.78 detune-result lifetimes; R.79 held CDC payload;
   R.80 reciprocal coefficient factoring; R.82 detune recomputation; R.83
@@ -399,6 +534,19 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H094 | rejected | Keep separate transition inequalities: one packed comparison saves one isolated LUT4 but adds three global LUT4/floor cells. |
 | H095 | accepted | Keep the exact foreground trigger-length overflow prefix on the direct lineage; it removes four global LUT4s, three carries, and four floor cells. |
 | H096 | accepted | Consume the launched-channel worklist after selecting the pacing owner; this removes 31 LUT4s, one FF, and 28 deterministic floor cells on merged main. |
+| H097 | rejected | Keep the dedicated `ml_cpu` provenance bit: `walk_tick` is equivalent and saves three LUT4s/one FF alone, but adds 18 LUT4s, four carries, 17 floor cells, and 20 routed LCs globally. |
+| H098 | rejected | Keep the binary multiplier countdown: an exact LFSR token saves four LUT4s/two carries alone, but adds 20 LUT4s, 19 floor cells, and 16 routed LCs globally. |
+| H099 | rejected | Keep the explicit filter base-copy writes: publication ownership saves 17 LUT4s alone, but both whole-PSG variants regress deterministic floor and placement. |
+| H100 | rejected | Keep the eight-entry source array: music release bits are invariant zero, but Yosys already prunes them and the explicit four-entry form maps identically at 17 LUT4s/four FF. |
+| H101 | rejected | Keep pending trigger row/length in FFs: a plain EBR is one cycle stale after a CPU write, while exact one-/two-EBR forwarding forms raise the isolated floor from 97 to 107/104 cells. |
+| H102 | accepted | Encode wavetable bass in otherwise-dead `w_ins_fx[0]`; this removes four global LUT4s, one FF, one unpackable FF, and five deterministic floor cells. |
+| H103 | rejected | Keep `ptick_seen`: the exact lower-launch-prefix replacement removes one FF but adds two LUT4s in the complete isolated pacing consumer. |
+| H104 | rejected | Keep `{w_ins_on,w_ins_wt}`: direct one-hot `{SFX,wavetable}` mode state is exact but adds one LUT4 in the complete registered consumer. |
+| H105 | rejected | Keep the four-bit record-transfer counter: the exact three-bit form removes one FF/two carries but adds 24 LUT4s in the complete isolated consumer. |
+| H106 | rejected | Keep the separate upload-write and diagnostic-read pointer updates: exact factoring saves two LUT4s alone but adds 51 LUT4s, one unpackable FF, 52 floor cells, and 54 routed LCs globally. |
+| H107 | rejected | Keep the unpacked `playing[]` storage plus exported packed view: direct `play_bits` storage removes six unpackable FFs but adds 79 LUT4s, two carries, 73 floor cells, and 79 routed LCs globally. |
+| H108 | rejected | Keep the reverb-mode term in `blend_restart` even for `REVERB=0`: parameter-gating it adds 39 LUT4s, four carries, one unpackable FF, 40 floor cells, and 47 routed LCs globally. |
+| H109 | rejected | Keep the sequencer FSM in binary encoding: forced one-hot is -6 LUT4/-5 unpackable/-11 floor and places three LCs lower, but adds 57 FF/four carries and cannot complete canonical routing. |
 
 ## Hypothesis H001
 
@@ -612,6 +760,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Square/pulse threshold forms: H004 and H049.
 - Audio-upload page transform: H050.
 - State-RAM replay-flop retirement: H058.
+- Launch/pacing fallback-state retirement: H103.
+- Instrument-kind state encoding: H104.
+- Record-transfer counter width: H105.
 - Organ quotient-byte reconstruction: H059.
 - Alternate-triangle `/4` payload reconstruction: H060.
 - Fade-progress high-byte reconstruction: H061.
@@ -4547,6 +4698,566 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   channel ordering, T_NL visitation, pacing fallback ownership, launched-bit
   consumers, or multiplier-request scheduling changes materially.
 
+## Hypothesis H097
+
+- **ID:** H097.
+- **Hypothesis:** `ml_cpu` records only which path entered `ML_STOP`. Every
+  automatic entry from `W_MUS` or its `MS_RD/MS_CK` loop-back scan is dominated
+  by `walk_tick=1`, and the CPU-launch entry from `S_IDLE` can write
+  `walk_tick=0`. No state between either entry and `ML_STOP` changes that bit,
+  so the existing `walk_tick` register can select immediate versus delayed
+  music stops and the dedicated provenance flop can be retired.
+- **Scope:** exact transition/source-closure proof over every `ML_STOP` entry,
+  an isolated registered provenance consumer, then `rtl/psg_seq.sv`, a
+  permanent `tools/psg_hw_forms.py` check, whole-PSG mapping, and the complete
+  H096 battery only after an isolated deterministic win. No launch worklist,
+  pattern pacing, audio value, state-memory layout, schedule, interface, EBR,
+  diagnostic ARAM, R.84 executor, or tolerance change.
+- **Baseline:** accepted H096 commit `a647185` atop merged main: 6,364 LUT4s,
+  1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
+  seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks.
+- **Changed condition versus H096 and the lifetime DNR families:** H096 changes
+  the launched-channel worklist and pacing-owner state; R.40--R.42 and
+  R.76--R.79 alias arithmetic/service payload storage. H097 changes neither.
+  It reuses a controller bit only after its tick-walk meaning has already
+  selected the automatic music-completion path and proves all entry paths
+  before changing production RTL.
+- **Change:** scratch proof and measured production probe removed `ml_cpu`, wrote `walk_tick=0` when `S_IDLE` claimed
+  a CPU music launch, retain the already-one bit across automatic completion
+  and loop-back scan, and select `mus_stop(2'd2)` exactly when `walk_tick` is
+  one at `ML_STOP`.
+- **Result:** 603 direct, loop-back scan, and held-path cases preserve the
+  immediate/delayed stop class. The complete isolated provenance consumer
+  falls from six to three LUT4s and two to one FF. Canonical whole-PSG mapping
+  instead changes 6,364 to 6,382 LUT4s, 1,321 to 1,325 carries, 1,459 to 1,458
+  flops, 509 to 508 unpackable flops, floor 6,873 to 6,890, and seed-1 route
+  7,095 to 7,115 LCs. Timing passes at 136.50/32.82 MHz, but all authoritative
+  area gates except FF count regress.
+- **Decision:** rejected after whole-PSG synthesis. Production RTL and the
+  conditional permanent proof are reverted byte-for-byte; no fidelity gate or
+  accepted area claim remains.
+- **Repeat only if:** if rejected, retry only after `ML_STOP` entry topology,
+  `walk_tick` lifetime, CPU-launch arbitration, loop-back scan, stop classes,
+  or mapper sequential lowering changes materially.
+
+## Hypothesis H098
+
+- **ID:** H098.
+- **Hypothesis:** the multi-pumped multiplier needs exactly 3, 4, 5, 6, 8,
+  9, 10, or 12 active fast-clock steps across its two supported radix
+  parameters. Each duration can be a start point on one four-bit maximal-LFSR
+  segment ending at terminal state one, with zero retained as idle. A shift
+  plus one XOR should replace the private binary decrement carry chain without
+  changing any request, product, acknowledge, or slow-domain busy clock.
+- **Scope:** exhaustive token/duration proof, transaction equivalence for both
+  radix parameters and all request modes, isolated synthesis of the complete
+  registered count/load/terminal consumer, then `rtl/psg_mulmp.sv`, permanent
+  multiplier proofs, whole-PSG mapping, and the complete H096 battery only
+  after an isolated deterministic win. No multiplier recurrence, operand,
+  product, CDC synchronizer, request/acknowledge edge, sequencer padding,
+  schedule, interface, EBR, diagnostic ARAM, R.84 executor, or tolerance
+  change.
+- **Baseline:** accepted H096 commit `a647185` atop merged main: 6,364 LUT4s,
+  1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
+  seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks.
+- **Changed condition versus H006, H051, H070, and H090:** H006 and H090
+  respelled or shared the loaded duration decoder while retaining binary
+  decrement; H051 accepted a separate three-bit fixed-five-step DQ token;
+  H070's 24-state divider token was tested in a different service. H098 keeps
+  both existing duration decoders and `seq_pad` independent, changing only the
+  four-bit fast-domain multiplier iteration representation across its actual
+  variable duration set.
+- **Change:** the measured production probe used the primitive four-bit
+  `x^4+x^3+1` maximal-LFSR recurrence,
+  bind each legal duration to the unique start token that reaches one on its
+  final active edge, and retain the current terminal acknowledge action.
+- **Result:** 418,608 radix/mode/freeze traces preserve every busy and terminal
+  edge for both supported masks; the selected `x^4+x^3+1` form passes all
+  6,020 two-radix CDC transactions. Its complete isolated count consumer falls
+  from 14 to ten LUT4s and two to zero carries, with five FF unchanged.
+  Canonical whole-PSG mapping instead changes 6,364 to 6,384 LUT4s, 1,321 to
+  1,319 carries, 1,459 flops unchanged, 509 to 508 unpackable flops, floor
+  6,873 to 6,892, and seed-1 route 7,095 to 7,111 LCs. Timing passes at
+  137.14/32.70 MHz, but every authoritative area metric except carries
+  regresses.
+- **Decision:** rejected after whole-PSG synthesis. Production multiplier,
+  transaction bench, and conditional permanent proof are reverted byte-for-
+  byte; no fidelity gate or accepted area claim remains.
+- **Repeat only if:** if rejected, retry only after legal multiplier duration
+  set, fast recurrence, terminal acknowledge, radix parameter, request-load
+  decoder, or mapper sequential lowering changes materially.
+
+## Hypothesis H099
+
+- **ID:** H099.
+- **Hypothesis:** `w_ch_{damp,rev,det,buzz,noiz}` is the effective filter tuple
+  only while a custom instrument is active. On trigger without an instrument
+  and on an instrument-to-ordinary-note exit, the tuple is synchronously
+  rewritten from `w_bf_*` and later published unchanged. Selecting `w_bf_*`
+  at `P_W2` whenever `w_ins_on=0` should remove both eight-bit register-write
+  arms while retaining the stored effective tuple and all instrument maxima.
+- **Scope:** exhaustive tuple/transition/publication proof over trigger,
+  ordinary-note, retained-instrument, and new-instrument paths; isolated
+  synthesis of the complete registered eight-bit filter/publication consumer;
+  then `rtl/psg_seq.sv`, a permanent `tools/psg_hw_forms.py` check, whole-PSG
+  mapping, and the complete H096 battery only after an isolated deterministic
+  win. No filter code, trit maximum, base/instrument precedence, active-bank
+  storage, publication format, schedule, interface, EBR, diagnostic ARAM,
+  R.84 executor, or tolerance change.
+- **Baseline:** accepted H096 commit `a647185` atop merged main: 6,364 LUT4s,
+  1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
+  seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks.
+- **Changed condition versus H045 and the lifetime DNR families:** H045 kept
+  all tuple writes and only respelled the three trit maxima, mapping
+  identically in isolation. H099 retains those relational maxima and every
+  stored bit. It changes ownership of two redundant base-copy writes and the
+  publication source, not an arithmetic/service payload lifetime alias.
+- **Change:** select `w_bf_*` at publication when `w_ins_on=0`. Variant one
+  removes the base-copy assignments in both `T_SP` and ordinary `K_LD`;
+  variant two restores `T_SP` initialization and removes only the ordinary
+  `K_LD` exit writes.
+- **Result:** the transition proof passes all 4,224 legal two-operation paths,
+  and the complete isolated registered consumer improves from 29 to 12 LUT4s
+  with 17 FF unchanged. Variant one maps at 6,371 LUT4s / 1,321 carries /
+  1,459 FF / 508 unpackable / floor 6,879 and routes at 7,100 LCs with
+  144.30/32.26 MHz timing: +7 LUT4s, -1 unpackable, +6 floor cells, and +5
+  routed LCs versus H096. Variant two maps at 6,398 LUT4s / 1,322 carries /
+  1,459 FF / 509 unpackable / floor 6,907 and routes at 7,128 LCs with
+  131.10/31.89 MHz timing: +34 LUT4s, +1 carry, +34 floor cells, and +33
+  routed LCs. Both pass timing but fail every authoritative deterministic area
+  gate except FF count.
+- **Decision:** rejected after the two permitted whole-PSG variants; production
+  RTL and the conditional permanent form are reverted byte-for-byte.
+- **Repeat only if:** if rejected, retry only after filter tuple ownership,
+  instrument-active state, trigger/exit topology, publication source, stored
+  effective tuple, or mapper register-enable lowering changes materially.
+
+## Hypothesis H100
+
+- **ID:** H100.
+- **Hypothesis:** only CPU foreground slots can execute the sole
+  `released[...] <= 1` assignment. Music-slot triggers clear their dynamic
+  array element, but music slots can never make it non-zero. Restricting
+  `released` to four foreground bits and treating every music slot as not
+  released should remove four unreachable FFs and the upper dynamic-write
+  targets without changing loop/release behavior.
+- **Scope:** exhaustive state-transition proof across reset, trigger clear,
+  simultaneous CPU release, foreground/music slot selection, instrument-bank
+  selection, and the EA5 loop predicate; isolated synthesis of the complete
+  registered state/consumer; then `rtl/psg_seq.sv`, a permanent
+  `tools/psg_hw_forms.py` invariant, canonical whole-PSG synthesis, and the
+  complete H096 battery only after deterministic isolated and global wins. No
+  release command, loop condition, trigger ordering, slot count, schedule,
+  interface, EBR, diagnostic ARAM, R.84 executor, or tolerance change.
+- **Baseline:** accepted H096 commit `a647185` atop merged main: 6,364 LUT4s,
+  1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
+  seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks.
+- **Changed condition versus lifetime/storage DNR families:** H037 tested a
+  combinationally dead detune source bit; H062/H063 reconstructed live stored
+  waveform/noise values; H092 merged two reachable result flops. H100 instead
+  removes four array elements with no set transition and retains every
+  reachable foreground bit plus the exact same-edge CPU-write precedence.
+- **Change:** in the scratch consumer, replace the eight-entry `released`
+  array with four
+  foreground entries, clear it only on foreground trigger, and make the EA5
+  release guard true for every music slot.
+- **Result:** exhaustive induction covers 2,560 reset-reachable combinations
+  of current foreground state, foreground/music slot, trigger clear,
+  same-edge CPU release, and instrument-bank loop selection. The production
+  JSON contains only `released[0]` through `released[3]`: Yosys already proves
+  the four music elements constant. Source-matched isolated reference and
+  explicit four-entry candidate both map to 17 LUT4s / zero carries / four
+  FFs.
+- **Decision:** rejected before production RTL because the desired state and
+  logic pruning is already present in the mapped netlist; no permanent form or
+  production file changed.
+- **Repeat only if:** if rejected, retry only after slot partitioning, CPU
+  release addressing, trigger ordering, loop/release semantics, or mapper
+  dynamic-array lowering changes materially.
+
+## Hypothesis H101
+
+- **ID:** H101.
+- **Hypothesis:** the four foreground `trg_row` and `trg_len` arrays consume 44
+  unpackable FFs even though the engine holds `c[1:0]` stable throughout the
+  eight-cycle `V_LD` prelude before `T_FL`. A four-entry block RAM can prefetch
+  both pending fields without a new state; eight resettable valid bits retain
+  the current reset/consume-to-zero contract. One EBR plus eight FFs should
+  reduce the deterministic LC floor materially.
+- **Scope:** isolated synthesis of the complete CPU-write, synchronous-read,
+  valid-bit, consume-clear, and row/length output consumer; exact proof of
+  reset, read-address settling, independent field writes, consume, and
+  same-edge CPU-write precedence; then `rtl/psg_seq.sv`, permanent
+  `tools/psg_hw_forms.py` schedule/transition checks, canonical whole-PSG
+  synthesis, and the complete H096 battery only after deterministic isolated
+  and global wins. At most two memory spellings. No trigger value/clamp,
+  command ordering, channel mapping, `T_FL` cadence, state-memory layout,
+  diagnostic ARAM, R.84 executor, or tolerance change.
+- **Baseline:** accepted H096 commit `a647185` atop merged main: 6,364 LUT4s,
+  1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
+  seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks. `trg_row` and
+  `trg_len` account for 20 and 24 unpackable FFs respectively.
+- **Changed condition versus state-memory DNR families:** none. The initial
+  active-index audit compared only H019 and missed legacy R.44, which had
+  already tested this exact pending-trigger EBR migration with valid bits,
+  `V_LD` prefetch, and CPU collision bypass. H101's isolated result independently
+  reproduces R.44's reason for rejection and closes the indexing gap.
+- **Change:** pack row and length into one four-entry synchronous RAM;
+  use independent per-field write masks if they infer one EBR, otherwise test
+  two narrow EBRs as the sole fallback. Clear only valid bits at consumption.
+- **Result:** the source FF consumer maps at 53 LUT4s / zero carries / 44 FFs /
+  44 unpackable / zero EBRs, for a 97-cell floor. A plain packed EBR maps at
+  44 LUT4s / two carries / 36 FFs / 26 unpackable / one EBR, for a 70-cell
+  floor, but its registered read returns the old field for one cycle after a
+  same-address CPU write. A concrete previous-cycle-write/`T_FL` trace gives
+  reference row 2 and RAM row 1. The required shared `{field,slot,data}`
+  write-through state maps at 78 LUT4s / two carries / 46 FFs / 29 unpackable /
+  one EBR, floor 107. The two-EBR fallback maps at 75 LUT4s / two carries /
+  46 FFs / 29 unpackable / two EBRs, floor 104. Both exact forms are locally
+  larger than the FF reference.
+- **Decision:** rejected before production RTL; no permanent form or
+  production file changed. Do not repeat R.44/H101 unless its explicit repeat
+  condition is met.
+- **Repeat only if:** if rejected, retry only after trigger register semantics,
+  CPU/engine ordering, `V_LD` prefetch cadence, iCE40 RAM write-mask inference,
+  EBR budget, or mapper memory lowering changes materially.
+
+## Hypothesis H102
+
+- **ID:** H102.
+- **Hypothesis:** `w_ins_bass` is consumed only when `w_ins_wt=1`. In that
+  mode, I_TR4 forces `w_ins_fx=0`, `ins_use=0`, and every effect consumer
+  ignores `w_ins_fx`; in non-wavetable mode bass is ignored and I_LD supplies
+  the real effect. Encoding bass in `w_ins_fx[0]` should retire one working FF
+  while keeping the record reload and all externally visible values exact.
+- **Scope:** exhaustive mode/trigger/note/store/reload proof; isolated synthesis
+  of the complete registered bass/effect load/store/publication consumer; then
+  `rtl/psg_common.svh`, `rtl/psg_seq.sv`, a permanent
+  `tools/psg_hw_forms.py` check, canonical whole-PSG synthesis, and the complete
+  H096 battery only after deterministic isolated and global wins. No wavetable
+  bass behavior, custom-instrument effect, state address/width, schedule,
+  interface, EBR, diagnostic ARAM, R.84 executor, or tolerance change.
+- **Baseline:** accepted H096 commit `a647185` atop merged main: 6,364 LUT4s,
+  1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
+  seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks.
+- **Changed condition versus storage/lifetime DNR families:** H082 aliased two
+  wide slide pipeline roles and paid a new D-input/fanout mux. H102 encodes one
+  Boolean in an existing field that is semantically fixed at zero in the only
+  mode where the Boolean is observable; the same three-bit field and record
+  word already survive across every required boundary.
+- **Change:** capture bass in `w_ins_fx[0]`; for wavetable instruments
+  retain it while clearing the upper effect bits, publish bass from that bit,
+  and use the same bit in record word 3 so record word 9 reload remains the
+  authoritative complete effect/encoded-bass field.
+- **Result:** the permanent form exhausts all 1,024 old/new mode, bass, effect,
+  store, and reload tuples. The complete isolated registered consumer improves
+  from 21 LUT4s / five FFs to 18 LUT4s / four FFs. Full forms, full/PREVIEW
+  lint, Python compilation, the default H095-bound R.84 model, `make test-psg`,
+  and all 59 frozen renders pass. Ordinary `/4`, `/5`, and `/6` cadence remains
+  572 clocks, while multipumped cadence remains 524 clocks; all six tick
+  windows retain zero late flips. Clock-divider checks pass. All eight explicit
+  Celeste music-0 PREVIEW checks at 1,275 and 159 clocks/sample for masks
+  7/1/2/4 pass at 25/27 voiced windows (93%). Synthetic and Celeste recovery
+  report zero coalesced, delayed, or dropped samples. Four-second hardware and
+  PREVIEW SFX-10 renders have zero `click-v1` events. A freshly rebuilt
+  five-frame Celeste smoke reports 2,079/3,668 active samples, range
+  -21,544..7,711, and 1,014 levels; its compile uses the same
+  `WIDTHTRUNC` waiver as the PSG gates because the console target omits that
+  waiver for three pre-existing `psg_walk` warnings. Strict OpenSpec, diff, and
+  scope checks pass.
+- **Physical result:** two forced HX8K builds reproduce JSON SHA-256
+  `1b48d1ca5a757c47088dfec051651d2b018c9a4aee166b4881dae8fb6fad7cd9`
+  and ASC SHA-256
+  `008a579edd06b6503363f9cddb1b93600db2f034a1328f20b5538162a5b78f09`.
+  H096 to H102 changes 6,364 to 6,360 LUT4s, 1,321 carries unchanged, 1,459 to
+  1,458 flops, 509 to 508 unpackable flops, 14 EBRs unchanged, floor 6,873 to
+  6,868, and seed-1 route 7,095 to 7,087 LCs. Routed timing changes from
+  151.17/33.09 to 140.92/32.65 MHz versus 112.50/18.75-MHz constraints. The
+  four-LUT4, one-FF, one-unpackable, and five-floor reductions are deterministic;
+  the eight-LC route reduction remains below placement sensitivity and is not
+  overclaimed.
+- **Decision:** accepted as generic RTL/proof commit `ccfb2a0`. Because H102
+  changes both `rtl/psg_common.svh` and `rtl/psg_seq.sv`, the companion must
+  regenerate its source certificate and C2-C-C live-value lineage before
+  integration; H102 makes no R.84/B2 proof or integration claim.
+- **Repeat only if:** if rejected, retry only after wavetable/effect mode
+  exclusivity, record packing, trigger stage ordering, effect consumers, or
+  mapper D-input lowering changes materially.
+
+## Hypothesis H103
+
+- **ID:** H103.
+- **Hypothesis:** H096 leaves the launch mask unchanged until the first
+  non-looping pacing owner and then clears it completely. Because T_NL visits
+  music slots in ascending order, a marked channel with no lower marked music
+  slot is exactly the first launched channel and therefore the unique fallback-
+  speed owner. Deriving that priority certificate from the existing mask should
+  retire `ptick_seen` without adding state or changing pacing.
+- **Scope:** exhaustive launch/qualifier/scan proof over all 256 masks;
+  isolated synthesis of the complete registered launch/pacing consumer; then
+  `rtl/psg_seq.sv`, permanent `tools/psg_hw_forms.py` coverage, canonical
+  whole-PSG synthesis, and the complete H102 battery only after deterministic
+  isolated and global wins. No pattern speed/length, channel order, launch
+  mask, multiplier request, schedule, interface, memory, EBR, diagnostic ARAM,
+  R.84 executor, or tolerance change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus H096's launch-worklist/state family:** H096 is now
+  accepted and permanently proves that the mask remains intact before the
+  owner and becomes zero after it. H103 consumes that new post-H096 mask
+  contract to replace the separate fallback one-shot; it does not retry the
+  accepted request-ownership transform or a rejected spelling.
+- **Change:** in an isolated probe, replace `!ptick_seen` with an exact lower-
+  launch-prefix predicate for music slots 4--7 and remove the flag's reset,
+  set, and launch-clear assignments.
+- **Result:** exhaustive evaluation passes all 256 launch/qualifier masks. The
+  complete registered launch/pacing consumer changes from 26 LUT4s and 18 FFs
+  to 28 LUT4s and 17 FFs. Retiring the flag therefore costs two LUT4s and fails
+  the deterministic isolated area gate; no production RTL, permanent proof,
+  whole-PSG synthesis, or fidelity run is warranted.
+- **Decision:** rejected before production; the probe remains ignored under
+  `build/experiments/h103/`, and no production or permanent-proof residue
+  remains.
+- **Repeat only if:** if rejected, retry only after music-slot ordering, T_NL
+  visitation, launch-mask clearing, fallback-speed ownership, or mapper dynamic-
+  index/prefix lowering changes materially.
+
+## Hypothesis H104
+
+- **ID:** H104.
+- **Hypothesis:** the instrument working state has only three legal kinds:
+  ordinary note/off, custom-SFX instrument, and wavetable instrument. The
+  current `{w_ins_on,w_ins_wt}` code makes the latter two hot predicates
+  `w_ins_on & ~w_ins_wt` and `w_ins_on & w_ins_wt`. Storing those predicates
+  directly as one-hot `{w_ins_wt,w_ins_use}` should keep the same two state bits
+  while removing repeated decoding and simplifying the record contract.
+- **Scope:** exhaustive kind-transition and store/reload proof; isolated
+  synthesis of the complete registered kind/record/publication consumer; then
+  `rtl/psg_common.svh`, `rtl/psg_seq.sv`, permanent `tools/psg_hw_forms.py`
+  coverage, canonical whole-PSG synthesis, and the complete H102 battery only
+  after deterministic isolated and global wins. No instrument semantics,
+  record width, effect priority, publication payload, schedule, interface,
+  memory/EBR count, diagnostic ARAM, R.84 executor, or tolerance change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus H100 and lifetime DNR families:** H100 partitioned
+  a release array whose dead music entries Yosys already pruned. H104 changes
+  neither array topology nor lifetime aliasing; it re-encodes a live three-state
+  scalar protocol so the two existing mutually exclusive consumers become the
+  stored bits themselves.
+- **Change:** in an isolated probe, replace stored `w_ins_on` with `w_ins_use`, retain
+  `w_ins_wt`, derive `w_ins_on = w_ins_use | w_ins_wt`, and store/reload the
+  one-hot pair without changing record width or visible publication values.
+- **Result:** 53,254 exhaustive transition, record, mode-control, and boundary-
+  data checks pass. The complete registered kind/record/publication consumer
+  changes from 138 LUT4s, eight carries, and two FFs to 139 LUT4s, eight carries,
+  and two FFs. Direct mode predicates do not repay the derived `on` decode and
+  changed state-input mux, so the candidate fails the deterministic isolated
+  area gate; no production RTL, permanent proof, whole-PSG synthesis, or
+  fidelity run is warranted.
+- **Decision:** rejected before production; all probe files remain ignored
+  under `build/experiments/h104/`, and no production or permanent-proof residue
+  remains.
+- **Repeat only if:** if rejected, retry only after instrument-kind reachability,
+  trigger/fetch transitions, record packing, mode consumers, or mapper decode
+  sharing changes materially.
+
+## Hypothesis H105
+
+- **ID:** H105.
+- **Hypothesis:** the record-transfer counter `vcnt` is declared four bits, but
+  V_LD resets at 7 and V_ST resets at 4; every load/store address helper and
+  record-pack selector therefore consumes only values 0--7. The H102 netlist
+  still contains four `vcnt` flip-flops and high-bit D logic. Narrowing the
+  protocol and helper inputs to three bits should retire real mapped state and
+  simplify the counter without changing any visited word or hold behavior.
+- **Scope:** exhaustive V_LD/V_ST/hold transition and address proof; isolated
+  synthesis of the complete registered counter/address/record-select consumer;
+  then `rtl/psg_seq.sv`, permanent `tools/psg_hw_forms.py` coverage, canonical
+  whole-PSG synthesis, and the complete H102 battery only after deterministic
+  isolated and global wins. No schedule state, transfer count, record layout,
+  address value, hold/replay contract, interface, memory/EBR count, diagnostic
+  ARAM, R.84 executor, or tolerance change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus H007, H014, H037, and H065:** H007 accepted a
+  clock-derived arithmetic width; H014/H037 found source bits that Yosys already
+  pruned; H065 contracted live sample payloads and globally regressed. H105
+  targets a separately mapped control flop whose complete reachable protocol
+  is bounded by explicit terminal states, not a data-range estimate.
+- **Change:** in an isolated probe, narrow `vcnt`, `tick_issue`, and the two tick-word helper
+  inputs/constants from four to three bits while preserving every state update
+  and address value.
+- **Result:** 960 exhaustive V_LD/V_ST, bank, hold, address, selector, terminal,
+  and repeated hold-pattern checks pass. The complete registered counter,
+  address, and record-select consumer changes from 81 LUT4s, three carries, and
+  four FFs to 105 LUT4s, one carry, and three FFs. The one-FF/two-carry saving
+  does not offset 24 added LUT4s, so the candidate fails the deterministic
+  isolated area gate; no production RTL, permanent proof, whole-PSG synthesis,
+  or fidelity run is warranted.
+- **Decision:** rejected before production; all probe files remain ignored
+  under `build/experiments/h105/`, and no production or permanent-proof residue
+  remains.
+- **Repeat only if:** if rejected, retry only after V_LD/V_ST terminal counts,
+  hold compensation, tick-word addressing, record packing, or mapper counter
+  lowering changes materially.
+
+## Hypothesis H106
+
+- **ID:** H106.
+- **Hypothesis:** main's later diagnostic ARAM composition added a second
+  `wraddr <= wraddr + 1` branch after the upload-data branch. CPU writes retain
+  priority, so exactly one predicate covers both cases: address `$02` on a CPU
+  write, or a diagnostic read when no CPU write is active. Factoring that
+  transaction should expose one pointer update/enable path and simplify the
+  source while preserving the write side effect and H005 address transform.
+- **Scope:** exhaustive pointer/control/address-class transition proof;
+  isolated synthesis of the complete registered pointer and memory-write
+  consumer; then `rtl/psg_aram.sv`, permanent `tools/psg_hw_forms.py` coverage,
+  canonical whole-PSG synthesis, and the complete H102 battery only after
+  deterministic isolated and global wins. No upload index/window, pointer
+  value, CPU priority, memory write, diagnostic read, ARAM replay/hold,
+  interface, EBR count, R.84 executor, or tolerance change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus H005 and H050:** those experiments predate main's
+  diagnostic CPU-read auto-increment and changed only the upload index/window
+  transform. H106 retains accepted H005 exactly and factors the newly composed
+  mutually exclusive pointer-update branches around it.
+- **Change:** defined one priority-correct upload-advance predicate,
+  perform the optional address-$02$ memory write inside that transaction, and
+  retain address-$00/$01$ partial pointer writes in the non-advance CPU-write
+  arm.
+- **Result:** exhaustive checking passes all 6,291,456 pointer/control/data
+  transitions, the ARAM hold test passes, and the Verilator readback verifies
+  all 4,608 actual bytes through `$42ff`. The complete registered pointer/write
+  consumer falls from 51 to 49 LUT4s with 17 carries and 16 FF unchanged; full
+  and PREVIEW lint pass. Canonical forced HX8K mapping then changes H102's
+  6,360 LUT4 / 1,321 carry / 1,458 FF / 508 unpackable / 14 EBR / floor 6,868 /
+  7,087 routed LCs to 6,411 / 1,321 / 1,458 / 509 / 14 / floor 6,920 / 7,141.
+  Both clocks still pass at 148.70/30.71 MHz. The complete fidelity battery is
+  skipped because the deterministic LUT/floor and placement gates fail.
+- **Decision:** rejected and reverted. Production RTL and permanent proof are
+  restored exactly; ignored evidence remains under `build/experiments/h106/`.
+- **Repeat only if:** if rejected, retry only after CPU-write/read priority,
+  diagnostic pointer semantics, pointer update consumers, or mapper enable/mux
+  lowering changes materially.
+
+## Hypothesis H107
+
+- **ID:** H107.
+- **Hypothesis:** `psg_seq` stores eight playback-active bits in the unpacked
+  `playing[]` array, then continuously repacks the same bits into the exported
+  `play_bits` vector. Internal and external consumers dynamically index those
+  two source spellings. Making `play_bits` the sole packed register should
+  remove the redundant representation, simplify the RTL, and may give Yosys a
+  cheaper common mux/storage form.
+- **Scope:** replace only `playing[i]`, `playing[c]`, and `playing[fg_sl]` with
+  the identically indexed `play_bits` storage and remove the repacking assign;
+  then canonical whole-PSG synthesis before any broader proof/fidelity battery.
+  No playback transition, status/debug output, slot selection, trigger, stop,
+  release, R.84 executor, image, Tang, tolerance, or interface change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus H100:** H100 restricted unreachable elements of
+  the separate `released[]` array, which Yosys already pruned. H107 instead
+  removes the live unpacked-to-packed alias used by both dynamic internal
+  indexing and module outputs; no state domain is restricted.
+- **Change:** used the output `play_bits` vector itself as the canonical
+  eight-bit playback register and eliminate `playing[]` plus its repacking
+  assignment.
+- **Result:** full and PREVIEW lint pass. Canonical forced HX8K mapping changes
+  H102's 6,360 LUT4 / 1,321 carry / 1,458 FF / 508 unpackable / 14 EBR /
+  floor 6,868 / 7,087 routed LCs to 6,439 / 1,323 / 1,458 / 502 / 14 /
+  floor 6,941 / 7,166. Both clocks still pass at 151.17/33.76 MHz. The six-
+  unpackable-FF improvement does not offset 79 added LUT4s, two carries, 73
+  floor cells, or 79 routed LCs, so the complete fidelity battery is skipped.
+- **Decision:** rejected and reverted. `psg_seq.sv` is restored exactly;
+  ignored synthesis evidence remains under `build/experiments/h107/`.
+- **Repeat only if:** if rejected, retry only after the playback-state domain,
+  dynamic slot consumers, module interface, or Yosys array/vector lowering
+  changes materially.
+
+## Hypothesis H108
+
+- **ID:** H108.
+- **Hypothesis:** the HX8K target deliberately instantiates `REVERB=0`, and
+  Yosys already proves both zero-ring comb expressions equal their dry inputs.
+  The live/prior reverb-mode comparison nevertheless remains in
+  `blend_restart`, retaining disabled-feature control and record state. Gating
+  only that comparison with the elaboration-time `REVERB` parameter should
+  remove the surviving control cone while leaving `REVERB=1` textually exact.
+- **Scope:** add only `REVERB &&` to the reverb-mode inequality in
+  `blend_restart`; first run canonical whole-PSG synthesis. If mapping improves,
+  prove current-versus-candidate `REVERB=0` PCM byte equivalence across focused
+  mode transitions and the complete render corpus before any acceptance claim.
+  No enabled-reverb datapath, ring contents/address, blend arithmetic, other
+  restart predicate, schedule, state layout, R.84 executor, image, Tang,
+  tolerance, or interface change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus R.26 and H079:** R.26 established that the two
+  zero-ring comb datapaths are already mapper identities; H079 respelled
+  enabled reverb rounding. H108 changes neither. It targets the separate mode-
+  change restart predicate that survives only because disabled reverb state is
+  still treated as audibly relevant.
+- **Change:** qualified `s_ch_rev != last_rev_r` with `REVERB` inside the
+  otherwise unchanged restart predicate.
+- **Result:** full, PREVIEW, and explicit `REVERB=0` lint pass. Canonical forced
+  HX8K mapping changes H102's 6,360 LUT4 / 1,321 carry / 1,458 FF /
+  508 unpackable / 14 EBR / floor 6,868 / 7,087 routed LCs to 6,399 / 1,325 /
+  1,458 / 509 / 14 / floor 6,908 / 7,134. Both clocks still pass at
+  144.80/32.83 MHz. The deterministic mapping and placement gates fail, so
+  focused and complete `REVERB=0` PCM equivalence work is not warranted.
+- **Decision:** rejected and reverted. `psg_walk.sv` is restored exactly;
+  ignored synthesis evidence remains under `build/experiments/h108/`.
+- **Repeat only if:** if rejected, retry only after the `REVERB=0` contract,
+  blend-restart consumers, prior-tuple state, or mapper parameter folding
+  changes materially.
+
+## Hypothesis H109
+
+- **ID:** H109.
+- **Hypothesis:** Yosys explicitly reports that it does not mark the sequencer's
+  60-state, six-bit `sst` register for automatic FSM recoding because its
+  heuristic predicts no benefit. The state nevertheless drives a large number
+  of equality-selected next-state and datapath cones. Forcing one-hot encoding
+  may trade roughly 54 extra flops for a larger LUT/decode reduction and a
+  lower iCE40 logic-cell floor.
+- **Scope:** add only a Yosys `fsm_encoding="one-hot"` attribute to `sst`; run
+  canonical whole-PSG mapping and judge `LUT4 + unpackable FF` before any long
+  correctness battery. No state transition, numeric enum value consumed by
+  RTL, state count, schedule, datapath, R.84 executor, image, Tang, tolerance,
+  or interface change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus R.68/R.69 and H104:** R.68/R.69 moved the walk's
+  phase decode into new or overlaid control-ROM payloads. H104 hand-reencoded a
+  two-flop instrument-kind state. H109 changes neither source protocol: it asks
+  the synthesizer to recode the complete, much larger sequencer FSM while
+  retaining the same RTL transitions and outputs.
+- **Change:** forced one-hot synthesis encoding on `sst` only.
+- **Result:** canonical mapping changes H102's 6,360 LUT4 / 1,321 carry /
+  1,458 FF / 508 unpackable / 14 EBR / floor 6,868 to 6,354 / 1,325 /
+  1,515 / 503 / 14 / floor 6,857. Placement uses 7,084 LCs versus H102's
+  7,087, explicitly below placement sensitivity, and its preliminary clocks
+  pass at 137.68/34.55 MHz. Router2 then plateaus on one overused wire and does
+  not complete through 29,349 canonical seed-1 iterations; the bounded run is
+  stopped after more than five minutes. No routed timing or ASC exists, so the
+  complete correctness/fidelity battery is skipped.
+- **Decision:** rejected and reverted. `psg_seq.sv` is restored exactly;
+  ignored mapping/routing evidence remains under `build/experiments/h109/`.
+- **Repeat only if:** if rejected, retry only after the sequencer state graph,
+  decoder fanout, state consumers, or Yosys FSM extraction/encoding changes
+  materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -4836,11 +5547,25 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h095/{forms*,equiv.log,isolated-*,candidate*,cadence-*,preview-*,recovery-*,click-*,celeste-smoke*}` | exhaustive/formal proof, isolated and two forced whole-PSG builds, and complete acceptance battery | Accepted direct composition at -4 LUT4/-3 carries/-4 floor cells; all fidelity, timing, and reproducibility gates pass. |
 | `build/experiments/h096/{budget-*,preview-*,recovery*,clicks*,celeste-smoke*,clocks*,bytecheck*}` plus `build/targets/psg.{json,asc}` | exhaustive protocol proof, two forced whole-PSG builds, and complete merged-main acceptance battery | Accepted `a647185` at -31 LUT4/-1 FF/-28 floor cells; all generic fidelity, timing, and reproducibility gates pass. |
 | `build/integration-h096-r84/` | deterministic A/B v4 source certificates plus unchanged R.84 artifacts and independent structural/value audits | I002 accepted at source SHA-256 `2af2c61f...`; nine mutations convicted and both 192,896-pair value audits pass. |
+| `build/integration-h102-r84/` | deterministic A/B v5 source certificates plus unchanged R.84 artifacts and independent structural/value audits | I003 accepted at source SHA-256 `d54dde5d...`; thirteen mutations convicted and both 192,896-pair value audits pass. |
+| `build/experiments/h097/{provenance_proof.py,provenance-proof.log,provenance_probe.sv,isolated-*,candidate.*}` | exact path proof, complete isolated provenance synthesis, and canonical whole-PSG synthesis | Exact and -3 LUT4/-1 FF alone, but globally +18 LUT4/+4 carries/+17 floor cells/+20 routed LCs. |
+| `build/experiments/h098/{count_proof.py,count-proof.log,count_probe.sv,count_*_r1.*,mulmp.log,candidate.*}` | exact token/freeze proof, isolated count synthesis, 6,020-transaction CDC bench, and canonical whole-PSG synthesis | Exact and -4 LUT4/-2 carries alone, but globally +20 LUT4/+19 floor cells/+16 routed LCs. |
+| `build/experiments/h099/{filter_owner_proof.py,filter-owner-proof.log,filter_owner_probe.sv,filter_owner_*.json,filter_owner_*.log,candidate*}` | exhaustive ownership proof, complete isolated registered-consumer synthesis, and two canonical whole-PSG variants | Exact across 4,224 legal paths and -17 LUT4 alone, but both whole-PSG variants regress deterministic floor and seed-1 placement. |
+| `build/experiments/h100/{released_domain_proof.py,released-domain-proof.log,released_domain_probe.sv,isolated-*-v2.*}` | exhaustive transition proof, source-matched release-array synthesis, and explicit foreground-only synthesis | Exact across 2,560 transition/consumer cases; both forms map identically at 17 LUT4s/four FF. |
+| `build/experiments/h101/{trigger_pending_probe.sv,isolated-*,write_read_counterexample.py,write-read-counterexample.log}` | complete source/one-EBR/two-EBR storage synthesis and exact write/read timing counterexample | Plain EBR floor is smaller but stale for one cycle; exact forwarding raises the 97-cell reference floor to 107/104 cells. |
+| `build/experiments/h102/{bass_fx_proof.py,bass-fx-proof.log,bass_fx_probe.sv,isolated-*,candidate*,forms*,test-psg.log,bytecheck.log,budget-*,preview-*,recovery.log,clicks*,celeste-*}` plus `build/targets/psg.{json,asc}` | exhaustive mode/store/reload proof, isolated synthesis, two forced whole-PSG builds, and complete H096 acceptance battery | Accepted `ccfb2a0` at -4 LUT4/-1 FF/-1 unpackable/-5 floor cells; all fidelity, timing, and reproducibility gates pass. |
+| `build/experiments/h103/{first_launch_proof.py,first-launch-proof.log,first_launch_probe.sv,isolated-*}` | exhaustive first-launch ownership proof and complete registered pacing-consumer synthesis | Exact across all 256 launch/qualifier masks, but the candidate is +2 LUT4/-1 FF and fails the isolated gate. |
+| `build/experiments/h104/{instrument_kind_proof.py,instrument_kind_probe.sv,isolated-*}` | exhaustive semantic/record/consumer proof and complete registered instrument-kind synthesis | Exact across 53,254 checks, but the candidate is +1 LUT4 with eight carries/two FF unchanged. |
+| `build/experiments/h105/{vcnt_width_proof.py,vcnt_width_probe.sv,isolated-*}` | exhaustive transfer/hold/address proof and complete registered counter consumer synthesis | Exact across 960 checks and -1 FF/-2 carries, but the candidate adds 24 LUT4s and fails the isolated gate. |
+| `build/experiments/h106/{wraddr_advance_proof.py,wraddr_advance_probe.sv,isolated-*,candidate*}` | exhaustive upload/read pointer proof, complete registered-consumer synthesis, ARAM hold/readback checks, and forced whole-PSG synthesis | Exact across 6,291,456 transitions and -2 LUT4 alone, but the candidate is +51 LUT4/+52 floor/+54 routed LCs globally. |
+| `build/experiments/h107/candidate*` | forced whole-PSG synthesis of direct packed playback-state storage | Source-exact alias removal and -6 unpackable FF, but +79 LUT4/+2 carry/+73 floor/+79 routed LCs globally. |
+| `build/experiments/h108/candidate*` | forced whole-PSG synthesis of the `REVERB=0` restart specialization | Enabled-reverb source remains unchanged, but the HX8K candidate is +39 LUT4/+4 carry/+1 unpackable/+40 floor/+47 routed LCs. |
+| `build/experiments/h109/{candidate.json,candidate.synth.log,candidate.pnr.log}` | forced one-hot sequencer mapping and bounded canonical seed-1 route | -6 LUT4/-5 unpackable/-11 floor and -3 placed LCs, but +57 FF/+4 carries and one unresolved wire through 29,349 router2 iterations. |
 
 ## Handoff
 
-- Next allowed experiment: H097 on accepted H096 `a647185`, after a fresh
-  source/DNR audit; it must remain outside the Active DNR families and
+- Next allowed experiment: H110 on accepted H102 `ccfb2a0`, after a fresh
+  source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
@@ -5083,7 +5808,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   launch worklist after selecting the pacing owner and passes every generic
   exactness, physical, fidelity, timing, preview, recovery, click,
   Celeste-smoke, and forced-reproducibility gate as commit `a647185`. It
-  changes `rtl/psg_seq.sv`; I002 regenerates and validates source-contract v4
-  plus the unchanged C2-C-C live-value lineage. No R.84 B2 claim is made.
-- Files to avoid staging after I002: executor/controller proof files beyond the
-  accepted v4 source-boundary tools and ledger, plus unrelated changes.
+  changes `rtl/psg_seq.sv`; I002 regenerated and validated source-contract v4
+  plus the unchanged C2-C-C live-value lineage. H102 encodes the wavetable bass
+  flag in the otherwise-dead wavetable effect field and passes every generic
+  exactness, physical, fidelity, timing, preview, recovery, click,
+  Celeste-smoke, and forced-reproducibility gate as commit `ccfb2a0`. It changes
+  both `rtl/psg_common.svh` and `rtl/psg_seq.sv`; I003 regenerated and validated
+  source-contract v5 plus the unchanged C2-C-C live-value lineage. No R.84 B2
+  claim is made.
+- Files to avoid staging after I003: executor/controller proof files beyond the
+  accepted source-boundary tools and ledger, plus unrelated changes.

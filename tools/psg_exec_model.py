@@ -106,6 +106,22 @@ H096_COMBINED_SOURCE_SHA256 = {
     "tools/psg_hw_forms.py":
         "4895def3a46f2516e5bed2019ad3e4de937e2f22c4ff8621214d824e2c3e4f90",
 }
+H102_PARENT_REVISION = \
+    "b2da2dfa654580a5efa5b633d2f662e60f344457"
+H102_RTL_REVISION = \
+    "ccfb2a06e3fc576ff4c6a4a896459a5d25ac6f5f"
+H102_CHANGED_SOURCES = (
+    "rtl/psg_common.svh", "rtl/psg_seq.sv", "tools/psg_hw_forms.py",
+)
+H102_COMBINED_SOURCE_SHA256 = {
+    **H096_COMBINED_SOURCE_SHA256,
+    "rtl/psg_common.svh":
+        "b158ca2c02fc0b8cdf8cc9c403d45541789812d171ef776969bd79236ee6c4c4",
+    "rtl/psg_seq.sv":
+        "29a756ed9edfbd7ee270b9491f1b24db0b6579a271f287d49810230f5da6f287",
+    "tools/psg_hw_forms.py":
+        "7cde39590661f5879c076639f55e422e04c499fe0755cd77b3683fa4f92e1205",
+}
 MODEL_LIVE_SOURCES = (
     "rtl/psg_common.svh", "rtl/psg_seq.sv", "rtl/psg_walk.sv",
 )
@@ -143,29 +159,43 @@ def configure_live_rtl(revision: str | None) -> dict[str, str]:
         ("git", "rev-parse", "--verify", f"{revision}^{{commit}}"),
         cwd=ROOT, check=True, stdout=subprocess.PIPE, text=True,
     ).stdout.strip()
-    assert full == H096_RTL_REVISION, \
-        f"expected canonical H096 {H096_RTL_REVISION}, got {full}"
+    assert full == H102_RTL_REVISION, \
+        f"expected canonical H102 {H102_RTL_REVISION}, got {full}"
     observed = {
         relative: hashlib.sha256(git_blob(full, relative)).hexdigest()
-        for relative in H096_COMBINED_SOURCE_SHA256
+        for relative in H102_COMBINED_SOURCE_SHA256
     }
-    assert observed == H096_COMBINED_SOURCE_SHA256, \
-        "canonical H096 source hash drift"
+    assert observed == H102_COMBINED_SOURCE_SHA256, \
+        "canonical H102 source hash drift"
     LIVE_RTL_REVISION = full
     return observed
 
 
-def write_h096_r84_source_contract(path: Path,
+def write_h102_r84_source_contract(path: Path,
                                    source_hashes: dict[str, str],
                                    state_count: int, node_count: int) -> str:
-    assert LIVE_RTL_REVISION == H096_RTL_REVISION
-    assert source_hashes == H096_COMBINED_SOURCE_SHA256
+    assert LIVE_RTL_REVISION == H102_RTL_REVISION
+    assert source_hashes == H102_COMBINED_SOURCE_SHA256
     combined = {
         relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+        for relative in H102_COMBINED_SOURCE_SHA256
+    }
+    assert combined == H102_COMBINED_SOURCE_SHA256, \
+        "accepted H102 combined source hash drift"
+    h102_committed = {
+        relative: hashlib.sha256(
+            git_blob(H102_RTL_REVISION, relative)).hexdigest()
+        for relative in H102_COMBINED_SOURCE_SHA256
+    }
+    assert h102_committed == H102_COMBINED_SOURCE_SHA256, \
+        "accepted H102 git-object source drift"
+    h102_parent_committed = {
+        relative: hashlib.sha256(
+            git_blob(H102_PARENT_REVISION, relative)).hexdigest()
         for relative in H096_COMBINED_SOURCE_SHA256
     }
-    assert combined == H096_COMBINED_SOURCE_SHA256, \
-        "accepted H096 combined source hash drift"
+    assert h102_parent_committed == H096_COMBINED_SOURCE_SHA256, \
+        "accepted H102 parent source drift"
     h096_committed = {
         relative: hashlib.sha256(
             git_blob(H096_RTL_REVISION, relative)).hexdigest()
@@ -200,18 +230,25 @@ def write_h096_r84_source_contract(path: Path,
     assert {relative for relative in H096_COMBINED_SOURCE_SHA256
             if H096_COMBINED_SOURCE_SHA256[relative]
             != COMBINED_SOURCE_SHA256[relative]} == set(H096_CHANGED_SOURCES)
+    assert {relative for relative in H102_COMBINED_SOURCE_SHA256
+            if H102_COMBINED_SOURCE_SHA256[relative]
+            != H096_COMBINED_SOURCE_SHA256[relative]} == set(H102_CHANGED_SOURCES)
     assert all(combined[relative] == source_hashes[relative]
                for relative in MODEL_LIVE_SOURCES)
     contract = {
-        "schema": "psg_exec_h096_r84_source_contract_v4",
+        "schema": "psg_exec_h102_r84_source_contract_v5",
         "h095_revision": H095_RTL_REVISION,
         "i001_revision": I001_RTL_REVISION,
         "main_revision": MAIN_COMBINED_REVISION,
         "h096_parent_revision": H096_PARENT_REVISION,
         "h096_revision": H096_RTL_REVISION,
+        "h102_parent_revision": H102_PARENT_REVISION,
+        "h102_revision": H102_RTL_REVISION,
         "h095_generic_source_sha256": H095_SOURCE_SHA256,
-        "h096_combined_source_sha256": combined,
+        "h096_combined_source_sha256": H096_COMBINED_SOURCE_SHA256,
         "h096_changed_sources": list(H096_CHANGED_SOURCES),
+        "h102_combined_source_sha256": combined,
+        "h102_changed_sources": list(H102_CHANGED_SOURCES),
         "model_live_sources": list(MODEL_LIVE_SOURCES),
         "r84_combined_overrides": list(R84_COMBINED_OVERRIDES),
         "counts": {
@@ -221,9 +258,9 @@ def write_h096_r84_source_contract(path: Path,
             "normalized_transactions": 131_087,
         },
         "boundary": [
-            "H096 changes only launch pacing RTL and its exhaustive form",
-            "R.84 overrides and diagnostic ARAM remain bound to merged main",
-            "source certificate relies on I001, main, and H096 acceptance gates",
+            "H102 changes only wavetable bass state and its exhaustive form",
+            "H096 and R.84 source boundaries remain exact lineage anchors",
+            "source certificate relies on I001, main, H096, and H102 gates",
         ],
     }
     output = path.resolve()
@@ -231,8 +268,8 @@ def write_h096_r84_source_contract(path: Path,
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n")
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
-    return f"{output}: H096 {len(source_hashes)} combined sources / " \
-           f"{len(H096_CHANGED_SOURCES)} changed from main; sha256 {digest}"
+    return f"{output}: H102 {len(source_hashes)} combined sources / " \
+           f"{len(H102_CHANGED_SOURCES)} changed from H096; sha256 {digest}"
 
 PAGE_SAMPLE = range(0x00, 0x100)
 PAGE_TICK = range(0x40, 0xC0)
@@ -7968,7 +8005,7 @@ def parse_args() -> argparse.Namespace:
         help="read generic live-source RTL from this exact git revision")
     parser.add_argument(
         "--rtl-source-contract-out", type=Path,
-        help="write the exact H096-to-R.84 combined source boundary")
+        help="write the exact H102-to-R.84 combined source boundary")
     args = parser.parse_args()
     event_inputs = (args.d1_controller_edges_in, args.d1_requirements_in,
                     args.d1_binding_manifest_in)
@@ -8190,7 +8227,7 @@ def main() -> int:
             args.d1_requirements_in, args.d1_binding_manifest_in,
             sample_b3b2a_candidate + tick_program))
     if args.rtl_source_contract_out:
-        print("RTL source contract: " + write_h096_r84_source_contract(
+        print("RTL source contract: " + write_h102_r84_source_contract(
             args.rtl_source_contract_out, source_hashes,
             len(states), len(seq_nodes)))
     print("warning: owner-zero actions and remaining owner-one actions are "

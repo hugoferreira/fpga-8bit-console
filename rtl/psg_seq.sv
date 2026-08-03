@@ -117,7 +117,7 @@ module psg_seq (input  bit   clk,
   logic [2:0]  w_cur_wave, w_cur_vol, w_cur_fx, w_prev_vol;
   logic        w_bf_noiz, w_bf_buzz;
   logic [1:0]  w_bf_det, w_bf_rev, w_bf_damp;
-  logic        w_ins_on, w_ins_wt, w_ins_bass, w_ins_done;
+  logic        w_ins_on, w_ins_wt, w_ins_done;
   logic [2:0]  w_ins_id;
   logic [4:0]  w_ins_row;
   logic [5:0]  w_ins_pitch, w_ins_prev_pitch;
@@ -563,7 +563,7 @@ module psg_seq (input  bit   clk,
   // Four words form the inactive sounding-parameter bank consumed by psg_walk.
   // Published increments use units of 2^7. Ordinary pitches append one zero;
   // the custom-instrument bass flag divides by two without losing its residue.
-  wire [13:0] pub_inc = (w_ins_on && w_ins_wt && w_ins_bass)
+  wire [13:0] pub_inc = (w_ins_on && w_ins_wt && w_ins_fx[0])
                           ? {1'b0, fxi_pub} : {fxi_pub, 1'b0};
 
   wire [11:0] a_pub = vol_r;
@@ -1005,7 +1005,7 @@ module psg_seq (input  bit   clk,
         I_TR2: begin
 
           wrd[7:0]   <= (seq_q == 0) ? 8'd1 : seq_q;
-          w_ins_bass <= seq_q[0];
+          w_ins_fx[0] <= seq_q[0];
           sst <= I_TR3;
         end
         I_TR3: begin
@@ -1020,7 +1020,7 @@ module psg_seq (input  bit   clk,
             w_ins_prev_pitch <= 6'd24;
             w_ins_vol <= 3'd7;
             w_ins_prev_vol <= 3'd7;
-            w_ins_fx <= 0;
+            w_ins_fx <= {2'b0, w_ins_fx[0]};
             w_ins_wave <= 0;
             sst <= I_TW;
           end else

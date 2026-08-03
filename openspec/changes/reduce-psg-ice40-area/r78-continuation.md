@@ -3433,6 +3433,22 @@ git history; do not repeat them without the recorded changed condition.
   on H096's separately accepted generic render, recovery, click, Celeste, and
   two-build physical gates rather than reinterpreting the source certificate
   as physical proof.
+- **C2-C-D1-C-B1-H102 composition:** accepted source rebinding for generic
+  H102 `ccfb2a0` atop H096. Schema
+  `psg_exec_h102_r84_source_contract_v5` retains the H095, I001, main, and H096
+  anchors, then proves that only `rtl/psg_common.svh`, `rtl/psg_seq.sv`, and
+  `tools/psg_hw_forms.py` differ from H096 in the complete twelve-file source
+  set. Independent A/B certificates are byte-identical at SHA-256
+  `d54dde5d...`; thirteen source mutations are convicted. Candidate
+  `6f5713e2...`, manifest `438d85a0...`, control `a9233d6d...`, requirements
+  `5a7b9809...`, controller `f86698f6...`, event dictionary `5b178017...`,
+  inventory `95619e61...`, and the accepted image remain byte-identical. Both
+  152,893-row structural audits and both 192,896-pair / 43,459-service value
+  audits pass. Complete forms, `make test-psg`, `make test-clocks`, the default
+  model, Python compilation, strict OpenSpec, and diff checks pass. This
+  consumes no B2 work and relies on H102's separately accepted generic render,
+  recovery, click, Celeste, and two-build physical gates rather than
+  reinterpreting the source certificate as physical proof.
 - **C2-C-D1-C-B2 boundary:** only after B1 closes, attach literal
   pool definitions/uses and service issue/result/take roots to exact enabled
   occurrences with pre/post phase.  Repair fold assembly, STEP8, result-write
