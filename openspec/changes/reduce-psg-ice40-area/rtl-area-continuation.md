@@ -27,7 +27,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H108.
+- Next hypothesis ID: H109.
+- H108 hypothesis row: `REVERB=0` already folds both comb datapaths to the
+  identity, but `blend_restart` still compares the live and prior reverb modes,
+  retaining disabled-feature control/state in the HX8K build. Gate only that
+  restart term with `REVERB`; preserve `REVERB=1` textually. Whole-PSG mapping
+  adds 39 LUT4s, four carries, one unpackable FF, 40 floor cells, and 47 routed
+  LCs. Decision: rejected and reverted before equivalence work.
 - H107 hypothesis row: `psg_seq` stores playback activity in an unpacked
   `playing[]` array and continuously repacks it into the dynamically indexed
   output `play_bits`. Use `play_bits` as the sole packed storage to remove the
@@ -134,15 +140,17 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   rejected `build/experiments/h097/`, `build/experiments/h098/`, and
   `build/experiments/h099/`, `build/experiments/h100/`,
   `build/experiments/h101/`, the accepted `build/experiments/h102/`, and the
-  rejected `build/experiments/h106/` and `build/experiments/h107/`, plus
+  rejected `build/experiments/h106/`, `build/experiments/h107/`, and
+  `build/experiments/h108/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H107 rejected and reverted because removing the
-  live unpacked/packed playback-state alias adds 79 LUT4s, two carries, and 73
-  deterministic floor cells despite six fewer unpackable FFs. H102 remains the
-  best accepted generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H107's packed playback register is globally much
+- Latest completed decision: H108 rejected and reverted because qualifying the
+  disabled-reverb restart term adds 39 LUT4s, four carries, one unpackable FF,
+  and 40 deterministic floor cells. H102 remains the best accepted generic
+  RTL/proof point at `ccfb2a0`.
+- Latest rejected variants: H108's `REVERB=0` restart specialization is
+  globally much worse before equivalence work. H107's packed playback register is globally much
   worse despite simpler source and fewer unpackable FFs. H106's exact factored
   upload/read pointer advance
   is globally much worse despite its two-LUT4 isolated saving. H101's pending-
@@ -297,7 +305,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H108 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H109 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -305,6 +313,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H105's record-transfer counter-width family,
   H106's upload/diagnostic pointer-advance factoring family,
   H107's unpacked/packed playback-state representation family,
+  H108's disabled-reverb restart specialization family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -459,6 +468,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H105 | rejected | Keep the four-bit record-transfer counter: the exact three-bit form removes one FF/two carries but adds 24 LUT4s in the complete isolated consumer. |
 | H106 | rejected | Keep the separate upload-write and diagnostic-read pointer updates: exact factoring saves two LUT4s alone but adds 51 LUT4s, one unpackable FF, 52 floor cells, and 54 routed LCs globally. |
 | H107 | rejected | Keep the unpacked `playing[]` storage plus exported packed view: direct `play_bits` storage removes six unpackable FFs but adds 79 LUT4s, two carries, 73 floor cells, and 79 routed LCs globally. |
+| H108 | rejected | Keep the reverb-mode term in `blend_restart` even for `REVERB=0`: parameter-gating it adds 39 LUT4s, four carries, one unpackable FF, 40 floor cells, and 47 routed LCs globally. |
 
 ## Hypothesis H001
 
@@ -5096,6 +5106,44 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   dynamic slot consumers, module interface, or Yosys array/vector lowering
   changes materially.
 
+## Hypothesis H108
+
+- **ID:** H108.
+- **Hypothesis:** the HX8K target deliberately instantiates `REVERB=0`, and
+  Yosys already proves both zero-ring comb expressions equal their dry inputs.
+  The live/prior reverb-mode comparison nevertheless remains in
+  `blend_restart`, retaining disabled-feature control and record state. Gating
+  only that comparison with the elaboration-time `REVERB` parameter should
+  remove the surviving control cone while leaving `REVERB=1` textually exact.
+- **Scope:** add only `REVERB &&` to the reverb-mode inequality in
+  `blend_restart`; first run canonical whole-PSG synthesis. If mapping improves,
+  prove current-versus-candidate `REVERB=0` PCM byte equivalence across focused
+  mode transitions and the complete render corpus before any acceptance claim.
+  No enabled-reverb datapath, ring contents/address, blend arithmetic, other
+  restart predicate, schedule, state layout, R.84 executor, image, Tang,
+  tolerance, or interface change.
+- **Baseline:** accepted H102 commit `ccfb2a0`: 6,360 LUT4s, 1,321 carries,
+  1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, seed-1 7,087
+  LCs, and 140.92/32.65 MHz routed clocks.
+- **Changed condition versus R.26 and H079:** R.26 established that the two
+  zero-ring comb datapaths are already mapper identities; H079 respelled
+  enabled reverb rounding. H108 changes neither. It targets the separate mode-
+  change restart predicate that survives only because disabled reverb state is
+  still treated as audibly relevant.
+- **Change:** qualified `s_ch_rev != last_rev_r` with `REVERB` inside the
+  otherwise unchanged restart predicate.
+- **Result:** full, PREVIEW, and explicit `REVERB=0` lint pass. Canonical forced
+  HX8K mapping changes H102's 6,360 LUT4 / 1,321 carry / 1,458 FF /
+  508 unpackable / 14 EBR / floor 6,868 / 7,087 routed LCs to 6,399 / 1,325 /
+  1,458 / 509 / 14 / floor 6,908 / 7,134. Both clocks still pass at
+  144.80/32.83 MHz. The deterministic mapping and placement gates fail, so
+  focused and complete `REVERB=0` PCM equivalence work is not warranted.
+- **Decision:** rejected and reverted. `psg_walk.sv` is restored exactly;
+  ignored synthesis evidence remains under `build/experiments/h108/`.
+- **Repeat only if:** if rejected, retry only after the `REVERB=0` contract,
+  blend-restart consumers, prior-tuple state, or mapper parameter folding
+  changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5395,10 +5443,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h105/{vcnt_width_proof.py,vcnt_width_probe.sv,isolated-*}` | exhaustive transfer/hold/address proof and complete registered counter consumer synthesis | Exact across 960 checks and -1 FF/-2 carries, but the candidate adds 24 LUT4s and fails the isolated gate. |
 | `build/experiments/h106/{wraddr_advance_proof.py,wraddr_advance_probe.sv,isolated-*,candidate*}` | exhaustive upload/read pointer proof, complete registered-consumer synthesis, ARAM hold/readback checks, and forced whole-PSG synthesis | Exact across 6,291,456 transitions and -2 LUT4 alone, but the candidate is +51 LUT4/+52 floor/+54 routed LCs globally. |
 | `build/experiments/h107/candidate*` | forced whole-PSG synthesis of direct packed playback-state storage | Source-exact alias removal and -6 unpackable FF, but +79 LUT4/+2 carry/+73 floor/+79 routed LCs globally. |
+| `build/experiments/h108/candidate*` | forced whole-PSG synthesis of the `REVERB=0` restart specialization | Enabled-reverb source remains unchanged, but the HX8K candidate is +39 LUT4/+4 carry/+1 unpackable/+40 floor/+47 routed LCs. |
 
 ## Handoff
 
-- Next allowed experiment: H108 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H109 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
