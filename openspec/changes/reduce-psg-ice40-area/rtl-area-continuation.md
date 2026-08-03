@@ -10,37 +10,31 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 - Topic: exact generic PSG RTL simplification and iCE40 HX8K area reduction.
 - Owner scope: existing production RTL outside the R.84 executor/controller
-  replacement; current H001 is limited to `rtl/psg_wave.sv`.
+  replacement; each hypothesis records its exact RTL and proof boundary.
 - Correctness gate: proof of exact arithmetic, focused model/unit tests,
   `make test-psg`, 59-render PICO-8 regression, and no weakened tolerance.
 - Physical gate: canonical `PATH=/opt/homebrew/bin:$PATH make synth-psg` with
   seed-1 router2 placement, routed timing, mapped resources, and 14 or fewer
   EBRs. An accepted area change must improve a deterministic mapped resource
   and not regress placed LCs.
-- Dirty-tree constraints: branch `codex/psg-rtl-area-continuation`; stage only
-  the active RTL, proof, generated artifact, and this ledger. Companion R.84
-  files and unrelated user work are excluded. Starting with H055, authoritative
-  whole-PSG pricing and any RTL commit use a dedicated continuation worktree
-  tracking direct accepted frontier `c9274fc`; this branch retains the durable
-  hypothesis ledger.
+- Dirty-tree constraints: stage only the active RTL, proof, generated artifact,
+  and this ledger. Companion R.84 files and unrelated user work are excluded.
+  H096 resumes from merged clean main `a84dbff` on its dedicated branch.
 
 ## Current State
 
 - Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
-  accepted; H095 accepted on the direct lineage.
-- Next hypothesis ID: H096.
-- H095 hypothesis row: on direct H089 `996ee40`, reapply only H030's exact
-  foreground trigger-length overflow prefix in `rtl/psg_seq.sv` and its
-  exhaustive 256-byte form in `tools/psg_hw_forms.py`. Baseline is the forced
-  H089 canonical HX8K result below. The change replaces `di > 8'd32` with
-  `(|di[7:6]) || (di[5] && |di[4:0])`; H030 previously saved four LUT4s and
-  two carries on its older source lineage, but merge base `e3823f5` means the
-  result must be re-priced globally here. Result: exact, 3 LUT4/zero carry/6 FF
-  versus 3 LUT4/2 carry/6 FF alone, and globally -4 LUT4/-3 carries/-4 floor
-  cells. Decision: accepted as direct commit `3d7a2e2`. Repeat only if a later
-  accepted lineage changes the trigger-length consumer or comparator-sharing
-  context.
+  accepted; H095 accepted on the direct lineage; H096 accepted on merged main.
+- Next hypothesis ID: H097.
+- H096 hypothesis row: retire `tch_seen` by consuming the existing launched-
+  channel worklist when the left-most qualifying music channel owns pattern
+  pacing. Exhaustive scan equivalence covers all 256 launch/qualifier masks.
+  The complete merged-main battery passes, and two forced builds reproduce
+  6,364 LUT4 / 1,321 carry / 1,459 FF / 509 unpackable / 14 EBR / floor 6,873 /
+  7,095 routed LCs at 151.17/33.09 MHz. Decision: accepted as generic RTL/proof
+  commit `a647185`. Repeat only if launch ordering, T_NL visitation, or pacing
+  ownership changes.
 - Current evidence: `build/experiments/h001/` and
   `build/experiments/h002/`, `build/experiments/h003/`, and
   `build/experiments/h005/`, `build/experiments/h007/`,
@@ -76,13 +70,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h089/`, `build/experiments/h090/`, and
   `build/experiments/h091/`, `build/experiments/h092/`, and the rejected
   `build/experiments/h093/`, the rejected `build/experiments/h094/`, and the
-  accepted `build/experiments/h095/`, plus
+  accepted `build/experiments/h095/` and `build/experiments/h096/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H095 accepted as direct commit `3d7a2e2` after
-  complete verification. Reapplying H030's exact trigger-length prefix on H089
-  removes four global LUT4s, three carries, and four deterministic floor cells.
+- Latest completed decision: H096 accepted as generic RTL/proof commit
+  `a647185` after complete verification. Consuming the launch worklist removes
+  31 global LUT4s, one FF, and 28 deterministic floor cells from merged main.
 - Latest rejected variants: H094's packed transition inequality is globally
   worse despite its isolated one-LUT4 saving. H093's grouped DQ table is locally
   worse. H092's result-flop merge is globally worse despite
@@ -165,16 +159,18 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   by 36 LCs. H009's shift token failed similarly; H005's `< 3` suffix remains
   rejected on fast-clock timing; H004, H006, and H008 remain rejected as
   indexed below.
-- Best known accepted seed-1 result: direct H095 commit `3d7a2e2` atop H089
-  `996ee40`: 6,342 LUT4s, 1,321 carries, 1,459 flops, 504 unpackable flops,
-  14 EBRs, 6,846-cell floor, and 7,066/7,680 LCs at 133.69/32.79 MHz. Versus
-  H089 it deterministically removes four LUT4s, three carries, and four floor
-  cells; the seven-LC route reduction is below placement sensitivity and is not
-  independently overclaimed. Two forced builds reproduced JSON and ASC
-  bit-for-bit.
+- Current post-integration accepted seed-1 result: H096 commit `a647185` atop
+  merged main `a84dbff`: 6,364 LUT4s, 1,321 carries, 1,459 flops, 509
+  unpackable flops, 14 EBRs, 6,873-cell floor, and 7,095/7,680 LCs at
+  151.17/33.09 MHz. Versus merged main it deterministically removes 31 LUT4s,
+  one FF, and 28 floor cells; the 25-LC route reduction is below placement
+  sensitivity and is not independently overclaimed. Two forced builds
+  reproduced JSON SHA-256 `da8f01f6...` and ASC SHA-256 `519dabc7...`
+  bit-for-bit. The numerically smaller direct H095 point predates the required
+  main/R.84/diagnostic-ARAM composition and is not the current integration base.
   The older H051 source lineage remains at
   6,506 LUT4s / 1,421 carries / 1,476 flops / floor 7,028 / 7,247 LCs.
-- Last updated: 2026-08-02.
+- Last updated: 2026-08-03.
 
 ## Main Integration I001
 
@@ -218,16 +214,18 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   event artifacts remain byte-identical, both binding/value audits pass, and
   the default model, complete forms, Python and strict OpenSpec gates pass.
 - **Decision:** accepted.  This is the verified H095 + R.84 integration point;
-  H096 and R.84 B2 remain blocked only until the resulting integration is
-  safely fast-forwarded to `main`.
+  it was safely fast-forwarded through the later main landing at `a84dbff`,
+  which unblocked the now-accepted H096 generic continuation. R.84 B2 remains
+  companion-owned.
 - **Repeat only if:** retry a rejected merge resolution only after identifying
   a concrete changed source/proof contract or an independently accepted newer
   direct/R.84 checkpoint.
 
 ## Next Experiment Gate
 
-- Next experiment: H096 on accepted direct H095, only after a fresh source and
-  DNR audit. It must not repeat H095's now-composed foreground trigger-length
+- Next experiment: H097 on accepted H096 `a647185`, only after a fresh source
+  and DNR audit. It must not repeat H096's launch-worklist/pacing-state family,
+  H095's now-composed foreground trigger-length
   prefix family, H094's now-closed packed transition-inequality
   family, H093's DQ coefficient-decoder spelling family, H092's EA2/EA4 result-
   flop lifetime family, H091's pattern-counter compression, H090's multiplier
@@ -363,6 +361,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H093 | rejected | Keep the nested DQ coefficient decoder: the exact grouped truth table adds three LUT4s in the complete registered service cone. |
 | H094 | rejected | Keep separate transition inequalities: one packed comparison saves one isolated LUT4 but adds three global LUT4/floor cells. |
 | H095 | accepted | Keep the exact foreground trigger-length overflow prefix on the direct lineage; it removes four global LUT4s, three carries, and four floor cells. |
+| H096 | accepted | Consume the launched-channel worklist after selecting the pacing owner; this removes 31 LUT4s, one FF, and 28 deterministic floor cells on merged main. |
 
 ## Hypothesis H001
 
@@ -4446,6 +4445,72 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - **Repeat only if:** retry only after the trigger-length write consumer,
   comparator-sharing context, or mapper lowering changes materially.
 
+## Hypothesis H096
+
+- **ID:** H096.
+- **Hypothesis:** `tch_seen` only remembers that the current pattern launch has
+  already accepted its left-most launched non-looping channel. At that event,
+  `ptick_seen` has necessarily already latched the left-most launched channel's
+  default speed, and no later `launched` bit can affect either pattern pacing
+  result. Consuming the launch worklist by clearing `launched` at the accepted
+  pattern-length request should therefore retire `tch_seen` and its high-fanout
+  compare/control cone while making the one-shot ownership explicit.
+- **Scope:** symbolic/exhaustive proof of the complete T_NL launch/pacing state
+  transition, followed by isolated and whole-PSG mapping. Production
+  `rtl/psg_seq.sv`, permanent `tools/psg_hw_forms.py` coverage, and the complete
+  merged-main acceptance battery are conditional on an early deterministic
+  mapped improvement. No pattern selection, channel ordering, speed/row value,
+  multiplier request, state schedule, memory, interface, EBR, R.84 executor,
+  diagnostic ARAM, or tolerance change.
+- **Baseline:** merged clean `main` commit `a84dbff`: canonical forced HX8K
+  6,395 LUT4s, 1,321 carries, 1,460 flops, 506 unpackable flops, 14 EBRs,
+  6,901-cell floor, seed-1 7,120 routed LCs; 140.92 MHz fast and 32.41 MHz PSG.
+- **Changed condition versus H031 and H095:** H031 shared T_NL's byte comparator
+  with another state-exclusive relation, while H095 changed an unrelated CPU
+  trigger-length saturation spelling. H096 preserves those accepted arithmetic
+  forms and instead retires the separate persistent one-shot state by consuming
+  the already-existing launch worklist after its final live use.
+- **Change:** remove `tch_seen`; define the T_NL pattern-length request from the
+  current `launched[c]` bit and the accepted shared relation; when that request
+  fires, clear `launched` while queueing `ptick_pend`. Add permanent proof that
+  the old and new protocols issue identical requests and pacing updates over
+  every launch/order/qualifier state admitted by the four-channel scan.
+- **Result:** the permanent form exhausts all 256 four-channel launch/qualifier
+  masks and preserves the request trace, fallback source, `ptick_seen`, and
+  pending-product outcome. Full forms, full/PREVIEW lint, Python compilation,
+  the default H095-bound R.84 model, `make test-psg` including 93 analysis tests
+  and the structural PSG test, and the 59/59 frozen renders pass. Ordinary and
+  multipumped `/4`, `/5`, and `/6` cadence passes at 572/1,275, 572/1,020, and
+  572/850 ordinary sample clocks and 524/1,275, 524/1,020, and 524/850
+  multipumped sample clocks; tick windows are 5,757/7,654, 4,737/6,123, and
+  4,056/5,103 ordinary, and 5,709/7,654, 4,689/6,123, and 4,008/5,103
+  multipumped, with zero late flips. Clock-divider checks pass. All eight
+  Celeste music-0 PREVIEW checks at 1,275 and 159 clocks/sample for masks
+  7/1/2/4 pass at 25/27 voiced windows (93%). Music-30 has no stable pitch
+  windows on merged main, but H096's four-second PREVIEW WAV is byte-identical
+  to clean `a84dbff` at SHA-256 `c4f2179d...`. Synthetic and Celeste recovery
+  report zero coalesced, delayed, or dropped samples. Four-second hardware and
+  PREVIEW SFX-10 renders have zero `click-v1` events. The five-frame Celeste
+  smoke reports 2,079/3,668 active samples, range -21,544..7,711, and 1,014
+  levels. Strict OpenSpec, diff and scope checks pass.
+- **Physical result:** two forced HX8K builds reproduce JSON SHA-256
+  `da8f01f61f5b915cea2f73dad6d87c6f1dc762edf6ce490989fbb3f354b55772`
+  and ASC SHA-256
+  `519dabc769d00349bf006af63dfa6232ac417aa00c830ae397d472a47df46d00`.
+  Merged main to H096 changes 6,395 to 6,364 LUT4s, 1,321 carries unchanged,
+  1,460 to 1,459 flops, 506 to 509 unpackable flops, 14 EBRs unchanged, floor
+  6,901 to 6,873, and seed-1 route 7,120 to 7,095 LCs. Routed timing improves
+  from 140.92/32.41 to 151.17/33.09 MHz versus 112.50/18.75-MHz constraints.
+  The 31-LUT4, one-FF, and 28-floor reductions are deterministic; the 25-LC
+  route reduction remains below placement sensitivity and is not overclaimed.
+- **Decision:** accepted as generic RTL/proof commit `a647185`. Because H096
+  changes `rtl/psg_seq.sv`, the companion must regenerate its H095-bound source
+  certificate and C2-C-C live-value lineage before integration; H096 makes no
+  R.84/B2 proof or integration claim.
+- **Repeat only if:** retry this launch-worklist/state family only if music
+  channel ordering, T_NL visitation, pacing fallback ownership, launched-bit
+  consumers, or multiplier-request scheduling changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -4733,12 +4798,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h093/{dq_coeff_proof.py,dq_coeff_formal.sv,exhaustive.log,formal.log,dq_coeff_probe.sv,isolated-*}` | exhaustive/SAT proof and complete registered DQ service synthesis | Exact, but the grouped table adds three LUT4s with carry/FF unchanged. |
 | `build/experiments/h094/{transition_tuple_proof.py,transition_tuple_formal.sv,exhaustive.log,formal.log,transition_tuple_probe.sv,isolated-*,candidate.*}` | structural/SAT proof, complete isolated synthesis, and canonical whole-PSG synthesis | Exact and -1 LUT4 alone, but globally +3 LUT4/+3 floor cells. |
 | `build/experiments/h095/{forms*,equiv.log,isolated-*,candidate*,cadence-*,preview-*,recovery-*,click-*,celeste-smoke*}` | exhaustive/formal proof, isolated and two forced whole-PSG builds, and complete acceptance battery | Accepted direct composition at -4 LUT4/-3 carries/-4 floor cells; all fidelity, timing, and reproducibility gates pass. |
+| `build/experiments/h096/{budget-*,preview-*,recovery*,clicks*,celeste-smoke*,clocks*,bytecheck*}` plus `build/targets/psg.{json,asc}` | exhaustive protocol proof, two forced whole-PSG builds, and complete merged-main acceptance battery | Accepted `a647185` at -31 LUT4/-1 FF/-28 floor cells; all generic fidelity, timing, and reproducibility gates pass. |
 
 ## Handoff
 
-- Next allowed experiment: H096 on accepted H095 only, after a fresh source/DNR
-  audit; it must remain outside the Active DNR families and companion-owned
-  R.84 work.
+- Next allowed experiment: H097 on accepted H096 `a647185`, after a fresh
+  source/DNR audit; it must remain outside the Active DNR families and
+  companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -4977,6 +5043,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   timing, preview, recovery, click, Celeste-smoke, and forced-reproducibility
   gate as direct commit `3d7a2e2`. Because it changes `rtl/psg_seq.sv`,
   eventual C2-C-C/R.84 integration must regenerate and rerun the live-value
-  proof plus the complete cadence/render/physical battery.
+  proof plus the complete cadence/render/physical battery. H096 consumes the
+  launch worklist after selecting the pacing owner and passes every generic
+  exactness, physical, fidelity, timing, preview, recovery, click,
+  Celeste-smoke, and forced-reproducibility gate as commit `a647185`. It
+  changes `rtl/psg_seq.sv`, so the H095-bound source certificate and C2-C-C
+  live-value lineage must be regenerated before companion integration; this
+  task makes no R.84/B2 proof claim.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
