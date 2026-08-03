@@ -1045,6 +1045,34 @@ synth-all: $(foreach u,$(SYNTH_UNITS),synth-$(u))
 .PHONY: synth-all $(foreach u,$(SYNTH_UNITS),synth-$(u) synth-seeds-$(u))
 
 # ------------------------------------------------------------------------------
+# PSG candidate gates
+# ------------------------------------------------------------------------------
+# Two commands for the two questions an area candidate has to answer, in the
+# order that costs least. `area-psg` is one build and decides whether the
+# candidate is a measurement at all; `gates-psg` is ~20 minutes and only makes
+# sense once it is.
+#
+#   make area-psg RECORD=1     capture the accepted tree as the baseline
+#   make area-psg              measure a candidate and apply the band rule
+#   make gates-psg CART=...    the correctness battery, fail-fast
+#   make gates-psg CART=... GATES_FROM=oracle    resume after a fix
+#
+# Running the battery before the area verdict is the expensive mistake here: a
+# candidate that turns out to be inside the naming band has then paid twenty
+# minutes plus the cost of reading every log, to learn nothing. See
+# .claude/skills/fpga-area-reduction/ for the full funnel and the band rule.
+GATES_FROM ?=
+
+area-psg:
+	@tools/psg_area_gate.sh $(if $(RECORD),record,)
+
+gates-psg:
+	@tools/psg_gates.sh $(if $(CART),--cart $(CART),) \
+	  $(if $(GATES_FROM),--from $(GATES_FROM),)
+
+.PHONY: area-psg gates-psg
+
+# ------------------------------------------------------------------------------
 # Board: Sipeed Tang Nano 20K (Gowin GW2AR-LV18QN88C8/I7)
 #
 # The second board this design targets. Everything above builds for the myStorm
