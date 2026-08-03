@@ -28,7 +28,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H145.
+- Next hypothesis ID: H146.
+- H145 hypothesis row: serialize W84 dampen accumulation and rounding through
+  the idle fold ALU, storing the signed-19 intermediate in dead `mxs_old` plus
+  `smp_a` storage before the late state write. Decision: rejected before
+  production RTL. Exact exhaustive/SAT proofs pass and carries fall, but the
+  best complete isolated consumer worsens the LUT-plus-unpackable floor by
+  twelve cells; encoding the second phase in `fmc` is worse again.
 - H144 hypothesis row: exploit accepted H039's four-byte-aligned record base
   at the final byte-offset addition, adding only `sa_off[7:2]` to the eleven-
   bit word address and appending `sa_off[1:0]`. Decision: rejected before
@@ -800,6 +806,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H136 | rejected | Keep `mxs_new`/`mxs_old` in the walker: the result token is exact, but two newly active CDC/result flops replace the two retired sign flops and the production-shaped isolated floor worsens 274 -> 275 cells. |
 | H137 | rejected | Keep the shared-EBR fade-step lookup and replay boundary: direct 32-entry decode is -8 floor cells alone but adds 84 whole-PSG LUT4s, one carry and 72 floor cells. |
 | H138 | rejected | Keep signed-18 live/old pre-clamp noise registers: signed-17 storage is exact and -6 floor cells alone, but adds 29 whole-PSG LUT4s and 28 floor cells despite removing seven carries and two flops. |
+| H145 | rejected | Keep the parallel dampen path: sharing the widened fold ALU is exact and removes 35 carries/19 unpackable FFs alone, but adds 31 LUT4s and worsens the complete isolated floor 434 -> 446 cells; an `fmc`-encoded finish worsens it to 485. |
 
 ## Hypothesis H001
 
@@ -1054,6 +1061,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Old-noise pre-clamp storage in `mx_old`'s middle lifetime: H142.
 - PCM reset-zero validity/payload representation: H143.
 - Aligned record-base byte-offset addition: H144.
+- W84 dampen accumulation/rounding through the fold ALU and dead
+  `{mxs_old,smp_a}` scratch: H145.
 
 ## Hypothesis H006
 
@@ -7310,6 +7319,69 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   offset range/ownership, pattern/record selection, RAM address registering,
   or mapper carry lowering changes materially.
 
+## Hypothesis H145
+
+- **ID:** H145.
+- **Hypothesis:** at W84 the preceding slot's fold is complete, so the shared
+  fold ALU is idle. The current dampen path still instantiates two signed-19
+  adders: one for `blend_y + dmp_mul`, then one for its toward-zero bias.
+  Execute those two adds on consecutive late phases through one signed-19
+  extension of the fold ALU. `smp_a` is dead after phase 44 and `mxs_old` is
+  dead after phase 54, so their existing 18+1 bits can hold the exact
+  intermediate without new payload state; delaying only the two late `s_lp`
+  state writes by one phase preserves the completed value and leaves eight
+  clocks of the 48-clock `/6` margin.
+- **Scope:** prove the signed ranges, all four dampen-mode arithmetic results,
+  the split 19-bit intermediate, same-edge scratch overwrite, fold/dampen ALU
+  selection and two late write phases with exhaustive and SAT checks. First
+  synthesize the complete registered fold/dampen/scratch consumer in isolation.
+  Only after a deterministic isolated LUT/carry/floor win may
+  `rtl/psg_walk.sv`, `tools/gen_psg_ctrl.py` and the generated constants table
+  change, followed by full multi-pump/PREVIEW lint, generator checks and a
+  forced canonical whole-PSG map. Route and run the H139 fidelity/cadence
+  battery only after a deterministic whole-PSG mapped/floor win. Preserve
+  every dampen/fold value, PCM sequence, parameter publication, multiplier and
+  fold transaction, interfaces, 14-EBR topology, R.84/B2 files, Tang paths,
+  images and tolerances.
+- **Baseline:** accepted H139 production at commit `d76241f` and docs commit
+  `4ce4b47`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed in 7,018
+  LCs at 142.63/31.17 MHz. The accepted schedule is 530+272 clocks against the
+  850-clock minimum. The complete isolated consumer will be recorded before
+  any production edit.
+- **Changed condition versus task 4.3, H072, H081 and lifetime DNRs:** task
+  4.3 still names dampen migration onto shared arithmetic but has no retained
+  implementation. H072 kept the parallel path and only moved its rounding
+  correction after the shift. H081 selected two slide adders before one chain
+  but added twenty LUT4s; H145 removes two wider dampen chains, uses an ALU
+  already idle at these phases, and reuses two source-derived dead scratch
+  lifetimes instead of adding a result register. The rejected lifetime rows
+  joined unrelated long-lived fanout cones; H145's scratch role ends before
+  the next slot reloads either host.
+- **Change:** proof-first two-step shared-ALU representation and complete
+  registered-consumer synthesis; production RTL remains unchanged until both
+  gates pass.
+- **Result:** `dampen_fold_proof.py` exhausts all 524,288 signed-19 scratch
+  values in four modes, 5,242,880 complete operand-boundary cases, every fold
+  operation over boundary-rich data, and the shifted late-write schedule.
+  Arbitrary-input SAT proves all four dampen modes, exact 19-bit split and
+  reconstruction, wrapped 18-bit fold preservation, and the sequential
+  W84/round/write timing. The complete registered baseline maps to 315 LUT4s,
+  77 carries, 175 FFs (119 unpackable), one EBR and floor 434. The direct
+  two-phase candidate maps to 346 LUT4s, 42 carries, 175 FFs (100 unpackable),
+  one EBR and floor 446: -35 carries and -19 unpackable FFs, but +31 LUT4s and
+  +12 floor cells. A materially different variant that encodes the rounding
+  phase in `fmc=10` maps to 385 LUT4s, 42 carries, the same 175/100 FF split,
+  one EBR and floor 485. The independent finish selector is therefore not the
+  cause of the failed floor gate.
+- **Decision:** rejected before production RTL. `rtl/psg_walk.sv`,
+  `tools/gen_psg_ctrl.py`, generated constants and accepted H139 artifacts
+  remain byte-identical, so no lint, whole-PSG map/route, cadence or fidelity
+  gate remains.
+- **Repeat only if:** if rejected, retry only after W84/fold overlap, dampen
+  ranges or rounding, scratch lifetimes, late-write slack, fold-ALU width, or
+  mapper selected-operand lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7649,11 +7721,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h142/{old_noise_role_proof.py,old_noise_role_formal.sv,old_noise_role_probe.sv,formal.log,isolated-*}` | source-derived lifetime/range audit, exhaustive scale/role proof, arbitrary-state SAT and complete registered-consumer synthesis | Exact and -11 FF/-11 unpackable locally, but +17 LUT4 worsens the isolated floor 130 -> 136 cells; production remains unchanged. |
 | `build/experiments/h143/{pcm_reset_proof.py,pcm_reset_probe.sv,formal.log,isolated-*}` | exhaustive bitwise transition proof, arbitrary-16-bit sequential SAT and complete registered output/parity-sink synthesis | Exact, but +2 LUT4/+1 FF/+1 unpackable worsens the isolated floor 22 -> 25 cells; production remains unchanged. |
 | `build/experiments/h144/{aligned_offset_proof.py,aligned_offset_probe.sv,formal.log,isolated-*}` | exhaustive record/offset proof, arbitrary scheduled-address SAT and complete registered-consumer synthesis | Exact and mapping-identical at 38 LUT4/16 carry/13 packed FF; production remains unchanged. |
+| `build/experiments/h145/{dampen_fold_proof.py,dampen_fold_formal.sv,dampen_fold_probe.sv,exhaustive.log,formal-*,isolated-*}` | exhaustive/SAT arithmetic, scratch, fold, timing and complete-consumer evidence | Exact and -35 carries/-19 unpackable FFs alone, but +31 LUT4s worsens floor 434 -> 446; `fmc=10` worsens it to 485. Production is unchanged. |
 
 ## Handoff
 
-- Next allowed experiment: H145 on accepted H139. Record a concrete row before
-  changing RTL, and select a mechanism outside the Active DNR index.
+- Next allowed experiment: H146 on accepted H139 after a fresh source/DNR
+  audit. H145 is exact but rejected at its complete isolated floor gate; do
+  not retry its widened fold-ALU/scratch shape without a repeat-condition
+  change.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -7950,6 +8025,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   production remains unchanged and no downstream gate remains. H144's aligned
   byte-offset spelling is exact but mapping-identical in the complete
   registered address consumer; production remains unchanged and no downstream
-  gate remains.
+  gate remains. H145's serialized dampen/fold arithmetic is exact and removes
+  35 carries plus nineteen unpackable FFs in isolation, but adds 31 LUT4s and
+  worsens the complete floor by twelve cells; the `fmc`-encoded variant is
+  larger again, production remains unchanged, and no downstream gate remains.
 - Files to avoid staging after H139: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
