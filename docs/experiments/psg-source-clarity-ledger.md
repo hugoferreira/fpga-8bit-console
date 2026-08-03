@@ -23,12 +23,12 @@ clarity is useful only when that contract remains intact.
 
 ## Current State
 
-- Active hypothesis: C005, express the duplicated current/preceding reverb comb
-  as one explicitly signed operation.
-- Next hypothesis ID: C006.
+- Active hypothesis: C006, share the reverb-comb spelling through a narrowly
+  scoped macro that expands to the proven physical structure.
+- Next hypothesis ID: C007.
 - Current baseline artifacts: `build/integration-h139-r84/synth-1.{json,asc}`.
-- Latest decision: C004 accepted; every top-level interface is declared before
-  its first consumer and the routed H139 image remains byte-identical.
+- Latest decision: C005 rejected and reverted; its exact function abstraction
+  added 41 LUT4s and 40 floor cells despite passing arbitrary-input SAT.
 - Best accepted result: H139 at JSON SHA-256
   `4f7c4af1678ebbaf203cc63088855ec16bc44ebaa92e0f529e5d7961f0e554ff`
   and ASC SHA-256
@@ -110,12 +110,12 @@ clarity is useful only when that contract remains intact.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: C005, replace the duplicated current/preceding
-  reverb-comb arithmetic with one module-local helper of the same widths.
-- Proof required before editing: prove the helper inlines the same signed
-  double-plus-history and negative-rounding operation for both arms.
-- Required verification: exhaustive helper equivalence, full/PREVIEW lint,
-  complete H139 fidelity battery, and exact physical metrics and route/timing.
+- Next permitted experiment: C006, use one local macro to emit the two comb
+  instances while retaining their explicit accumulator/result net names.
+- Proof required before editing: compare the preprocessed comb expansion with
+  C004 and retain C005's arbitrary-input equivalence result.
+- Required verification: full/PREVIEW lint and canonical physical mapping
+  first; route and the complete battery only if H139 area remains exact.
 - Blocked repeat families: no source-level refactor is accepted from LOC,
   readability, isolated synthesis, or generated-code size alone.
 
@@ -127,7 +127,8 @@ clarity is useful only when that contract remains intact.
 | C002 | accepted | Sequencer/walk source maps and short-name guides; exact JSON/ASC. |
 | C003 | accepted | Smaller-module maps and duplication audit; exact JSON/ASC. |
 | C004 | accepted | Top-level declarations precede consumers; exact H139 ASC. |
-| C005 | active | Share the identical current/preceding reverb-comb operation. |
+| C005 | rejected | Exact function adds 41 LUT4s and 40 floor cells; reverted. |
+| C006 | active | Macro-expand the comb while retaining proven physical nets. |
 
 ## Hypothesis C001
 
@@ -250,11 +251,37 @@ clarity is useful only when that contract remains intact.
   source-derived exhaustive equivalence check; no state, schedule, or interface
   changes.
 - **Baseline:** accepted C004 with exact H139 area and routed ASC.
-- **Change:** pending shared-helper implementation.
-- **Result:** pending.
-- **Decision:** active.
+- **Change:** replace the two explicit comb expressions and four intermediate
+  wires with one signed `reverb_comb` function called for each arm.
+- **Result:** arbitrary-input SAT proves exact output equality. Full/PREVIEW
+  lint reaches only established warning classes, with the removed intermediate
+  nets reducing counts from 52/49 to 51/48. Canonical whole-PSG synthesis
+  regresses 6,302 -> 6,343 LUT4s and floor 6,800 -> 6,840 while keeping 1,291
+  carries, 1,450 FFs, and 14 EBRs; one more FF packs only because the larger
+  logic cover changes placement. Production is restored exactly to C004;
+  routing and the fidelity battery are skipped after the hard area failure.
+- **Decision:** rejected and reverted.
 - **Repeat only if:** a helper spelling that fails the physical gate is retried
   only after its signed-width or inlining behavior is materially different.
+
+## Hypothesis C006
+
+- **ID:** C006.
+- **Hypothesis:** a temporary macro can keep one source spelling for the comb
+  operation while expanding into C004's exact named wires, avoiding the
+  function inlining/mapping regression and keeping timing visible at the call
+  sites.
+- **Changed condition versus C005:** preprocessing emits the original
+  accumulator, round-toward-zero, and result declarations with their original
+  names instead of introducing function-local cells.
+- **Scope:** the same two comb expressions in `rtl/psg_walk.sv`; define the
+  macro immediately before use and undefine it immediately afterwards.
+- **Baseline:** restored accepted C004.
+- **Change:** pending scoped macro expansion.
+- **Result:** pending.
+- **Decision:** active.
+- **Repeat only if:** the macro's preprocessed expansion or physical result is
+  not identical to the explicit C004 structure.
 
 ## Saved Artifacts
 
@@ -281,9 +308,9 @@ clarity is useful only when that contract remains intact.
 
 ## Handoff
 
-- Next allowed experiment: C005 only.
+- Next allowed experiment: C006 only.
 - Blocked/rejected mechanisms: all new area work and any clarity abstraction
   that changes H139 resources or relies on local/source-only evidence.
-- Verification still missing: C005 onward and final source rebinding/battery.
+- Verification still missing: C006 onward and final source rebinding/battery.
 - Files to avoid staging: non-PSG RTL, Tang files, unrelated OpenSpec changes,
   build products, and existing area-loop evidence.
