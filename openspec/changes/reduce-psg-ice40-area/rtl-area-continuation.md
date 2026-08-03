@@ -25,8 +25,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 - Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
-  accepted; H095 accepted on the direct lineage; H096 accepted on merged main.
-- Next hypothesis ID: H102.
+  accepted; H095 accepted on the direct lineage; H096 accepted atop merged
+  main; H102 accepted atop H096.
+- Next hypothesis ID: H103.
+- H102 hypothesis row: encode wavetable bass in `w_ins_fx[0]`, which is forced
+  zero and otherwise dead whenever `w_ins_wt=1`, and retire the dedicated
+  `w_ins_bass` working flop. The 1,024-tuple mode/store/reload proof and complete
+  H096 battery pass; two forced builds reproduce 6,360 LUT4 / 1,321 carry /
+  1,458 FF / 508 unpackable / 14 EBR / floor 6,868 / 7,087 routed LCs at
+  140.92/32.65 MHz. Decision: accepted as generic RTL/proof commit `ccfb2a0`.
 - H101 hypothesis row: store the four pending trigger row/length tuples in one
   prefetched block RAM, with resettable per-field valid bits preserving zeroed
   state and same-edge CPU-write precedence. A plain EBR has a one-cycle stale
@@ -98,18 +105,17 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h093/`, the rejected `build/experiments/h094/`, and the
   accepted `build/experiments/h095/` and `build/experiments/h096/`, the
   rejected `build/experiments/h097/`, `build/experiments/h098/`, and
-  `build/experiments/h099/`, plus
+  `build/experiments/h099/`, `build/experiments/h100/`,
+  `build/experiments/h101/`, and the accepted `build/experiments/h102/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H101 rejected before production because exact
-  write-through state makes both EBR variants larger than the FF reference.
-  H100 was rejected because the
-  explicit four-bit source maps identically to Yosys's optimized eight-entry
-  array. H096
-  remains the accepted generic RTL/proof commit `a647185`; consuming the
-  launch worklist removes 31 global LUT4s, one FF, and 28 deterministic floor
-  cells from merged main.
+- Latest completed decision: H102 accepted as generic RTL/proof commit
+  `ccfb2a0`; the encoded wavetable bass flag removes four global LUT4s, one FF,
+  one unpackable FF, and five deterministic floor cells from H096. H101 was
+  rejected before production because exact write-through state makes both EBR
+  variants larger than the FF reference. H100 was rejected because the explicit
+  four-bit source maps identically to Yosys's optimized eight-entry array.
 - Latest rejected variants: H101's pending-trigger EBR is inexact without
   forwarding and locally worse with it. H100's unreachable music release bits are already
   removed by Yosys. H099's exact filter-publication ownership change
@@ -4784,6 +4790,68 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   CPU/engine ordering, `V_LD` prefetch cadence, iCE40 RAM write-mask inference,
   EBR budget, or mapper memory lowering changes materially.
 
+## Hypothesis H102
+
+- **ID:** H102.
+- **Hypothesis:** `w_ins_bass` is consumed only when `w_ins_wt=1`. In that
+  mode, I_TR4 forces `w_ins_fx=0`, `ins_use=0`, and every effect consumer
+  ignores `w_ins_fx`; in non-wavetable mode bass is ignored and I_LD supplies
+  the real effect. Encoding bass in `w_ins_fx[0]` should retire one working FF
+  while keeping the record reload and all externally visible values exact.
+- **Scope:** exhaustive mode/trigger/note/store/reload proof; isolated synthesis
+  of the complete registered bass/effect load/store/publication consumer; then
+  `rtl/psg_common.svh`, `rtl/psg_seq.sv`, a permanent
+  `tools/psg_hw_forms.py` check, canonical whole-PSG synthesis, and the complete
+  H096 battery only after deterministic isolated and global wins. No wavetable
+  bass behavior, custom-instrument effect, state address/width, schedule,
+  interface, EBR, diagnostic ARAM, R.84 executor, or tolerance change.
+- **Baseline:** accepted H096 commit `a647185` atop merged main: 6,364 LUT4s,
+  1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
+  seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks.
+- **Changed condition versus storage/lifetime DNR families:** H082 aliased two
+  wide slide pipeline roles and paid a new D-input/fanout mux. H102 encodes one
+  Boolean in an existing field that is semantically fixed at zero in the only
+  mode where the Boolean is observable; the same three-bit field and record
+  word already survive across every required boundary.
+- **Change:** capture bass in `w_ins_fx[0]`; for wavetable instruments
+  retain it while clearing the upper effect bits, publish bass from that bit,
+  and use the same bit in record word 3 so record word 9 reload remains the
+  authoritative complete effect/encoded-bass field.
+- **Result:** the permanent form exhausts all 1,024 old/new mode, bass, effect,
+  store, and reload tuples. The complete isolated registered consumer improves
+  from 21 LUT4s / five FFs to 18 LUT4s / four FFs. Full forms, full/PREVIEW
+  lint, Python compilation, the default H095-bound R.84 model, `make test-psg`,
+  and all 59 frozen renders pass. Ordinary `/4`, `/5`, and `/6` cadence remains
+  572 clocks, while multipumped cadence remains 524 clocks; all six tick
+  windows retain zero late flips. Clock-divider checks pass. All eight explicit
+  Celeste music-0 PREVIEW checks at 1,275 and 159 clocks/sample for masks
+  7/1/2/4 pass at 25/27 voiced windows (93%). Synthetic and Celeste recovery
+  report zero coalesced, delayed, or dropped samples. Four-second hardware and
+  PREVIEW SFX-10 renders have zero `click-v1` events. A freshly rebuilt
+  five-frame Celeste smoke reports 2,079/3,668 active samples, range
+  -21,544..7,711, and 1,014 levels; its compile uses the same
+  `WIDTHTRUNC` waiver as the PSG gates because the console target omits that
+  waiver for three pre-existing `psg_walk` warnings. Strict OpenSpec, diff, and
+  scope checks pass.
+- **Physical result:** two forced HX8K builds reproduce JSON SHA-256
+  `1b48d1ca5a757c47088dfec051651d2b018c9a4aee166b4881dae8fb6fad7cd9`
+  and ASC SHA-256
+  `008a579edd06b6503363f9cddb1b93600db2f034a1328f20b5538162a5b78f09`.
+  H096 to H102 changes 6,364 to 6,360 LUT4s, 1,321 carries unchanged, 1,459 to
+  1,458 flops, 509 to 508 unpackable flops, 14 EBRs unchanged, floor 6,873 to
+  6,868, and seed-1 route 7,095 to 7,087 LCs. Routed timing changes from
+  151.17/33.09 to 140.92/32.65 MHz versus 112.50/18.75-MHz constraints. The
+  four-LUT4, one-FF, one-unpackable, and five-floor reductions are deterministic;
+  the eight-LC route reduction remains below placement sensitivity and is not
+  overclaimed.
+- **Decision:** accepted as generic RTL/proof commit `ccfb2a0`. Because H102
+  changes both `rtl/psg_common.svh` and `rtl/psg_seq.sv`, the companion must
+  regenerate its source certificate and C2-C-C live-value lineage before
+  integration; H102 makes no R.84/B2 proof or integration claim.
+- **Repeat only if:** if rejected, retry only after wavetable/effect mode
+  exclusivity, record packing, trigger stage ordering, effect consumers, or
+  mapper D-input lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5077,10 +5145,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h099/{filter_owner_proof.py,filter-owner-proof.log,filter_owner_probe.sv,filter_owner_*.json,filter_owner_*.log,candidate*}` | exhaustive ownership proof, complete isolated registered-consumer synthesis, and two canonical whole-PSG variants | Exact across 4,224 legal paths and -17 LUT4 alone, but both whole-PSG variants regress deterministic floor and seed-1 placement. |
 | `build/experiments/h100/{released_domain_proof.py,released-domain-proof.log,released_domain_probe.sv,isolated-*-v2.*}` | exhaustive transition proof, source-matched release-array synthesis, and explicit foreground-only synthesis | Exact across 2,560 transition/consumer cases; both forms map identically at 17 LUT4s/four FF. |
 | `build/experiments/h101/{trigger_pending_probe.sv,isolated-*,write_read_counterexample.py,write-read-counterexample.log}` | complete source/one-EBR/two-EBR storage synthesis and exact write/read timing counterexample | Plain EBR floor is smaller but stale for one cycle; exact forwarding raises the 97-cell reference floor to 107/104 cells. |
+| `build/experiments/h102/{bass_fx_proof.py,bass-fx-proof.log,bass_fx_probe.sv,isolated-*,candidate*,forms*,test-psg.log,bytecheck.log,budget-*,preview-*,recovery.log,clicks*,celeste-*}` plus `build/targets/psg.{json,asc}` | exhaustive mode/store/reload proof, isolated synthesis, two forced whole-PSG builds, and complete H096 acceptance battery | Accepted `ccfb2a0` at -4 LUT4/-1 FF/-1 unpackable/-5 floor cells; all fidelity, timing, and reproducibility gates pass. |
 
 ## Handoff
 
-- Next allowed experiment: H102 on accepted H096 `a647185`, after a fresh
+- Next allowed experiment: H103 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit; it must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
@@ -5327,6 +5396,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   Celeste-smoke, and forced-reproducibility gate as commit `a647185`. It
   changes `rtl/psg_seq.sv`, so the H095-bound source certificate and C2-C-C
   live-value lineage must be regenerated before companion integration; this
-  task makes no R.84/B2 proof claim.
+  task makes no R.84/B2 proof claim. H102 encodes the wavetable bass flag in
+  the otherwise-dead wavetable effect field and passes every generic exactness,
+  physical, fidelity, timing, preview, recovery, click, Celeste-smoke, and
+  forced-reproducibility gate as commit `ccfb2a0`. It changes both
+  `rtl/psg_common.svh` and `rtl/psg_seq.sv`, so companion integration must
+  regenerate its source certificate and C2-C-C live-value lineage and rerun the
+  complete cadence/render/physical battery.
 - Files to avoid staging: all executor/controller proof files, companion
   continuation edits, and unrelated repository changes.
