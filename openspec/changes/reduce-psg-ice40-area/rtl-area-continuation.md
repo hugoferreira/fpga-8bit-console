@@ -31,7 +31,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   prefetched block RAM, with resettable per-field valid bits preserving zeroed
   state and same-edge CPU-write precedence. A plain EBR has a one-cycle stale
   read counterexample; both exact forwarding variants exceed the 97-cell
-  isolated reference floor. Decision: rejected before production RTL.
+  isolated reference floor. Archive audit: this inadvertently duplicated
+  legacy R.44's already-closed mechanism; no production edit was repeated.
+  Decision: rejected before production RTL.
 - H100 hypothesis row: restrict `released` storage to the four foreground
   slots. Music-slot bits have no set path and are therefore invariant zero;
   their loop condition can bypass the foreground array. The proof passes
@@ -297,7 +299,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   proof, waveform/form tests, full structural PSG, 59-render exact regression,
   mapped resources, seed-1 placed LCs, both routed clocks, strict OpenSpec
   validation, and `git diff --check`.
-- Blocked repeat families: R.40--R.42 lifetime aliases; R.63/R.64 multiplier
+- Blocked repeat families: R.40--R.42 lifetime aliases; R.44 pending-trigger
+  EBR migration; R.63/R.64 multiplier
   adder sharing; R.67 parallel reciprocal port; R.68/R.69 partial schedule
   encodings; R.76--R.78 detune-result lifetimes; R.79 held CDC payload;
   R.80 reciprocal coefficient factoring; R.82 detune recomputation; R.83
@@ -4756,11 +4759,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   1,321 carries, 1,459 flops, 509 unpackable flops, 14 EBRs, 6,873-cell floor,
   seed-1 7,095 LCs, and 151.17/33.09 MHz routed clocks. `trg_row` and
   `trg_len` account for 20 and 24 unpackable FFs respectively.
-- **Changed condition versus state-memory DNR families:** H019 changed
-  ownership of the existing 16-bit per-slot runtime-state memory and regressed
-  its global muxing. H101 leaves that memory and every runtime record untouched;
-  it moves two write-only CPU pending fields whose read address is stable long
-  before their sole consume state.
+- **Changed condition versus state-memory DNR families:** none. The initial
+  active-index audit compared only H019 and missed legacy R.44, which had
+  already tested this exact pending-trigger EBR migration with valid bits,
+  `V_LD` prefetch, and CPU collision bypass. H101's isolated result independently
+  reproduces R.44's reason for rejection and closes the indexing gap.
 - **Change:** pack row and length into one four-entry synchronous RAM;
   use independent per-field write masks if they infer one EBR, otherwise test
   two narrow EBRs as the sole fallback. Clear only valid bits at consumption.
@@ -4775,7 +4778,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   46 FFs / 29 unpackable / two EBRs, floor 104. Both exact forms are locally
   larger than the FF reference.
 - **Decision:** rejected before production RTL; no permanent form or
-  production file changed.
+  production file changed. Do not repeat R.44/H101 unless its explicit repeat
+  condition is met.
 - **Repeat only if:** if rejected, retry only after trigger register semantics,
   CPU/engine ordering, `V_LD` prefetch cadence, iCE40 RAM write-mask inference,
   EBR budget, or mapper memory lowering changes materially.
