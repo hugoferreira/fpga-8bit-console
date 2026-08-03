@@ -23,12 +23,13 @@ clarity is useful only when that contract remains intact.
 
 ## Current State
 
-- Active hypothesis: C008, rebind the accepted clarity source set to the H139/
-  R.84 structural and value proofs and close the final audit.
-- Next hypothesis ID: none while C008 is active.
-- Current baseline artifacts: `build/integration-h139-r84/synth-1.{json,asc}`.
-- Latest decision: C007 accepted; record-load actions are named and the H139
-  JSON and routed ASC remain byte-identical.
+- Active hypothesis: none; C008 closes the clarity refactor.
+- Next hypothesis ID: none.
+- Current baseline artifacts: `build/integration-h139-r84/synth-1.{json,asc}`
+  and `build/experiments/c008/`.
+- Latest decision: C008 accepted; source-contract v7 binds all sixteen
+  maintained sources at clarity revision `1251f49`, and the normalized model,
+  live structural/value traces, behavior, and physical image remain H139.
 - Best accepted result: H139 at JSON SHA-256
   `4f7c4af1678ebbaf203cc63088855ec16bc44ebaa92e0f529e5d7961f0e554ff`
   and ASC SHA-256
@@ -80,11 +81,11 @@ clarity is useful only when that contract remains intact.
 ### Completion proof
 
 - [x] Comment-only slices reproduce byte-identical canonical JSON and ASC.
-- [ ] Every structural slice passes full/PREVIEW lint and its focused tests.
-- [ ] Final source rebinding passes the H139/R.84 structural and value proofs.
-- [ ] Final full battery passes all functional/render/cadence/PREVIEW/recovery/
+- [x] Every structural slice passes full/PREVIEW lint and its focused tests.
+- [x] Final source rebinding passes the H139/R.84 structural and value proofs.
+- [x] Final full battery passes all functional/render/cadence/PREVIEW/recovery/
   click/Celeste/clock gates and two byte-identical canonical physical builds.
-- [ ] Final audit covers all 5,250 production-source lines and closes every
+- [x] Final audit covers all 5,265 production-source lines and closes every
   checklist item with evidence.
 
 ## Source Audit Matrix
@@ -110,12 +111,9 @@ clarity is useful only when that contract remains intact.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: C008, bind the final source revision and hashes to
-  the H139/R.84 source certificate, structural traces, and value lineage.
-- Proof required before editing: commit C007 so the certificate has one exact
-  revision; inventory every changed source against H139 and C004.
-- Required verification: independent A/B source generation, structural/value
-  audits, final source audit, and the complete H139 acceptance envelope.
+- Next permitted experiment: none; C008 is accepted and the goal is complete.
+- Reopen only if a maintained PSG source, source-aware proof pattern, normalized
+  artifact, or H139 acceptance gate changes.
 - Blocked repeat families: no source-level refactor is accepted from LOC,
   readability, isolated synthesis, or generated-code size alone.
 
@@ -130,7 +128,7 @@ clarity is useful only when that contract remains intact.
 | C005 | rejected | Exact function adds 41 LUT4s and 40 floor cells; reverted. |
 | C006 | rejected | Exact macro adds 31 LUT4s and 33 floor cells; reverted. |
 | C007 | accepted | Named record-load actions; exact movement and H139 ASC. |
-| C008 | active | Rebind final source proofs and close the audit. |
+| C008 | accepted | v7 binds all 16 sources; normalized proofs and H139 envelope exact. |
 
 ## Hypothesis C001
 
@@ -324,9 +322,30 @@ clarity is useful only when that contract remains intact.
   to recognize the accepted C001--C004/C007 spellings; no production behavior
   change.
 - **Baseline:** accepted C007 and H139/R.84 source contract v6.
-- **Change:** pending final revision/hash rebinding and source audit.
-- **Result:** pending.
-- **Decision:** active.
+- **Change:** retain every v6 H095--H139/R.84 lineage anchor, then add a v7
+  child boundary from integrated H139 `fc74906` to clarity source revision
+  `1251f49`. The child hashes all sixteen maintained PSG sources, names the
+  exact eleven-source change set, and independently validates revision, parent,
+  worktree, changed-source, schema, count, and model-live-source relations.
+- **Result:** independent A/B generation produces byte-identical v7 source
+  contracts at SHA-256 `8ce444ea240f7a6c4836cb00828bde5d98079a25c8f965d2346780158206abef`
+  and H139-identical candidate, manifest, control, requirements, controller,
+  and event artifacts. Fresh live-RTL traces are byte-identical to I004/H139.
+  Both binding audits pass 152,893 structural rows and convict all 22 source
+  mutations across sixteen files; both value audits pass 192,896 pairs and
+  43,459 service transactions. The default model, all hardware forms,
+  full/PREVIEW lint at 52/49 warnings, `make test-psg`, `make test-clocks`, and
+  59/59 frozen renders pass directly on the final source. C004 supplies the
+  already accepted six cadence profiles, both PREVIEW rates, synthetic/Celeste
+  recovery, zero-click hardware/PREVIEW renders, and byte-identical Celeste
+  smoke; C007's focused movement/action proof and canonical build bind the only
+  later production-token change. C004 and C007 canonical JSON are mutually
+  byte-identical at `dbe15b79...`; both routed images are byte-identical to H139
+  at `cca305c1...`, retaining 6,302 LUT4s, 1,291 carries, 1,450 FFs, 498
+  unpackable FFs, 14 EBRs, floor 6,800, 7,018 routed LCs, and 142.63/31.17 MHz.
+  The final source audit covers 5,265 lines with no experiment ID, provenance,
+  revision narrative, or TODO/FIXME residue.
+- **Decision:** accepted.
 - **Repeat only if:** the accepted production/source-proof revision changes.
 
 ## Saved Artifacts
@@ -345,6 +364,7 @@ clarity is useful only when that contract remains intact.
 | `build/experiments/c001/c004.asc` | canonical C004 seed-1 route | Byte-identical to H139. |
 | `build/experiments/c004/` | C004 live-source acceptance logs | Full H139 functional/fidelity battery passes. |
 | `build/experiments/c007/` | C007 executor/physical evidence | Named actions pass; JSON/ASC exact. |
+| `build/experiments/c008/` | independent v7 model, source, structural and value proof | 16 sources, 152,893 rows, 192,896 pairs; all exact. |
 
 ## Archive
 
@@ -355,9 +375,9 @@ clarity is useful only when that contract remains intact.
 
 ## Handoff
 
-- Next allowed experiment: C008 only.
+- Next allowed experiment: none; the clarity goal is complete.
 - Blocked/rejected mechanisms: all new area work and any clarity abstraction
   that changes H139 resources or relies on local/source-only evidence.
-- Verification still missing: final C008 source rebinding and completion audit.
+- Verification still missing: none for C001--C008.
 - Files to avoid staging: non-PSG RTL, Tang files, unrelated OpenSpec changes,
   build products, and existing area-loop evidence.

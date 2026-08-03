@@ -131,6 +131,75 @@ H139_COMBINED_SOURCE_SHA256 = {
     "rtl/psg_walk.sv":
         "be6a2fa58ef4db8851ad0ed0efa3b63eb18e1535ffb1462a77e0b7420c9e5a0f",
 }
+CLARITY_PARENT_REVISION = \
+    "fc74906de6dd90d410a9c0a69bf35d729aca3ba7"
+CLARITY_RTL_REVISION = \
+    "1251f4991a21572f1ffd7f5e7aadf0d26d670b05"
+CLARITY_PARENT_SOURCE_SHA256 = {
+    "rtl/psg.sv":
+        "c0e2e90ff75fa3845098234d1320788fa590ce91e73bc81f1c72e30d9a225489",
+    "rtl/psg_common.svh":
+        "b158ca2c02fc0b8cdf8cc9c403d45541789812d171ef776969bd79236ee6c4c4",
+    "rtl/psg_aram.sv":
+        "92fae0f8d71cd481733d171d01fd8b41d28f0739c0c21bff9669e140f95640ef",
+    "rtl/psg_timing.sv":
+        "838f5ce103dc3056fbe96444f183acb812749e78fa9b3444a5a1e8c8a0f11bfc",
+    "rtl/psg_state_mem.sv":
+        "181d29a9f24cc36bd04a25c1a87f1cf3ab38ba19d50641a5594d5bae8708db24",
+    "rtl/psg_mulsvc.sv":
+        "91ce01180ec94461f6a3264f618076f6a42ddee2a19de3cb725f6626d535864a",
+    "rtl/psg_mulmp.sv":
+        "501212cc205d43bbcc0e2026dec3b210dfa04cf4afa79da8c6f2c2d54a4650b3",
+    "rtl/psg_dqsvc.sv":
+        "93f9c973343ee49bdb0eeae1f5dfdc33898531e634c015720e09edcdee8c1a17",
+    "rtl/psg_divsvc.sv":
+        "e33499955d5a9fbb7bd4d31704e80397451965036c0b186315da6350b1046655",
+    "rtl/psg_wave.sv":
+        "d92f77de6207940167550424b2223a88a8ef2bb71f68e49ff0229078c69d8220",
+    "rtl/psg_walk.sv":
+        "be6a2fa58ef4db8851ad0ed0efa3b63eb18e1535ffb1462a77e0b7420c9e5a0f",
+    "rtl/psg_seq.sv":
+        "29a756ed9edfbd7ee270b9491f1b24db0b6579a271f287d49810230f5da6f287",
+    "rtl/psg_execctl.sv":
+        "1fb65e6de53c8bc9307c2fc5bbdb91d705533e1b0cb2dbd96b0344a0b3bcf202",
+    "rtl/psg_execdp.sv":
+        "872500d10c50435c856b72afaac74f2583cb62b298c8604adb213e5dcc619842",
+    "rtl/psg_execmove.sv":
+        "3bf543a849a77a652ef043b7be2ca2dd798ad4c0bb3fd630c2d3547b6beae133",
+    "rtl/psg_execwave.sv":
+        "b9c4714b7bae96942fa161698684d4dae109f46a12a666f3850b642ec9ab9de1",
+}
+CLARITY_CHANGED_SOURCES = (
+    "rtl/psg.sv", "rtl/psg_aram.sv", "rtl/psg_mulmp.sv",
+    "rtl/psg_dqsvc.sv", "rtl/psg_wave.sv", "rtl/psg_walk.sv",
+    "rtl/psg_seq.sv", "rtl/psg_execctl.sv", "rtl/psg_execdp.sv",
+    "rtl/psg_execmove.sv", "rtl/psg_execwave.sv",
+)
+CLARITY_COMBINED_SOURCE_SHA256 = {
+    **CLARITY_PARENT_SOURCE_SHA256,
+    "rtl/psg.sv":
+        "382d44c9c36f26eeb2ba1db35bb77eab15c03d2463a6a3ad0f291d5b41e1dcda",
+    "rtl/psg_aram.sv":
+        "a658b6280320fcbc71f4d8539ad0ae784607bfb646d019e82f83a385ae307387",
+    "rtl/psg_mulmp.sv":
+        "8a2143b4613e6d4e7e0ced54f583ba434e9134cf45ef41d83e13f5fc2e4de52f",
+    "rtl/psg_dqsvc.sv":
+        "26d69c594f3d81813e7d6f4297650882c68a10213ffeca4aa9b51aa3759397d2",
+    "rtl/psg_wave.sv":
+        "31f7e20133336128dadbe6e480c311b8f51885a89effd067c4403ee90fc2f511",
+    "rtl/psg_walk.sv":
+        "8ffb5aa88d975e1a0e7712fbc2aad184009bc9dfc4bc966ace7c0a8b0153b587",
+    "rtl/psg_seq.sv":
+        "762b4fd13f39dd74d293991347901ac8769831cee0135cb43d8e1b63d70621c0",
+    "rtl/psg_execctl.sv":
+        "673269fb92eaf2b2273f9f2d926af656182f1d0d26236c8c4cfa0b1ee18db792",
+    "rtl/psg_execdp.sv":
+        "d33741b258386cecc506ae1de2623735109552fd3c11cfa56f45cfbf593a6cc3",
+    "rtl/psg_execmove.sv":
+        "5d03dca5781833edfa984c93e06917cbcd21023970c71903519155c76d66f93a",
+    "rtl/psg_execwave.sv":
+        "6e23ef3d3ee0998a64fefca885a7713e7ad60b7d90493ad10c447802767da9c4",
+}
 MODEL_LIVE_SOURCES = (
     "rtl/psg_common.svh", "rtl/psg_seq.sv", "rtl/psg_walk.sv",
 )
@@ -168,29 +237,43 @@ def configure_live_rtl(revision: str | None) -> dict[str, str]:
         ("git", "rev-parse", "--verify", f"{revision}^{{commit}}"),
         cwd=ROOT, check=True, stdout=subprocess.PIPE, text=True,
     ).stdout.strip()
-    assert full == H139_RTL_REVISION, \
-        f"expected canonical H139 {H139_RTL_REVISION}, got {full}"
+    assert full == CLARITY_RTL_REVISION, \
+        f"expected accepted clarity revision {CLARITY_RTL_REVISION}, got {full}"
     observed = {
         relative: hashlib.sha256(git_blob(full, relative)).hexdigest()
-        for relative in H139_COMBINED_SOURCE_SHA256
+        for relative in CLARITY_COMBINED_SOURCE_SHA256
     }
-    assert observed == H139_COMBINED_SOURCE_SHA256, \
-        "canonical H139 source hash drift"
+    assert observed == CLARITY_COMBINED_SOURCE_SHA256, \
+        "accepted clarity source hash drift"
     LIVE_RTL_REVISION = full
     return observed
 
 
-def write_h139_r84_source_contract(path: Path,
-                                   source_hashes: dict[str, str],
-                                   state_count: int, node_count: int) -> str:
-    assert LIVE_RTL_REVISION == H139_RTL_REVISION
-    assert source_hashes == H139_COMBINED_SOURCE_SHA256
-    combined = {
+def write_clarity_r84_source_contract(path: Path,
+                                      source_hashes: dict[str, str],
+                                      state_count: int, node_count: int) -> str:
+    assert LIVE_RTL_REVISION == CLARITY_RTL_REVISION
+    assert source_hashes == CLARITY_COMBINED_SOURCE_SHA256
+    clarity_worktree = {
         relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
-        for relative in H139_COMBINED_SOURCE_SHA256
+        for relative in CLARITY_COMBINED_SOURCE_SHA256
     }
-    assert combined == H139_COMBINED_SOURCE_SHA256, \
-        "accepted H139 combined source hash drift"
+    assert clarity_worktree == CLARITY_COMBINED_SOURCE_SHA256, \
+        "accepted clarity combined source hash drift"
+    clarity_committed = {
+        relative: hashlib.sha256(
+            git_blob(CLARITY_RTL_REVISION, relative)).hexdigest()
+        for relative in CLARITY_COMBINED_SOURCE_SHA256
+    }
+    assert clarity_committed == CLARITY_COMBINED_SOURCE_SHA256, \
+        "accepted clarity git-object source drift"
+    clarity_parent_committed = {
+        relative: hashlib.sha256(
+            git_blob(CLARITY_PARENT_REVISION, relative)).hexdigest()
+        for relative in CLARITY_PARENT_SOURCE_SHA256
+    }
+    assert clarity_parent_committed == CLARITY_PARENT_SOURCE_SHA256, \
+        "accepted clarity parent source drift"
     h139_committed = {
         relative: hashlib.sha256(
             git_blob(H139_RTL_REVISION, relative)).hexdigest()
@@ -259,10 +342,14 @@ def write_h139_r84_source_contract(path: Path,
     assert {relative for relative in H139_COMBINED_SOURCE_SHA256
             if H139_COMBINED_SOURCE_SHA256[relative]
             != H102_COMBINED_SOURCE_SHA256[relative]} == set(H139_CHANGED_SOURCES)
-    assert all(combined[relative] == source_hashes[relative]
+    assert {relative for relative in CLARITY_COMBINED_SOURCE_SHA256
+            if CLARITY_COMBINED_SOURCE_SHA256[relative]
+            != CLARITY_PARENT_SOURCE_SHA256[relative]} \
+        == set(CLARITY_CHANGED_SOURCES)
+    assert all(clarity_worktree[relative] == source_hashes[relative]
                for relative in MODEL_LIVE_SOURCES)
     contract = {
-        "schema": "psg_exec_h139_r84_source_contract_v6",
+        "schema": "psg_exec_clarity_r84_source_contract_v7",
         "h095_revision": H095_RTL_REVISION,
         "i001_revision": I001_RTL_REVISION,
         "main_revision": MAIN_COMBINED_REVISION,
@@ -277,8 +364,13 @@ def write_h139_r84_source_contract(path: Path,
         "h096_changed_sources": list(H096_CHANGED_SOURCES),
         "h102_combined_source_sha256": H102_COMBINED_SOURCE_SHA256,
         "h102_changed_sources": list(H102_CHANGED_SOURCES),
-        "h139_combined_source_sha256": combined,
+        "h139_combined_source_sha256": H139_COMBINED_SOURCE_SHA256,
         "h139_changed_sources": list(H139_CHANGED_SOURCES),
+        "clarity_parent_revision": CLARITY_PARENT_REVISION,
+        "clarity_revision": CLARITY_RTL_REVISION,
+        "clarity_parent_source_sha256": CLARITY_PARENT_SOURCE_SHA256,
+        "clarity_combined_source_sha256": clarity_worktree,
+        "clarity_changed_sources": list(CLARITY_CHANGED_SOURCES),
         "model_live_sources": list(MODEL_LIVE_SOURCES),
         "r84_combined_overrides": list(R84_COMBINED_OVERRIDES),
         "counts": {
@@ -291,6 +383,7 @@ def write_h139_r84_source_contract(path: Path,
             "H139 changes only rtl/psg_walk.sv relative to canonical H102",
             "H102, H096, and R.84 source boundaries remain exact lineage anchors",
             "source certificate relies on I001, main, H096, H102, H134, and H139 gates",
+            "clarity child binds all sixteen maintained PSG sources to unchanged H139 behavior and area",
         ],
     }
     output = path.resolve()
@@ -298,8 +391,9 @@ def write_h139_r84_source_contract(path: Path,
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n")
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
-    return f"{output}: H139 {len(source_hashes)} combined sources / " \
-           f"{len(H139_CHANGED_SOURCES)} changed from H102; sha256 {digest}"
+    return f"{output}: clarity {len(source_hashes)} maintained sources / " \
+           f"{len(CLARITY_CHANGED_SOURCES)} changed from H139 integration; " \
+           f"sha256 {digest}"
 
 PAGE_SAMPLE = range(0x00, 0x100)
 PAGE_TICK = range(0x40, 0xC0)
@@ -8038,7 +8132,7 @@ def parse_args() -> argparse.Namespace:
         help="read generic live-source RTL from this exact git revision")
     parser.add_argument(
         "--rtl-source-contract-out", type=Path,
-        help="write the exact H139-to-R.84 combined source boundary")
+        help="write the exact clarity-to-H139/R.84 source boundary")
     args = parser.parse_args()
     event_inputs = (args.d1_controller_edges_in, args.d1_requirements_in,
                     args.d1_binding_manifest_in)
@@ -8260,7 +8354,7 @@ def main() -> int:
             args.d1_requirements_in, args.d1_binding_manifest_in,
             sample_b3b2a_candidate + tick_program))
     if args.rtl_source_contract_out:
-        print("RTL source contract: " + write_h139_r84_source_contract(
+        print("RTL source contract: " + write_clarity_r84_source_contract(
             args.rtl_source_contract_out, source_hashes,
             len(states), len(seq_nodes)))
     print("warning: owner-zero actions and remaining owner-one actions are "
