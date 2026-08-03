@@ -28,7 +28,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H149.
+- Next hypothesis ID: H150.
+- H149 hypothesis row: store the one-cycle displaced-control collision fact in
+  `fstep_q[12]` only while the fade lookup is replaying, when an adjacent
+  `$20` consumes `crom_q` directly and the prior fade-step value is
+  unobservable. Decision: rejected and reverted. Exact proof passes and the
+  isolated floor improves by twelve cells, but the canonical whole PSG adds
+  58 LUT4s, five carries, 47 floor cells and 58 routed LCs.
 - H148 hypothesis row: give the fade-step lookup its own 32x13 synchronous
   ROM, preserving the accepted two-cycle sequencer hold and displaced-control
   stall while removing the shared constants-port address arm and external
@@ -1075,6 +1081,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Direct combinational fade-step decode replacing the constants-EBR borrow:
   H137.
 - Dedicated fade-step EBR reversing the constants-port consolidation: H148.
+- Displaced-control token stored temporarily in `fstep_q[12]`: H149.
 - Live/old pre-clamp noise-register width contraction: H138.
 - Live/old noise recurrence add/clamp sharing: H140.
 - Soft-add underflow history in unused `fmc` states: H141.
@@ -7570,6 +7577,75 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   contents, constants/control port arbitration, accepted EBR ceiling,
   hold/replay timing, or mapper RAM-output lowering changes materially.
 
+## Hypothesis H149
+
+- **ID:** H149.
+- **Hypothesis:** `ctrl_displaced` is a one-cycle fact consumed only on the
+  replay cycle, while `fstep_q[12]`'s preceding fade-step value is
+  unobservable on that same cycle because an adjacent `$20` consumes the
+  newly returned `crom_q` word directly. Capture the exact prior-edge
+  `fade_issue && ctrl_read` fact temporarily in `fstep_q[12]`, then overwrite
+  all thirteen bits with `crom_q[12:0]` on the replay edge. This should retire
+  one resettable collision-history flop without changing the shared ROM,
+  replay duration, fade value, control address or walk cadence.
+- **Scope:** exhaust reset, every full/multi-pumped/PREVIEW walk phase,
+  idle-start and terminal-finish collisions, accepted and dropped starts,
+  consecutive `$22` writes, adjacent and delayed `$20` writes, arbitrary
+  ordinary pitch/control reads and every fade index. Compare sequencer hold,
+  displaced-control stall, walker phase/address evolution, ROM owner/address,
+  `crom_q`, retained `fstep_q`, and committed `fade_step` cycle-exact; prove
+  the complete registered baseline/candidate controller with SAT and
+  synthesize it in isolation. Only after exactness and a deterministic
+  isolated floor win may `rtl/psg_seq.sv` change, followed by full/PREVIEW
+  lint and a forced canonical whole-PSG map. Route and run the H139
+  fidelity/cadence battery only after a whole-PSG mapped/floor win. Preserve
+  the 14-EBR shared constants/control store, schedules, interfaces, R.84/B2
+  files, Tang paths, images and tolerances.
+- **Baseline:** accepted H139 production at commit `d76241f` and docs commit
+  `50cec7d`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed in 7,018
+  LCs at 142.63/31.17 MHz. The complete isolated shared-port/controller
+  baseline will be measured before any production edit.
+- **Changed condition versus H120, H126, H137 and H148:** H120 removed reset
+  from fade payloads guarded by `fade_dir` but did not touch the collision
+  token. H126 reconstructed the token from post-edge `prun` and failed on
+  same-edge walk start/finish; H149 retains the exact pre-edge `ctrl_read`
+  fact and changes only its temporary storage. H137 removed the lookup and
+  replaced it with a globally expensive decoder, while H148 split it into a
+  fifteenth EBR and regressed. H149 keeps the accepted lookup, shared port,
+  two-cycle hold and 14-EBR topology unchanged.
+- **Change:** proof and complete isolated synthesis first; production RTL
+  remains unchanged until both gates pass.
+- **Result:** the source-bound table audit passes all 32 fade words. The
+  inductive model passes 6,594,000 transitions over every phase of the
+  multi-pumped, compatibility and PREVIEW schedules, including idle starts,
+  terminal finishes, reset, holds and all command classes. A further 16,155
+  traces cover adjacent/delayed `$20`, consecutive `$22`, reset and every fade
+  index. The eight-cycle arbitrary-input SAT miter also passes from reset,
+  comparing ROM address/data, replay/hold, displaced stall and every qualified
+  fade-step observation.
+
+  The complete isolated baseline maps to 33 LUT4s, 28 flops (27 unpackable),
+  one EBR and floor 60; the candidate maps to 35 LUT4s, 27 flops (13
+  unpackable), one EBR and floor 48. Although this retires one flop and wins
+  twelve isolated floor cells, forced canonical whole-PSG synthesis reverses
+  it: H139's 6,302 LUT4s, 1,291 carries, 1,450 flops, 498 unpackable flops and
+  floor 6,800 become **6,360 LUT4s, 1,296 carries, 1,449 flops, 487 unpackable
+  flops and floor 6,847**, with 14 EBRs unchanged. Seed-1 router2 completes in
+  **7,076 LCs (+58)** at 121.92 MHz fast / 33.16 MHz PSG. Both clocks pass,
+  but every binding area metric except flop count regresses. Full/PREVIEW lint
+  retains the established warning classes. `rtl/psg_seq.sv` is restored
+  byte-identically to H139 at fingerprint `41bf50aae6d2`; render, cadence,
+  recovery, click, smoke, image, Tang, tolerance and R.84/B2 files remain
+  unchanged.
+- **Decision:** rejected and reverted at the whole-PSG physical gate. Packing
+  the token makes the isolated fade-step output flops share LUTs, but the
+  flattened sequencer cover adds 58 LUT4s and 47 deterministic floor cells.
+- **Repeat only if:** if rejected, retry only after `fstep_q` value lifetime,
+  adjacent/consecutive command timing, collision-token reset semantics,
+  shared-port replay duration, or mapper mixed-reset slice lowering changes
+  materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7913,15 +7989,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h146/*` | exhaustive/SAT DQ proof, focused service test, lint, isolated synthesis and canonical map/route | Exact and -13 LUT4/-11 carry alone, but globally +36 LUT4/+1 carry/+36 floor/+43 routed LCs. |
 | `build/experiments/h147/*` | exhaustive/SAT gain bound/history proof, lint, isolated synthesis and canonical map/route | Exact and -5 LUT4/-2 FF alone, but globally +26 LUT4/+2 carry/+27 floor/+33 routed LCs with fast timing failure. |
 | `build/experiments/h148/*` | 81,920-sequence fade/control proof, isolated port synthesis, full/PREVIEW lint and canonical map/route | Exact and -22 LUT4/-13 FF/-35 floor alone, but globally +19 LUT4/+4 carry/-13 FF/+5 floor/+13 routed LCs while spending EBR 15. |
+| `build/experiments/h149/*` | 6,594,000-transition relation, 16,155 command traces, SAT, complete isolated port synthesis, full/PREVIEW lint and canonical map/route | Exact and -1 FF/-12 floor alone, but globally +58 LUT4/+5 carry/-1 FF/-11 unpackable/+47 floor/+58 routed LCs; production reverted. |
 
 ## Handoff
 
-- Next allowed experiment: H149 on accepted H139 after a fresh source/DNR
-  audit. H147 is exact but rejected after its isolated width win reversed
-  globally and failed timing; H148 is exact and wins decisively in isolation,
-  but is rejected after adding five whole-PSG floor cells and thirteen routed
-  LCs while consuming the last permitted EBR. Do not retry either without its
-  repeat-condition change.
+- Next allowed experiment: H150 on accepted H139 after a fresh source/DNR
+  audit. H148 is exact and wins decisively in isolation, but adds five
+  whole-PSG floor cells and thirteen routed LCs while consuming the last EBR.
+  H149 is exact and improves its isolated floor, but adds 47 whole-PSG floor
+  cells and 58 routed LCs. Do not retry either without its repeat-condition
+  change.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
