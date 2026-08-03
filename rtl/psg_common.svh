@@ -57,7 +57,7 @@ localparam logic [5:0] PSG_V_PAR1 = 6'd28;
 localparam logic [5:0] PSG_V_SEQ  = 6'd32;
 
 // Pack lists shared by the sequencer's load/store paths.
-`define PSG_REC_W3 {w_ins_bass, w_cur_wave, w_prev_pitch, w_cur_pitch}
+`define PSG_REC_W3 {w_ins_fx[0], w_cur_wave, w_prev_pitch, w_cur_pitch}
 `define PSG_REC_W4 {w_ins_done, w_bf_rev, w_bf_det, w_bf_buzz, w_bf_noiz, \
                     w_prev_vol, w_cur_fx, w_cur_vol}
 `define PSG_REC_W5 {w_ins_vol, w_ins_wave, w_ins_row, w_ins_id, w_bf_damp}

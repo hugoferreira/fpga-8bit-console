@@ -1023,6 +1023,30 @@ def sec_seq() -> None:
     report("seq.launch_worklist_consume", launch_protocol_ok,
            f"request and fallback traces match for all {cases} launch/qualifier masks")
 
+    bass_fx_ok = True
+    bass_fx_cases = 0
+    for old_wt in range(2):
+        for old_bass in range(2):
+            for old_fx in range(8):
+                ref_old_fx = 0 if old_wt else old_fx
+                enc_old_fx = old_bass if old_wt else old_fx
+                bass_fx_ok &= ((old_wt & old_bass,
+                                ref_old_fx if not old_wt else 0)
+                               == (old_wt & (enc_old_fx & 1),
+                                   enc_old_fx if not old_wt else 0))
+                for new_wt in range(2):
+                    for header_bass in range(2):
+                        for note_fx in range(8):
+                            ref_fx = 0 if new_wt else note_fx
+                            enc_fx = header_bass if new_wt else note_fx
+                            bass_fx_ok &= ((new_wt & header_bass,
+                                            ref_fx if not new_wt else 0)
+                                           == (new_wt & (enc_fx & 1),
+                                               enc_fx if not new_wt else 0))
+                            bass_fx_cases += 1
+    report("seq.wavetable_bass_fx_encoding", bass_fx_ok,
+           f"mode/store/reload behavior matches for {bass_fx_cases:,} tuples")
+
 
 SECTIONS = {"div": sec_div, "mix": sec_mix, "slide": sec_slide,
             "svc": sec_svc, "tzpow": sec_tzpow, "blend": sec_blend,
