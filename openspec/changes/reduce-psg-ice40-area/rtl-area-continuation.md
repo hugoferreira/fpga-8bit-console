@@ -27,7 +27,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H131.
+- Next hypothesis ID: H132.
+- H131 hypothesis row: replace the `aud_sl(...) == c` row-owner relation with
+  the exact foreground-play XOR. All 65,536 slot/play/phase tuples and
+  arbitrary-state SAT pass, but both complete row writers map identically at
+  18 LUT4s and twenty unpackable flops. Decision: rejected before production.
 - H130 hypothesis row: select the addressed CPU status channel/slot before its
   row/SFX payload instead of building the 44-bit all-channel bus first. All
   2,048 control/index cases and full-domain SAT pass, but the complete
@@ -737,6 +741,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H128 | rejected | Keep the repeated `rw` qualifiers inside `psg_seq`: the top-level write pulse makes them redundant, but Yosys already absorbs the implication and both registered decoders map identically at 9 LUT4s/4 FF. |
 | H129 | rejected | Keep one eight-entry `sfx_id` FF array: fixed foreground/music bank partitioning is exact, but retains 48 unpackable FFs and adds ten LUT4s in the complete storage/read consumer. |
 | H130 | rejected | Keep the all-channel status buses before CPU selection: direct addressed-channel/slot selection is exact but adds two LUT4s in the complete registered readback. |
+| H131 | rejected | Keep `aud_sl(...) == c` at the row writer: the direct foreground-play XOR is exact but maps identically at 18 LUT4s/20 unpackable FF. |
 
 ## Hypothesis H001
 
@@ -981,6 +986,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Phaser remainder selected-threshold reconstruction: H127.
 - `sfx_id` foreground/music FF-bank partitioning: H129.
 - CPU status channel/slot selection order: H130.
+- Audible-row owner predicate spelling: H131.
 
 ## Hypothesis H006
 
@@ -6468,6 +6474,44 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   channel/slot selection topology, debug consumers, or mapper cross-module mux
   lowering changes materially.
 
+## Hypothesis H131
+
+- **ID:** H131.
+- **Hypothesis:** at `V_ST`, `aud_sl(c[1:0], play_bits) == c` is exactly
+  `play_bits[{1'b0,c[1:0]}] != c[2]`: a foreground slot owns the audible row
+  only while it plays, and its music partner owns it otherwise. Spelling this
+  one-bit relation directly may simplify the enables feeding all twenty
+  `aud_row` flops without changing which slot publishes each channel row.
+- **Scope:** prove every slot/play-mask/phase tuple and arbitrary prior/new row
+  values with SAT; synthesize the complete four-entry resettable row writer in
+  isolation. Only after exactness and a deterministic isolated floor win may
+  the one predicate in `rtl/psg_seq.sv` change, followed by full/PREVIEW lint
+  and forced canonical whole-PSG mapping. Route and run the H102 fidelity
+  battery only after a deterministic mapped/floor win. Preserve row values,
+  write clocks, CPU/debug status, slot pairing, schedule, EBRs, R.84/B2 files,
+  images, Tang paths, and tolerances.
+- **Baseline:** accepted H102/I003 RTL at docs commit `f91da55`; H113's
+  source-identical baseline maps 6,360 LUT4s, 1,321 carries, 1,458 flops, 508
+  unpackable flops, 14 EBRs and floor 6,868; `aud_row` accounts for twenty
+  unpackable flops.
+- **Changed condition versus H033 and H130:** H033 changed the CPU readback
+  activity bit and mapped identically; H130 reordered status payload selection
+  and was larger. H131 touches neither readback nor payload selection: it tests
+  the same slot-pair invariant at the distinct registered row-writer enable.
+- **Change:** proof-first direct ownership predicate; production RTL remains
+  unchanged until the isolated deterministic gate passes.
+- **Result:** exhaustive enumeration covers all 65,536 reset, phase, slot and
+  play-mask tuples. The unconstrained Yosys SAT miter proves next-row-state
+  equality for arbitrary prior rows and write data. Both complete resettable
+  four-entry row writers map to 18 LUT4s, zero carries, twenty flops and twenty
+  unpackable cells. Production RTL, lint, whole-PSG mapping, routing and
+  fidelity are skipped at the mapping-identical isolated gate.
+- **Decision:** rejected before production RTL. Keep `aud_sl(...) == c`; Yosys
+  already lowers it to the same registered write enables as the direct XOR.
+- **Repeat only if:** if rejected, retry only after audible-slot pairing,
+  `V_ST` publication timing, row-mirror storage, or mapper dynamic-index/equality
+  lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6793,10 +6837,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h128/{write_qualifier_probe.sv,write_qualifier_proof.py,exhaustive.log,formal.log,isolated-*}` | exhaustive/SAT proof and complete registered event-decoder synthesis | All 2,048 tuples and SAT pass; baseline/candidate are mapping-identical at 9 LUT4s/4 packed FF. |
 | `build/experiments/h129/{sfx_partition_probe.sv,sfx_partition_proof.py,exhaustive.log,formal.log,isolated-*}` | control/index proof, arbitrary-state SAT, and complete registered storage/read synthesis | Exact, but candidate retains 48 unpackable FFs and grows 76 -> 86 LUT4s. |
 | `build/experiments/h130/{status_select_probe.sv,status_select_proof.py,exhaustive.log,formal.log,isolated-*}` | control/index proof, arbitrary-payload SAT, and complete registered readback synthesis | Exact, but direct selection grows 61 -> 63 LUT4s with seven packed FF in both. |
+| `build/experiments/h131/{aud_row_owner_probe.sv,aud_row_owner_proof.py,exhaustive.log,formal.log,isolated-*}` | exhaustive ownership proof, arbitrary-state SAT, and complete row-writer synthesis | Exact and mapping-identical at 18 LUT4s/20 unpackable FF. |
 
 ## Handoff
 
-- Next allowed experiment: H131 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H132 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
@@ -7056,6 +7101,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   LUT4s without changing 48 unpackable flops; production is unchanged and no
   downstream gate remains. H130's direct status selection is exact but adds
   two LUT4s in the complete registered readback; production is unchanged and
-  no downstream gate remains.
+  no downstream gate remains. H131's direct row-owner XOR is exact but
+  mapping-identical at 18 LUT4s/twenty unpackable flops; production is
+  unchanged and no downstream gate remains.
 - Files to avoid staging after I003: executor/controller proof files beyond the
   accepted source-boundary tools and ledger, plus unrelated changes.
