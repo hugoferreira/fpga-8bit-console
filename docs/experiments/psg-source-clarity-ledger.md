@@ -23,12 +23,12 @@ clarity is useful only when that contract remains intact.
 
 ## Current State
 
-- Active hypothesis: C006, share the reverb-comb spelling through a narrowly
-  scoped macro that expands to the proven physical structure.
-- Next hypothesis ID: C007.
+- Active hypothesis: C007, name the executor's remaining literal record-load
+  actions so the movement program reads as an action dictionary.
+- Next hypothesis ID: C008.
 - Current baseline artifacts: `build/integration-h139-r84/synth-1.{json,asc}`.
-- Latest decision: C005 rejected and reverted; its exact function abstraction
-  added 41 LUT4s and 40 floor cells despite passing arbitrary-input SAT.
+- Latest decision: C006 rejected and reverted; its exact macro expansion added
+  31 LUT4s, four carries, and 33 floor cells, closing the comb-helper family.
 - Best accepted result: H139 at JSON SHA-256
   `4f7c4af1678ebbaf203cc63088855ec16bc44ebaa92e0f529e5d7961f0e554ff`
   and ASC SHA-256
@@ -110,12 +110,12 @@ clarity is useful only when that contract remains intact.
 
 ## Next Experiment Gate
 
-- Next permitted experiment: C006, use one local macro to emit the two comb
-  instances while retaining their explicit accumulator/result net names.
-- Proof required before editing: compare the preprocessed comb expansion with
-  C004 and retain C005's arbitrary-input equivalence result.
-- Required verification: full/PREVIEW lint and canonical physical mapping
-  first; route and the complete battery only if H139 area remains exact.
+- Next permitted experiment: C007, replace raw `7'h01` through `7'h07` case
+  labels in `psg_execmove` with named `V_LD0` through `V_LD7` constants.
+- Proof required before editing: keep every action value and fixed projection
+  exact; do not generalize the decoder into an indexed mux.
+- Required verification: executor movement test, generated action/address
+  contract, full/PREVIEW lint, and byte-identical H139 physical artifacts.
 - Blocked repeat families: no source-level refactor is accepted from LOC,
   readability, isolated synthesis, or generated-code size alone.
 
@@ -128,7 +128,8 @@ clarity is useful only when that contract remains intact.
 | C003 | accepted | Smaller-module maps and duplication audit; exact JSON/ASC. |
 | C004 | accepted | Top-level declarations precede consumers; exact H139 ASC. |
 | C005 | rejected | Exact function adds 41 LUT4s and 40 floor cells; reverted. |
-| C006 | active | Macro-expand the comb while retaining proven physical nets. |
+| C006 | rejected | Exact macro adds 31 LUT4s and 33 floor cells; reverted. |
+| C007 | active | Name literal executor record-load actions. |
 
 ## Hypothesis C001
 
@@ -277,11 +278,33 @@ clarity is useful only when that contract remains intact.
 - **Scope:** the same two comb expressions in `rtl/psg_walk.sv`; define the
   macro immediately before use and undefine it immediately afterwards.
 - **Baseline:** restored accepted C004.
-- **Change:** pending scoped macro expansion.
-- **Result:** pending.
-- **Decision:** active.
+- **Change:** define one temporary comb macro, invoke it for both arms with the
+  original intermediate names, and undefine it immediately after use.
+- **Result:** preprocessing emits the intended named accumulator,
+  round-toward-zero, and result declarations, and full/PREVIEW lint remains at
+  52/49. Canonical whole-PSG synthesis nevertheless regresses 6,302 -> 6,333
+  LUT4s, 1,291 -> 1,295 carries, 498 -> 500 unpackable FFs, and floor 6,800 ->
+  6,833. Production is restored exactly to C004; route and fidelity are
+  skipped after the hard area failure. With both a function and a literal
+  preprocessor expansion rejected, the reverb-comb helper family is closed.
+- **Decision:** rejected and reverted.
 - **Repeat only if:** the macro's preprocessed expansion or physical result is
   not identical to the explicit C004 structure.
+
+## Hypothesis C007
+
+- **ID:** C007.
+- **Hypothesis:** naming the eight record-load action codes will remove the
+  last unexplained raw action values from `psg_execmove` without changing its
+  deliberately fixed projections or the synthesized PSG.
+- **Scope:** the action dictionary and record-load case labels in
+  `rtl/psg_execmove.sv`; no decoder structure, address, or output changes.
+- **Baseline:** restored accepted C004.
+- **Change:** pending named load actions.
+- **Result:** pending.
+- **Decision:** active.
+- **Repeat only if:** a later generated program adds a record-load action not
+  represented in the movement dictionary.
 
 ## Saved Artifacts
 
@@ -308,9 +331,9 @@ clarity is useful only when that contract remains intact.
 
 ## Handoff
 
-- Next allowed experiment: C006 only.
+- Next allowed experiment: C007 only.
 - Blocked/rejected mechanisms: all new area work and any clarity abstraction
   that changes H139 resources or relies on local/source-only evidence.
-- Verification still missing: C006 onward and final source rebinding/battery.
+- Verification still missing: C007 onward and final source rebinding/battery.
 - Files to avoid staging: non-PSG RTL, Tang files, unrelated OpenSpec changes,
   build products, and existing area-loop evidence.
