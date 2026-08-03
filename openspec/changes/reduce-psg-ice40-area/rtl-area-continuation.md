@@ -23,11 +23,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: H139; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102.
-- Next hypothesis ID: H139.
+- Next hypothesis ID: H140.
+- H139 hypothesis row: select the live W4 or old W15/W27 registered pre-clamp
+  noise value and increment before one exact shared post-shift scale tree,
+  replacing the two parallel `nz_z`/`nz_old_z` trees without changing either
+  register. Decision: active; prove the consume-phase contract and complete
+  registered consumer before production RTL.
 - H138 hypothesis row: narrow the two registered live/old pre-clamp noise
   values from signed 18 to 17 bits, retaining explicit signed-18 views at
   their output-scaling consumers. Decision: rejected and reverted. The exact
@@ -6930,6 +6935,48 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   multiplier step range, kick range, stored pre-clamp consumers, or mapper
   signed-extension lowering changes materially.
 
+## Hypothesis H139
+
+- **ID:** H139.
+- **Hypothesis:** `nz_z` and `nz_old_z` apply the same arithmetic-right-shift
+  followed by exact `x*68` or `x*80` scale to the live and old registered
+  pre-clamp noise sums. In full mode the live result is consumed only at W4,
+  while the old result is consumed only for its sign at W15 and its complete
+  value at W27. Select `{nz_out_r,einc}` versus
+  `{nz_old_out_r,s_old_inc}` from those existing control phases before one
+  shared scale tree, replacing both parallel trees without adding state.
+- **Scope:** audit every `z_new_c`/`z_old_sel` consumer in full and PREVIEW
+  elaborations; exhaustively prove the selected signed shift/scale arithmetic
+  and the W4/W15/W27 output contract; prove the complete registered consumer
+  with SAT; and synthesize that consumer in isolation. Only after exactness
+  and a deterministic isolated floor win may `rtl/psg_walk.sv` change,
+  followed by full/PREVIEW lint and a forced canonical whole-PSG map. Route
+  and run the H134 fidelity battery only after a deterministic whole-PSG
+  mapped/floor win. Preserve both noise registers and their widths, clamp and
+  kick arithmetic, live/old values, request/consume phases, random sequences,
+  PREVIEW behavior, schedule, interfaces, 14-EBR topology, R.84/B2 files,
+  Tang paths, images and tolerances.
+- **Baseline:** accepted H134 commit `b96536d`: 6,360 LUT4s, 1,317 carries,
+  1,450 flops, 500 unpackable flops, 14 EBRs and floor 6,860, routed in 7,086
+  LCs at 133.92/33.04 MHz. The fresh isolated registered consumer baseline
+  will be recorded before any production edit.
+- **Changed condition versus H017, H064 and H138:** H017 selected complete
+  gain contexts and globally regressed; H064 selected the pre-multiply LFSR
+  draw before one XOR transform and globally regressed; H138 narrowed the two
+  stored pre-clamp values and regressed globally. H139 changes no stored value
+  or draw transform. It selects two schedule-exclusive post-clamp scale
+  consumers before one identical shift/add tree, so a complete arithmetic
+  instance leaves with the selection rather than merely shortening a width or
+  retiring a register.
+- **Change:** proof-first live/old noise-scale selection and sharing;
+  production RTL remains unchanged until exactness and isolated physical gates
+  pass.
+- **Result:** active.
+- **Decision:** active.
+- **Repeat only if:** if rejected, retry only after live/old scale formulas,
+  W4/W15/W27 consumer phases, registered noise-value ownership, increment
+  selection, or mapper mux/shift-add lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7266,8 +7313,8 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Handoff
 
-- Active experiment: none on accepted H134. H138 is rejected and recorded;
-  H139 is next only after a fresh DNR and source audit.
+- Active experiment: H139 on accepted H134 after a fresh DNR/source audit.
+  Do not start H140 until H139 is accepted or rejected and recorded.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
