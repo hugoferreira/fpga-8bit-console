@@ -28,7 +28,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H140.
+- Next hypothesis ID: H141.
+- H140 hypothesis row: select the live CAP_W0 or old CAP_W1 signed-18 noise
+  accumulation inputs before one shared add/clamp cone. Decision: rejected and
+  reverted. The exact isolated consumer saves eight LUT4s, seventeen carries
+  and five floor cells, but the canonical whole PSG adds 30 LUT4s, three
+  unpackable flops, 33 floor cells and 36 routed LCs.
 - H139 hypothesis row: select the live W4 or old W15/W27 registered pre-clamp
   noise value and increment before one exact shared post-shift scale tree,
   replacing the two parallel `nz_z`/`nz_old_z` trees without changing either
@@ -1023,6 +1028,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Direct combinational fade-step decode replacing the constants-EBR borrow:
   H137.
 - Live/old pre-clamp noise-register width contraction: H138.
+- Live/old noise recurrence add/clamp sharing: H140.
 
 ## Hypothesis H006
 
@@ -7008,6 +7014,65 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   W4/W15/W27 consumer phases, registered noise-value ownership, increment
   selection, or mapper mux/shift-add lowering changes materially.
 
+## Hypothesis H140
+
+- **ID:** H140.
+- **Hypothesis:** the live noise recurrence consumed at CAP_W0 and the old-arm
+  recurrence consumed at CAP_W1 each form a signed-18 sum followed by the same
+  exact `noise_clamp`. The phases are disjoint, and CAP_W0's old-context
+  snapshot is visible to CAP_W1. Selecting the base, step and optional live
+  kick from the existing consume phase before one add/clamp cone should retire
+  the duplicate old recurrence arithmetic without adding state.
+- **Scope:** audit live/old recurrence ownership across CAP_W0/CAP_W1,
+  transition restarts, clears, PREVIEW elaboration and every consumer;
+  exhaustively prove both signed sums and clamp results, prove the complete
+  registered consumer with unconstrained SAT, and synthesize that consumer in
+  isolation. Only after exactness and a deterministic isolated floor win may
+  `rtl/psg_walk.sv` change, followed by full/PREVIEW lint and a forced
+  canonical whole-PSG map. Route and run the H139 fidelity battery only after
+  a deterministic whole-PSG mapped/floor win. Preserve both recurrence state
+  registers and widths, random draws, multiplier results, kicks, clamp
+  boundaries, capture phases, PREVIEW behavior, schedule, interfaces, 14-EBR
+  topology, R.84/B2 files, Tang paths, images and tolerances.
+- **Baseline:** accepted H139 commit `d76241f`, RTL fingerprint
+  `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries, 1,450 flops, 498 unpackable
+  flops, 14 EBRs and floor 6,800, routed in 7,018 LCs at 142.63/31.17 MHz.
+  The complete registered-consumer baseline will be recorded before any
+  production edit.
+- **Changed condition versus H027, H062, H064 and H138:** H027 changed the
+  clamp predicate spelling but retained both clamp consumers; H062 retired an
+  old-noise activity flag; H064 selected random-draw bits before the multiply;
+  H138 narrowed the stored pre-clamp values. H140 changes none of those
+  representations. It selects two schedule-exclusive complete recurrence
+  inputs before one identical accumulation and clamp, so a full arithmetic
+  instance may leave rather than merely moving a flag, draw or width.
+- **Change:** select the old recurrence only in full mode at CAP_W1; otherwise
+  select the live recurrence. Feed the selected signed-18 base, conditional
+  step and live-only kick through one signed sum and exact clamp, retaining the
+  two original registered destinations and capture phases.
+- **Result:** the exhaustive model proves all 262,144 clamp inputs and 524,288
+  selected recurrence cases; the unconstrained Yosys SAT miter passes. Full
+  multi-pump and PREVIEW lint retain only the established warning classes.
+  The complete registered consumer changes 150 -> 142 LUT4s, 33 -> 16
+  carries, keeps 68 flops, moves 36 -> 39 unpackable flops, and improves its
+  estimated floor 186 -> 181 cells.
+
+  Canonical whole-PSG mapping at RTL fingerprint `6e1933f0cc32` instead changes
+  H139's 6,302 LUT4s, 1,291 carries, 1,450 flops, 498 unpackable flops and
+  6,800-cell floor to **6,332 LUT4s, 1,275 carries, 1,450 flops, 501
+  unpackable flops and floor 6,833**, with 14 EBRs unchanged. Seed-1 router2
+  completes in **7,054 LCs (+36)** at 140.67 MHz fast / 31.66 MHz PSG; both
+  clocks pass, but every authoritative area measure except carries regresses.
+  Production is reverted byte-for-byte to H139. The hard physical gate fails,
+  so structural, render, cadence, PREVIEW-recovery, click and smoke batteries
+  are intentionally skipped.
+- **Decision:** rejected and reverted. The input-selection mux and its
+  entanglement with the live kick/old state cones cost more global LUT and
+  packing area than the duplicate recurrence arithmetic.
+- **Repeat only if:** if rejected, retry only after CAP_W0/CAP_W1 ordering,
+  transition snapshot ownership, live/old recurrence formulas, clamp bounds,
+  or mapper mux/add/clamp lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7342,10 +7407,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h137/{fade_decode_proof.py,fade_decode_formal.sv,fade_decode_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*}` | source-bound table/command proof, SAT, complete registered-consumer synthesis, full/PREVIEW lint and canonical whole-PSG mapping | Exact and -8 floor cells alone, but globally +84 LUT4/+1 carry/-2 FF/-12 unpackable/+72 floor; production reverted and route/fidelity skipped. |
 | `build/experiments/h138/{noise_width_proof.py,noise_width_formal.sv,noise_width_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*}` | source-derived range proof, SAT, complete registered-consumer synthesis, full/PREVIEW lint and canonical whole-PSG mapping | Exact and -6 floor cells alone, but globally +29 LUT4/-7 carries/-2 FF/-1 unpackable/+28 floor; production reverted and route/fidelity skipped. |
 | `build/experiments/h139/{noise_scale_proof.py,noise_scale_formal.sv,noise_scale_probe.sv,formal.log,lint-*,isolated-*,candidate*,repro*}` plus complete acceptance logs, `clicks/`, and `celeste-smoke.ppm` | exhaustive/SAT proof, two registered-consumer probes, canonical map/route reproducibility and full H134 fidelity/cadence/PREVIEW/recovery/click/smoke battery | Accepted: -58 LUT4/-26 carry/-2 unpackable/-60 floor/-68 routed LCs, unchanged FF/EBR, exact renders and passing timing. |
+| `build/experiments/h140/{noise_recurrence_proof.py,noise_recurrence_formal.sv,noise_recurrence_probe.sv,formal.log,isolated-*,candidate*}` | exhaustive clamp/selection proof, arbitrary-input SAT, complete registered-consumer synthesis, full/PREVIEW lint and canonical whole-PSG map/route | Exact and -8 LUT4/-17 carry/-5 floor cells alone, but globally +30 LUT4/+3 unpackable/+33 floor/+36 routed LCs; production reverted and fidelity skipped. |
 
 ## Handoff
 
-- Next allowed experiment: H140 on accepted H139. Record a concrete row before
+- Next allowed experiment: H141 on accepted H139. Record a concrete row before
   changing RTL, and select a mechanism outside the Active DNR index.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
