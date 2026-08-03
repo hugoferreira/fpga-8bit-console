@@ -23,11 +23,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: H136; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102.
-- Next hypothesis ID: H136.
+- Next hypothesis ID: H137.
+- H136 hypothesis row: carry each multiplier request's arithmetic sign through
+  the otherwise-dead `m_res[33]` result bit, preserving it across the chained
+  reciprocal request, and retire full-schedule `mxs_new`/`mxs_old`. Decision:
+  active; prove the token and price the complete service/sign consumers before
+  production RTL.
 - H135 hypothesis row: retire the adjacent 17-bit `mx_new` result into
   `smp_b`. Exhaustive and both full-path nine-step SAT miters pass, but the
   complete registered consumer changes 58 -> 95 LUT4s, 72 -> 55 flops and
@@ -6737,6 +6742,51 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - **Repeat only if:** retry only after `smp_b` or `mx_new` write/
   consume phases, current-arm result width, wavetable/non-wavetable ownership,
   or mapper register-input/fanout lowering changes materially.
+
+## Hypothesis H136
+
+- **ID:** H136.
+- **Hypothesis:** every ordinary shared-multiplier request already carries its
+  arithmetic sign redundantly in `mul_start_a[23]` and `[24]`, while the
+  complete magnitude result leaves `m_res[33]` constant zero. Preserve the
+  request sign in that result bit. For the live/old gain paths, copy the prior
+  result token into bit 23 of the numerically positive `x*341` request so the
+  second transaction retains the original waveform sign. The wavetable
+  interpolation and gain consumers can then read the transaction-aligned
+  result token directly, retiring both full-schedule `mxs_new` and `mxs_old`;
+  PREVIEW keeps a separate local sign because it uses its own parallel product.
+- **Scope:** first prove every walker/sequencer request arm's bit-23 token,
+  every single-clock and multi-pumped multiplier transaction, the chained
+  reciprocal token, and the W4/W15/W26/W27/W40/W51 consumers. Synthesize the
+  complete registered multiplier-plus-sign consumer in isolation. Only after
+  exactness and a deterministic isolated floor win may `rtl/psg_mulsvc.sv`,
+  `rtl/psg_mulmp.sv`, and `rtl/psg_walk.sv` change, followed by full/PREVIEW
+  lint and a forced canonical whole-PSG map. Route and run the H134 battery
+  only after a deterministic whole-PSG mapped/floor win. Preserve multiplier
+  magnitudes, result slices, iteration counts, request/consume phases,
+  interpolation and gain rounding, PREVIEW behavior, interfaces, 14-EBR
+  topology, R.84/B2 files, Tang paths, images and tolerances.
+- **Baseline:** accepted H134 commit `b96536d`: 6,360 LUT4s, 1,317 carries,
+  1,450 flops, 500 unpackable flops, 14 EBRs and floor 6,860, routed in 7,086
+  LCs at 133.92/33.04 MHz. The fresh isolated service/sign-consumer baseline
+  will be recorded before any production edit.
+- **Changed condition versus H063, H132/H133, and H135:** H063 reconstructed
+  only `mxs_old` from a later live value and its one-FF retirement regressed
+  globally. H132/H133 moved `tilt_tail_r` into a reciprocal-EBR token and paid
+  address/output selection. H135 combined unrelated early-sample and late-mix
+  fanout in one register. H136 instead attaches the sign to the multiplication
+  transaction that already produces the magnitude, uses a currently dead
+  result position, preserves the token explicitly through the one chained
+  request, and removes two sign lifetimes without merging their fanout into a
+  sample or mix register.
+- **Change:** proof-first multiplier result-token and full-schedule sign-state
+  retirement; production RTL remains unchanged until the exactness and
+  isolated physical gates pass.
+- **Result:** active.
+- **Decision:** active.
+- **Repeat only if:** if rejected, retry only after multiplier result width,
+  request signedness, reciprocal chaining, sign-consumer phases, or mapper
+  cross-domain/result-bit lowering changes materially.
 
 ## Saved Artifacts
 
