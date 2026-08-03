@@ -527,7 +527,10 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   wire [23:0]        nz_m   = m_res[27:4];
   wire signed [17:0] nz_mag = $signed({2'b0, nz_m[23:8]});
   wire signed [17:0] nz_pos = nz_mag;
-  wire signed [17:0] nz_neg = -(nz_mag + 18'(|nz_m[7:0]));
+  // Round toward zero on the negative branch: -(m + |frac|) == ~m + !|frac|
+  // for the zero-extended magnitude, so one complemented limb replaces the
+  // negate-after-increment carry chain.
+  wire signed [17:0] nz_neg = ~nz_mag + 18'(!(|nz_m[7:0]));
 
   // Previous and live noise steps have the same multiply shape and occur on
   // disjoint phases, so select their operands before the shared request arm.

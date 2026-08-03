@@ -956,6 +956,22 @@ def sec_noise() -> None:
            f"67,108,864 pairs; low-half delta range "
            f"[{delta15_lo}, {delta15_hi}]")
 
+    # The pitched-noise multiplier returns an unsigned magnitude with a
+    # discarded eight-bit fraction; rounding toward zero on the negative
+    # branch is -(m + |frac|), which equals ~m + !|frac| on the zero-extended
+    # 18-bit magnitude - one complemented limb instead of a negate after an
+    # increment.
+    mask18 = (1 << 18) - 1
+    limb_ok = True
+    for m in range(1 << 16):
+        for frac_nz in (0, 1):
+            reference = (-(m + frac_nz)) & mask18
+            produced = ((~m & mask18) + (0 if frac_nz else 1)) & mask18
+            limb_ok &= produced == reference
+    report("noise.round_shared_limb", limb_ok,
+           "-(m + |frac|) == ~m + !|frac| on the zero-extended magnitude "
+           "for all 131,072 magnitude/fraction cases")
+
 
 def sec_seq() -> None:
     print("seq: exact prefix forms for sequencer register inputs")

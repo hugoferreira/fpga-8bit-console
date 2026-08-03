@@ -487,3 +487,22 @@ second architecture on the live source tree.
 - Verification still missing: none for C001--C011.
 - Files to avoid staging: non-PSG RTL, Tang files, unrelated OpenSpec changes,
   build products, and existing area-loop evidence.
+
+## Post-acceptance correction (2026-08-03)
+
+C010's physical claim -- "Synthesized tokens are exact, so the retained H139
+JSON/ASC, area, routing, and timing remain unchanged by construction" -- is
+measured false at the physical layer. A canonical
+`PATH=/opt/homebrew/bin:$PATH make synth-psg` at clean `644d68f`, with the
+toolchain unchanged since before H139 (yosys 0.67 installed 15 Jul,
+nextpnr-ice40 0.10 installed 1 May), maps 6,333 LUT4s / 501 unpackable /
+floor 6,834 against H139's retained 6,302 / 498 / 6,800, and seed-1 router2
+produces no routed design -- overuse flatlines at two wires through 18,052
+iterations. The canonicalized-token-stream argument binds the logic, not the
+artifact: yosys reads the raw source, comments and declaration regrouping move
+`src` line attributes, and abc9's LUT covering is order- and name-sensitive
+(the documented +-60 band). The lesson for future clarity passes: a
+comment-only edit still requires the canonical physical build to be RE-RUN,
+not inferred. The routable canonical build is restored by area hypothesis
+H155 (`rtl-area-continuation.md`), whose evidence is under
+`build/experiments/h155/`.

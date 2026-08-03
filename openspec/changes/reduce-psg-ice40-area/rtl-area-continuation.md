@@ -27,17 +27,46 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
-  H134.
-- Next hypothesis ID: none under the current goal. H155 is reserved but
-  unstarted. The area loop closes at H139 while the next goal improves source
-  clarity, ergonomics, organisation, DRYness, modularity, and current-design
-  documentation without regressing H139's area or fidelity envelope.
+  H134; H155 accepted atop the C001--C011 clarity lineage.
+- Next hypothesis ID: H156. The 2026-08-03 `/goal` reopened the area loop
+  after the clarity campaign closed it at H139. H155 (the H055 shared-limb
+  retry) is accepted; it also restores a routable seed-1 canonical build,
+  which clean `644d68f` had silently lost (see the H155 row).
 - H139 integration status: I004 accepts the R.84 source rebinding and complete
   merge battery. The v6 contract binds canonical `d76241f`; both structural
   and value audits, complete forms, functional/cadence/render/PREVIEW/recovery/
   click/Celeste gates, and two forced canonical physical builds pass. The
   reproducible retained result remains 6,302 LUT4s, 1,291 carries, 1,450
   flops, 14 EBRs, floor 6,800 and 7,018 routed LCs at 142.63/31.17 MHz.
+- H155 hypothesis row: retry H055's shared negative noise limb --
+  `-(nz_mag + |frac|)` respelled as `~nz_mag + !|frac|` -- after H134/H139
+  changed the pitched-noise consumer pipeline and its routing neighbourhood,
+  meeting H055's recorded repeat condition. Decision: accepted. The exhaustive
+  262,144-case scalar proof and unconstrained SAT miter pass; the identity is
+  retained as `noise.round_shared_limb` in `tools/psg_hw_forms.py`. Measured
+  against clean `644d68f` (rtl `23c2bbe7dc6e`) with the unchanged July
+  toolchain: pre-map 13,487 -> 13,482 cells (-3 `$_AND_`, -2 `$_XOR_`;
+  carries, flops, EBRs unchanged); canonical map 6,333 -> 6,330 LUT4s, 1,291
+  -> 1,292 carries, 1,450 flops, 501 -> 498 unpackable, floor 6,834 -> 6,828,
+  14 EBRs; seed-1 placement 7,055 -> 7,052 LCs. Decisively, clean `644d68f`
+  itself does NOT complete seed-1 router2 -- overuse flatlines at two wires
+  through 18,052 iterations, the exact H055 failure signature -- while the
+  H155 netlist routes at 7,052 LCs and 33.50/138.20 MHz PSG/fast, both
+  passing. The clean-HEAD numbers differ from accepted H139's retained
+  6,302/floor 6,800/7,018 routed because the C-series clarity passes changed
+  source text and line numbers and abc9's covering is order/name-sensitive;
+  C010's "unchanged by construction" inference bound the canonicalized token
+  stream, not the physical artifact. Full battery on the H155 tree: full and
+  PREVIEW lint at the three established width warnings; `make test-psg` ALL
+  PASSED (PICO-8 statistical fidelity, fold, 524,288 dq formulas + 57,344
+  transactions, 93 audio-analysis and 13 visualizer tests); all 59 frozen
+  renders byte-identical and diagnostic-clean at 18.75 MHz; `make
+  test-clocks` /4 /5 /6 PASS; PREVIEW P.1 passes both 1,275- and 159-clock
+  rates; synthetic and Celeste recovery ALL TESTS PASSED with zero coalesced,
+  delayed or dropped samples; zero `click-v1` events in both modes; the
+  five-frame Celeste smoke is byte-identical at SHA-256 `3d4933a9...` with
+  2,079/3,668 off-centre samples, range -21,544..7,711 and 1,014 levels; a
+  forced canonical rebuild reproduces the JSON/ASC byte-identically.
 - H154 hypothesis row: encode the production radix-2 multiplier's five fast-
   step classes in prefix bits above each request class's proved live `B`
   width. Preserve all twelve `B` bits for the sole twelve-step class, use the
@@ -874,6 +903,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H145 | rejected | Keep the parallel dampen path: sharing the widened fold ALU is exact and removes 35 carries/19 unpackable FFs alone, but adds 31 LUT4s and worsens the complete isolated floor 434 -> 446 cells; an `fmc`-encoded finish worsens it to 485. |
 | H146 | rejected | Keep the three DQ ceiling incrementers: explicit selection is -13 LUT4/-11 carry alone, but adds 36 whole-PSG LUT4s, one carry, 36 floor cells and 43 routed LCs. |
 | H147 | rejected | Keep 13-bit gain history: the 12-bit boundary is -5 LUT4/-2 FF alone, but globally +26 LUT4/+2 carry/+27 floor/+33 routed LCs and misses fast timing. |
+| H155 | accepted | Keep the shared complemented negative noise limb `~nz_mag + !|frac|`: -5 pre-map gates, -3 LUT4/-6 floor/-3 placed LCs, and it restores the seed-1 route that clean `644d68f` lost. |
 
 ## Hypothesis H001
 
@@ -8000,10 +8030,87 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   radix/count classes, request payload width, fast-load boundary, supported
   radix set, or mapper payload/countdown lowering changes materially.
 
+## Hypothesis H155
+
+- **ID:** H155.
+- **Hypothesis:** H055's shared-limb signed-noise rounding -- respell the
+  negative limb `-(nz_mag + |frac|)` as the exact `~nz_mag + !|frac|` --
+  becomes acceptable on the H139 lineage. H055 measured a deterministic
+  -15 LUT4/-14 floor whole-PSG win and was rejected only because seed-1
+  router2 stayed at two overused wires for 21,160 iterations on the H051-era
+  netlist. H134/H139 have since restructured the pitched-noise consumer (one
+  shared live/old scale tree, shared `wt_x1` storage) and removed 68 routed
+  LCs, meeting H055's "consumer pipeline boundary changes" repeat condition.
+- **Scope:** the single `nz_neg` limb in `rtl/psg_walk.sv`; exhaustive proof
+  and unconstrained SAT before the edit; permanent form in
+  `tools/psg_hw_forms.py`; whole-PSG pre-map, canonical map, seed-1 route,
+  and the complete behavior battery. No multiplier, noise clamp, kick
+  predicate, LFSR, schedule, state, interface, EBR, or tolerance change.
+- **Baseline:** clean `644d68f` (rtl `23c2bbe7dc6e`), yosys 0.67
+  (`b8e7da6f`, installed 15 Jul) and nextpnr-ice40 0.10 (installed 1 May) --
+  the toolchain is unchanged since before H139, so all deltas are
+  source-attributable. Pre-map 13,487 cells (1,433 carry wrappers, 1,450
+  flops); canonical map 6,333 LUT4s, 1,291 carries, 1,450 flops, 501
+  unpackable, floor 6,834, 14 EBRs; seed-1 placement 7,055 LCs; router2 does
+  NOT complete -- overuse flatlines at two wires through 18,052 iterations,
+  H055's recorded failure signature. This differs from accepted H139's
+  retained 6,302 LUT4s/498 unpackable/floor 6,800/7,018 routed LCs: the
+  C-series clarity passes changed source text and line numbers, abc9's
+  covering is order- and name-sensitive (the documented +-60 band), and
+  C010's "unchanged by construction" inference bound the canonicalized token
+  stream rather than the physical artifact. Clean HEAD had therefore silently
+  lost the routable canonical build.
+- **Changed condition versus H055:** the consumer pipeline boundary named in
+  H055's repeat condition changed (H134's shared wavetable interpolation
+  state, H139's single shared noise scale tree replacing `nz_z`/`nz_old_z`),
+  and the router's starting point changed twice -- H139 removed 68 routed LCs,
+  then the clarity passes reshuffled the covering. No other H055 mechanism is
+  retried; the rejected duplicated-inline variant stays rejected.
+- **Change:** replace `-(nz_mag + 18'(|nz_m[7:0]))` with
+  `~nz_mag + 18'(!(|nz_m[7:0]))` at the sole negative rounding limb in
+  `rtl/psg_walk.sv`, with a comment stating the identity; add the
+  `noise.round_shared_limb` permanent form to `tools/psg_hw_forms.py`.
+- **Result:** the 262,144-case scalar enumeration and the unconstrained SAT
+  miter (`sat -prove ok 1 -verify`, minisat, no model) both prove the
+  identity; `python3 tools/psg_hw_forms.py noise` reports all forms PROVED.
+  Pre-map 13,487 -> 13,482 (-3 `$_AND_`, -2 `$_XOR_`; carries, MUX/NOT/OR,
+  flops, EBRs unchanged) -- real gates leave the netlist in the honest ~1:1
+  arithmetic family. Canonical map 6,330 LUT4s (-3), 1,292 carries (+1),
+  1,450 flops, 498 unpackable (-3), floor 6,828 (-6), 14 EBRs. Seed-1
+  placement 7,052 LCs (-3); router2 COMPLETES at 7,052 routed LCs,
+  33.50 MHz PSG / 138.20 MHz fast, both constraints passing, where the
+  baseline produces no routed design. Full and PREVIEW lint hold the three
+  established width warnings. `make test-psg` ALL PASSED (PICO-8 statistical
+  fidelity, fold, 524,288 dq formulas + 57,344 transactions, 93
+  audio-analysis and 13 visualizer tests, structural simulation). All 59
+  frozen renders at the explicit 18.75 MHz sweep are byte-identical to the
+  adopt-exact anchor and diagnostic-clean. `make test-clocks` passes /4, /5
+  and /6. PREVIEW P.1 passes at 1,275 and 159 clocks/sample (91% voiced
+  agreement, 85% floor; combined levels/activity PASS). Synthetic and
+  Celeste recovery pass with zero coalesced/delayed/dropped samples. Both
+  click renders report zero `click-v1` events. The five-frame Celeste smoke
+  is byte-identical at SHA-256 `3d4933a9...` with 2,079/3,668 off-centre
+  samples, range -21,544..7,711, 1,014 distinct levels. A forced canonical
+  rebuild reproduces the JSON/ASC byte-identically. Incidental finding: the
+  five stale foreign-machine Verilator objdirs under `build/` were removed to
+  run the battery, and `make shot`'s console rule fatals on the three
+  established width warnings after any clean rebuild (pre-existing; the smoke
+  here used the rule's command plus the established `-Wno-WIDTHEXPAND
+  -Wno-WIDTHTRUNC`).
+- **Decision:** accepted.
+- **Repeat only if:** the pitched-noise product slice, signed rounding
+  contract, or consumer pipeline boundary changes again.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
 | -- | -- | -- |
+| `build/experiments/h155/baseline-head.{json,pnr.log}` | `PATH=/opt/homebrew/bin:$PATH make synth-psg` at clean `644d68f` | Clean-HEAD canonical map (floor 6,834) and the stuck seed-1 route (overuse=2 through 18,052 iterations). |
+| `build/experiments/h155/premap-{baseline,candidate}.log` | `yosys ... synth_ice40 -run :map_luts; stat` | Pre-map A/B: 13,487 -> 13,482 cells. |
+| `build/experiments/h155/candidate.{json,asc}` | `PATH=/opt/homebrew/bin:$PATH make synth-psg` with H155 | Accepted canonical build; a forced rebuild reproduces both byte-identically. |
+| `build/experiments/h155/oracle-matrix.log` | `tools/psg_oracle_matrix.py ... --clock 18750000` | 59/59 byte-identical, 59/59 diagnostic-clean. |
+| `build/experiments/h155/{test-psg,test-clocks,preview,recovery,clicks}.log` | the named make targets | Complete behavior battery, all PASS. |
+| `build/experiments/h155/smoke.ppm` + `smoke-run.log` | five-frame headless Celeste run | Byte-identical smoke, SHA-256 `3d4933a9...`. |
 | `build/experiments/h001/baseline.synth.log` | `PATH=/opt/homebrew/bin:$PATH make synth-psg` at `86d4fab` | H001 baseline mapping. |
 | `build/experiments/h001/baseline.pnr.log` | same | H001 baseline seed-1 placement and timing. |
 | `build/experiments/h001/candidate.synth.log` | `PATH=/opt/homebrew/bin:$PATH make synth-psg` with H001 | H001 accepted mapping. |
@@ -8694,5 +8801,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   isolated floor win, but globally adds 51 LUT4s, one unpackable flop and 52
   floor cells; production is restored byte-for-byte, a forced map reproduces
   H139, and no route or fidelity gate remains.
-- Files to avoid staging after H139: executor/controller proof files, R.84/B2
+  H155's shared complemented noise limb passes every exactness, physical,
+  fidelity, cadence, PREVIEW, recovery, click, Celeste-smoke and
+  forced-reproducibility gate, and restores the routable seed-1 canonical
+  build that clean `644d68f` had silently lost to the clarity passes'
+  source-text sensitivity. It changes `rtl/psg_walk.sv`, so any future
+  R.84/B2 integration must regenerate and rerun the live-value proof plus the
+  complete cadence/render/physical battery.
+- Files to avoid staging after H155: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
