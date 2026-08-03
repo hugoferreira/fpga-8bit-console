@@ -28,7 +28,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H154.
+- Next hypothesis ID: H155.
+- H154 hypothesis row: encode the production radix-2 multiplier's five fast-
+  step classes in prefix bits above each request class's proved live `B`
+  width. Preserve all twelve `B` bits for the sole twelve-step class, use the
+  otherwise-zero thirteenth payload bit plus the two high bits that are dead
+  for every shorter class as a prefix, and retire the separate four-bit
+  `req_steps` source-domain payload. Decision: rejected and reverted. Exact
+  proof and the complete isolated service improve floor 148 -> 146 with three
+  fewer flops, but the canonical whole PSG adds 51 LUT4s, one unpackable flop
+  and 52 floor cells.
 - H153 hypothesis row: retire the standalone `cpz` copy-zero flag into
   `note_lo[7]`, which is dead after the note consumer on every K_ADV/EA5 route
   that can reach PC3. Preserve the captured historical decision that H122
@@ -7910,6 +7919,78 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   K_ADV/EA5-to-PC3 routing, copy-zero consumers, `note_lo` storage/packing,
   CPU stop visibility, or mapper register-enable lowering changes materially.
 
+## Hypothesis H154
+
+- **ID:** H154.
+- **Hypothesis:** the production multi-pumped multiplier uses radix 2 and
+  carries five exact fast-step classes: short/6, mode-0/8, mode-3/9,
+  mode-1/10 and mode-2/12. Their multiplier bounds are respectively six,
+  eight, nine, ten and twelve live `B` bits. Keep the twelve-step payload
+  unchanged under a zero thirteenth bit; for every shorter class, set that
+  otherwise-dead thirteenth bit and encode the class in payload bits 11:10,
+  which are above even the widest ten-bit shorter operand. The fast domain can
+  mask only those two tag bits when the thirteenth bit is set and reconstruct
+  the iteration count from the three-bit prefix, retiring the separate
+  four-bit `req_steps` bundled payload. This should exchange one newly-live
+  payload flop and a narrow decode for four source-domain count flops.
+- **Scope:** prove every live request arm's mode/short `B` bound, all five tag
+  encodings, exact value recovery, exact fast-step reconstruction, every
+  radix-2 result/acknowledge transaction and unchanged supported radix-4
+  behavior. Synthesize the complete registered request-payload, request-toggle,
+  fast-load and countdown consumer in isolation. Only after exactness and a
+  deterministic isolated floor win may `rtl/psg_mulmp.sv` change, followed by
+  full/PREVIEW lint and a forced canonical whole-PSG map. Route and run the
+  H139 fidelity/cadence/recovery/click/Celeste battery only after a whole-PSG
+  mapped/floor win. Preserve every multiplier value, result position,
+  transaction latency, padded sequencer-busy duration, CDC toggle, schedule,
+  interface, 14-EBR topology, R.84/B2 file, Tang path, image and tolerance.
+- **Baseline:** accepted H139 production at commit `d76241f` and docs commit
+  `40e9f60`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed in 7,018
+  LCs at 142.63/31.17 MHz. The H139 census attributes 24 unpackable flops and
+  221 LUT4-family labels to `req_b`; a fresh complete payload/countdown
+  consumer baseline will be recorded before any production edit.
+- **Changed condition versus H006, H090, H102 and H136:** H006 respelled only
+  the radix-4 count bits and H090 derived `seq_pad` from a still-separate
+  `req_steps`; neither removed the count payload. H102 successfully packed a
+  mode-exclusive bit into dead payload storage, but on a sequencer record
+  boundary. H136 activated `req_b[12]` and `m_p[33]` to carry a result sign,
+  exactly replacing the two sign flops it sought to retire. H154 activates
+  only `req_b[12]`, reuses already-live `req_b[11:10]` as class bits only when
+  their operand positions are proved zero, leaves the result word untouched,
+  and removes four count flops from the same CDC request boundary.
+- **Change:** exhaust every tag/value/count relation and representative signed
+  transaction, then compare the complete dual-clock registered service before
+  changing production. After the isolated gate passed, encode prefix 0xx as
+  the twelve-step payload and 100/101/110/111 as the 10/9/8/6-step classes in
+  `rtl/psg_mulmp.sv`; mask bits 11:10 only for a tagged short class and decode
+  the fast counter from the prefix. Keep the original payload/count path under
+  `RADIX_BITS == 2`.
+- **Result:** all 5,952 legal payload/value classes and 53,568 signed
+  transaction checks pass. The existing cycle-exact multiplier gate passes,
+  and the integrated dual-clock bench passes 6,020 radix-2/radix-4/freeze
+  transactions with unchanged true-busy bounds. Full and PREVIEW lint exactly
+  reproduce H139's 52/49 established warning counts. The complete isolated
+  service changes 126 -> 130 LUT4s, keeps 38 carries, retires three flops
+  (78 -> 75), reduces unpackable flops 22 -> 16, and improves floor 148 ->
+  146 cells.
+
+  Forced canonical whole-PSG synthesis reverses that local result: H139's
+  6,302 LUT4s, 1,291 carries, 1,450 flops, 498 unpackable flops, 14 EBRs and
+  floor 6,800 become **6,353 LUT4s, 1,290 carries, 1,447 flops, 499
+  unpackable flops, 14 EBRs and floor 6,852**. The three retired source flops
+  do not repay the tagged request-load/decode cover, and one more remaining
+  flop becomes unpackable. Production is restored byte-for-byte to H139; a
+  forced restored map reproduces 6,302/1,291/1,450/498/14/floor 6,800 exactly.
+  Routing and the fidelity/cadence battery are skipped after the hard mapped-
+  area failure.
+- **Decision:** rejected and reverted at the whole-PSG area gate. Keep the
+  explicit `req_steps` payload; its four flops pack more cheaply in the full
+  design than the class prefix and fast-load decode.
+- **Repeat only if:** if rejected, retry only after multiplier operand bounds,
+  radix/count classes, request payload width, fast-load boundary, supported
+  radix set, or mapper payload/countdown lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -8258,17 +8339,21 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h151/*` | seven-class transaction proof, 30-cycle arbitrary-input SAT, complete provider/divider synthesis, full/PREVIEW lint and canonical map/route | Exact and -8 FF/-3 floor alone, but globally +31 LUT4/+4 carry/-8 FF/-6 unpackable/+25 floor/+32 routed LCs; production reverted. |
 | `build/experiments/h152/*` | 10,089,360-case ownership proof, 1,024 hold/replay timelines, complete registered ownership synthesis, full/PREVIEW lint and forced canonical whole-PSG mapping | Exact and -5 LUT4/-8 FF/-5 floor alone, but globally +72 LUT4/+4 carries/-8 packed FF/+72 floor with unpackable FF and EBR counts unchanged; production reverted and route/fidelity skipped. |
 | `build/experiments/h153/*` | 1,441,792 semantic note/copy cases, 245,760 hold/CPU-change timelines and complete registered note/copy consumer synthesis | Exact and -1 FF/-1 unpackable, but +1 LUT4 leaves the isolated floor unchanged at 33; production never changed. |
+| `build/experiments/h154/*` | 5,952 payload classes, 53,568 signed transactions, 6,020 dual-clock service transactions, isolated synthesis, full/PREVIEW lint and forced candidate/restored canonical mapping | Exact and -3 FF/-6 unpackable/-2 floor alone, but globally +51 LUT4/-1 carry/-3 FF/+1 unpackable/+52 floor; production reverted, the restored map reproduces H139, and route/fidelity were skipped. |
 
 ## Handoff
 
-- Next allowed experiment: H154 on accepted H139 after a fresh source/DNR
-  audit. H149, H151 and H152 improve their isolated floors but add 47, 25 and
-  72 whole-PSG floor cells respectively; H150 and H153 fail their isolated
-  floors. Do not retry any of them without its repeat-condition change.
+- Next allowed experiment: H155 on accepted H139 after a fresh source/DNR
+  audit. H149, H151, H152 and H154 improve their isolated floors but add 47,
+  25, 72 and 52 whole-PSG floor cells respectively; H150 and H153 fail their
+  isolated floors. Do not retry any of them without its repeat-condition
+  change.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
-- `build/targets/psg.*` now contains rejected H152 measurement output; use
-  `build/experiments/h139/candidate.*` as the accepted physical baseline.
+- `build/targets/psg.{json,synth.log}` now contains H154's forced restored H139
+  map, while `build/targets/psg.{asc,pnr.log}` still contains the accepted H139
+  route; use `build/experiments/h139/candidate.*` as the durable accepted
+  physical baseline.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
   H004 and H006 were rejected before production RTL; H005's timing-failing
   spelling remains rejected. H008 was rejected before production RTL. H009
@@ -8591,6 +8676,10 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   is restored byte-for-byte and no route or fidelity gate remains. H153's
   `cpz` lifetime in dead `note_lo[7]` is exact and retires one unpackable flop,
   but adds one LUT4 and leaves the complete isolated floor unchanged;
-  production never changed and no downstream gate remains.
+  production never changed and no downstream gate remains. H154's radix-2
+  iteration-class prefix is exact and retires three flops with a two-cell
+  isolated floor win, but globally adds 51 LUT4s, one unpackable flop and 52
+  floor cells; production is restored byte-for-byte, a forced map reproduces
+  H139, and no route or fidelity gate remains.
 - Files to avoid staging after H139: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
