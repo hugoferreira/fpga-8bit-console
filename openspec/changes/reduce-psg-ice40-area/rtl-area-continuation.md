@@ -27,7 +27,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H119.
+- Next hypothesis ID: H120.
+- H119 hypothesis row: PREVIEW and the canonical multi-pumped schedule need
+  only six `pph` bits, while the compatibility single-clock schedule retains
+  seven. The exact width derivation removes one FF and five carries, but adds
+  35 LUT4s, 34 floor cells, and 32 routed LCs. Decision: rejected and
+  reverted.
 - H118 hypothesis row: every `vol_r` producer stays in 0..1,792, but the
   mapped design retains all twelve declared bits. Narrow the complete stored
   volume/interpolation/instrument-scaling cone to eleven bits and explicitly
@@ -203,20 +208,24 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h110/`, `build/experiments/h111/`,
   `build/experiments/h112/`, `build/experiments/h113/`,
   `build/experiments/h114/`, `build/experiments/h115/`, and
-  `build/experiments/h116/`, `build/experiments/h117/`, and
-  `build/experiments/h118/`, plus
+  `build/experiments/h116/`, `build/experiments/h117/`,
+  `build/experiments/h118/`, and `build/experiments/h119/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H118 rejected after two exact whole-PSG variants.
-  The volume cone is bounded to eleven bits, but narrowing it saves one FF
-  while adding 35/60 LUT4s and 41/66 routed LCs. H117 removed reset from
+- Latest completed decision: H119 rejected after exact three-mode schedule
+  proof, lint, and canonical whole-PSG place-and-route. The elaboration-
+  specific `pph` width removes one FF and five carries but adds 35 LUT4s and
+  32 routed LCs. H118 bounded the volume cone to eleven bits, but narrowing it
+  saves one FF while adding 35/60 LUT4s and 41/66 routed LCs. H117 removed reset from
   validity-dominated walk payloads but added 34/56 LUT4s and 44/64 routed LCs.
   H116 moved the eight effective-filter
   bits into inactive P_W2 but added 20/51 LUT4s and 30/53 routed LCs.
   I003 remains the accepted H102 source-contract v5 integration, and H102
   remains the best accepted generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H118's exact volume-width contraction is globally
+- Latest rejected variants: H119's exact elaboration-specific walk-phase
+  width is globally worse despite one fewer FF and five fewer carries. H118's
+  exact volume-width contraction is globally
   worse despite one fewer FF. H117's validity-dominated reset removal is
   globally worse despite unchanged state count. H116's EBR-owned effective-filter lifetime is
   globally worse despite eight fewer FFs. H115's bounded filter max is already recovered by
@@ -450,7 +459,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H118 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H120 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -469,6 +478,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H116's effective-filter inactive-bank lifetime family,
   H117's walk-controller payload-reset family,
   H118's sequencer volume-width family,
+  H119's elaboration-specific walk-phase counter-width family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -867,6 +877,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Effective-filter lifetime in inactive P_W2: H116.
 - Walk-controller payload reset removal: H117.
 - Sequencer volume-cone width contraction: H118.
+- Elaboration-specific walk-phase counter width: H119.
 
 ## Hypothesis H006
 
@@ -5757,6 +5768,62 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   range, effect counter invariant, scaling divisors, music-gain landing,
   publication width, or mapper volume-cone lowering changes materially.
 
+## Hypothesis H119
+
+- **ID:** H119.
+- **Hypothesis:** `psg_walk.pph` is declared seven bits for every elaboration,
+  and the accepted H102 netlist retains all seven physical counter flops. The
+  PREVIEW schedule visits only phases 0..23, while the canonical
+  `MULTIPUMP=1` hardware schedule visits only 0..61; both domains fit six
+  bits. Only the `REALTIME_PREVIEW=0, MULTIPUMP=0` compatibility schedule
+  reaches phase 67 and requires seven bits. Deriving the counter width from
+  those elaboration parameters may retire one mapped hardware flop and its
+  high-bit counter/decode fabric without changing a visited phase.
+- **Scope:** exhaustively prove start, advance, arbitrary repeated
+  `ctrl_stall`, terminal wrap, slot advance, and final-walk close for PREVIEW,
+  multi-pumped, and single-clock compatibility schedules; then change only
+  the width of `pph`, `pph_nxt`, the compatibility schedule input, and their
+  width casts in `rtl/psg_walk.sv`. Run full multi-pump and PREVIEW lint plus
+  canonical forced whole-PSG synthesis/census first. Route and run the
+  complete H102 fidelity battery only after a deterministic mapped/floor win.
+  Do not change schedule landmarks, control-ROM contents or addresses,
+  controller transitions, reset semantics, sample acceptance, arithmetic,
+  persistent oscillator state, interfaces, EBRs, R.84 executor/proofs,
+  images, Tang paths, or tolerances.
+- **Baseline:** accepted H102/I003 RTL at docs checkpoint `379db7b` maps 6,360
+  LUT4s, 1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor
+  6,868, and routes in 7,087 LCs at 140.92/32.65 MHz. Fresh source-contract v5
+  validation convicts all thirteen mutations; SHA-256 remains
+  `d54dde5d...`, with all twelve live source hashes matching. The accepted
+  JSON retains seven physical `pph` flops.
+- **Changed condition versus H105, H117, and R.68--R.69:** H105 narrowed the
+  separate V_LD/V_ST transfer counter `vcnt` and regressed its complete
+  consumer; H117 removed reset from `pph` without changing its width and
+  regressed globally; R.68--R.69 changed schedule-decode storage/encoding
+  while retaining the counter. H119 changes no reset or decode ownership and
+  instead exploits elaboration-specific terminal bounds on the phase counter
+  itself. No DNR row tests this mechanism.
+- **Change:** derive `PPH_W = (!REALTIME_PREVIEW && !MULTIPUMP) ? 7 : 6`, use
+  it for `pph` and `pph_nxt`, and replace fixed seven-bit phase casts/constants
+  with `PPH_W`-sized forms. Preserve the compatibility schedule's seven-bit
+  function input and all three exact terminal values.
+- **Result:** the proof covers 39,520 state-transition pairs and 39,520
+  combinational pairs across PREVIEW, canonical multi-pump, and compatibility
+  schedules, including starts, arbitrary stalls and skips, terminal wraps,
+  slot advances, and the final close. All three lint modes pass with only the
+  pre-existing `WIDTHTRUNC` class suppressed. Canonical synthesis maps 6,395
+  LUT4s, 1,316 carries, 1,457 flops, 507 unpackable flops and 14 EBRs; the
+  deterministic floor is 6,902 cells and seed-1 router2 completes in 7,119
+  LCs at 145.99 MHz fast / 32.50 MHz PSG. Relative to H102 this is +35 LUT4s,
+  -5 carries, -1 FF, -1 unpackable FF, +34 floor cells, and +32 routed LCs.
+  The fidelity battery is intentionally skipped because every binding area
+  gate fails.
+- **Decision:** rejected and reverted byte-for-byte. The ignored proof and
+  physical evidence remain under `build/experiments/h119/`.
+- **Repeat only if:** if rejected, retry only after a schedule terminal,
+  elaboration-mode contract, phase consumer, controller reset/stall behavior,
+  or mapper counter/decode lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6069,10 +6136,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h116/{filter_bank_proof.py,candidate*,candidate-v2*}` | exhaustive bank-lifetime/replay proof, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact and -8 FF, but variants add 20/51 LUT4s, 21/52 floor cells, and 30/53 routed LCs. |
 | `build/experiments/h117/{reset_dominance_proof.py,candidate*,candidate-v2*}` | exhaustive validity/reset proof, source-gate audit, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact with unchanged state count, but variants add 34/56 LUT4s, 40/56 floor cells, and 44/64 routed LCs. |
 | `build/experiments/h118/{volume_width_proof.py,candidate*,candidate-v2*}` | 2,707,216-case range proof, full/PREVIEW lint, and two canonical forced whole-PSG builds | Exact and -1 FF, but variants add 35/60 LUT4s, 35/57 floor cells, and 41/66 routed LCs. |
+| `build/experiments/h119/{pph_width_proof.py,candidate*}` | 79,040 schedule/transition checks, all three lint modes, and canonical forced whole-PSG synthesis/route | Exact and -1 FF/-5 carries, but +35 LUT4s, +34 floor cells, and +32 routed LCs. |
 
 ## Handoff
 
-- Next allowed experiment: H119 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H120 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
