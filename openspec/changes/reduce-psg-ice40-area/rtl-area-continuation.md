@@ -27,7 +27,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H113.
+- Next hypothesis ID: H114.
+- H113 hypothesis row: the top-level multiplier request combines the mutually
+  exclusive walker and sequencer payloads with five bitwise OR networks. Keep
+  the same ORed start signal, but select the captured payload from its active
+  owner. This may let Yosys retain the owner predicate through the large
+  flattened `req_a`/`req_b` cones instead of independently merging every bit.
+  The request cones shrink, but the global map adds 66 LUT4s, four carries,
+  66 floor cells, and 73 routed LCs. Decision: rejected and reverted.
 - H112 hypothesis row: packing pending trigger row and length into one 11-bit
   FF array preserves all 6,291,456 field/priority transitions, but the complete
   separate and packed consumers both map to 61 LUT4s and 44 flops. Decision:
@@ -162,16 +169,19 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   `build/experiments/h101/`, the accepted `build/experiments/h102/`, and the
   rejected `build/experiments/h106/`, `build/experiments/h107/`, and
   `build/experiments/h108/`, `build/experiments/h109/`, and the rejected
-  `build/experiments/h110/`, `build/experiments/h111/`, and
-  `build/experiments/h112/`, plus
+  `build/experiments/h110/`, `build/experiments/h111/`,
+  `build/experiments/h112/`, and `build/experiments/h113/`, plus
   `build/experiments/h009/`, `build/experiments/h010/`, and
   `build/experiments/h012/` and `build/experiments/h013/` synthesis,
   placement, click, recovery, and smoke artifacts as applicable.
-- Latest completed decision: H112 rejected before production because its exact
-  packed trigger-metadata FF array maps identically to the separate arrays.
+- Latest completed decision: H113 rejected after exact captured-transaction
+  proof, clean lint, and a completed canonical route because owner selection
+  adds 66 LUT4s, four carries, 66 floor cells, and 73 routed LCs globally.
   I003 remains the accepted H102 source-contract v5 integration, and H102
   remains the best accepted generic RTL/proof point at `ccfb2a0`.
-- Latest rejected variants: H112's exact trigger-metadata packing is already
+- Latest rejected variants: H113's owner-selected multiplier request payload
+  shrinks `req_a`/`req_b` but globally expands downstream cones. H112's
+  exact trigger-metadata packing is already
   recovered by Yosys. H111's exact pending-valid hoist is already
   recovered by Yosys. H110's join-mode reconstruction loses historical
   state on a same-edge bank publication/pass start. H109's one-hot sequencer state lowers mapped floor
@@ -398,7 +408,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Next Experiment Gate
 
-- Next experiment: H113 on accepted H102 `ccfb2a0`, only after a fresh source
+- Next experiment: H114 on accepted H102 `ccfb2a0`, only after a fresh source
   and DNR audit. It must not repeat H096/H103's
   launch-worklist/pacing-state family, H102's wavetable-bass/effect-state
   encoding family,
@@ -411,6 +421,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H110's inactive-bank join-mode reconstruction family,
   H111's registered readback pending-valid factoring family,
   H112's pending-trigger FF-array packing family,
+  H113's top-level walker/sequencer multiplier-payload merge family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -570,6 +581,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H110 | rejected | Keep the explicit `join_stage` history bit: a same-edge `tick_en_d` publication plus join-pass start clears `bank_ready` while preserving `join_stage=1`. |
 | H111 | rejected | Keep the readback pending assignments in their control arms: the unconditional next-state spelling is exact but maps identically at 14 LUT4s/nine flops. |
 | H112 | rejected | Keep separate pending-trigger row/length arrays: one packed 11-bit FF array is exact but maps identically at 61 LUT4s/44 flops. |
+| H113 | rejected | Keep the zero-idle OR payload merge: owner selection is transaction-exact and shrinks `req_a`/`req_b`, but adds 66 LUT4s, four carries, 66 floor cells, and 73 routed LCs globally. |
 
 ## Hypothesis H001
 
@@ -800,6 +812,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - Inactive-bank join-mode reconstruction: H110.
 - Registered readback pending-valid factoring: H111.
 - Pending-trigger FF-array packing: H112.
+- Top-level walker/sequencer multiplier-payload merge: H113.
 
 ## Hypothesis H006
 
@@ -5397,6 +5410,53 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   ownership, CPU/consume priority, dynamic-index consumers, or mapper array
   lowering changes materially.
 
+## Hypothesis H113
+
+- **ID:** H113.
+- **Hypothesis:** `psg.sv` currently merges the walker and sequencer multiplier
+  request payloads with bitwise OR even though `wmul_start` and `smul_start`
+  are mutually exclusive and every inactive client drives a zero bundle. Keep
+  `mul_start = wmul_start | smul_start`, but select all payload fields from the
+  active owner. The explicit owner mux may preserve common selection structure
+  through the flattened `req_a` and `req_b` cones and reduce whole-PSG LUT4s.
+- **Scope:** prove exact captured-transaction equivalence for all legal owner
+  combinations and arbitrary active payload bits, verify the producers'
+  zero-when-idle contract, then change only the five combinational payload
+  assignments in `rtl/psg.sv`. Run full/PREVIEW lint and canonical forced
+  whole-PSG synthesis/census first. Run routing and the complete H102 fidelity
+  battery only after a deterministic mapped/floor improvement. Do not change
+  multiplier state, arithmetic, mode widths, request/consume timing, CDC
+  payload lifetime, walker/sequencer interfaces, R.84 executor/proofs, images,
+  Tang paths, or tolerances.
+- **Baseline:** accepted H102/I003 at `a25f488` reproduces 6,360 LUT4s, 1,321
+  carries, 1,458 flops, 508 unpackable flops, 14 EBRs, 6,868-cell floor, and
+  7,087 routed LCs at 140.92/32.65 MHz. Source-contract v5 is SHA-256
+  `d54dde5d...`, with all twelve bound source hashes matching.
+- **Changed condition versus H017, R.36, R.63--R.64, and R.79:** those rows
+  factored operand logic inside one requester, changed request-time arithmetic,
+  or introduced/retired held CDC payload state. H113 leaves both requesters and
+  the multiplier boundary unchanged; it replaces only the top-level merge of
+  two already-exclusive, zero-when-idle bundles with owner selection and adds
+  no state or arithmetic.
+- **Change:** retain the ORed start signal; assign A, B, mode, and short from
+  the walker bundle when `wmul_start` is asserted, otherwise from the sequencer
+  bundle. Preserve the existing simultaneous-request assertion.
+- **Result:** the all-domain Yosys SAT proof passes for arbitrary 40-bit active
+  payloads under the no-dual-owner contract, and both producer blocks retain
+  their zero-when-idle defaults. Full multi-pump and PREVIEW Verilator lint
+  pass. Canonical forced mapping changes 6,360 LUT4 / 1,321 carry / 1,458 FF /
+  508 unpackable / 14 EBR / floor 6,868 to 6,426 / 1,325 / 1,458 / 508 / 14 /
+  floor 6,934. The formerly dominant `req_a` and `req_b` families shrink
+  from 376/279 to 165/234 LUT4s, but owner fanout reshapes other cones and the
+  global LUT gain is lost. Router2 completes at 7,160 LCs versus 7,087, with
+  both clocks passing at 151.17/32.35 MHz. The complete fidelity battery is
+  skipped because every binding area gate fails.
+- **Decision:** rejected and production RTL reverted byte-for-byte. Ignored
+  proof and physical evidence remains under `build/experiments/h113/`.
+- **Repeat only if:** if rejected, retry only after requester exclusivity,
+  zero-when-idle payloads, multiplier capture semantics, top-level ownership,
+  or mapper mux/OR lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -5703,10 +5763,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h110/{join_stage_proof.py,join_stage_probe.sv}` | reachable reduced-controller proof and unrun synthesis probe | Refuted by same-edge bank publication plus join-pass start before production RTL or synthesis. |
 | `build/experiments/h111/{readback_pending_proof.py,readback_pending_probe.sv,isolated-*}` | exhaustive bit/control proof and complete registered readback synthesis | Exact across 128 transitions; both forms map identically at 14 LUT4s/nine flops. |
 | `build/experiments/h112/{trigger_meta_proof.py,trigger_meta_probe.sv,isolated-*}` | exhaustive field/priority proof and complete registered dynamic-index synthesis | Exact across 6,291,456 transitions; both forms map identically at 61 LUT4s/44 flops. |
+| `build/experiments/h113/{merge_capture_proof.sv,capture-proof.log,baseline.*,candidate.*}` | all-domain SAT proof, source-contract audit, full/PREVIEW lint, and canonical forced whole-PSG synthesis/route | Transaction-exact, but the candidate is +66 LUT4/+4 carry/+66 floor/+73 routed LCs and is rejected. |
 
 ## Handoff
 
-- Next allowed experiment: H113 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H114 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
