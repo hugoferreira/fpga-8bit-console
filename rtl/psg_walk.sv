@@ -144,7 +144,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   logic [PSG_VW-1:0] pc_ch;
 
   logic signed [17:0] smp_a, smp_b;
-  logic signed [7:0] wt_p1, wt_q1;
+  logic signed [7:0] wt_x1;
   logic [9:0] wt_pf, wt_qf;
 
   // Pack the oscillator working set for its scheduled writeback window.
@@ -339,10 +339,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
 
   // Linear interpolation deltas and ten-bit phase fractions for the two
   // oscillator arms.
-  wire signed [8:0] wt_pd =
-      $signed({wt_p1[7], wt_p1}) - $signed(smp_a[8:0]);
-  wire signed [8:0] wt_qd =
-      $signed({wt_q1[7], wt_q1}) - $signed(smp_b[8:0]);
+  wire signed [8:0] wt_delta_base = cap[CAP_W4]
+                                  ? $signed(smp_a[8:0])
+                                  : $signed(smp_b[8:0]);
+  wire signed [8:0] wt_d =
+      $signed({wt_x1[7], wt_x1}) - wt_delta_base;
   wire signed [19:0] wt_mag = $signed({1'b0, m_res[20:2]});
   wire signed [19:0] wt_op = wt_mag ^ $signed({20{mxs_new}});
   wire signed [17:0] wt_base = cap[CAP_W26] ? smp_b : smp_a;
@@ -644,7 +645,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
 
           ((cap[CAP_W4] || cap[CAP_W15]) && s_snd_wt): begin
             wmul_start = 1'b1;
-            wmul_a = cap[CAP_W4] ? 25'(wt_pd) : 25'(wt_qd);
+            wmul_a = 25'(wt_d);
             wmul_b = cap[CAP_W4] ? {2'b0, wt_pf} : {2'b0, wt_qf};
             wmul_mode = 2'd1;
           end
@@ -1212,7 +1213,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
           // for the next sample's restart comparison.
           cap[CAP_W2]: begin
             if (s_snd_wt)
-              wt_p1 <= $signed(seq_q);
+              wt_x1 <= $signed(seq_q);
             else
               smp_a <= z_eval;
             s_last_inc <= s_eff_inc;
@@ -1236,8 +1237,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
               smp_b <= z_eval;
             if (s_snd_wt) begin
 
-              wt_q1 <= $signed(seq_q);
-              mxs_new <= wt_pd[8];
+              wt_x1 <= $signed(seq_q);
+              mxs_new <= wt_d[8];
             end else
 
               stage_leaf();
@@ -1245,7 +1246,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
           cap[CAP_W15]: begin
             if (s_snd_wt) begin
               smp_a <= wt_z;
-              mxs_new <= wt_qd[8];
+              mxs_new <= wt_d[8];
             end else begin
 
               gz_filt_r <= m_res[26:10];
@@ -1328,6 +1329,14 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       end
     end
   end
+
+  // Keep the value-lineage trace schema source-compatible without perturbing
+  // synthesis ordering.  These are simulation-only wires, not restored
+  // lifetimes: W2 observes x1 as p1 and W4 observes it after it becomes q1.
+`ifndef SYNTHESIS
+  wire signed [7:0] wt_p1 = wt_x1;
+  wire signed [7:0] wt_q1 = wt_x1;
+`endif
 
 endmodule
 

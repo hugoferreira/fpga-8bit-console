@@ -23,11 +23,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 
 ## Current State
 
-- Active hypothesis: H134; H001--H003, H005, H007, H022, H023, H027, H030,
+- Active hypothesis: none; H001--H003, H005, H007, H022, H023, H027, H030,
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
-  main; H102 accepted atop H096.
-- Next hypothesis ID: H134.
+  main; H102 accepted atop H096; H134 accepted atop H102.
+- Next hypothesis ID: H135.
 - H131 hypothesis row: replace the `aud_sl(...) == c` row-owner relation with
   the exact foreground-play XOR. All 65,536 slot/play/phase tuples and
   arbitrary-state SAT pass, but both complete row writers map identically at
@@ -6649,12 +6649,37 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   no new downstream selector is introduced. Both bytes refresh on every
   wavetable visit regardless of play/amplitude, covering the persistent
   zero-amplitude class that blocks fraction aliasing.
-- **Change:** proof-first adjacent sample-byte lifetime plus one selected-base
-  subtract; production RTL remains unchanged until exactness and isolated
-  physical gates pass.
-- **Result:** active.
-- **Decision:** active.
-- **Repeat only if:** if rejected, retry only after wavetable byte-read phases,
+- **Change:** merge `wt_p1`/`wt_q1` into `wt_x1`, select the live `smp_a` or
+  `smp_b` base before one nine-bit `wt_d` subtract, and feed both interpolation
+  requests plus their sign capture from that result. Keep simulation-only
+  `wt_p1`/`wt_q1` trace aliases after all hardware logic and behind
+  `ifndef SYNTHESIS` so the established value-lineage schema still elaborates
+  without perturbing synthesis ordering.
+- **Result:** the source-bound exhaustive model passes all 131,072 signed-byte/
+  signed-nine-bit arithmetic cases and 917,504 W2 -> W4 -> W15 sequence checks;
+  the corrected four-step nonblocking SAT miter also passes. The complete
+  isolated consumer improves 46 -> 20 LUT4s, 16 -> 8 carries and 25 -> 17
+  flops. The whole PSG keeps 6,360 LUT4s and 14 EBRs while moving 1,321 ->
+  1,317 carries, 1,458 -> 1,450 flops, 508 -> 500 unpackable flops and floor
+  6,868 -> 6,860 cells. Seed-1 router2 places 7,086 LCs and routes at
+  133.92 MHz fast / 33.04 MHz PSG. The simulation aliases initially changed
+  synthesis ordering when placed above the datapath; moving them after the
+  final sequential block restores the 6,360-LUT map, and the final ASC is
+  byte-identical to the pre-alias candidate at SHA-256
+  `b4c0f70e1b48e705dbe312ee96dac8a97745d950b473498fd872e5fdc127d601`.
+  Full/PREVIEW lint and `make test-psg` pass; the latter retains 524/850 walk
+  clocks and 4,008/5,103 tick clocks with zero late flips. All 59 frozen
+  renders are byte-identical. Ordinary `/4`, `/5`, `/6` cadence remains 572
+  clocks and multipumped cadence remains 524, with every tick window clean.
+  All eight active PREVIEW checks at 1,275 and 159 clocks/sample pass, recovery
+  reports no coalesced/delayed/dropped samples, and both four-second SFX-10
+  renders contain zero `click-v1` events. Clock-divider checks pass. The fresh
+  five-frame Celeste smoke reports 2,079/3,668 off-centre samples, range
+  -21,544..7,711, and 1,014 levels.
+- **Decision:** accepted. H134 saves four deterministic carries, eight flops,
+  eight unpackable/floor cells and one routed LC without changing any render,
+  schedule, interface, EBR, R.84/B2, Tang, image or tolerance surface.
+- **Repeat only if:** revisit only after wavetable byte-read phases,
   interpolation request timing, sample-byte persistence, subtract ownership,
   or mapper register-input/arithmetic sharing changes materially.
 
@@ -6986,11 +7011,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h131/{aud_row_owner_probe.sv,aud_row_owner_proof.py,exhaustive.log,formal.log,isolated-*}` | exhaustive ownership proof, arbitrary-state SAT, and complete row-writer synthesis | Exact and mapping-identical at 18 LUT4s/20 unpackable FF. |
 | `build/experiments/h132/{tail_token_proof.py,tail_token_formal.sv,wave_consumer_probe.sv,exhaustive.log,formal-*,isolated-*}` | all-context exhaustive proof, address and registered-token SAT, and complete registered waveform-consumer synthesis | Exact with one EBR in both forms, but -1 carry/-1 FF changes 696 -> 701 LUT4s and worsens the floor 762 -> 766 cells. |
 | `build/experiments/h133/{tail_plane_proof.py,tail_plane_formal.sv,wave_consumer_probe.sv,exhaustive.log,formal-*,isolated-*}` | all-context high-half-plane proof, address and registered-token SAT, and complete registered waveform-consumer synthesis | Exact with one EBR in both forms, but -1 carry/-1 FF changes 696 -> 699 LUT4s and worsens the floor 762 -> 764 cells. |
+| `build/experiments/h134/{wavetable_byte_proof.py,wavetable_byte_probe.sv,exhaustive.log,formal.log,lint-*,isolated-*,candidate*,postalias2*}` plus completed acceptance output and `clicks/`, `celeste-smoke.ppm` | source-bound exhaustive/SAT proof, complete registered-consumer synthesis, canonical map/route reproducibility and the full H102 fidelity/cadence/PREVIEW/recovery/click/smoke battery | Accepted: exact, -4 carries/-8 FF/-8 unpackable and floor cells, 7,086 routed LCs; final ASC is byte-identical after simulation-only trace aliases. |
 
 ## Handoff
 
-- Next allowed experiment: H134 on accepted H102 `ccfb2a0`, using the
-  adjacent wavetable sample-byte lifetime and selected-base subtract above.
+- Next allowed experiment: H135 on accepted H134. Record a concrete row before
+  changing RTL, and select a mechanism outside the Active DNR index.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
@@ -7256,6 +7282,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   remains. H133's one-bit address-MSB token plane is also exact and recovers
   two of H132's lost floor cells, but still adds three LUT4s for one fewer
   carry, FF, and unpackable cell; production is unchanged, no downstream gate
-  remains, and the current spare-bit token family is closed.
-- Files to avoid staging after I003: executor/controller proof files beyond the
-  accepted source-boundary tools and ledger, plus unrelated changes.
+  remains, and the current spare-bit token family is closed. H134 merges the
+  adjacent wavetable sample-byte lifetimes and shares their subtract; every
+  exactness, physical, fidelity, cadence, preview, recovery, click and Celeste
+  gate passes at 6,860 floor cells and 7,086 routed LCs. It changes
+  `rtl/psg_walk.sv`, so no R.84/B2 source-certificate or lineage equivalence is
+  claimed from this isolated loop.
+- Files to avoid staging after H134: executor/controller proof files, R.84/B2
+  artifacts, Tang paths, images, tolerances and unrelated changes.
