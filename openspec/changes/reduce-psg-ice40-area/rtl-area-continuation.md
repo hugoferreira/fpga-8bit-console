@@ -28,7 +28,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134.
-- Next hypothesis ID: H150.
+- Next hypothesis ID: H151.
+- H150 hypothesis row: store only `fade_step[11:0]`; among the fade-eligible
+  table indices 1--31, a zero low field uniquely encodes index 1's value 4096.
+  Decision: rejected before production RTL. Exact proof passes and one
+  unpackable flop retires, but three LUT4s worsen the isolated floor by two
+  cells.
 - H149 hypothesis row: store the one-cycle displaced-control collision fact in
   `fstep_q[12]` only while the fade lookup is replaying, when an adjacent
   `$20` consumes `crom_q` directly and the prior fade-step value is
@@ -1082,6 +1087,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H137.
 - Dedicated fade-step EBR reversing the constants-port consolidation: H148.
 - Displaced-control token stored temporarily in `fstep_q[12]`: H149.
+- Active fade-step low-twelve-bit zero encoding: H150.
 - Live/old pre-clamp noise-register width contraction: H138.
 - Live/old noise recurrence add/clamp sharing: H140.
 - Soft-add underflow history in unused `fmc` states: H141.
@@ -7646,6 +7652,62 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   shared-port replay duration, or mapper mixed-reset slice lowering changes
   materially.
 
+## Hypothesis H150
+
+- **ID:** H150.
+- **Hypothesis:** a fade starts only when `fade_len >= 8`, so the captured
+  table index is 1..31. Index 1 is the sole value with bit 12 set (`4096`),
+  and every other eligible step is nonzero and below 4096. Store only the low
+  twelve bits in `fade_step`; reconstruct the exact thirteen-bit addend as
+  `{~|fade_step, fade_step}` while `fade_dir` makes the payload observable.
+  This should retire one unpackable fade-step flop without changing the table,
+  lookup/replay timing, accumulator width, gain publication or fade cadence.
+- **Scope:** bind the 32 generated table words; prove that index zero never
+  starts a fade and that the low-twelve-bit encoding is bijective over indices
+  1..31. Exhaust reset, fade-in/out start, interruption, every active
+  accumulator value, `pre_tick` update/completion and all 31 eligible steps;
+  prove the complete registered fade-state consumer with SAT and synthesize it
+  in isolation. Only after exactness and a deterministic isolated floor win
+  may `rtl/psg_seq.sv` change, followed by full/PREVIEW lint and a forced
+  canonical whole-PSG map. Route and run the H139 fidelity/cadence battery only
+  after a whole-PSG mapped/floor win. Preserve `$20`/`$22` timing and readback,
+  shared-ROM collision behavior, all fade values, schedules, 14 EBRs,
+  interfaces, R.84/B2 files, Tang paths, images and tolerances.
+- **Baseline:** accepted H139 production at commit `d76241f` and docs commit
+  `0885d54`, RTL fingerprint `41bf50aae6d2`: 6,302 LUT4s, 1,291 carries,
+  1,450 flops, 498 unpackable flops, 14 EBRs and floor 6,800, routed in 7,018
+  LCs at 142.63/31.17 MHz. The complete registered fade-state consumer will be
+  measured before any production edit.
+- **Changed condition versus H025, H061, H118, H120 and H147:** H025 only
+  named the repeated fade sum; H061 reconstructed eight `fade_acc` bits from
+  published gain and regressed; H120 removed reset from guarded fade payloads
+  but retired no mapped flop. H118 and H147 narrowed volume/gain histories in
+  wider fanout cones. H150 leaves accumulator, gain, direction and reset
+  ownership intact and contracts only the table-derived active step, using a
+  source-bound nonzero-domain encoding at its unchanged addend boundary.
+- **Change:** proof and complete isolated synthesis first; production RTL
+  remains unchanged until both gates pass.
+- **Result:** the source-bound table audit proves all 31 eligible steps are
+  nonzero, index 1's 4096 uniquely encodes as a zero low field, and decoding
+  every stored value returns the exact generated step. Exhaustive checking
+  passes 4,063,232 active accumulator/direction/step cases and 4,536
+  simultaneous tick/command/interruption cases. The eight-cycle
+  arbitrary-input SAT miter passes from reset for every sequence whose fade
+  commands remain in the proved eligible-step domain.
+
+  The complete registered fade-state baseline maps to 79 LUT4s, 16 carries,
+  41 flops (thirteen unpackable) and floor 92. The candidate maps to 82 LUT4s,
+  16 carries, 40 flops (twelve unpackable) and floor 94. The zero detector and
+  reconstructed high addend cost three LUT4s to retire one unpackable flop, so
+  the deterministic isolated floor regresses by two cells. Production RTL,
+  lint, whole-PSG map/route and fidelity gates are skipped.
+- **Decision:** rejected before production RTL. Keep the exact thirteen-bit
+  active fade step; its stored high bit is cheaper than reconstructing the
+  unique 4096 value in the complete consumer.
+- **Repeat only if:** if rejected, retry only after the fade-step table/domain,
+  fade eligibility, accumulator consumer, payload reset/validity, or mapper
+  zero-detect/sequential lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -7990,15 +8052,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h147/*` | exhaustive/SAT gain bound/history proof, lint, isolated synthesis and canonical map/route | Exact and -5 LUT4/-2 FF alone, but globally +26 LUT4/+2 carry/+27 floor/+33 routed LCs with fast timing failure. |
 | `build/experiments/h148/*` | 81,920-sequence fade/control proof, isolated port synthesis, full/PREVIEW lint and canonical map/route | Exact and -22 LUT4/-13 FF/-35 floor alone, but globally +19 LUT4/+4 carry/-13 FF/+5 floor/+13 routed LCs while spending EBR 15. |
 | `build/experiments/h149/*` | 6,594,000-transition relation, 16,155 command traces, SAT, complete isolated port synthesis, full/PREVIEW lint and canonical map/route | Exact and -1 FF/-12 floor alone, but globally +58 LUT4/+5 carry/-1 FF/-11 unpackable/+47 floor/+58 routed LCs; production reverted. |
+| `build/experiments/h150/*` | source-bound domain proof, 4,063,232 active arithmetic cases, 4,536 command cases, SAT and complete isolated fade-state synthesis | Exact and -1 FF/-1 unpackable, but +3 LUT4 worsens the isolated floor 92 -> 94; production unchanged. |
 
 ## Handoff
 
-- Next allowed experiment: H150 on accepted H139 after a fresh source/DNR
-  audit. H148 is exact and wins decisively in isolation, but adds five
-  whole-PSG floor cells and thirteen routed LCs while consuming the last EBR.
-  H149 is exact and improves its isolated floor, but adds 47 whole-PSG floor
-  cells and 58 routed LCs. Do not retry either without its repeat-condition
-  change.
+- Next allowed experiment: H151 on accepted H139 after a fresh source/DNR
+  audit. H149 is exact and improves its isolated floor, but adds 47 whole-PSG
+  floor cells and 58 routed LCs. H150 is exact and retires one unpackable
+  flop, but its isolated floor grows by two cells. Do not retry either without
+  its repeat-condition change.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
   owned R.84 work.
 - Verification still missing: none for accepted H001--H003, H005, or H007.
