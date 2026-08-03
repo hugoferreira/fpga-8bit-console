@@ -27,7 +27,14 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H031, H039, H044, H047, H051, H056, H057, H069, H075, H080, and H089
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096.
-- Next hypothesis ID: H125.
+- Next hypothesis ID: H126.
+- H125 hypothesis row: `s_ch_noiz` is loaded on the same edge as the
+  unreachable `s_eff_a[11]` bit and maps as a separate unpackable flop whose
+  named fanout cone contains 92 LUT4s. Pack this materially higher-fanout
+  payload into bit 11 while masking only numeric amplitude consumers. The
+  exact registered cone saves 31 LUT4s, one carry and one FF, but the whole
+  PSG adds 45 LUT4s, two carries and 45 floor cells. Decision: rejected and
+  reverted.
 - H124 hypothesis row: the walker stores the full-mode clear toggle in one
   dedicated flop while all reachable amplitudes fit eleven bits and the
   existing twelve-bit `s_eff_a` storage still maps bit 11. Pack the clear
@@ -512,6 +519,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H120's fade-payload reset-removal family,
   H121's sequencer-credit state-representation family,
   H122's PC3 copy-zero live-state reconstruction family,
+  H123's sampled parameter-bank history family,
+  H124's clear-toggle/amplitude dead-bit packing family,
+  H125's noiz/amplitude dead-bit packing family,
   H097's `ML_STOP` provenance/lifetime-alias family,
   H098's fast multiplier iteration-token family,
   H099's filter-tuple ownership/publication-source family,
@@ -6115,6 +6125,54 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   P_W3 layout, clear-token ownership, walker consumer set, or mapper
   register/enable lowering changes materially.
 
+## Hypothesis H125
+
+- **ID:** H125.
+- **Hypothesis:** `psg_walk.s_ch_noiz` is loaded from P_W2 on the same edge as
+  the unreachable `s_eff_a[11]` amplitude bit loaded from P_W3, before either
+  is consumed. Pack `state_q[6]` into stored amplitude bit 11, derive
+  `s_ch_noiz` from that bit, and explicitly restrict only numeric amplitude
+  consumers to bits 10:0. This retires one unpackable high-fanout flop and may
+  let its 92-LUT named cone cover better than H124's low-fanout clear token.
+- **Scope:** prove all 8,192 amplitude/noiz/load tuples, arbitrary holds,
+  every noiz consumer (noise refresh and buzz/brown selection), every
+  amplitude zero/slice/gain/PREVIEW consumer, and the one-cycle P_W2-to-P_W3
+  load order. Synthesize the complete registered consumer first. If it saves
+  deterministic local resources, change only `rtl/psg_walk.sv`, run full
+  multi-pump and PREVIEW lint, then canonical forced whole-PSG mapping/census.
+  Route and run the H102 fidelity battery only after mapped/floor area wins.
+  Retain parameter-bank words, amplitude/noiz values, noise/filter behavior,
+  schedule, interfaces, EBRs, R.84 files and tolerances.
+- **Baseline:** accepted H102/I003 RTL at commit `c6105c5` maps 6,360 LUT4s,
+  1,321 carries, 1,458 flops, 508 unpackable flops, 14 EBRs, floor 6,868, and
+  routes in 7,087 LCs at 140.92/32.65 MHz. H113's source-identical JSON maps
+  all twelve `s_eff_a` DFFEs and one separate unpackable `s_ch_noiz` DFFE;
+  its named downstream family contains 92 LUT4s.
+- **Changed condition versus H124:** H124's packed clear token drove only a
+  seven-LUT named cone and both source spellings regressed globally despite
+  the one-FF retirement. H125 changes the packed payload and its entire
+  consumer topology: `s_ch_noiz` is unpackable and participates in a 92-LUT
+  refresh/brown-noise cone. The unchanged amplitude mask is not itself the
+  hypothesized saving.
+- **Change:** load `state_q[6]` into `s_eff_a[11]` during P_W2, load only
+  `state_q[10:0]` during P_W3, derive `s_ch_noiz` from stored bit 11, and mask
+  bit 11 at the unchanged amplitude consumers.
+- **Result:** 32,768 exhaustive checks pass over all 4,096 amplitude/noiz
+  tuples, including both refresh outcomes, buzz/brown selection and numeric
+  consumers. Five-cycle SAT proves the P_W2/P_W3 split load followed by
+  arbitrary holds. The complete mapper-visible isolated cone improves from
+  181 LUT4s / 24 carries / 13 DFFEs to 150 / 23 / 12. Full multi-pump and
+  PREVIEW lint pass. Canonical whole-PSG mapping instead moves to 6,405 LUT4s,
+  1,323 carries, 1,457 flops, 14 EBRs and floor 6,913: +45 LUT4s, +2 carries,
+  -1 FF and +45 floor cells. Routing and fidelity are skipped because the
+  deterministic area gate fails; production RTL is restored byte-for-byte.
+- **Decision:** rejected. The high-fanout payload is globally worse than
+  H124's already-rejected low-fanout packing, so the amplitude dead-bit family
+  closes under the two-variant stop rule.
+- **Repeat only if:** if rejected, retry only after noiz/buzz semantics,
+  amplitude domain, P_W2/P_W3 load order, walker consumer set, or mapper
+  register/enable lowering changes materially.
+
 ## Saved Artifacts
 
 | Artifact | Command | Notes |
@@ -6433,10 +6491,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h122/cpz_counterexample.py` | reachable K_ADV-to-PC3 control interleaving | Refutes live-state reconstruction when a CPU stop lands during the copy chain; no RTL changed. |
 | `build/experiments/h123/bank_history_counterexample.py` | exhaustive same-edge publication and dropped-PREVIEW history model | Refutes a live bank delta before RTL: same-edge flips move restart early and dropped starts leave stale history. |
 | `build/experiments/h124/{packed_clear_proof.py,packed_clear_probe.sv,formal.log,isolated-*,candidate*}` | complete legal-domain proof, SAT, registered-consumer synthesis, full/PREVIEW lint, and two forced whole-PSG maps | Exact and locally -29 LUT4/-1 carry/-1 FF, but both global spellings are +39 LUT4/+2 carry/+39 floor; production reverted. |
+| `build/experiments/h125/{packed_noiz_proof.py,packed_noiz_probe.sv,formal.log,isolated-*,candidate*}` | split-load proof, SAT, registered-consumer synthesis, full/PREVIEW lint, and forced whole-PSG mapping | Exact and locally -31 LUT4/-1 carry/-1 FF, but globally +45 LUT4/+2 carry/+45 floor; production reverted. |
 
 ## Handoff
 
-- Next allowed experiment: H125 on accepted H102 `ccfb2a0`, after a fresh
+- Next allowed experiment: H126 on accepted H102 `ccfb2a0`, after a fresh
   source/DNR audit. It must remain outside the Active DNR families and
   companion-owned R.84 work.
 - Blocked/rejected mechanisms: the Active DNR index above and all companion-
