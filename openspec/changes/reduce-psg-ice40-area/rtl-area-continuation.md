@@ -221,6 +221,43 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   a concrete changed source/proof contract or an independently accepted newer
   direct/R.84 checkpoint.
 
+## Main Integration I002
+
+- **ID:** I002.
+- **Hypothesis:** accepted H096 `a647185` changes exactly the launch/pacing
+  source and its exhaustive hardware form relative to merged main `a84dbff`.
+  Rebinding the H095-to-I001-to-main source certificate to that exact revision
+  should preserve the complete R.84 manifests, event dictionary, structural
+  joins and live-value lineage while making H096 safe to integrate.
+- **Scope:** `tools/psg_exec_model.py`, `tools/psg_exec_bindings.py`, generated
+  proof artifacts and the two PSG continuation ledgers only. Do not change
+  production RTL, the accepted image, controller, manifest, event dictionary,
+  pool work, tolerances, or begin R.84 B2.
+- **Baseline:** H096 commit `a647185` already passes the full generic battery at
+  6,364 LUT4s, 1,321 carries, 1,459 flops, 14 EBRs, 6,873 floor cells and 7,095
+  routed LCs. The accepted main source certificate is v3 SHA-256 `3f8a3ec8...`,
+  bound to H095 `3d7a2e2`, I001 `6c9eebe`, and main composition `9aacce1`.
+- **Change:** add an exact v4 certificate that retains those lineage
+  anchors, binds H096 `a647185`, proves that only `rtl/psg_seq.sv` and
+  `tools/psg_hw_forms.py` differ from merged main in the complete bound source
+  set, and independently convicts revision/hash/schema mutations.
+- **Result:** independent A/B generation produces byte-identical v4 source
+  certificates at SHA-256 `2af2c61f...`. Candidate `6f5713e2...`, manifest
+  `438d85a0...`, control `a9233d6d...`, requirements `5a7b9809...`, controller
+  `f86698f6...`, and events `5b178017...` remain byte-identical to I001. Both
+  structural audits pass 152,893 legacy rows and convict all nine source
+  mutations; both value audits pass 192,896 pairs and 43,459 service
+  transactions. Complete forms, `make test-psg` including 59 frozen renders,
+  93 analysis tests and structural timing, `make test-clocks`, the default
+  model, Python compilation, strict OpenSpec and diff checks pass. H096's exact
+  committed RTL retains its two forced-build result of 6,364 LUT4s, 1,321
+  carries, 1,459 flops, 14 EBRs, 6,873 floor cells and 7,095 routed LCs at
+  151.17/33.09 MHz.
+- **Decision:** accepted. H096 is now source-bound to the accepted R.84 proof
+  lineage without starting B2 or changing production RTL/image artifacts.
+- **Repeat only if:** retry after rejection only if the accepted H096 revision,
+  source-boundary schema, or an R.84 prerequisite changes.
+
 ## Next Experiment Gate
 
 - Next experiment: H097 on accepted H096 `a647185`, only after a fresh source
@@ -4503,10 +4540,9 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   from 140.92/32.41 to 151.17/33.09 MHz versus 112.50/18.75-MHz constraints.
   The 31-LUT4, one-FF, and 28-floor reductions are deterministic; the 25-LC
   route reduction remains below placement sensitivity and is not overclaimed.
-- **Decision:** accepted as generic RTL/proof commit `a647185`. Because H096
-  changes `rtl/psg_seq.sv`, the companion must regenerate its H095-bound source
-  certificate and C2-C-C live-value lineage before integration; H096 makes no
-  R.84/B2 proof or integration claim.
+- **Decision:** accepted as generic RTL/proof commit `a647185`. I002 now
+  satisfies the required R.84 source-certificate and C2-C-C live-value rebind;
+  H096 changes no R.84 executor artifact and starts no B2 work.
 - **Repeat only if:** retry this launch-worklist/state family only if music
   channel ordering, T_NL visitation, pacing fallback ownership, launched-bit
   consumers, or multiplier-request scheduling changes materially.
@@ -4799,6 +4835,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | `build/experiments/h094/{transition_tuple_proof.py,transition_tuple_formal.sv,exhaustive.log,formal.log,transition_tuple_probe.sv,isolated-*,candidate.*}` | structural/SAT proof, complete isolated synthesis, and canonical whole-PSG synthesis | Exact and -1 LUT4 alone, but globally +3 LUT4/+3 floor cells. |
 | `build/experiments/h095/{forms*,equiv.log,isolated-*,candidate*,cadence-*,preview-*,recovery-*,click-*,celeste-smoke*}` | exhaustive/formal proof, isolated and two forced whole-PSG builds, and complete acceptance battery | Accepted direct composition at -4 LUT4/-3 carries/-4 floor cells; all fidelity, timing, and reproducibility gates pass. |
 | `build/experiments/h096/{budget-*,preview-*,recovery*,clicks*,celeste-smoke*,clocks*,bytecheck*}` plus `build/targets/psg.{json,asc}` | exhaustive protocol proof, two forced whole-PSG builds, and complete merged-main acceptance battery | Accepted `a647185` at -31 LUT4/-1 FF/-28 floor cells; all generic fidelity, timing, and reproducibility gates pass. |
+| `build/integration-h096-r84/` | deterministic A/B v4 source certificates plus unchanged R.84 artifacts and independent structural/value audits | I002 accepted at source SHA-256 `2af2c61f...`; nine mutations convicted and both 192,896-pair value audits pass. |
 
 ## Handoff
 
@@ -5041,14 +5078,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   and the transition-comparison spelling family closes. H095's exact trigger-
   length prefix composes on H089 and passes every proof, physical, fidelity,
   timing, preview, recovery, click, Celeste-smoke, and forced-reproducibility
-  gate as direct commit `3d7a2e2`. Because it changes `rtl/psg_seq.sv`,
-  eventual C2-C-C/R.84 integration must regenerate and rerun the live-value
-  proof plus the complete cadence/render/physical battery. H096 consumes the
+  gate as direct commit `3d7a2e2`; I001 completed its required R.84 rebind and
+  acceptance battery. H096 consumes the
   launch worklist after selecting the pacing owner and passes every generic
   exactness, physical, fidelity, timing, preview, recovery, click,
   Celeste-smoke, and forced-reproducibility gate as commit `a647185`. It
-  changes `rtl/psg_seq.sv`, so the H095-bound source certificate and C2-C-C
-  live-value lineage must be regenerated before companion integration; this
-  task makes no R.84/B2 proof claim.
-- Files to avoid staging: all executor/controller proof files, companion
-  continuation edits, and unrelated repository changes.
+  changes `rtl/psg_seq.sv`; I002 regenerates and validates source-contract v4
+  plus the unchanged C2-C-C live-value lineage. No R.84 B2 claim is made.
+- Files to avoid staging after I002: executor/controller proof files beyond the
+  accepted v4 source-boundary tools and ledger, plus unrelated changes.

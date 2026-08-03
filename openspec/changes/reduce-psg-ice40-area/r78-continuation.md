@@ -3416,6 +3416,23 @@ git history; do not repeat them without the recorded changed condition.
   diagnostic composition cost: +9 LUT4, -4 carries, +1 FF, +2 unpackable,
   +11 floor cells and +4 routed LCs; both clocks remain closed.  This starts no
   B2 literal-slice work.  B2 remains the next permitted proof step.
+- **C2-C-D1-C-B1-H096 composition:** accepted source rebinding for generic
+  H096 `a647185` on merged main `a84dbff`. Schema
+  `psg_exec_h096_r84_source_contract_v4` retains canonical H095 `3d7a2e2`,
+  verified I001 `6c9eebe`, and main composition `9aacce1`, then binds the exact
+  H096 revision and proves that only `rtl/psg_seq.sv` and
+  `tools/psg_hw_forms.py` differ from its merged-main parent in the complete
+  twelve-file source set. Independent A/B certificates are byte-identical at
+  SHA-256 `2af2c61f...`; nine source mutations are convicted. Candidate
+  `6f5713e2...`, manifest `438d85a0...`, control `a9233d6d...`, requirements
+  `5a7b9809...`, controller `f86698f6...`, event dictionary `5b178017...`, and
+  the accepted image remain byte-identical. Both 152,893-row structural audits
+  and both 192,896-pair / 43,459-service value audits pass. Complete forms,
+  `make test-psg`, `make test-clocks`, the default model, Python compilation,
+  strict OpenSpec, and diff checks pass. This consumes no B2 work and relies
+  on H096's separately accepted generic render, recovery, click, Celeste, and
+  two-build physical gates rather than reinterpreting the source certificate
+  as physical proof.
 - **C2-C-D1-C-B2 boundary:** only after B1 closes, attach literal
   pool definitions/uses and service issue/result/take roots to exact enabled
   occurrences with pre/post phase.  Repair fold assembly, STEP8, result-write
