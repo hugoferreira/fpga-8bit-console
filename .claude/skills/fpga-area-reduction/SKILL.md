@@ -106,7 +106,7 @@ Do not judge a candidate on one abc9 build. Use a low-variance ruler:
 |---|---|---|
 | **pre-map cells** | **0** by construction | circuit complexity; cheapest honest number |
 | **`-noabc` floor** (built-in techmap) | **0** measured | did it survive covering? |
-| `-noabc9` classic abc floor | 9 | closer in style to what ships |
+| `-noabc9` classic abc floor | 9 **(n=6 - underestimated)** | **do not trust alone**: read -28/-49 on H162 changes abc9 could not distinguish from zero |
 | **abc9 floor** | **62–72** | the shipped metric — only ever as a *distribution* |
 
 `scripts/detfloor.sh <unit>` prints the first three in one command.
@@ -122,10 +122,18 @@ when they agree is it worth sampling abc9 — n≥16 per arm, compared with a
 builds.
 
 **Corollary that reverses this document's earlier advice:** pre-map is not
-merely a screen. It is the only number that is both stable and free, and on the
-one candidate measured every way it agreed with all three deterministic
-instruments while disagreeing only with the noisy one. Read a pre-map delta as
-evidence about *where the distribution sits*, not as a prediction of one draw.
+merely a screen. It is the only number that is both stable and free, and it has
+now agreed with `-noabc` on every candidate measured both ways. Read a pre-map
+delta as evidence about *where the distribution sits*, not as a prediction of
+one draw.
+
+**When the deterministic instruments disagree with each other, believe the ones
+with a measured spread.** On H162, classic-abc read −28 and −49 on two changes
+that abc9 could not distinguish from zero (p≈0.36, p≈0.13) and that pre-map and
+`-noabc` both called slightly worse. Its "spread 9" was estimated from n=6.
+Fall back to sampling the shipped mapper rather than picking whichever proxy
+agrees with you — and note this is exactly the moment a pre-registered rule
+gets quietly reinterpreted, so re-register instead.
 
 **Two ways a noise sampler lies, both shipped here before being caught.** A
 perturbation that is silently a no-op reports a confident spread of 0 that

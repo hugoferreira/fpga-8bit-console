@@ -28,7 +28,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134; H155 accepted atop the C001--C011 clarity lineage.
-- Next hypothesis ID: H162. The 2026-08-03 `/goal` reopened the area loop
+- Next hypothesis ID: H163. The 2026-08-03 `/goal` reopened the area loop
   after the clarity campaign closed it at H139. H155 (the H055 shared-limb
   retry) is accepted; it also restores a routable seed-1 canonical build,
   which clean `644d68f` had silently lost (see the H155 row).
@@ -1026,6 +1026,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H157 | rejected | Do not open another register-lifetime alias: the complete remaining pool is 17 flops (`wt_x1` 8, `fmc` 4, `fsel` 3, `last_mode_r` 2) and the six measured instances cost +1..+84 LUT4. Class closed by arithmetic. |
 | H158 | rejected | Do not pursue the `q16` address-adder share, the `w_ch_*` maxima, or the `t_ix15` index add: bundled ablation ceiling is 76 cells with the behaviour deleted, honest content ~11. |
 | H160 | rejected alone, accepted in H161 | Do not read alone: deleting the duplicated `fade_acc + fade_step` evaluations is -52 pre-map but **+31 floor**, because the duplicates were being fused into their consumers. Half of H161's -33. |
+| H162 | rejected | H142/H153 retried under the doctrine: H142 retires 12 unpackable flops but buys +17 LUT4 (all deterministic instruments worse); H153 and the bundle are indistinguishable from zero in abc9 (p~0.36 / p~0.13). **classic-abc read -28/-49 on both and was wrong** - its spread-9 estimate came from n=6. |
 | H161 | **accepted** | Land H159+H160 **together**: pre-map -133, `-noabc` floor -88 (spread 0), classic-abc -48, abc9 median -34.5 (U=378.5/400, p~7e-7). Individually 0 and +31. Evaluate families as bundles - one-at-a-time is biased, not just slow. |
 | H159 | rejected alone, accepted in H161 | Do not read alone. Collapsing the four wavetable fetch adders into one index-selected add is exact by construction and **-81 pre-map / -20 carries**, but **flat on floor** alone (-2 LUT4, +2 unpackable). Carries can retire without their LUTs, so pre-map does not predict one abc9 draw. Landed in H161. |
 
@@ -8437,6 +8438,49 @@ chains pays only when the LUTs retire with them. Two consequences:
   changes that each fail alone can pass together, so evaluate families as
   bundles. Fmax fell 2.7 MHz on the one placement measured and still needs a
   seed distribution.
+
+## Hypothesis H162 -- H142/H153 retried under the doctrine
+
+- **ID:** H162.
+- **Hypothesis:** H142 and H153 were both decided on **isolated** synthesis
+  (floor +6, and "floor unchanged"), never on a whole-design measurement, and
+  both magnitudes sit far inside the 62--72 cell abc9 noise. Retry them
+  against the deterministic instruments, individually and as a bundle, since
+  H161 showed two individually-failing changes can pass together.
+- **Scope:** re-implement both from the recorded transforms; decide on
+  `detfloor.sh` plus an abc9 distribution. No new proof work -- H142's
+  exactness was already established (131,072 role transactions plus a SAT
+  miter).
+- **Baseline:** accepted H161 at `417e954`, rtl `e004a57e4ee8`: pre-map
+  13,349, `-noabc` floor 8,791, classic-abc floor 6,899, abc9 floor median
+  6,811.5 (n=16, spread 72).
+- **Changed condition versus H142/H153:** only the instrument. Neither
+  transform is altered.
+- **Result:**
+
+  | arm | pre-map | `-noabc` | classic-abc | abc9 median (n=16) |
+  | -- | -- | -- | -- | -- |
+  | H142 | **+18** | **+5** | +2 | not run |
+  | H153 | +3 | +1 | **-28** | 6,804.0 (U=137.5/256, **p~0.36**) |
+  | H142+H153 | +21 | **+6** | **-49** | 6,799.0 (U=157.5/256, **p~0.13**) |
+
+  H142 retires the twelve unpackable flops it promised (509 -> 497) and buys
+  **+17 LUT4** doing it; all three deterministic instruments agree it is worse.
+  H153 and the bundle move nothing abc9 can distinguish from zero.
+- **Decision:** all rejected and reverted.
+- **Two findings worth more than the hypotheses:**
+  1. **The original H142 verdict was right; its evidence was not.** An isolated
+     floor of +6 could never have established it, and the deterministic
+     instruments now do. Re-testing the sub-100 tail will **confirm** rows as
+     well as overturn them -- that tail is unestablished, not wrong.
+  2. **classic-abc is not a trustworthy proxy.** It read **-28 / -49** on
+     changes abc9 cannot distinguish from zero (p~0.36 / p~0.13). Its
+     "spread 9" came from **n=6** and is very likely an underestimate. Use
+     `-noabc` (spread 0, measured) and pre-map as the deterministic
+     instruments; treat classic-abc as decoration until its spread is
+     characterised at n>=30.
+- **Repeat only if:** the `mx_old` role schedule or the `note_lo`/`cpz`
+  lifetimes change materially. Do **not** retry on a classic-abc signal alone.
 
 ## Operation Cost Catalog (2026-08-04)
 
