@@ -59,6 +59,7 @@ module target_psg (
 );
 
     logic [7:0]         dout;
+    logic               rdy;
     logic signed [15:0] pcm;
 
     // dbg is left UNCONNECTED, exactly as rtl/top.sv leaves .psg_dbg(), so
@@ -83,13 +84,15 @@ module target_psg (
           .MULTIPUMP(1)) psg0 (
         .clk(psgclk), .fastclk(fastclk), .reset(rst),
         .cs(cs), .rw(rw), .addr(addr), .di(di),
-        .dout(dout), .pcm(pcm), .dbg()
+        .dout(dout), .rdy(rdy), .pcm(pcm), .dbg()
     );
     /* verilator lint_on PINCONNECTEMPTY */
 
     // The real outputs, reduced to one registered pin so the datapath that
-    // produces them is not optimised away for having nowhere to go.
-    always_ff @(posedge psgclk) probe <= ^{dout, pcm};
+    // produces them is not optimised away for having nowhere to go. rdy is a
+    // real output (the CPU wait-state handshake) and its stall cone must be
+    // measured with the rest of the PSG.
+    always_ff @(posedge psgclk) probe <= ^{dout, pcm, rdy};
 
 endmodule
 

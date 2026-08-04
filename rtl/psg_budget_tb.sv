@@ -31,13 +31,14 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   bit cs = 0, rw = 0;
   logic [7:0] addr = 0, di = 0;
   logic [7:0] dout;
+  logic rdy;
   logic signed [15:0] pcm;
 
   psg #(.CLK_HZ(CLKHZ), .REALTIME_PREVIEW(PREVIEW_P),
         .MULTIPUMP(MULTIPUMP_P)) dut(
     .clk(clk), .fastclk(fastclk), .reset(reset),
     .cs(cs), .rw(rw), .addr(addr), .di(di),
-    .dout(dout), .pcm(pcm),
+    .dout(dout), .rdy(rdy), .pcm(pcm),
     .dbg());
 
   logic signed [15:0] ds_pcm = 0;
@@ -263,6 +264,8 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
     @(negedge clk);
     cs = 1; rw = 1; addr = a; di = d;
     @(negedge clk);
+    // Frozen-CPU emulation: a wait-stated access holds the bus until RDY.
+    while (!rdy) @(negedge clk);
     cs = 0; rw = 0;
   endtask
 
@@ -270,6 +273,7 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
     @(negedge clk);
     cs = 1; rw = 0; addr = a;
     @(negedge clk);
+    while (!rdy) @(negedge clk);
     cs = 0;
     d = dout;
   endtask
@@ -1118,7 +1122,7 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
       wr(8'h20, 8'd3);
       ticks(3);
       check(dut.u_seq.playing[4], "channel 0's music slot is running");
-      mus_sfx = dut.u_seq.sfx_id[4];
+      mus_sfx = dut.u_state.state_m[{3'd4, 6'd33}][5:0];
       rd(8'h14, q);
       check(q[7] && q[5:0] == mus_sfx,
             "$14 reports the music while nothing covers it");
@@ -1128,7 +1132,8 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
       ticks(2);
       check(dut.u_seq.playing[0], "channel 0's foreground slot is running");
       check(dut.u_seq.playing[4], "the music slot was NOT stopped");
-      check(dut.u_seq.sfx_id[4] == mus_sfx, "and it still holds the music's SFX");
+      check(dut.u_state.state_m[{3'd4, 6'd33}][5:0] == mus_sfx,
+            "and it still holds the music's SFX");
       rd(8'h14, q);
       check(q[5:0] == 6'd15, "$14 reports the covering effect");
 
@@ -1162,8 +1167,12 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
       wr(8'h18, 8'd1);
       wr(8'h10, 8'd15);
 
-      check(dut.trig_req[4], "the music slot's pending trigger is untouched");
-      check(dut.u_seq.launched[4], "and it still paces the pattern");
+      // RDY wait-state contract: the $10 write commits only after the
+      // engine's pending trigger service completes, so the music trigger is
+      // consumed (serviced), never raced. The pacing checks below assert the
+      // musical outcome directly.
+      check(!dut.trig_req[4], "the music trigger was serviced before the write landed");
+      check(dut.u_seq.playing[4], "and the music slot is running");
 
       pat0 = dut.mus_pat;
       ticks(20);

@@ -83,7 +83,7 @@ module top_psg #(
   psg #(.CLK_HZ(PSG_CLK_HZ), .REVERB(1), .DBG_PORT(2), .MULTIPUMP(0)) psg0(
     .clk(psgclk), .fastclk(fastclk), .reset(reset),
     .cs(psg_cs), .rw(psg_rw), .addr(psg_addr), .di(psg_di),
-    .dout(psg_dout), .pcm(pcm), .dbg(psg_dbg));
+    .dout(psg_dout), .rdy(), .pcm(pcm), .dbg(psg_dbg));
   /* verilator lint_on PINCONNECTEMPTY */
 
   // The onboard amplifier is aggressive with the supplied small speaker.
