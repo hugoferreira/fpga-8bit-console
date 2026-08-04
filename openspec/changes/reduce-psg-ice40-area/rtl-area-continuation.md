@@ -9684,8 +9684,13 @@ to-replacement calibration of a catalog ceiling before committing to a build.
   ruling is that byte-exactness yields here, fidelity does not.
 - **Decision:** stage 1 measured CANDIDATE on every instrument; the mix-four
   delta is accepted and its anchor re-freeze authorized (not yet executed).
-  Remaining before merge: re-freeze the anchor, cart stages (pico8 is
-  independently red at HEAD from 24a465a; celeste needs a cart).
+  **Merged to main at `2aa1c43` (2026-08-04), after edd1178 fixed the pico8
+  desync independently.** Composition validated on merged main: test-psg
+  PASS, oracle 58/59 with only the expected mix-four delta; the authorized
+  anchor re-freeze was then executed (pre-H165 anchor preserved at
+  /tmp/mix-four-pre-h165.wav) and oracle passes 59/59 at rtl
+  `4a1836c30279 @ 2aa1c43`. H166 merged in the same session. pico8 full-track
+  stage launched post-merge (long-running; result to be recorded).
   Stage 2 (trg_row/trg_len/aud_row via the same lane, ~64 more flops incl.
   the V_ST aud_row write and banked-word readback) is designed, not built.
 - **Repeat only if:** n/a — active. If rejected, the RDY plumbing reverts
@@ -9730,8 +9735,8 @@ inventory of why each width is what it is.
 | -- | -- | -- | -- | -- |
 | 1 | `psg_timing.divd` | clog2(CLK_HZ)+1 | clog2(CLK_HZ/gcd)+1 | **H166 landed** |
 | 2 | `psg_timing.scnt` compares (==182, ==176) | two 8-bit equalities | down-counter sign bit | open; scnt is an exported port the sequencer schedules against — blast radius beyond the module |
-| 3 | `s_phase2` | 24 bits | 17 live (clean-room oddity list) | open |
-| 4 | `pph` | [6:0] | PLAST=61 fits [5:0] | open; check CAP schedule aliases first |
+| 3 | `s_phase2` | 24 bits | 17 live (clean-room oddity list) | **CLOSED 2026-08-04: already optimal.** Netlist check: only [16:0] are flopped — yosys const-folds [23:17] in hardware builds ([23:17] is live only under REALTIME_PREVIEW's 24-bit accumulate). The 24-bit declaration costs zero cells; do not respell (C-series source-text sensitivity). |
+| 4 | `pph` | [6:0] | PLAST=61 (MULTIPUMP) fits [5:0] | **CLOSED 2026-08-04: real but not taken.** All 7 bits ARE flopped — a genuine invisible bound (counter reachability is not statically provable), but the prize is ~2-4 cells and it lives in psg_walk.sv, whose source-text sensitivity has unrouted the canonical build before. Risk/reward negative at this size. |
 | 5 | `fade_acc`/`fade_step` vs fade_sum[16] bound | — | — | candidate: derive the real range |
 
 Each entry needs the H166 treatment: state the invariant that bounds the
