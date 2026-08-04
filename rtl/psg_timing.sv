@@ -17,10 +17,27 @@ module psg_timing #(
 
   // divd is the sample accumulator offset by its wrap threshold. Its sign
   // selects between adding 22050 and subtracting CLK_HZ-22050.
-  localparam int DIV_W = $clog2(CLK_HZ) + 1;
+  //
+  // Both steps are multiples of gcd(CLK_HZ, 22050), and a Bresenham sign
+  // sequence is invariant under uniform scaling of (up, down, init) — by
+  // induction divd_reduced == divd/g at every clock, so the strobe pattern
+  // is cycle-identical while the adder spans only CLK_HZ/g.
+  function automatic integer gcd_f(input integer a, input integer b);
+    integer t;
+    begin
+      while (b != 0) begin
+        t = a % b;
+        a = b;
+        b = t;
+      end
+      gcd_f = a;
+    end
+  endfunction
+  localparam integer DIV_GCD = gcd_f(CLK_HZ, 32'd22050);
+  localparam int DIV_W = $clog2(CLK_HZ / DIV_GCD) + 1;
   localparam logic signed [DIV_W-1:0] DIV_DOWN =
-      DIV_W'(CLK_HZ - 32'd22050);
-  localparam logic signed [DIV_W-1:0] DIV_UP = DIV_W'(32'd22050);
+      DIV_W'((CLK_HZ - 32'd22050) / DIV_GCD);
+  localparam logic signed [DIV_W-1:0] DIV_UP = DIV_W'(32'd22050 / DIV_GCD);
   logic signed [DIV_W-1:0] divd;
   // scnt is the 0..182 tick cadence; tick_hold produces the delayed boundary
   // used to publish the bank prepared by the preceding tick program.
