@@ -44,9 +44,22 @@ ENTRIES = (0, 10, 20, 30, 40)
 TOL = {
     "lock_median": 0.04,        # correlation at the best lag
     "lock_tracked": 0.06,       # fraction of half-second blocks holding lag
+    "lock_lag_stable": 0.05,    # fraction of blocks AT the modal lag - see below
     "contour": 0.01,            # loudness/timbre trajectory, the noise metric
     "band_db": 0.30,            # absolute band level, dB render/reference
 }
+
+# `lock_tracked` above thresholds CORRELATION only, so it answers "are the right
+# notes there". It is blind to the lag those notes arrive at, and a sequencer
+# whose timing jitters can keep every block correlated while none of them agree
+# on when. `lock_lag_stable` is the missing half: the fraction of blocks whose
+# best lag sits at the track's modal lag. Two renders of the same music hold ONE
+# constant lag - the good build measured 109 of 110 blocks at -64 samples, and
+# a build with jittering tick timing measured 28 of 110 while `lock_median` moved
+# only 0.83 -> 0.72. Timing and content are separate failures and want separate
+# numbers.
+LOCK_CORR_MIN = 0.70            # matches ComparisonPolicy.lock_block_correlation_minimum
+LOCK_LAG_TOL = 8                # matches ComparisonPolicy.lock_lag_tolerance_samples
 
 
 def render(entry, audio_path, samples, clock=28_125_000):
@@ -74,9 +87,19 @@ def measure(reference, candidate):
         locks = R.lock(reference, candidate)
         if locks:
             held = [c for _, _, c in locks]
-            good = [c > 0.70 for _, _, c in locks]
+            good = [c > LOCK_CORR_MIN for _, _, c in locks]
             out["lock_median"] = float(np.median(held))
             out["lock_tracked"] = sum(good) / len(good)
+            # The modal lag is taken over CONFIDENT blocks only: a block that
+            # correlates at nothing reports an arbitrary argmax, and letting
+            # those vote would put the mode anywhere.
+            confident = [lag for _, lag, c in locks if c > LOCK_CORR_MIN]
+            if confident:
+                modal = int(np.bincount(np.array(confident)
+                                        - min(confident)).argmax()) + min(confident)
+                out["lock_lag_stable"] = sum(
+                    abs(lag - modal) <= LOCK_LAG_TOL for _, lag, _ in locks
+                ) / len(locks)
 
     rows = R.contour(reference, shifted)
     if rows is not None:
