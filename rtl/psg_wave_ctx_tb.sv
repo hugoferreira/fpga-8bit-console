@@ -53,7 +53,7 @@ module psg_wave_ctx_tb;
     .dq_old_ctx(dq_old_ctx),
     .s_snd_wave(s_snd_wave), .s_snd_wt(s_snd_wt),
     .s_ch_det(s_ch_det), .s_ch_buzz(s_ch_buzz),
-    .s_phase_hi(s_phase_hi), .s_phase2(full_phase2),
+    .s_phase_hi(s_phase_hi), .s_phase2(full_phase2[16:0]),
     .s_eff_inc_hi(s_eff_inc_hi),
     .s_old_wave(s_old_wave), .s_old_phase_hi(s_old_phase_hi),
     .s_old_inc_hi(s_old_inc_hi), .old_mode_r(old_mode_r),
