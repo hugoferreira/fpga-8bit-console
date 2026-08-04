@@ -107,6 +107,7 @@ measured dead end and `-abc2` is worse. The `-dff` flag measured −19: noise.
 | Tool | What it gives |
 |---|---|
 | `tools/psg_ff_census.py` | unpackable-flop families and LUT cones, worst first |
+| `tools/psg_mux_census.py` | residual-selection census: classifies every LUT4's truth table; pure-mux cells ranked per select net. Run it on the deterministic `-noabc` JSON for a stable, cleanly-named ranking. Baseline: 2,008/8,282 floor LUTs (24%) are pure 2:1 muxes; ~997/6,300 survive in the shipped abc9 netlist. Counts are attributions, not refunds — price candidates by ablation, judge with `make area-psg` |
 | `make psg-lifetimes` | register live ranges in the sample walk, and which pairs could share one — derived from the RTL, not from reading. The most reliable small lever and the least predictable |
 | `tools/psg_buffers.py`, `tools/psg_hw_forms.py` | buffer/arithmetic form models for exactness proofs |
 | ablation | stub a cone to its **proposed replacement** and re-synthesize (SKILL.md §5) |

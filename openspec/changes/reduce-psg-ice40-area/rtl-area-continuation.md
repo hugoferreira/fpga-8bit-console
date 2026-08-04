@@ -28,7 +28,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134; H155 accepted atop the C001--C011 clarity lineage.
-- Next hypothesis ID: H165. The 2026-08-03 `/goal` reopened the area loop
+- Next hypothesis ID: H167. H166 (timing-accumulator gcd reduction) accepted on branch h166-timing-gcd; it opens the Sizing Audit section. H165 (RDY wait-states + sfx_id BRAM migration, stage 1) is measured CANDIDATE on a worktree branch, held for the mix-four anchor decision — see its row. The 2026-08-03 `/goal` reopened the area loop
   after the clarity campaign closed it at H139. H155 (the H055 shared-limb
   retry) is accepted; it also restores a routable seed-1 canonical build,
   which clean `644d68f` had silently lost (see the H155 row). H161 is the
@@ -159,6 +159,16 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   recorded -23/-31 LUT4 were noise. Magnitudes elsewhere are unreliable even
   where signs are right (H007 claimed -46, delivers -6). The accepted lineage
   is sound. See the `Audit A001` section for the table and the method.
+- **Analysis A002 (2026-08-04): residual selection measured at the mapped
+  layer.** `tools/psg_mux_census.py`: ~1,000 of 6,300 shipped LUTs (16%) are
+  pure 2:1 muxes (the mapped-layer counterpart of the catalog's 29% pre-map
+  `$_MUX_`); 45% sit in u_walk. Only **16/2,034 are hold-muxes** — the DFFE
+  enable-extraction lever class is empty. Independently confirms the
+  catalog's largest-cluster call (old_rev/old_alt attribution 274) and
+  calibrates its ceilings: the wave-side old-ctx steering that constant
+  ablation prices at -315 ablates **to its replacement at -30 pre-map** —
+  constant ablation over-attributes ~10x on this family. See the `Analysis
+  A002` section.
 - **Start here, not at H159:** the `Operation Cost Catalog (2026-08-04)` and
   `Clean-room Candidate Pool (2026-08-04)` sections below carry the measured
   ranking of every distinct operation, the four calibration constants that
@@ -9539,3 +9549,192 @@ worth that much and should not be touched.
   complete cadence/render/physical battery.
 - Files to avoid staging after H155: executor/controller proof files, R.84/B2
   artifacts, Tang paths, images, tolerances and unrelated changes.
+
+## Analysis A002 -- the selection census: residual mux fabric measured directly (2026-08-04)
+
+Baseline `e004a57e4ee8 @ a121c03` (H161 tip). New instrument
+`tools/psg_mux_census.py` (registered in the skill's psg-project.md): classifies
+every SB_LUT4's truth table (cofactoring constant-tied inputs -- LUT_INIT is
+variable-width, and skipping that step reads everything as 4-input logic) and
+attributes pure-mux cells to their select net. Run it on the deterministic
+`-noabc` JSON for a rank-stable, cleanly-named attribution.
+
+**The headline numbers.** Pre-map: 3,877 of 13,349 cells (29%) are `$_MUX_`.
+`-noabc` floor (8,282 LUT, spread 0): **2,008 pure 2:1-mux LUTs (24.2%)**,
+1,483 half-absorbed (`s ? literal : g(two vars)`), 445 wires. Shipped abc9
+(6,300 LUT): **997 pure-mux (15.8%)** + 382 with an inverted arm. abc9 absorbs
+about half the floor's muxes; ~1,000 shipped cells remain pure selection.
+
+**Structural facts that close whole escape shapes:**
+
+- Only **16 of 2,034** pure muxes are register hold-muxes (D <- mux(Q, new)):
+  yosys' enable extraction is already complete, so the "map hold-muxes onto
+  DFFE" lever class is empty. The rest is genuine phase-scheduled *data*
+  selection.
+- Residual selection is NOT refundable selection. In a serial engine most
+  surviving muxes are the time-multiplexing itself; the census localises cost,
+  it does not promise a refund.
+
+**Per-family attribution (select-net scope, -noabc) and dispositions:**
+
+| family | pure-mux LUTs | disposition |
+| -- | -- | -- |
+| u_walk (total) | 910 (45%) | the serial engine is the fabric |
+| u_walk.old_rev_r + old_alt_r | 211 + 63 | CLOSED: this is the `cmb_old` family; honest price 0 (its -158 was the constant-ablation artefact) |
+| u_wave.u_ctx | 207 | unpriced; wave-mode shaping, blend-family prior (poor) |
+| u_wave dq/q old-ctx steering | ~62 | **MEASURED this analysis: ablated to the new-context arm in an isolated `git archive` tree, pre-map 13,349 -> 13,319 = -30 ceiling.** Below band; dead as a standalone family. Census attribution and ablation price differ 2x: attribution counts cells whose select *net* derives from the family, not cells the family's removal refunds |
+| u_seq.c (voice counter) | 76 | per-voice steering; adjacent closed rows (H107 play_bits +79, sfx_id wash); BRAM escape blocked by the two-async-writer staging cost |
+| u_walk.cap capture mask | 68 | data steering by phase (not enables); operand-side already; unpriced |
+| u_walk.bl_cnt | 51 | CLOSED: blend family (+31/+35/+132 three shapes) |
+| mul request/start muxes | 83 | mined: operand-side selection landed (-168); landing-law constraints pin the rest |
+| u_aram.u_core | 82 | RDATA-keyed unpacking; unpriced |
+| addr/readback + top-level misc | ~341 total | readback mined (H033/H111/H106); play_bits closed (H107) |
+
+**Relation to the Operation Cost Catalog (correction, same day).** An earlier
+draft of this section called u_ctx/cap/aram "unpriced"; the catalog's 45
+ablations already price all three (wave shaper -1,137, per-CAP-slot ceilings,
+aRAM decode -143) as constant-ablation ceilings. What A002 adds is the
+*mapped* layer and the *to-replacement* calibration:
+
+- The catalog's constant-ablation ceilings over-attribute badly where arms and
+  consumers fold together: old-voice steering reads -315 by constant ablation
+  and **-30 by ablation to its replacement**. Read the catalog's table as
+  ceilings-of-ceilings, per its own calibration constant 3.
+- The census's mapped-layer number (16% pure-mux shipped) is the quantitative
+  form of the catalog's headline: ~38 cells/operation of fabric is mostly this
+  residual selection, and it is the serialization itself, not removable
+  routing. The hold-mux result closes the one mapping-level escape (DFFE
+  enables) that the catalog's pre-map view could not test.
+- Both instruments agree the largest refundable cluster is the
+  old-voice/crossfade arm (fidelity decision, -400..-600), and the census's
+  escape-shape taxonomy points the same way the clean-room pool's best row
+  does: H4' (address-selected storage) is the only exact-fidelity shape with a
+  winning class record.
+
+**Repeat only if:** the census fractions move materially (a new engine, a
+schedule change), or a hypothesis needs per-select-net attribution or a
+to-replacement calibration of a catalog ceiling before committing to a build.
+
+## Hypothesis H165
+
+- **ID:** H165.
+- **Hypothesis:** a CPU wait-state contract (65C02 RDY held low, SN76489/
+  Yamaha-style) lets state-memory-resident registers commit through the
+  sequencer's idle port with ZERO staging flops — the frozen CPU is the
+  staging register — unblocking the address-selected-storage class that the
+  async-writer staging cost killed every prior time (sfx_id wash: 24 staging
+  flops vs 46 saved). Stage 1 migrates sfx_id (8x6 fabric register file) into
+  per-voice state word PSG_V_SFX=33, in the unreachable half of the stride.
+- **Scope:** rtl/psg_seq.sv, psg.sv, psg_common.svh, chip.sv (internal RDY
+  wiring only — no new chip.sv port), target_psg.sv (rdy joins the probe
+  reduction), tang top, three TBs, sim/psg_wav.cpp (harness respects rdy).
+  Preserved: 14-EBR topology, walk schedule, all consumer values. CHANGED BY
+  DESIGN: CPU write/read timing to $10-$17 can stall (bounded by one engine
+  service, <1% duty); the write-vs-trigger-service interleaving race is
+  impossible by construction.
+- **Baseline:** `e004a57e4ee8 @ 67c30f6` — premap 13,349; -noabc floor 8,791
+  (spread 0); classic 6,899; abc9 floor n=16 median 6,811.5 (6,777–6,849);
+  placed 7,027; 499 unpackable (abc9 census); 14 EBR; 31.35/128.35 MHz.
+- **Changed condition versus prior attempts:** H101/H112/H129 bought a NEW
+  EBR plus forwarding; the sfx_id-only attempt paid 24 staging flops. The RDY
+  contract (user-authorized interface change, 2026-08-04) eliminates staging
+  entirely and uses existing storage and traffic.
+- **Change:** committed as `41ab202` on branch `h165-rdy-waitstates`
+  (worktree). V_LD +1 cycle (word 33 -> w_sfx working reg); ml_launch writes
+  ride the eng_we lane (new eng_va voice override); CPU commits gated on
+  S_IDLE && !wlk_we via a cpu_stall/RDY handshake whose predicate deliberately
+  omits rw (65C02 gates WE with RDY — reading rw is a combinational loop);
+  $14-$17 readback is a stalled 2-cycle BRAM read (rb_done trails rb_valid one
+  cycle so dout captures before release); DBG_PORT==1 keeps a snooped shadow.
+- **Result** (rtl `978a95ce0aff @ 67c30f6`):
+
+  ```
+  pre-map cells      13,349 -> 13,340  -9    [deterministic]
+  -noabc floor        8,791 ->  8,709  -82   [deterministic, spread 0]
+  classic-abc floor   6,899 ->  6,815  -84
+  unpackable (noabc)    509 ->    473  -36   [reliable]
+  abc9 floor         median 6,811.5 -> 6,730.0, n=16/arm, ZERO overlap
+                     (cand max 6,763 < base min 6,777) — p < 1e-8 any rank test
+  EBR 14 -> 14; placed 7,027 -> 6,965 (-62, one draw); 31.11/143.64 MHz PASS
+  ```
+
+  test-psg ALL PASSED (incl. PICO-8 statistical fidelity; tick budget worst
+  4,008/5,103 — the +8 clk/service V_LD extension fits with 1,095 spare).
+  Gates sweep/models/mul/clicks/recovery PASS. Simulator-top lint identical to
+  baseline (5 pre-existing warnings). **Oracle: 58/59 byte-identical; DIFFERS:
+  mix-four** — the four-trigger burst serialises behind trigger services and
+  the mixed onset lands exactly one sample (~45 µs) later; values track in
+  parallel thereafter (no corruption). This is the contract's documented
+  delta, not a defect.
+- **Perceptual ruling (user-accepted, 2026-08-04):** the one-sample onset
+  shift is inaudible by ~three orders of magnitude, and the mix-four anchor
+  re-freeze is authorized on these grounds:
+  - Onset-displacement detection needs ~10–20 ms even for trained listeners
+    (~5–10 ms for rhythm experts). 45 µs is ~400x below that floor.
+  - The only µs-scale human sensitivity is interaural time difference
+    (~10–20 µs) — inapplicable: the whole mono mix shifts together, so no
+    binaural cue exists.
+  - Comb filtering from a 45 µs offset (~11 kHz notch) would require mixing
+    against the un-shifted copy — nothing does; it is a pure translation,
+    and the four channels stay mutually aligned on the sample grid.
+  - PICO-8 itself quantizes sfx() triggers to frame boundaries (tens of ms):
+    the delta is ~2–3 orders finer than the source platform's own trigger
+    granularity, so no PICO-8 cart ever encoded meaning at this timescale.
+  The byte gate did its job — it flagged the change for a human ruling; the
+  ruling is that byte-exactness yields here, fidelity does not.
+- **Decision:** stage 1 measured CANDIDATE on every instrument; the mix-four
+  delta is accepted and its anchor re-freeze authorized (not yet executed).
+  Remaining before merge: re-freeze the anchor, cart stages (pico8 is
+  independently red at HEAD from 24a465a; celeste needs a cart).
+  Stage 2 (trg_row/trg_len/aud_row via the same lane, ~64 more flops incl.
+  the V_ST aud_row write and banked-word readback) is designed, not built.
+- **Repeat only if:** n/a — active. If rejected, the RDY plumbing reverts
+  with it (branch h165-rdy-waitstates holds the whole change).
+
+## Hypothesis H166
+
+- **ID:** H166.
+- **Hypothesis:** the fractional sample-clock accumulator `divd` only ever
+  holds multiples of gcd(CLK_HZ, 22050); dividing the Bresenham constant pair
+  by that gcd at elaboration shrinks the adder/register from spanning CLK_HZ
+  to CLK_HZ/g with a cycle-identical strobe sequence.
+- **Scope:** rtl/psg_timing.sv only. Exactness is algebraic, not empirical: by
+  induction divd_reduced == divd/g at every clock (init and both steps scale
+  uniformly; sign is scale-invariant), so sample_en/scnt/tick_en are
+  bit-identical per cycle for every CLK_HZ.
+- **Baseline:** `e004a57e4ee8 @ 67c30f6` — premap 13,349; -noabc floor 8,791;
+  classic 6,899.
+- **Change:** committed as `fce497c` on branch `h166-timing-gcd` (independent
+  of H165). Elaboration-time Euclid in Verilog-2005 constant-function style —
+  yosys's frontend rejects `return`/`int unsigned` in functions (first
+  attempt died on TOK_ID); assign to the function name instead. Widths:
+  26→18 bits at 18.75 MHz (g=150), 23→14 at the default clock (g=630).
+- **Result** (rtl `6e41ef7e065c @ 67c30f6`): pre-map 13,349 → 13,342 (−7);
+  -noabc floor 8,791 → **8,784 (−7**, spread 0, unpack 509 unchanged — the
+  accumulator flops were packable); classic floor 6,899 → **6,859 (−40**,
+  LUT4 −39) — the narrower carry chain pays more under classic covering.
+  test-psg ALL PASSED; test-clocks /4 /5 /6 PASS (the gate that
+  re-parameterizes this exact module); oracle 59/59 byte-identical.
+- **Decision:** accepted on the deterministic instruments (small but real,
+  H155-class); kept on its own branch pending merge order vs H165.
+- **Repeat only if:** n/a — landed.
+
+## Sizing Audit (opened 2026-08-04, H166 is entry 1)
+
+First-principles review of every ticks/samples/clocks bookkeeping width:
+replace "sized by what was convenient" with "sized by what the value needs",
+one exact micro-hypothesis at a time. Not chasing big wins — building the
+inventory of why each width is what it is.
+
+| # | site | today | needed | status |
+| -- | -- | -- | -- | -- |
+| 1 | `psg_timing.divd` | clog2(CLK_HZ)+1 | clog2(CLK_HZ/gcd)+1 | **H166 landed** |
+| 2 | `psg_timing.scnt` compares (==182, ==176) | two 8-bit equalities | down-counter sign bit | open; scnt is an exported port the sequencer schedules against — blast radius beyond the module |
+| 3 | `s_phase2` | 24 bits | 17 live (clean-room oddity list) | open |
+| 4 | `pph` | [6:0] | PLAST=61 fits [5:0] | open; check CAP schedule aliases first |
+| 5 | `fade_acc`/`fade_step` vs fade_sum[16] bound | — | — | candidate: derive the real range |
+
+Each entry needs the H166 treatment: state the invariant that bounds the
+value, prove the reduction exact against it, land only on a deterministic
+verdict. The Operation Cost Catalog prices whole operations; this table
+prices their bookkeeping.
