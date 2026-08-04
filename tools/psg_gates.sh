@@ -206,7 +206,8 @@ cart_stage() {
 # -----------------------------------------------------------------------------
 
 echo "== psg gates == started $STARTED, logs in $DIR/"
-echo "  rtl $(cat rtl/*.sv rtl/*.v 2>/dev/null | shasum | cut -c1-12) @ $(git rev-parse --short HEAD 2>/dev/null || echo no-git)"
+# rtl/pll.v is generated (gitignored) - exclude it from the fingerprint.
+echo "  rtl $(cat rtl/*.sv $(ls rtl/*.v 2>/dev/null | grep -v '^rtl/pll\.v$') 2>/dev/null | shasum | cut -c1-12) @ $(git rev-parse --short HEAD 2>/dev/null || echo no-git)"
 
 run sweep    sweep_objdirs
 run models   make test-psg

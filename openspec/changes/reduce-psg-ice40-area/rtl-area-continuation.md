@@ -33,6 +33,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   retry) is accepted; it also restores a routable seed-1 canonical build,
   which clean `644d68f` had silently lost (see the H155 row). H161 is the
   accepted tip (rtl `e004a57e4ee8`, placed 7,027 @ 14 EBR).
+- **2026-08-04 evening: the `pico8` gate red is FIXED** — not pacing but a
+  shared-bus clobber: the sequencer consumed the live `m_res` against its
+  *padded* busy, so a freeze in which the walk reused the multiplier left a
+  walk product for the resumed consume. Fix: sequencer-owned `m_res_seq`
+  latch in `psg.sv` (+29 pre-map / +59 `-noabc` floor, a correctness cost).
+  All eight gates green, oracle 59/59 byte-identical, five-track pico8
+  corpus green. Mechanism, diagnosis method and traps: the skill's
+  psg-project.md and the `psg-pico8-fidelity` memory. **Re-record the area
+  baseline (`make area-psg RECORD=1`) before measuring any candidate.**
 - **MEASUREMENT DOCTRINE, 2026-08-04 — this supersedes the acceptance rule
   every row below was judged by.** abc9's covering is sensitive to the
   netlist's *encoding*, not just its content. Renaming a third of the PSG's

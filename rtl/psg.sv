@@ -344,6 +344,27 @@ module psg #(
     end
   endgenerate
 
+  // The sequencer consumes its products against the padded busy, which can
+  // expire across a freeze in which the walk reuses the multiplier and
+  // overwrites the live m_res recurrence. Latch each sequencer-owned product
+  // while it sits completed in the service, so a consume that resumes after
+  // a walk reads the sequencer's own product, never the walk's last one.
+  // The live arm covers the single-clock services, where readiness and the
+  // completion edge coincide.
+  logic        m_owner_seq;
+  logic [33:0] m_res_seq;
+  always_ff @(posedge clk) begin
+    if (reset)
+      m_owner_seq <= 1'b0;
+    else if (smul_start)
+      m_owner_seq <= 1'b1;
+    else if (wmul_start)
+      m_owner_seq <= 1'b0;
+    if (m_owner_seq && !m_busy_walk)
+      m_res_seq <= m_res;
+  end
+  wire [33:0] m_res_seq_v = (m_owner_seq && !m_busy_walk) ? m_res : m_res_seq;
+
   // ---- Tick-rate note, effect, and music control ----
   // The sequencer owns CPU-visible playback state and publishes the inactive
   // sounding bank before atomically flipping it for the sample walk.
@@ -361,7 +382,7 @@ module psg #(
     .seq_addr(seq_addr), .seq_q(seq_q),
     .state_q(state_q), .state_replay(state_replay),
     .etk_ra(etk_ra), .etk_we(etk_we), .etk_wa(etk_wa), .etk_wd(etk_wd),
-    .m_res(m_res), .m_busy(m_busy_seq),
+    .m_res(m_res_seq_v), .m_busy(m_busy_seq),
     .smul_start(smul_start), .smul_a(smul_a), .smul_b(smul_b),
     .smul_mode(smul_mode), .smul_short(smul_short),
     .div_start(div_start), .div_n(div_n), .div_d(div_d),

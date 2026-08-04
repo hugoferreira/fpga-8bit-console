@@ -164,30 +164,26 @@ It also refuses to call a run green when a cart-dependent stage was skipped
 rather than trusting the matrix runner's exit code — **rc=0 there means
 "completed", not "clean"**.
 
-**KNOWN RED as of 2026-08-04: the `pico8` stage fails at HEAD.** Bisected to
-**`24a465a` "perf(psg): multi-pump arithmetic and reclaim the /6 schedule"**
-(2026-08-01) — its parent `e1d6c2d` is GOOD, and it is the only RTL-touching
-commit in the bracket. Symptoms at HEAD:
-
-```
-music 20: lock_median   0.828 -> 0.717   (tolerance 0.040)
-music 20: lock_tracked  0.855 -> 0.555   (tolerance 0.060)
-music 40: band 250 Hz-1 kHz  local/quiet/whole   past 0.300
-music 40: band 4-8 kHz       local/whole         past 0.300
-```
-
-The cause is the mechanism already recorded in the `psg-mul-alignment` memory:
-the effect microprogram gates on `!m_busy`, so shortening multiply latency lets
-the micro-PC advance ~5 cycles earlier per product. That was measured **on music
-10 only** (0.26%) and recorded as "every fidelity metric unchanged" — music 20
-and 40 were never checked. The 59-render byte sweep stays 59/59 green through
-it, because those cases do not exercise chained music patterns.
-
-Bisect notes for whoever picks this up: restrict with `-- rtl/` (38 candidates
-instead of 255), use `--entries 20` (~4.6 min/run instead of ~23), and **test
-the commit after the reported first-bad** — an earlier convergence on `6b28873`
-was a half-staged commit repaired by the next one, not the regression. Runner
-and per-commit logs: `build/bisect-fid/`.
+**The 2026-08-04 `pico8` red is FIXED (all gates green, 59/59 oracle
+byte-identical).** The bisected first-bad `24a465a` introduced `SEQ_BUDGET`
+starve-freezes, and the real defect was **not** micro-PC pacing: the
+sequencer consumed the live shared `m_res` against its *padded* busy, so a
+freeze in which the walk reused the multiplier left a **walk product** in
+`m_res` for the resumed consume (volumes/pitch products silently wrong;
+pattern flow and flip timing provably unchanged — per-tick traces identical
+across 6,703 ticks, zero late flips). Fix: a sequencer-owned 34-bit product
+latch in `psg.sv` (`m_res_seq`, captured while the completed product sits in
+the service; live arm covers the single-clock services). Cost: pre-map +29,
+`-noabc` floor +59. Three transferable lessons: (1) `SEQ_BUDGET=0` as the
+single-variable experiment localized the cause in one run; (2) a shared
+result bus plus a *padded* readiness view is a clobber hazard for every
+consumer that can be frozen between completion and consume; (3)
+`tools/psg_pico8_fidelity.py` discards the sim's stdout
+(`stdout=DEVNULL`), so `$display` probes silently vanish — run the psg_wav
+binary directly when probing. Bisect notes kept for the next regression:
+restrict with `-- rtl/`, use `--entries 20` (~4.6 min/run), and **test the
+commit after the reported first-bad**. Runner and per-commit logs:
+`build/bisect-fid/`.
 
 **Two gate facts worth internalising:**
 
