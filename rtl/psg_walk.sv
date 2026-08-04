@@ -318,27 +318,30 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   // ---- Wavetable fetch and interpolation ----
   // Wavetable samples are signed bytes in the selected SFX record. Full mode
   // reads adjacent points for interpolation; preview reads one point per arm.
+  // All four fetch sites add the same 13-bit record base to a six-bit index,
+  // so select the index and add once instead of building four adders under a
+  // result mux. The +1 arms keep their six-bit wrap: incrementing before the
+  // widen is exactly what the four separate spellings did, so this is exact by
+  // construction and needs no bound on s_phase or q16. syn_use_q/syn_plus1
+  // reproduce the original chain's a0 > a1 > a2 > a3 priority - that ordering
+  // is the only place this transform could silently go wrong.
+  wire syn_a0 = REALTIME_PREVIEW ? (pph == 7'(PWORK)) : cap[CAP_W0];
+  wire syn_a1 = !REALTIME_PREVIEW && cap[CAP_W1];
+  wire syn_a2 = (REALTIME_PREVIEW ? (pph == 7'(PWORK + 1)) : iss_om) && v2_on;
+  wire syn_a3 = !REALTIME_PREVIEW && iss_os && v2_on;
+  wire syn_use_q = !syn_a0 && !syn_a1 && (syn_a2 || syn_a3);
+  wire syn_plus1 = (!syn_a0 && syn_a1)
+                || (!syn_a0 && !syn_a1 && !syn_a2 && syn_a3);
+  wire [5:0] syn_ix = (syn_use_q ? q16[15:10] : s_phase[15:10])
+                    + (syn_plus1 ? 6'd1 : 6'd0);
+
   always_comb begin
     syn_rd   = 1'b0;
     syn_addr = 13'd0;
-    if (prun && !ctrl_stall && s_snd_wt && play_bits[pc_ch]) begin
-      if (REALTIME_PREVIEW ? (pph == 7'(PWORK)) : cap[CAP_W0]) begin
-        syn_rd   = 1'b1;
-        syn_addr = s_snd_wtb + {7'b0, s_phase[15:10]};
-      end else if (!REALTIME_PREVIEW && cap[CAP_W1]) begin
-        syn_rd   = 1'b1;
-        syn_addr = s_snd_wtb
-                 + {7'b0, s_phase[15:10] + 6'd1};
-      end else if ((REALTIME_PREVIEW ? (pph == 7'(PWORK + 1)) : iss_om)
-                   && v2_on) begin
-        syn_rd   = 1'b1;
-        syn_addr = s_snd_wtb + {7'b0, q16[15:10]};
-      end else if (!REALTIME_PREVIEW && iss_os
-                   && v2_on) begin
-        syn_rd   = 1'b1;
-        syn_addr = s_snd_wtb
-                 + {7'b0, q16[15:10] + 6'd1};
-      end
+    if (prun && !ctrl_stall && s_snd_wt && play_bits[pc_ch]
+        && (syn_a0 || syn_a1 || syn_a2 || syn_a3)) begin
+      syn_rd   = 1'b1;
+      syn_addr = s_snd_wtb + {7'b0, syn_ix};
     end
   end
 

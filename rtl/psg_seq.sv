@@ -170,6 +170,13 @@ module psg_seq (input  bit   clk,
   logic [15:0] fade_acc;
   logic [12:0] fade_step;
 
+  // One sum, four consumers: [16] is the wrap test, [15:0] the next
+  // accumulator, [15:8] the published gain byte. Spelling it once keeps a
+  // single 17-bit chain instead of a 17-bit test plus a separately inferred
+  // 16-bit accumulate. Exact by construction - the low sixteen bits of the
+  // 17-bit sum are the 16-bit truncating add the three consumers used.
+  wire [16:0] fade_sum = {1'b0, fade_acc} + {4'b0, fade_step};
+
   logic [12:0] fstep_q;
 
   // ---- Serialized tick program and current-slot control ----
@@ -1230,7 +1237,7 @@ module psg_seq (input  bit   clk,
       if (pre_tick) begin
         tickpend <= 1;
         if (fade_dir != 2'd0) begin
-          if ({1'b0, fade_acc} + {4'b0, fade_step} >= 17'h10000) begin
+          if (fade_sum[16]) begin
             fade_acc <= 0;
             fade_dir <= 0;
             mus_gain <= 8'd255;
@@ -1240,10 +1247,10 @@ module psg_seq (input  bit   clk,
               mus_stop(2'd1);
             end
           end else begin
-            fade_acc <= fade_acc + {3'b0, fade_step};
+            fade_acc <= fade_sum[15:0];
             mus_gain <= (fade_dir == 2'd1)
-                          ? 8'((fade_acc + {3'b0, fade_step}) >> 8)
-                          : 8'd255 - 8'((fade_acc + {3'b0, fade_step}) >> 8);
+                          ? fade_sum[15:8]
+                          : 8'd255 - fade_sum[15:8];
           end
         end
       end
