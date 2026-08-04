@@ -28,7 +28,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134; H155 accepted atop the C001--C011 clarity lineage.
-- Next hypothesis ID: H163. The 2026-08-03 `/goal` reopened the area loop
+- Next hypothesis ID: H164. The 2026-08-03 `/goal` reopened the area loop
   after the clarity campaign closed it at H139. H155 (the H055 shared-limb
   retry) is accepted; it also restores a routable seed-1 canonical build,
   which clean `644d68f` had silently lost (see the H155 row).
@@ -8525,6 +8525,47 @@ chains pays only when the LUTs retire with them. Two consequences:
      characterised at n>=30.
 - **Repeat only if:** the `mx_old` role schedule or the `note_lo`/`cpz`
   lifetimes change materially. Do **not** retry on a classic-abc signal alone.
+
+## Hypothesis H163 -- the top rejected rows by plausibility, re-tested
+
+- **ID:** H163.
+- **Hypothesis:** rank the rejected rows by the part of their record that is
+  *trustworthy* -- unpackable flops and carries retired, not LUT4 -- and
+  re-test the ones whose kill margin sits inside the noise. Pre-map was never
+  recorded before H155, so it cannot be used; `(unpackable retired) - (LUT4
+  added)` is the best available proxy, and only H148 (-5) and H145 (-12) had
+  margins inside +-30.
+- **Baseline:** accepted H161 at `417e954`, rtl `e004a57e4ee8`: pre-map 13,349,
+  `-noabc` floor 8,791 (LUT4 8,282 / 509 unpackable).
+- **Instruments:**
+
+  | candidate | pre-map | `-noabc` floor | LUT4 | unpack |
+  | -- | -- | -- | -- | -- |
+  | H145 saving *(delete both dampen adders -- a CEILING)* | **-39** | **-38** | -38 | 0 |
+  | H145 cost *(two extra arms on the fold operand mux only)* | **+84** | **+34** | +34 | 0 |
+  | H081 *(full transform, one 30-bit selected add)* | +5 | **+31** | +22 | **+9** |
+
+  abc9 distribution: n/r -- no candidate reached a deterministic improvement.
+  EBR: unchanged (14) for H145/H081; H148 requires 15.
+- **Decision:** all three rejected; original verdicts confirmed.
+  - **H145** ceilings at **-4 floor**: its entire saving is 38 cells and two
+    operand-mux arms alone cost 34, before the signed-19 ALU widening and the
+    two-phase state machinery it also needs. Dead without implementing it.
+  - **H081** is **+31 floor** whole-design -- and its unpackable count *rises*
+    by nine, because the operand mux needs staging. It was rejected on an
+    isolated +20; the whole-design number is worse, not better.
+  - **H148** is dead on the constraint, not the arithmetic: it needs a
+    fifteenth EBR and its net logic is +19 LUT4 / +5 floor, so it fails the
+    "recompaction must buy positive net logic" rule in both terms. Its table
+    already lives in `crom`; the transform moves it *out* to a dedicated block,
+    so freeing `crom` words cannot rescue it. (An earlier suggestion in this
+    session that it could was a misreading of the transform's direction.)
+- **The reusable number:** **two arms on a shared 18-bit ALU cost 34 floor
+  cells**, measured directly. That is the exchange rate for "serialize through
+  a shared ALU", and it is why every candidate in that class has charged. A
+  serialization must retire more than ~17 cells per arm it adds to break even.
+- **Repeat only if:** the fold ALU stops being shared, or a serialization
+  appears that adds no operand arms at all.
 
 ## Audit A001 -- the eleven accepted rows inside the noise, re-priced
 
