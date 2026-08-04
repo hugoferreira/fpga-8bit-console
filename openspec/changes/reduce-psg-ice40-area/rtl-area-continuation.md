@@ -9690,7 +9690,9 @@ to-replacement calibration of a catalog ceiling before committing to a build.
   anchor re-freeze was then executed (pre-H165 anchor preserved at
   /tmp/mix-four-pre-h165.wav) and oracle passes 59/59 at rtl
   `4a1836c30279 @ 2aa1c43`. H166 merged in the same session. pico8 full-track
-  stage launched post-merge (long-running; result to be recorded).
+  stage **PASS** post-merge at rtl `4a1836c30279 @ 2aa1c43` — the RDY
+  contract's trigger-timing delta does not move the full-track fidelity
+  metrics, and edd1178's desync fix holds through the H165/H166 composition.
   Stage 2 (trg_row/trg_len/aud_row via the same lane, ~64 more flops incl.
   the V_ST aud_row write and banked-word readback) is designed, not built.
 - **Repeat only if:** n/a — active. If rejected, the RDY plumbing reverts
