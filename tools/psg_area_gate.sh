@@ -27,11 +27,20 @@ BAND=${PSG_AREA_BAND:-60}
 DIR=${PSG_AREA_DIR:-build/gates-psg}
 SYNTH=build/targets
 MODE=compare
+# Placement costs ~3 of this script's ~5 minutes and can never rescue a floor
+# that failed to improve: floor up is REJECT whatever placement does, and floor
+# flat is UNRESOLVED at best. So map first, check the floor, and only place
+# when the floor has earned it. PSG_AREA_FULL=1 forces placement anyway, which
+# is what you want when you need the placed/Fmax vector of a known-rejected
+# candidate for its ledger row.
+FAILFAST=1
+[ -n "$PSG_AREA_FULL" ] && FAILFAST=0
 
 for a in "$@"; do
   case "$a" in
     record)   MODE=record ;;
     --reuse)  REUSE=1 ;;
+    --full)   FAILFAST=0 ;;
     -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $a" >&2; exit 2 ;;
   esac
@@ -50,9 +59,15 @@ premap_cells() {
     | awk '/=== design hierarchy ===/{h=1} h && /^ *[0-9]+ +cells$/{print $1; exit}'
 }
 
+place() {
+  make synth-psg >> "$DIR/synth.out" 2>&1 || {
+    echo "synth-psg FAILED - see $DIR/synth.out" >&2; tail -5 "$DIR/synth.out" >&2; exit 1; }
+}
+
 if [ -z "$REUSE" ]; then
   PREMAP=$(premap_cells)
-  make synth-psg > "$DIR/synth.out" 2>&1 || {
+  # Map only; `make synth-psg` below reuses this JSON and just places.
+  make "$SYNTH/psg.json" > "$DIR/synth.out" 2>&1 || {
     echo "synth-psg FAILED - see $DIR/synth.out" >&2; tail -5 "$DIR/synth.out" >&2; exit 1; }
 else
   PREMAP=$(cat "$DIR/premap.txt" 2>/dev/null || premap_cells)
@@ -73,6 +88,41 @@ CARRY=$(echo "$CENSUS" | sed -E 's/.*CARRY +([0-9]+).*/\1/')
 FF=$(echo "$CENSUS"    | sed -E 's/.*FF +([0-9]+).*/\1/')
 UNPK=$(echo "$CENSUS"  | sed -E 's/.*, ([0-9]+) unpackable.*/\1/')
 FLOOR=$((LUT4 + UNPK))
+
+# ------------------------------------------------------------------ fail-fast
+# The floor is available now, from the map alone. Placement cannot turn a
+# non-improving floor into a CANDIDATE, so stop here rather than spend it.
+if [ "$MODE" != record ] && [ "$FAILFAST" = 1 ] && [ -f "$DIR/baseline.txt" ]; then
+  BF=$(sed -E 's/.*[ ]floor=([0-9]+).*/\1/' "$DIR/baseline.txt")
+  if [ -n "$BF" ] && [ "$FLOOR" -ge "$BF" ]; then
+    D=$((FLOOR - BF))
+    printf '== psg area (map only) ==\n'
+    printf '  rtl %s\n' "$FP"
+    printf '  %-11s %6s\n' premap "$PREMAP" LUT4 "$LUT4" carry "$CARRY" \
+                           flops "$FF" unpackable "$UNPK" floor "$FLOOR"
+    BP=$(sed -E 's/^premap=([0-9]+).*/\1/' "$DIR/baseline.txt")
+    DP=$((PREMAP - BP))
+    printf '\n    %-8s %6s -> %6s  %8s\n' \
+      premap "$BP"  "$PREMAP" "$([ "$DP" -gt 0 ] && printf '+%s' "$DP" || printf '%s' "$DP")" \
+      floor  "$BF"  "$FLOOR"  "$([ "$D"  -gt 0 ] && printf '+%s' "$D"  || printf '%s' "$D")"
+    printf '\n'
+    if [ "$D" -gt 0 ]; then
+      printf '  VERDICT: REJECT (early) - floor +%s. Placement skipped: it cannot\n' "$D"
+      printf '           rescue a regressed floor. Revert and record the row.\n'
+    else
+      printf '  VERDICT: UNRESOLVED (early) - the floor did not move (0), so this\n'
+      printf '           candidate has NO measured area effect and placement cannot\n'
+      printf '           create one. Revert, or bundle it with siblings and re-run:\n'
+      printf '           composition is not additive here, and two individually\n'
+      printf '           null-or-negative changes have measured -33 together.\n'
+    fi
+    printf '           Re-run with --full (or PSG_AREA_FULL=1) if you need the\n'
+    printf '           placed/Fmax vector for the ledger row.\n'
+    exit 1
+  fi
+fi
+
+if [ -z "$REUSE" ]; then place; fi
 
 PLACED=$(grep -E 'ICESTORM_LC: +[0-9]+/' "$SYNTH/psg.pnr.log" | tail -1 \
          | sed -E 's#.*ICESTORM_LC: +([0-9]+)/.*#\1#')

@@ -81,7 +81,61 @@ hypotheses", "reach ≤ K LC or report the honest remaining sum" — and treat
 reaching that edge as success even when the answer is "no further gain is
 available at this fidelity". §9 is what that report looks like.
 
-## 1. Three metrics, three different questions
+## 1. Measure with a deterministic instrument; ship with the good one
+
+**Read this before the table in §1b, which predates it and is wrong about
+resolution.** abc9's LUT covering is sensitive to how the netlist is *encoded*
+— cell and net names, and the tie-breaks they drive — not only to what the
+circuit computes. Measured on this repo's PSG by renaming a third of the cells
+with the circuit provably identical (pre-map count pinned): the packing floor
+ranges over **62–72 cells**. That is *wider than the ±60 band* the rest of this
+document treats as its resolution limit. A single abc9 build therefore cannot
+resolve anything below roughly a hundred cells, and most sub-100-cell verdicts
+taken that way were never measurements.
+
+This is a named, studied phenomenon — Kahng & Mantik, *Measurement of Inherent
+Noise in EDA Tools* (ISQED'02). Their taxonomy transfers: cell/net **ordering**
+is canonicalised away and changes nothing; **RNG seeds** move quality ~0.25%;
+**naming** moves it up to ~7%, and scrambling name-encoded hierarchy up to 12%.
+They also found noise is **not additive** across perturbations — which is why
+two changes measuring 0 and +31 here composed to −33.
+
+Do not judge a candidate on one abc9 build. Use a low-variance ruler:
+
+| Instrument | Spread over renames | Use |
+|---|---|---|
+| **pre-map cells** | **0** by construction | circuit complexity; cheapest honest number |
+| **`-noabc` floor** (built-in techmap) | **0** measured | did it survive covering? |
+| `-noabc9` classic abc floor | 9 | closer in style to what ships |
+| **abc9 floor** | **62–72** | the shipped metric — only ever as a *distribution* |
+
+`scripts/detfloor.sh <unit>` prints the first three in one command.
+`tools/psg_area_dist.sh N label` samples the abc9 distribution: it perturbs
+names, **asserts pre-map invariance** so a rename that changes the circuit is
+discarded rather than inflating the spread, and reports median/IQR/spread.
+
+**Order of use.** A candidate must move the deterministic numbers in the right
+direction first. If pre-map and `-noabc` disagree in sign, it is not a
+structural improvement and no amount of abc9 sampling will make it one. Only
+when they agree is it worth sampling abc9 — n≥16 per arm, compared with a
+**rank test (Mann–Whitney)**, statistic named *before* looking. Never two point
+builds.
+
+**Corollary that reverses this document's earlier advice:** pre-map is not
+merely a screen. It is the only number that is both stable and free, and on the
+one candidate measured every way it agreed with all three deterministic
+instruments while disagreeing only with the noisy one. Read a pre-map delta as
+evidence about *where the distribution sits*, not as a prediction of one draw.
+
+**Two ways a noise sampler lies, both shipped here before being caught.** A
+perturbation that is silently a no-op reports a confident spread of 0 that
+reads as "the tool is stable" — guard by asserting the tree actually changed.
+And a perturbation that changes the *circuit* (renaming RTL identifiers
+desynchronised macro bodies in a `.svh`, implicitly declaring undriven nets)
+produces a beautiful, entirely fictional distribution — guard by asserting the
+pre-map count is identical across samples, since pre-map is naming-invariant.
+
+## 1b. Three metrics, three different questions
 
 Never report "the area" — report which layer moved.
 

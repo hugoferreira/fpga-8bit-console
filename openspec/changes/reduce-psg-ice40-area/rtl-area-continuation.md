@@ -28,10 +28,128 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134; H155 accepted atop the C001--C011 clarity lineage.
-- Next hypothesis ID: H156. The 2026-08-03 `/goal` reopened the area loop
+- Next hypothesis ID: H162. The 2026-08-03 `/goal` reopened the area loop
   after the clarity campaign closed it at H139. H155 (the H055 shared-limb
   retry) is accepted; it also restores a routable seed-1 canonical build,
   which clean `644d68f` had silently lost (see the H155 row).
+- **MEASUREMENT DOCTRINE, 2026-08-04 — this supersedes the acceptance rule
+  every row below was judged by.** abc9's covering is sensitive to the
+  netlist's *encoding*, not just its content. Renaming a third of the PSG's
+  cells with the circuit provably unchanged (pre-map pinned at 13,482) moves
+  the floor over **62-72 cells**. The `+-60` band is therefore not a resolution
+  limit -- it is *narrower than the noise*, and **a single abc9 build resolves
+  nothing under ~100 cells.** Named phenomenon: Kahng & Mantik, "Measurement of
+  Inherent Noise in EDA Tools" (ISQED'02) -- ordering is canonicalised away,
+  RNG seeds move ~0.25%, naming moves up to 7%, hierarchy up to 12%, and noise
+  is **not additive**, which is why H159 (0) and H160 (+31) composed to -33.
+
+  | Instrument | value | spread over renames |
+  | -- | -- | -- |
+  | pre-map cells | 13,482 | 0 (by construction) |
+  | `-noabc9 -noabc` floor | 8,879 | **0** |
+  | `-noabc9 -flowmap` floor | 9,340 | not sampled |
+  | `-noabc9` classic abc floor | 6,947 | 9 |
+  | abc9 floor | ~6,840 median | **62-72** |
+
+  **Procedure.** `scripts/detfloor.sh psg` gives the deterministic numbers;
+  they must move in the right direction first. Only then sample abc9 with
+  `tools/psg_area_dist.sh N label` (n>=16/arm) and compare with a rank test
+  named *before* looking. `-noabc` is a ruler, not a result -- never quote
+  8,879 as "the area".
+
+  **RE-PRICED 2026-08-04 under the doctrine, both load-bearing:**
+
+  | tree | pre-map | `-noabc` floor | classic-abc floor |
+  | -- | -- | -- | -- |
+  | `d76241f` H139 accepted | 13,487 | 8,881 | 6,952 |
+  | `644d68f` after C001--C011 clarity | **13,487** | **8,881** | **6,952** |
+  | `78b8bec` H155 | 13,482 | 8,879 | 6,947 |
+
+  - **The "+28 floor drift" from the clarity commits is REFUTED. It was noise.**
+    All three deterministic instruments are *identical* across the entire
+    C-series -- the clarity passes changed the design's structure by exactly
+    nothing, which is what "comment-only" always claimed. The ledger asserted
+    the +28 was real "because the floor is a deterministic mapped resource and
+    the band does not apply to it". That reasoning is wrong: deterministic is
+    not the same as insensitive. There is no debt to recover and no candidate
+    should ever again be charged for it.
+  - **H155 is VINDICATED, at a smaller size than recorded.** Pre-map -5,
+    `-noabc` floor -2, classic-abc floor -5: consistent in sign across every
+    stable instrument, so the shared complemented noise limb is a real
+    structural saving. Its recorded -6 abc9 floor happened to agree, but was a
+    single draw and could not have established this on its own.
+
+  **Consequence for this ledger.** Every verdict whose magnitude is under ~100
+  cells rests on a single draw and is **unestablished** -- not wrong, but not
+  demonstrated. That includes accepted H155 (-6 floor / -3 placed), the +28
+  lineage drift attributed to the C-series clarity commits (almost certainly
+  noise, not a cost), and most of the H140s-H150s rejection series. The
+  campaign's large landings are unaffected: -190 placed, -128, -448 are far
+  outside any plausible band. It is the sub-50 tail -- where the last ~15
+  hypotheses lived -- that needs re-running under the doctrine above.
+  Correctness is untouched: those stages were proven exact and rendered
+  byte-identically. What is in question is the area accounting, not the chip.
+- **READ THIS BEFORE APPLYING THE +-60 BAND TO ANYTHING.** The band is a
+  resolution limit on **placed LCs only**, caused by abc9's order- and
+  name-sensitive LUT covering. It does **not** apply to the packing floor
+  (LUT4 + unpackable flops) or to pre-map cells: both are deterministic, so a
+  -20 floor is a real -20 that banks and composes. `tools/psg_area_gate.sh`
+  already encodes this -- it returns UNRESOLVED only when the floor is *flat*,
+  and CANDIDATE whenever the floor improves, whatever the placed delta does
+  inside the band. Rejecting every sub-60 candidate individually is a trap: it
+  guarantees nothing is ever landed, because small deterministic wins can only
+  become visible in aggregate. The 2026-08-03 pass fell into exactly this and
+  binned two real wins (H156, H158's `q16` arm) before the error was caught.
+  **The correct handling of a small real win is to bundle it, not to reject
+  it.** What genuinely refutes a candidate is a measured *positive* net -- and
+  the H149--H154 family supplies plenty of those (+47, +52, +72 floor), which
+  is why those rows stand while H156/H158 were re-opened.
+- **The never-examined space is priced; it is thin, not empty (H156--H158,
+  2026-08-03, rescored 2026-08-04).** Attributing carry cells to net families
+  -- which
+  `tools/psg_ff_census.py` does not report, and which the LUT4-only ranking
+  hid -- found seven families that no row in H001--H155 had ever named:
+  `gz_filt_r` (259 LUT4 / 106 carries, the second-largest carry family),
+  `s_old_phase` (164), `w_clr_tog` (157), `fstk` (155), `q16` (143 / 47),
+  `old_q0` (109) and `w_ch_det` (92 / 39). Ablation ceilings: the whole
+  `gz_filt_r` scale network is 52 cells (honest re-association ~8); the
+  bundled `q16`/filter-max/`t_ix15` arithmetic is 76 cells with the behaviour
+  deleted (honest ~11, and only the `q16` share is even a candidate). The
+  complete remaining lifetime-alias pool is 17 flops. **Honest remaining sum
+  across everything unexamined: about 19 pre-map cells** -- real and bankable,
+  but only as part of a bundle, never as three separate stages each carrying
+  its own proof and battery.
+- **Open composition stage (2026-08-04).** A plan, not a result: **none of
+  these four has a measured net yet.** Each figure below is a component or a
+  ceiling-minus-estimate, and H4's inputs are H101's *isolated* syntheses,
+  which the record says reverse globally more often than not. Nothing here is
+  bankable until the bundle is built and measured whole. **And the figures
+  below are in the wrong currency:** H159 measured a -81 pre-map / -20 carry
+  change at exactly **zero floor**, so every item here must be re-priced on
+  mapped floor before it is banked. Treat these as screening numbers only.
+  The items, none individually worth its own stage: `gz` re-association -8
+  pre-map (H156); `q16` second-address adder share ~-11 carries (H158, gated
+  on `q16[15:10] != 63`); the `sfx_id`/`trg_row`/`trg_len` state-mem migration
+  ~-29 floor (H4', removal -90 floor against a +37 shared write-through and a
+  +24 readback mirror); and the sequencer control-ROM address decode, whose
+  replaceable core measures -41 pre-map (H1') but whose prefetch register and
+  stall handling are still unpriced. Bundle total before H1' is about -48
+  floor; with H1' it plausibly clears -70. Two rules for working it: bank only
+  **nets**, never ablation ceilings, and re-measure the bundle as a whole,
+  because candidates peeling at the same shared fabric cannot both pay.
+- **Start here, not at H159:** the `Operation Cost Catalog (2026-08-04)` and
+  `Clean-room Candidate Pool (2026-08-04)` sections below carry the measured
+  ranking of every distinct operation, the four calibration constants that
+  make those numbers readable, and ten priced candidates. The catalog answers
+  "where is the area and what would removing it buy" without re-running 45
+  ablations. Its headline: restructuring is closed, and area now tracks the
+  *number of distinct scheduled operations* at ~38 cells of fabric each.
+- Known lineage debt, unattributed: the floor has drifted **+28 cells since
+  H139** (6,800 -> 6,828, LUT4 +28, carries +1) across H155 and the C-series
+  clarity commits. The floor is a deterministic mapped resource and the band
+  does not apply to it, so the +28 is real -- but it is abc9 covering
+  responding to source text, not a lever, and recovering it is a mapping
+  lottery rather than a hypothesis.
 - H139 integration status: I004 accepts the R.84 source rebinding and complete
   merge battery. The v6 contract binds canonical `d76241f`; both structural
   and value audits, complete forms, functional/cadence/render/PREVIEW/recovery/
@@ -904,6 +1022,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 | H146 | rejected | Keep the three DQ ceiling incrementers: explicit selection is -13 LUT4/-11 carry alone, but adds 36 whole-PSG LUT4s, one carry, 36 floor cells and 43 routed LCs. |
 | H147 | rejected | Keep 13-bit gain history: the 12-bit boundary is -5 LUT4/-2 FF alone, but globally +26 LUT4/+2 carry/+27 floor/+33 routed LCs and misses fast timing. |
 | H155 | accepted | Keep the shared complemented negative noise limb `~nz_mag + !|frac|`: -5 pre-map gates, -3 LUT4/-6 floor/-3 placed LCs, and it restores the seed-1 route that clean `644d68f` lost. |
+| H156 | rejected | Do not re-associate the `gz_filt_r` 1025-gain scale network: deleting it outright is only -52 pre-map cells, so the exact form is worth ~8. The largest never-examined cone in the design is empty. |
+| H157 | rejected | Do not open another register-lifetime alias: the complete remaining pool is 17 flops (`wt_x1` 8, `fmc` 4, `fsel` 3, `last_mode_r` 2) and the six measured instances cost +1..+84 LUT4. Class closed by arithmetic. |
+| H158 | rejected | Do not pursue the `q16` address-adder share, the `w_ch_*` maxima, or the `t_ix15` index add: bundled ablation ceiling is 76 cells with the behaviour deleted, honest content ~11. |
+| H160 | rejected alone, accepted in H161 | Do not read alone: deleting the duplicated `fade_acc + fade_step` evaluations is -52 pre-map but **+31 floor**, because the duplicates were being fused into their consumers. Half of H161's -33. |
+| H161 | **accepted** | Land H159+H160 **together**: pre-map -133, `-noabc` floor -88 (spread 0), classic-abc -48, abc9 median -34.5 (U=378.5/400, p~7e-7). Individually 0 and +31. Evaluate families as bundles - one-at-a-time is biased, not just slow. |
+| H159 | rejected alone, accepted in H161 | Do not read alone. Collapsing the four wavetable fetch adders into one index-selected add is exact by construction and **-81 pre-map / -20 carries**, but **flat on floor** alone (-2 LUT4, +2 unpackable). Carries can retire without their LUTs, so pre-map does not predict one abc9 draw. Landed in H161. |
 
 ## Hypothesis H001
 
@@ -8100,6 +8224,348 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - **Decision:** accepted.
 - **Repeat only if:** the pitched-noise product slice, signed rounding
   contract, or consumer pipeline boundary changes again.
+
+## Hypothesis H156
+
+- **ID:** H156.
+- **Hypothesis:** the `gz_filt_r` cone is the largest never-examined structure
+  in the design -- 259 named LUT4s and 106 carries, the second-largest carry
+  family after `req_a` -- and no row in H001--H155 names it. Its live-gain
+  scale network spells `floor((1025*A + G) / 2^20)` (with `A = m_res>>3`,
+  `G = gz_filt_r`) as a 26-bit add feeding a 34-bit add, of which the low nine
+  bits of the second add are pure pass-through. Re-associating it to
+  `(A + ((A + G) >> 10)) >> 10` should retire a wide carry chain.
+- **Scope:** pre-map ablation pricing first; only on a ceiling clearing the
+  band would the exactness proof (the `m_res[28:3]` versus `m_res[27:3]`
+  truncation is not free -- the identity holds only if `m_res[28]` is provably
+  zero at both consume points) and production RTL follow. Preserve wave-6
+  arm selection, the W15/W40/W84 register roles, and the 14-EBR topology.
+- **Baseline:** `c1ad243`, rtl `1a76c4596af2`: pre-map 13,482 cells / 1,433
+  carry wrappers / 1,450 flops; 6,330 LUT4s, 1,292 carries, 498 unpackable,
+  floor 6,828, placed 7,052, 14 EBR, 33.50/138.20 MHz.
+- **Changed condition versus prior rows:** none needed -- this family had never
+  been opened. It was found by attributing carry cells to net families, which
+  `tools/psg_ff_census.py` does not report; the LUT4-only ranking had hidden
+  it behind `req_a`, `tilt_tail_r` and `mx_old`, all of which are closed.
+- **Change:** ablation only. `{2'b0, gz_q3acc[33:19]}` replaced by
+  `{2'b0, m_res[27:13]}` at both consume sites, deleting `gz_171_twice`,
+  `gz_171` and `gz_q3acc` outright. Run in an isolated `git archive HEAD`
+  tree copy; production RTL never touched.
+- **Result:** the entire scale network prices at **13,482 -> 13,430 pre-map
+  cells, 1,433 -> 1,382 carries** -- a ceiling of 52 cells with the arithmetic
+  deleted, not replaced. The exact re-association retires one 34-bit add in
+  favour of a 26-bit add, recovering roughly eight of those cells. Gates 2--5
+  never ran.
+- **Decision:** not landed alone; **held for composition**. The exact
+  re-association is worth about eight pre-map cells. Pre-map is deterministic,
+  so that eight is real and banks -- the original "cannot resolve against the
+  +-60 band" reading was wrong (see the band note in Current State). Too small
+  to justify its own stage and its own proof; carry it into a bundle.
+- **Repeat only if:** the W15/W40 product slices, the 1025 gain coefficient, or
+  the wave-6 bypass arm change materially, or the two adds acquire a shared
+  consumer that makes them retire together.
+
+## Hypothesis H157
+
+- **ID:** H157.
+- **Hypothesis:** the register-lifetime alias family still has unmined pairs;
+  `make psg-lifetimes` derives them from the RTL rather than from reading, and
+  the reference file calls it the most reliable small lever.
+- **Scope:** pool-time triage only, per SKILL.md section 6 ("reject or bundle
+  anything under the noise band at pool time").
+- **Baseline:** as H156.
+- **Changed condition versus H134/H135/H142/H152/H153/H154:** none. Those rows
+  are the measured instances of this family; this row prices what remains of
+  it as a whole rather than opening another instance.
+- **Change:** none. `make psg-lifetimes` enumerated the complete candidate set
+  on the 62-phase walk visit.
+- **Result:** the entire remaining pool is four guests -- `wt_x1` (8 flops),
+  `fmc` (4), `fsel` (3), `last_mode_r` (2) -- 17 flops in total even if every
+  alias landed simultaneously and cost nothing. The six measured instances of
+  this exact family went the other way: H153 +1 LUT4, H142 +17, H145 +31,
+  H154 +51 LUT4 and +52 floor, H152 +72 LUT4 and +72 floor, H137 +84 LUT4.
+- **Decision:** rejected at pool time; the class is closed by arithmetic. Its
+  best case is below the band and its measured mean is strongly positive.
+- **Repeat only if:** the walk visit gains phases, a register family's live
+  range changes materially, or an alias mechanism is found that does not buy
+  new selection hardware (THE LAW, section 4).
+
+## Hypothesis H158
+
+- **ID:** H158.
+- **Hypothesis:** the remaining never-examined families hold recoverable
+  arithmetic: `q16`'s two `syn_addr` adds differ only by `+1` on a six-bit
+  field and could share one adder given a proved non-wrap bound (an invisible
+  bound, the richest class); the three `w_ch_*` effective-filter maxima carry
+  39 attributed carries; and `t_ix15`'s eleven-bit index add is unexamined.
+- **Scope:** bundled pre-map ablation, since each is individually below the
+  band and section 6 requires bundling before spending anything.
+- **Baseline:** as H156.
+- **Changed condition versus H115:** H115 closed the *bounded filter-max
+  spelling*; this row prices the max network's whole removable mass together
+  with two unrelated unexamined adds, to test whether the bundle clears the
+  band. It does not propose a new spelling for any of them.
+- **Change:** ablation only, all three at once, in the isolated tree copy --
+  `q16[15:10] + 6'd1` shared with the first add, the three `w_ch_det/rev/damp`
+  maxima reduced to their foreground arms, `t_ix15` reduced to `t_h15`.
+- **Result:** **13,482 -> 13,406 pre-map cells, 1,433 -> 1,409 carries** --
+  a 76-cell ceiling with all three behaviours deleted. Almost none of it is
+  recoverable: the maxima are semantically required, and `t_ix15` is
+  load-bearing for the accepted `/15` split identity. Only the `q16` share is
+  a real candidate, worth about eleven carries and requiring a proof that
+  `q16[15:10] != 63` at the second issue site.
+- **Decision:** split. The `w_ch_*` maxima and `t_ix15` are **rejected** --
+  both are semantically required, so their ablation ceiling is not recoverable
+  at all. The `q16` adder share is **held for composition**: about eleven
+  carries, real and deterministic, gated on proving `q16[15:10] != 63` at the
+  second issue site.
+- **Repeat only if:** the wavetable address issue sites, the effective-filter
+  maximum contract, or the tilt index identity change materially.
+
+## Hypothesis H159
+
+- **ID:** H159.
+- **Hypothesis:** all four wavetable fetch sites in `psg_walk.sv` (:321--341)
+  spell `s_snd_wtb + {7'b0, <six-bit index>}` under a priority chain, so four
+  13-bit adders sit under a result mux. Selecting the six-bit index first and
+  adding once is the "select the operands, not the result" corollary that
+  previously won -168 pre-map / -54 placed.
+- **Scope:** `rtl/psg_walk.sv` combinational fetch block only. Preserve arm
+  priority, the `REALTIME_PREVIEW` two-arm form, `syn_rd` timing and the
+  six-bit wrap.
+- **Baseline:** rtl `1a76c4596af2` -- pre-map 13,482 / 1,433 carries; 6,330
+  LUT4, 498 unpackable, floor 6,828, placed 7,052, 33.50/138.20 MHz.
+- **Changed condition versus H144 and the aligned-record-base family:** those
+  exploited record alignment at the *final* addition. H159 does not change any
+  address value; it changes only how many adders exist to produce them.
+- **Change:** hoisted `syn_a0..syn_a3`, derived `syn_use_q` and `syn_plus1`
+  from the original chain's priority, formed
+  `syn_ix = (syn_use_q ? q16[15:10] : s_phase[15:10]) + (syn_plus1 ? 1 : 0)`,
+  and left one `s_snd_wtb + {7'b0, syn_ix}`. Exact **by construction**: the
+  `+1` stays inside six bits, so the 63->0 wrap is preserved, and no bound on
+  `q16` or `s_phase` is needed. All four arms verified against the original
+  priority table.
+- **Result:** pre-map 13,482 -> 13,401 (**-81 cells, -20 carries**), but
+  mapped LUT4 6,330 -> 6,328 (-2), unpackable 498 -> **500 (+2)**, **floor
+  6,828 -> 6,828 (0)**, placed 7,052 -> 7,053 (+1), Fmax 33.50 -> 30.79 MHz.
+  Rtl fingerprint `12c211eb6e1d`. Gates 3--5 never ran.
+- **Decision:** rejected **alone**; **accepted as part of H161**. Alone the
+  floor is flat, not merely sub-band -- the operand mux cost back exactly what
+  the retired adders saved. Composed with H160 it is half of a -33 floor win.
+  Do not cite this row as a refutation of the transform.
+- **Repeat only if:** the fetch sites stop sharing `s_snd_wtb`, or an arm is
+  removed so the index select gets cheaper than the adder it replaces.
+
+**THE CALIBRATION THIS BOUGHT, which is worth more than the hypothesis.**
+A **-81 pre-map / -20 carry** change produced **exactly zero floor movement**.
+Pre-map is deterministic, but it is *not a proxy for the floor*: on iCE40 a
+carry unit lives inside a logic cell that also holds a LUT, so retiring carry
+chains pays only when the LUTs retire with them. Two consequences:
+
+1. **CORRECTED by H161 and the doctrine block -- read that, not this.** The
+   original wording here said pre-map "is not a proxy for the floor" and that
+   candidates must be re-priced on mapped floor. That over-generalised from one
+   point. What is true: a pre-map delta does not predict a *single abc9 draw*,
+   because that draw carries 62-72 cells of naming noise. What is false: that
+   pre-map is uninformative. On H161, pre-map (-133) agreed in sign and rank
+   with every deterministic instrument -- `-noabc` (-88, spread 0) and
+   classic-abc (-48) -- and only the noisy abc9 number disagreed. Pre-map is
+   the cheapest naming-invariant measure of complexity available; read it as
+   evidence about where the distribution sits, not about one build.
+2. **"Select the operands, not the result" is site-dependent, not a law.** It
+   won -168/-54 once on a seven-arm 25-bit mux where several arms wanted the
+   same expression. Here, on four arms over a 13-bit base, it is zero: the
+   mapper was already sharing the adders, and the select had to be bought.
+   The distinguishing feature is arm *width* and duplication, not arm count.
+
+## Hypothesis H160
+
+- **ID:** H160.
+- **Hypothesis:** `fade_acc + fade_step` is evaluated four times at two widths
+  in `rtl/psg_seq.sv` -- 17-bit for the wrap test at :1233, 16-bit for the
+  accumulate at :1243 and the gain byte at :1245/:1246. One 17-bit sum serves
+  all four: `[16]` is the wrap, `[15:0]` the accumulator, `[15:8]` the byte.
+- **Scope:** `rtl/psg_seq.sv` fade advance only. Exact by construction.
+- **Baseline:** rtl `1a76c4596af2`.
+- **Change:** one `wire [16:0] fade_sum = {1'b0, fade_acc} + {4'b0, fade_step}`
+  replacing the four separate evaluations.
+- **Result:** pre-map 13,482 -> 13,430 (**-52 cells, -16 carries**), but mapped
+  LUT4 6,330 -> **6,359 (+29)**, carries +3, unpackable +2, **floor 6,828 ->
+  6,859 (+31)**, placed +31. Deleting a duplicated adder made the design
+  *larger*: the duplicates were being fused into their consumers' cones, and
+  forcing one materialised net broke all three fusions.
+- **Decision:** rejected **alone**; **accepted as part of H161**. Do not read
+  this row without H161 -- in isolation it is a regression, in composition it
+  is half of a -33 floor win.
+- **Repeat only if:** n/a; superseded by H161.
+
+## Hypothesis H161
+
+- **ID:** H161.
+- **Hypothesis:** H159 (four wavetable-fetch adders -> one index-selected add)
+  and H160 (one shared 17-bit fade sum) are unrelated arithmetic respellings
+  that individually measure floor **0** and **+31**. Noise is not additive, so
+  the composition is not the sum: measure the bundle, not the parts.
+- **Scope:** `rtl/psg_walk.sv` fetch block and `rtl/psg_seq.sv` fade advance.
+  Both exact by construction -- no value bound is relied on anywhere.
+- **Baseline:** rtl `1a76c4596af2` @ `452d3b2`.
+- **Changed condition versus H159/H160:** neither is changed; only their
+  *joint* evaluation is new. This row exists because one-at-a-time evaluation
+  is **biased**, not merely slow, when effects do not compose.
+- **Result, pre-registered before measurement** (primary `-noabc`, PASS iff
+  candidate < baseline; any deterministic instrument disagreeing in sign
+  forces revert; confirmatory abc9 n=20/arm, one-sided Mann-Whitney,
+  alpha=0.01, named in advance):
+
+  | Instrument | baseline | candidate | delta | deterministic |
+  | -- | -- | -- | -- | -- |
+  | pre-map cells | 13,482 | 13,349 | **-133** | yes |
+  | **`-noabc` floor** | 8,879 | 8,791 | **-88** | **yes, spread 0** |
+  | classic-abc floor | 6,947 | 6,899 | **-48** | spread 9 |
+  | abc9 floor, median of 20 | 6,842.0 | 6,807.5 | **-34.5** | no |
+
+  abc9 rank test: **U = 378.5 / 400, z = 4.83, p ~ 7e-7**. Every instrument
+  agrees in sign, and the two provably noise-free ones show the largest effect.
+- **Gates:** `sweep`/`models`/`mul`/`oracle` PASS -- all 59 frozen renders
+  byte-identical. `pico8` fails **identically to the unmodified baseline**:
+  a pre-existing regression bisected elsewhere to `24a465a` (multi-pump
+  latency advancing the `!m_busy`-gated micro-PC), not this change. Note
+  `oracle` is structurally blind to that class, since its cases do not chain
+  music patterns -- 59/59 is necessary evidence here, not sufficient.
+- **Decision:** accepted.
+- **Repeat only if:** n/a. **The transferable result is the method:** two
+  changes that each fail alone can pass together, so evaluate families as
+  bundles. Fmax fell 2.7 MHz on the one placement measured and still needs a
+  seed distribution.
+
+## Operation Cost Catalog (2026-08-04)
+
+Derived, not read: a scope census plus 45 ablation runs (31 from a clean-room
+agent given no access to this ledger, 14 from a walker schedule sweep). It
+exists so the next session inherits the ranking instead of re-deriving it.
+
+Baseline for every number below is rtl `1a76c4596af2` -- pre-map 13,482 cells
+/ 1,433 carries / 1,450 flops; 6,330 LUT4, 1,292 carries, 498 unpackable,
+floor 6,828, placed 7,052, 14 EBR. Captured at `c1ad243` and still current at
+`452d3b2`, which committed only the area-gate tooling and left `rtl/`
+byte-identical. Quote the fingerprint, not the commit: `452d3b2` landed
+mid-session and the distinction is what makes these numbers still valid.
+
+**Disjoint decomposition -- this one sums to the 6,828 floor.**
+
+| Scope | LUT4 | carry | unpack | LC floor |
+| -- | -- | -- | -- | -- |
+| `u_walk` | 2,356 | 509 | 124 | 2,480 |
+| `u_seq` | 1,921 | 263 | 247 | 2,168 |
+| `u_wave` (all of it in `u_ctx`) | 733 | 250 | 46 | 779 |
+| `u_mul` (multipump) | 716 | 171 | 9 | 725 |
+| `u_state` | 166 | 0 | 18 | 184 |
+| `u_aram` | 149 | 22 | 25 | 174 |
+| `u_div` | 112 | 42 | 8 | 120 |
+| `u_timing` | 53 | 29 | 2 | 55 |
+
+**Operation ablation ceilings (vs 13,482 cells / 1,433 carries).** These are
+constant ablations, so each folds everything downstream with it -- that cascade
+is deliberately included, and it is why they **do not sum**.
+
+| Operation | dcells | dcarry | dff |
+| -- | -- | -- | -- |
+| multiplier operand plumbing, both sides | -1,171 | -48 | -53 |
+| computed wave shaper, whole | -1,137 | -259 | -54 |
+| -- sequencer side of that plumbing | -751 | -30 | -33 |
+| -- exact /3, /7, /15 shapes | -730 | -120 | -35 |
+| sequencer state-mem write decode | -454 | -22 | -1 |
+| -- walker side of that plumbing | -427 | -18 | -20 |
+| pitched noise | -423 | -59 | -25 |
+| exact slide interpolation | -354 | -87 | -59 |
+| preceding-arm (old voice) consumers | -315 | -102 | 0 |
+| reciprocal recombination adder | -223 | +2 | -1 |
+| soft-add 5:1 compression | -202 | -8 | 0 |
+| aRAM address decode | -143 | -4 | -1 |
+| `sfx_id`+`trg_row`+`trg_len`+`aud_row` | -130 | 0 | **-90** |
+| crossfade blend | -116 | -63 | 0 |
+| /3 gain accumulation | -51 | -51 | 0 |
+| wavetable lerp | -39 | -20 | 0 |
+
+**Walker schedule slots (same baseline).**
+
+| Slot | dcells | dcarry | Role |
+| -- | -- | -- | -- |
+| `CAP_W0` | -1,701 | -156 | LFSR + phase advance + crossfade snapshot |
+| `CAP_W84` | -328 | -119 | dampen filter, `filt_y` write |
+| `CAP_W1` | -273 | -18 | old-arm noise, wavetable phase |
+| `CAP_W5` | -232 | -35 | old-arm phase advance |
+| `CAP_W2` | -125 | 0 | transition-detect tuple (`s_last_*`) |
+| `CAP_W15` | -122 | -15 | wavetable z / /3 limb capture |
+| `CAP_W51` | -94 | -15 | final mix scale |
+| `CAP_W6` | -87 | -17 | secondary oscillator advance |
+| `CAP_W75` | -87 | 0 | crossfade blend multiply |
+| `CAP_W3` | -56 | 0 | second sample point |
+| `CAP_W4` | -52 | 0 | sample/wavetable point, leaf stage |
+| `CAP_W26` | -39 | 0 | wavetable `smp_b` |
+| `CAP_W27` | -17 | 0 | live gain consume |
+| `CAP_W40` | **-1** | 0 | second /3 accumulation write |
+
+**The four calibration constants everything above should be read through.**
+
+1. **Deleting one multiplier mux arm costs -38 cells; merging two arms
+   algebraically costs +4.** Measured twice independently (-38 clean-room,
+   -44 for the `/3` client with its cascade). So the -1,171 of multiplier
+   plumbing is collectable only by deleting *requesters*, never by
+   restructuring. There is no algebraic path to it.
+2. **The shared multiplier's plumbing is ~9x its arithmetic.** Inside `u_mul`
+   the recurrence `m_p` is 49 LUT4 / 19 carries / 34 flops; the request path is
+   621 LUT4 / 149 carries. This is the quantitative statement of why fabric,
+   not features, dominates the netlist -- and, with (1), why that fact is not
+   by itself a lever.
+3. **The slot ceilings sum to -3,214 against a `u_walk` floor of 2,480.** The
+   catalog over-attributes by more than the module contains. Each operation
+   really does carry downstream fabric with it, but those shares are shared,
+   so each can be collected only once. `CAP_W0`'s -1,701 is the extreme case
+   and is an artefact: deleting the phase advance stops the oscillator.
+4. **Aggregate composition:** 29.0% `$_MUX_`, 56.6% AND/OR/NOT, 10.6% carry,
+   3.5% XOR. The arithmetic that computes audio is ~11-14% of the netlist.
+
+**What the catalog says the remaining levers are.** Not restructuring. Area is
+proportional to the number of distinct scheduled operations, at roughly 38
+cells of fabric per retired operation *plus* that operation's own logic. The
+old-voice/crossfade arm is the largest removable cluster and four independent
+slices agree on it: `CAP_W1` -273, `CAP_W5` -232, `CAP_W75` -87, `oldarm`
+-315, `xfade` -116, plus the `mx_old` census family at 295 LUT4 / 77 carries.
+The long-standing ~-220 working estimate for crossfade removal is too low;
+400-600 is the defensible range once its arms, modes, staging flops and
+mix-side consumers retire together. That remains a fidelity decision, not an
+RTL one.
+
+## Clean-room Candidate Pool (2026-08-04)
+
+Ten hypotheses from an agent deliberately denied this ledger, the skill's
+closed-verdict catalogue and the memory files, then priced against them. Kept
+as a pool per the ranked-pool discipline; none has been run as a hypothesis.
+
+| # | Candidate | Claimed | Standing against the record |
+| -- | -- | -- | -- |
+| H4' | `sfx_id`/`trg_row`/`trg_len`/`aud_row` into the unreachable `psg_state_mem` words 33..63 | -70..-90 LC floor, -90 flops | **Best of the ten.** Address-selected storage is the one sharing mechanism with no per-bit input muxes and the class that has won every time. Adjacent to H101/H112/H129 but the mechanism differs where it matters: free already-instantiated storage on existing V_LD/V_ST traffic, not a new EBR with forwarding. The known killer is unchanged -- async CPU `$10-$13` writes need staging, which priced `sfx_id` as a wash before (24 staging flops against 46 saved). |
+| H1' | Control-ROM the sequencer's four replicated 60-state decodes | -250..-400 | **Genuinely untried** -- no ledger row for microcode/microword/sst decode, and `crom[64..255]` was reserved as its home. But its case rests on a pre-map ceiling for pure mux fabric, and the closest measured precedent inverted: the pph address fabric as a control word read -75 pre-map and mapped **+21 LUT4** while costing a block. |
+| H2' | Widen the reciprocal ROM so the double fold disappears | -250..-350 | Costs 9-12 EBR against the preserved 14-EBR topology (23-26 of 32). Violates a scope property every hypothesis has held; the property is self-imposed, so this is a user call, not a refutation. |
+| H3' | Piecewise-linear wave ROM replacing `psg_wave_ctx` | -600..-800 | Render-changing, and the slopes for waves 1/5 are non-dyadic. Precedent exists for accepting a render-changing wave stage with a re-frozen baseline, so it is admissible -- but it is the largest-blast-radius item here. |
+| H5' | Four-leaf mixer: at most 4 of 8 leaves are ever non-zero | -40..-80 | The bound is a real invisible bound, the richest class. Exactness hinges entirely on `soft_add(x,0) == x`, which **fails** for `|x| >= 24576` (`psg_walk.sv:764`) -- and leaves come from a 17-bit `gz_filt_r`. Very likely render-changing; one simulator run over a Celeste track settles it. |
+| H6' | Replace the literal `x341` reciprocal with the base-256 split | area-neutral | Confirmed area-neutral by two measurements (arm -38/-44, `gz3` -51, new shift-add ~+90). Its product is schedule slack, not cells. |
+| H7' | Time-share the duplicated `noise_clamp` | -80..-140 | `noise-clamp` is already a closed family, and H139 accepted sharing the noise scale tree. Also buys an operand mux to save a clamp -- the shape that has charged every time. |
+| H8' | Slide's two divisions via a `1/sp` reciprocal ROM | ~-175 | Exactness is the whole risk and PICO-8 slides are audibly pitch-sensitive; the affine-slide-carry family is closed and H074 showed a low-carry change moving a reachable published increment. |
+| H9' | Read the preceding arm from the inactive parameter bank instead of `s_last_*` | -100..-180 | Depends on the inactive bank being a stable previous tuple, which the publication window breaks. Adjacent to blocked R.40--R.42 lifetime aliases. |
+| H10' | Merge `psg_divsvc` into `psg_mulmp` | -60..-90 | Probably dead on its own evidence: `psg_seq.sv` xs=5 issues `div_start` **and** `mul_go`, so merging serialises them and `SEQ_BUDGET = 272` must be re-derived. Also a shared-ALU shape (R.63/R.64 blocked). |
+
+**Structural oddities the same pass turned up, none yet actioned:** 48% of
+`psg_state_mem` is unreachable (`PSG_VSTR` 64 vs highest address `PSG_V_SEQ`
+32); `crom[144..205]` encodes 14 events in 62 words and `crom[206..255]` is
+unused; `psg_wave.sv:247--327` is a whole second `floor(K*dp/256)`
+implementation live only under PREVIEW (swapping the serial engine for it
+measures **+123**); `ring_rp` is declared and incremented outside its own
+`if (REVERB)` generate; `pph` is `[6:0]` with `PLAST = 61`; `s_phase2` is 24
+bits carrying 17 live ones; forcing `sst`'s `fsm_encoding` costs **+315** and
+`one_hot`/`binary` give byte-identical results, so the default `fsm` pass is
+worth that much and should not be touched.
 
 ## Saved Artifacts
 

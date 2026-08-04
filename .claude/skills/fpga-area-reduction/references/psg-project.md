@@ -45,6 +45,37 @@ spread). Placement itself is seed-invariant; use this only for timing risk.
 Tang Nano 20K (Gowin GW2AR-18C) is the second board: `make tangnano20k-psg`,
 resource parsing via `tools/gowin_stat.py`. See the `tangnano20k-target` memory.
 
+## Deterministic first — read before the metrics below
+
+The `±60` band quoted throughout this file is **too small**. Renaming a third
+of the PSG's cells, with the circuit provably unchanged (pre-map pinned at
+13,482), moves the packing floor over **62–72 cells**. A single abc9 build
+resolves nothing under ~100 cells. See SKILL.md §1.
+
+```bash
+.claude/skills/fpga-area-reduction/scripts/detfloor.sh psg   # the stable numbers
+tools/psg_area_dist.sh 20 candidate                          # the abc9 distribution
+```
+
+Measured instruments on this design (baseline `1a76c4596af2`):
+
+| Instrument | value | spread over renames |
+|---|---|---|
+| pre-map cells | 13,482 | 0 (by construction) |
+| `-noabc9 -noabc` floor | 8,879 | **0** |
+| `-noabc9 -flowmap` floor | 9,340 | not sampled |
+| `-noabc9` classic abc floor | 6,947 | 9 |
+| abc9 floor | ~6,840 median | **62–72** |
+
+`-noabc` is a *ruler, not a result* — never quote 8,879 as "the area". Use it
+to decide direction, then confirm with an abc9 distribution and a rank test.
+
+**`make area-psg`'s CANDIDATE/REJECT/UNRESOLVED verdicts are single abc9 draws**
+and inherit this limitation. It now fail-fasts before placement when the floor
+does not improve (`--full` / `PSG_AREA_FULL=1` forces the placed vector), which
+saves ~3 minutes per rejected candidate — but a floor delta under ~100 from
+that tool is one sample, not a measurement.
+
 ## The three metrics, concretely
 
 **Pre-map structural** (~25 s) — the number immune to abc9 naming:

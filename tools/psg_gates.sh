@@ -59,7 +59,28 @@ if [ "$NEEDS_CART" = yes ] && [ -z "$CART" ] && [ -z "$PSG_GATES_SKIP_CART" ]; t
   exit 2
 fi
 
+# `build/` is gitignored, so a fresh git worktree inherits NO frozen renders,
+# case set or reference audio image - and the stages then fail with messages
+# ("no anchor render set", "missing Celeste audio image") that read exactly
+# like real regressions in the candidate. That cost two battery runs. Seed the
+# read-only inputs from the main checkout instead of making every new worktree
+# rediscover it. Only ever copies IN, never overwrites, and never touches the
+# main checkout.
+seed_from_main() {
+  main=$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')
+  [ -n "$main" ] || return 0
+  [ "$main" != "$(pwd)" ] || return 0
+  for rel in "$CASES" "$(dirname "$ANCHOR")" build/p8ref; do
+    src="$main/$rel"
+    [ -d "$src" ] || continue
+    [ -d "$rel" ] && continue
+    mkdir -p "$(dirname "$rel")" && cp -R "$src" "$rel" \
+      && echo "  seeded $rel from the main checkout"
+  done
+}
+
 mkdir -p "$DIR"
+seed_from_main
 SKIPPED=""
 STARTED=$(date '+%H:%M:%S')
 
@@ -93,7 +114,25 @@ run() {
     echo "  --- $DIR/$name.log (tail) ---"
     tail -25 "$DIR/$name.log" | sed 's/^/  /'
     echo
-    echo "  Battery stopped at '$name'. Fix or revert, then resume with:"
+    echo "  Battery stopped at '$name'."
+    echo
+    echo "  BEFORE ATTRIBUTING THIS TO YOUR CHANGE, run the same stage on the"
+    echo "  unmodified baseline. Some gates are red on main independently of"
+    echo "  any candidate - 'pico8' regressed at 24a465a (multi-pump latency"
+    echo "  advancing the !m_busy-gated micro-PC) and is still open. A failure"
+    echo "  here reads identically whether it is yours or pre-existing:"
+    echo
+    echo "    git diff rtl/ > /tmp/cand.patch && git checkout rtl/"
+    echo "    tools/psg_gates.sh --cart <cart> --only $name"
+    echo "    git apply /tmp/cand.patch          # restore the candidate"
+    echo
+    echo "  (Save a patch rather than stashing: the stash stack is shared"
+    echo "   across worktrees, and a concurrent session can pop yours.)"
+    echo
+    echo "  The workable acceptance rule is 'no gate worse than baseline',"
+    echo "  not 'every gate green' - the latter is not currently achievable."
+    echo
+    echo "  Then fix or revert, and resume with:"
     echo "    tools/psg_gates.sh --cart <cart> --from $name"
     exit 1
   fi
@@ -121,7 +160,10 @@ sweep_objdirs() {
 # The matrix runner returns 0 for "completed", not for "clean", so the exit code
 # alone proves nothing - the renders have to be compared against the anchor set.
 oracle_sweep() {
-  test -d "$ANCHOR" || { echo "no anchor render set at $ANCHOR"; return 1; }
+  test -d "$ANCHOR" || {
+    echo "no anchor render set at $ANCHOR"
+    echo "  This is an ENVIRONMENT gap, not a candidate failure - see seed_from_main."
+    return 1; }
   test -d "$CASES"  || { echo "no case set at $CASES"; return 1; }
   refs=$(dirname "$ANCHOR")/reference
   test -d "$refs" || { echo "no reference set at $refs"; return 1; }

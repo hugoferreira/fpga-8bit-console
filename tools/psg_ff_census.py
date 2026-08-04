@@ -174,6 +174,18 @@ def main() -> int:
         ob = o[0] if o and isinstance(o[0], int) else None
         fam_lut[family(label.get(ob, cname))] += 1
 
+    # Carries ranked separately, because the LUT4 ranking hides them.  Wide
+    # carry retirement is one of the few lever classes that actually pays on
+    # this fabric, so "which family owns the carry chains" is a different
+    # question from "which family owns the LUTs" and the answers disagree:
+    # `gz_filt_r` sits fourth by LUT4 but second by carries, which is how
+    # H156 found the largest cone that H001-H155 had never named.  Carry
+    # cells are named after their own chain, so attribute by cell name.
+    fam_car: Counter[str] = Counter()
+    for cname, cell in cells.items():
+        if cell["type"] == CARRY:
+            fam_car[family(cname)] += 1
+
     if show_scopes:
         # Attribute each mapped primitive to its innermost preserved scope,
         # then roll descendants into their parents.  LUT + unpackable FF is a
@@ -228,6 +240,9 @@ def main() -> int:
         print(f"    {n:5d}  {name}")
     print(f"\n  LUT4s by driven net family (top {top_n}):")
     for name, n in fam_lut.most_common(top_n):
+        print(f"    {n:5d}  {name}")
+    print(f"\n  carries by family (top {top_n}):")
+    for name, n in fam_car.most_common(top_n):
         print(f"    {n:5d}  {name}")
     return 0
 
