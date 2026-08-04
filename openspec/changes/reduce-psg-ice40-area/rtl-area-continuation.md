@@ -137,6 +137,12 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   floor; with H1' it plausibly clears -70. Two rules for working it: bank only
   **nets**, never ablation ceilings, and re-measure the bundle as a whole,
   because candidates peeling at the same shared fabric cannot both pay.
+- **Audit A001 (2026-08-04): the eleven accepted rows inside the noise are
+  re-priced.** Nine of eleven are real (~236 floor cells total); **H057 and
+  H096 delivered exactly zero** on both deterministic instruments and their
+  recorded -23/-31 LUT4 were noise. Magnitudes elsewhere are unreliable even
+  where signs are right (H007 claimed -46, delivers -6). The accepted lineage
+  is sound. See the `Audit A001` section for the table and the method.
 - **Start here, not at H159:** the `Operation Cost Catalog (2026-08-04)` and
   `Clean-room Candidate Pool (2026-08-04)` sections below carry the measured
   ranking of every distinct operation, the four calibration constants that
@@ -8481,6 +8487,52 @@ chains pays only when the LUTs retire with them. Two consequences:
      characterised at n>=30.
 - **Repeat only if:** the `mx_old` role schedule or the `note_lo`/`cpz`
   lifetimes change materially. Do **not** retry on a classic-abc signal alone.
+
+## Audit A001 -- the eleven accepted rows inside the noise, re-priced
+
+Every accepted row whose claim sat under ~100 cells, measured as **landing
+commit vs its parent** on the two trustworthy deterministic instruments. No
+re-implementation: these are all in the tree already, so the measurement is
+`git archive` plus two yosys runs per side.
+
+| H | landing commit | recorded claim | pre-map | `-noabc` floor | verdict |
+| -- | -- | -- | -- | -- | -- |
+| H089 | `996ee40` | -63 LUT4 | **-86** | **-58** | real, large |
+| H027 | `9c4a1ac` | -69 carries, -61 LC | **-68** | -12 | real; carry-heavy, so the floor shows less |
+| H022 | `f569fa1` | "trade 17 LUT4" | **-59** | **-29** | real, **larger** than recorded |
+| H080 | `6458450` | -24 LUT4, -23 carries | **-48** | **-47** | real, large |
+| H047 | `c1b4862` | -28 LUT4, -33 carries | **-39** | **-46** | real, large |
+| H069 | `d3ce9a6` | -10 LUT4 | -24 | -26 | real |
+| H075 | `c634db2` | -23 LUT4 | -11 | -10 | real, small |
+| H007 | `48f0ef5` | -46 LUT4, -13 carries | -6 | -6 | real but **~8x smaller** |
+| H155 | `78b8bec` | -6 floor | -5 | -2 | real, small (priced earlier) |
+| **H057** | `c9274fc` | -23 LUT4 | **+1** | **0** | **nothing** |
+| **H096** | `a647185` | -31 LUT4 | **+1** | **0** | **nothing** |
+
+The measurements chain: H007's landed state is H022's parent, H069's landed is
+H075's parent, H080's landed is H089's parent. Consecutive commits line up
+exactly, which is a check on the method as well as the numbers.
+
+**Nine of eleven are real, totalling ~236 floor cells.** The accepted lineage
+is sound; the campaign did not build on sand.
+
+**What was wrong was magnitude, not sign.** H007 claimed -46 LUT4 and delivers
+-6. H022 was recorded as a 17-LUT4 *trade* and delivers -29 floor. Every
+recorded figure was a single abc9 draw, so it carried +-30 of noise on top of
+whatever the transform actually did.
+
+**H057 and H096 delivered exactly zero** on both deterministic instruments.
+They are not harmful -- both are principled respellings and neither costs
+anything -- but their recorded area justifications (-23 and -31 LUT4) were
+noise. Do not cite either as evidence that its mechanism pays.
+
+**The asymmetry against the rejected tail is the useful part.** Accepted rows
+survive re-pricing 9/11; the two rejections re-tested so far (H142, H153) both
+*confirmed*. The plausible reason is that these transforms were principled --
+exact algebraic identities, clamp respellings, adder sharing -- and principled
+transforms tend to be genuinely smaller. Noise corrupted the recorded size, not
+the decision. That lowers the expected yield from re-running the rejected tail:
+it is unestablished, but it is not obviously a pile of missed wins.
 
 ## Operation Cost Catalog (2026-08-04)
 
