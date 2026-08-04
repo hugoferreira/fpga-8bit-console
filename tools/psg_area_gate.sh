@@ -77,7 +77,9 @@ echo "$PREMAP" > "$DIR/premap.txt"
 
 # One token, no spaces: the whole vector is stored as key=value pairs and read
 # back with eval, so a fingerprint with a space in it would split the record.
-FP="$(cat rtl/*.sv rtl/*.v 2>/dev/null | shasum | cut -c1-12)@$(git rev-parse --short HEAD 2>/dev/null || echo no-git)"
+# rtl/pll.v is generated (gitignored) - hashing it makes two identical trees
+# fingerprint differently. Exclude it; hash only source RTL.
+FP="$(cat rtl/*.sv $(ls rtl/*.v 2>/dev/null | grep -v '^rtl/pll\.v$') 2>/dev/null | shasum | cut -c1-12)@$(git rev-parse --short HEAD 2>/dev/null || echo no-git)"
 
 # LUT4 / CARRY / FF and the packed split all come from one census pass; the
 # floor is LUT4 + unpackable flops, because an unpackable flop burns a whole

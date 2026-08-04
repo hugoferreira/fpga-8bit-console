@@ -28,10 +28,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134; H155 accepted atop the C001--C011 clarity lineage.
-- Next hypothesis ID: H164. The 2026-08-03 `/goal` reopened the area loop
+- Next hypothesis ID: H165. The 2026-08-03 `/goal` reopened the area loop
   after the clarity campaign closed it at H139. H155 (the H055 shared-limb
   retry) is accepted; it also restores a routable seed-1 canonical build,
-  which clean `644d68f` had silently lost (see the H155 row).
+  which clean `644d68f` had silently lost (see the H155 row). H161 is the
+  accepted tip (rtl `e004a57e4ee8`, placed 7,027 @ 14 EBR).
 - **MEASUREMENT DOCTRINE, 2026-08-04 — this supersedes the acceptance rule
   every row below was judged by.** abc9's covering is sensitive to the
   netlist's *encoding*, not just its content. Renaming a third of the PSG's
@@ -119,7 +120,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   across everything unexamined: about 19 pre-map cells** -- real and bankable,
   but only as part of a bundle, never as three separate stages each carrying
   its own proof and battery.
-- **Open composition stage (2026-08-04).** A plan, not a result: **none of
+- **Open composition stage (2026-08-04) -- RE-PRICED BY H164, 2026-08-04
+  evening: the cheap half is dead.** The gz re-association measures exactly 0
+  (wreduce already performs it), the q16 share is subsumed by H161's index
+  add, and H1' is closed at pool time by the pph precedent. **What survives is
+  H4' alone (~-29 floor screened, sfx_id wash-risk documented) -- see the H164
+  row before starting it.** The original text follows for the record. A plan,
+  not a result: **none of
   these four has a measured net yet.** Each figure below is a component or a
   ceiling-minus-estimate, and H4's inputs are H101's *isolated* syntheses,
   which the record says reverse globally more often than not. Nothing here is
@@ -150,12 +157,11 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   "where is the area and what would removing it buy" without re-running 45
   ablations. Its headline: restructuring is closed, and area now tracks the
   *number of distinct scheduled operations* at ~38 cells of fabric each.
-- Known lineage debt, unattributed: the floor has drifted **+28 cells since
-  H139** (6,800 -> 6,828, LUT4 +28, carries +1) across H155 and the C-series
-  clarity commits. The floor is a deterministic mapped resource and the band
-  does not apply to it, so the +28 is real -- but it is abc9 covering
-  responding to source text, not a lever, and recovering it is a mapping
-  lottery rather than a hypothesis.
+- ~~Known lineage debt, unattributed: the floor has drifted +28 cells since
+  H139~~ -- **REFUTED by the measurement doctrine above** (all three
+  deterministic instruments identical across the C-series). This bullet is
+  kept struck-through because earlier sessions cited it; there is no debt,
+  and no candidate should be charged for it.
 - H139 integration status: I004 accepts the R.84 source rebinding and complete
   merge battery. The v6 contract binds canonical `d76241f`; both structural
   and value audits, complete forms, functional/cadence/render/PREVIEW/recovery/
@@ -8612,6 +8618,79 @@ exact algebraic identities, clamp respellings, adder sharing -- and principled
 transforms tend to be genuinely smaller. Noise corrupted the recorded size, not
 the decision. That lowers the expected yield from re-running the rejected tail:
 it is unestablished, but it is not obviously a pile of missed wins.
+
+## Hypothesis H164 -- the open composition stage's cheap half, priced exactly
+
+- **ID:** H164.
+- **Hypothesis:** the 2026-08-04 open composition stage (Current State) plus a
+  fresh ten-candidate pool grouped by lever class: (A) exact carry arithmetic
+  -- the held H156 `gz` re-association, the `16'd65535 - wx_r == ~wx_r` wave
+  reflection identity, a shared `pticks + 1` sum; (B) storage/decode -- H4'
+  state-mem migration, H1' control-ROM decode; (C/D) the never-opened carry
+  families `dq_live_r`, `s_last_G`, `divd`, `wx_r` tail, `w_clr_tog`/`old_q0`
+  width audit. Speculated aggregate ~120-150 pre-map cells (~25-40 carries),
+  against a ~100 LUT/carry goal gate, carries prioritised.
+- **Scope:** gate-1 pricing of every group-A/C/D member against the exact
+  proposed replacement in isolated `git archive HEAD` tree copies; production
+  RTL untouched by any rejected member. Groups B deferred to their own
+  transactions (build cost is session-sized).
+- **Baseline:** rtl `e004a57e4ee8` @ `a121c03` (accepted H161): pre-map 13,349
+  cells / 1,389 carry wrappers / 1,450 flops; `-noabc` floor 8,791 (LUT4 8,282
+  / 509 unpackable); classic-abc floor 6,899; canonical abc9 map 6,300 LUT4 /
+  1,272 carries / 499 unpackable / floor 6,799; **placed 7,027 @ 31.35/128.35
+  MHz, 14 EBR** (first placed vector recorded for the H161 lineage).
+- **Changed condition versus H156/H158/H160:** H156/H158 were ablation
+  ceilings ("held for composition"), never priced as exact replacements; this
+  row prices them. The `pticks` share is a new instance of the H160 shape
+  inside a bundle, which H161 licenses.
+- **Change:** four isolated A/B pre-map measurements; no production RTL kept.
+- **Result:**
+
+  ```
+  (i)   gz re-association (held from H156):
+        pre-map 13,349 -> 13,349, carries 1,389 -> 1,389 -- BIT-IDENTICAL
+        across every gate type. wreduce already splits the {B,9'b0}+{9'b0,x}
+        shifted-operand form; the "34-bit add" was never physically 34 bits.
+        H156's ~-8 was an unmeasured estimate. Measured: exactly 0.
+        (The re-association itself needs no m_res[28] proof: keeping
+        B = m_res[27:3] in the outer term, floor((B*2^10+y)/2^20) ==
+        floor((B + floor(y/2^10))/2^10) unconditionally. Moot at 0.)
+  (ii)  q16 second-address adder share (held from H158): ALREADY LANDED --
+        subsumed by H159/H161's single index add (`syn_plus1` folds the +1
+        into the 6-bit index select at HEAD). Struck from the composition
+        list; do not carry it forward.
+  (iii) wave reflection identity (65535 - wx_r -> ~wx_r, psg_wave.sv:52):
+        pre-map 13,349 -> 13,349. opt_expr already folds all-ones-minus-x.
+        Measured: exactly 0.
+  (iv)  pticks shared increment (psg_seq.sv:1170/:1172):
+        pre-map 13,349 -> 13,352 (+3), carries 1,389 -> 1,390 (+1). REJECTED.
+  (v)   dq_live_r / s_last_G / wx_r tail / widths: closed by inspection --
+        the dq service is an already-minimal radix-4 shift-add engine,
+        g_live is one 13-bit shift-add, s_old_phase/old_q0 already narrowed.
+        No removable spelling identified; no measurement spent.
+  (vi)  H1' control-ROM decode: REJECTED AT POOL TIME by precedent
+        arithmetic -- its measured replaceable core (-41 pre-map) is smaller
+        than the pph fabric's -75, which mapped +21 LUT4 and cost a block;
+        the unpriced prefetch register and stall handling only add.
+  ```
+
+  abc9 distribution: n/r -- no candidate reached a deterministic improvement.
+- **Decision:** all of groups A/C/D rejected or closed at gate 1; H1' closed
+  at pool time. **The open composition stage's bundle total collapses from
+  "about -48 floor" to H4' alone (~-29 floor screened)** -- the only surviving
+  byte-exact candidate, unbuilt, wash-risk documented (sfx_id staging).
+- **Repeat only if:** (i)/(iii) never -- synthesis performs them; (iv) only
+  inside a bundle whose other members clear the band; (vi) only if a control
+  word is found that replaces >=100 pre-map cells of decode with no new
+  stall/prefetch state.
+
+**Instrument fix landed with this row:** every fingerprint site (`Makefile`
+`synth-<unit>`, `tools/psg_area_gate.sh`, `tools/psg_area_dist.sh`,
+`scripts/premap.sh`, `scripts/detfloor.sh`) hashed `rtl/*.v` including the
+**generated, gitignored `rtl/pll.v`**, so two identical source trees could
+fingerprint differently. All five now exclude it; the corrected formula
+reproduces the ledger's `e004a57e4ee8` at `a121c03`, restoring cross-tree
+comparability.
 
 ## Operation Cost Catalog (2026-08-04)
 

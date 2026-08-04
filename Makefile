@@ -982,9 +982,10 @@ $(SYNTH_DIR)/$(1).json: rtl/target_$(1).sv $$(SYNTH_DEPS)
 synth-$(1): $(SYNTH_DIR)/$(1).json
 	@echo "=== $(1) ==="
 	@# A number without an RTL fingerprint is not reproducible across revisions.
-	@# Quote the fingerprint whenever a measurement is recorded.
+	@# Quote the fingerprint whenever a measurement is recorded. rtl/pll.v is
+	@# generated (gitignored) - excluded, or identical trees fingerprint apart.
 	@printf "  rtl %s @ %s\n" \
-	  "$$$$(cat rtl/*.sv rtl/*.v 2>/dev/null | shasum | cut -c1-12)" \
+	  "$$$$(cat rtl/*.sv $$$$(ls rtl/*.v 2>/dev/null | grep -v '^rtl/pll\.v$$$$') 2>/dev/null | shasum | cut -c1-12)" \
 	  "$$$$(git rev-parse --short HEAD 2>/dev/null || echo no-git)"
 	@nextpnr-ice40 --$(FPGA_TYPE) --package $(FPGA_PKG) \
 	    --json $(SYNTH_DIR)/$(1).json --asc $(SYNTH_DIR)/$(1).asc \

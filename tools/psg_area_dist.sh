@@ -51,7 +51,8 @@ ROOT=$(pwd)
 # and pure waste when the baseline has not moved. Fingerprint covers rtl/ only,
 # so tool or doc edits do not invalidate it.
 CACHE=${PSG_DIST_CACHE:-build/gates-psg/dist}
-FP=$(cat rtl/*.sv rtl/*.v 2>/dev/null | shasum | cut -c1-12)
+# rtl/pll.v is generated (gitignored) - exclude it or identical trees key differently.
+FP=$(cat rtl/*.sv $(ls rtl/*.v 2>/dev/null | grep -v '^rtl/pll\.v$') 2>/dev/null | shasum | cut -c1-12)
 MAPKEY=$(echo "${PSG_DIST_MAP:-abc9}" | tr -cd 'a-z0-9')
 KEY="$CACHE/$FP.$MAPKEY.txt"
 WORK=$(mktemp -d)

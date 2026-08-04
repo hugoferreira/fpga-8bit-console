@@ -76,7 +76,8 @@ for unit in "$@"; do
             synth_ice40 -top $top -noabc9 -json $work/$unit.ca.json" \
     > "$work/$unit.ca.log" 2>&1
 
-  fp="$(cat rtl/*.sv rtl/*.v 2>/dev/null | shasum | cut -c1-12)@$(git rev-parse --short HEAD 2>/dev/null || echo no-git)"
+  # rtl/pll.v is generated (gitignored) - exclude it from the fingerprint.
+  fp="$(cat rtl/*.sv $(ls rtl/*.v 2>/dev/null | grep -v '^rtl/pll\.v$') 2>/dev/null | shasum | cut -c1-12)@$(git rev-parse --short HEAD 2>/dev/null || echo no-git)"
   echo "== $unit  rtl $fp =="
   printf '  %-24s %s\n' "pre-map cells"          "$premap"
   printf '  %-24s %s\n' "-noabc floor (spread 0)" "$(floor_of "$work/$unit.na.json")"

@@ -214,19 +214,21 @@ metacomment and errors (BADVLTPRAGMA).
 ## Current budgets and ceilings
 
 - **Current recorded baseline** (`build/gates-psg/baseline.txt`, captured at
-  `c1ad243`, fingerprint `1a76c4596af2`): premap 13,482 · **6,330 LUT4 · 1,292
-  carries · 1,450 flops · 498 unpackable · floor 6,828 · placed 7,052** · 14 EBR
-  · 33.50/138.20 MHz. Re-record with `make area-psg RECORD=1` whenever a stage
-  is accepted, or every candidate after it is measured against stale numbers.
+  `a121c03` = accepted H161, fingerprint `e004a57e4ee8`): premap 13,349 ·
+  **6,300 LUT4 · 1,272 carries · 1,450 flops · 499 unpackable · floor 6,799 ·
+  placed 7,027** · 14 EBR · 31.35/128.35 MHz. Deterministic instruments:
+  `-noabc` floor 8,791, classic-abc 6,899. Re-record with `make area-psg
+  RECORD=1` whenever a stage is accepted, or every candidate after it is
+  measured against stale numbers. (Fingerprints before 2026-08-04 hashed the
+  generated `rtl/pll.v` and are not comparable across trees; all five
+  fingerprint sites now exclude it.)
 - Accepted H139 production: **6,302 LUT4, 1,291 carries, 1,450 flops, 498
   unpackable flops, 14 EBR, floor 6,800, routed 7,018 LC @ 142.63/31.17 MHz.**
   Durable physical baseline: `build/experiments/h139/candidate.*`.
-- **The lineage has drifted +28 floor cells since H139** (6,800 → 6,828, LUT4
-  +28, carries +1) across H155 and the source-clarity commits. Placed moved
-  +34, which is inside the ±60 band and therefore says nothing — but **the floor
-  is a deterministic mapped resource and the band does not apply to it**, so
-  that +28 is real. Worth knowing before attributing a future candidate's cost
-  to itself; it is not this skill's call whether it should be recovered.
+- The "+28 floor drift since H139" previously recorded here is **REFUTED**
+  (ledger doctrine block, 2026-08-04): all three deterministic instruments are
+  identical across the C-series. Deterministic is not the same as insensitive;
+  there is no lineage debt and no candidate should be charged for it.
 - `rtl/target_psg.sv` is **REVERB=0 and must stay so** — the exact per-voice
   rings are 732×int16 each = 36 EBR against 32, so every number produced at
   REVERB=1 described a build that cannot exist.
