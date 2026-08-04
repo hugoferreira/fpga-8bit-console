@@ -1468,6 +1468,119 @@ def draw(panels, start, seconds, color, out=sys.stdout):
 
 # --------------------------------------------------------- image drawing ----
 
+def _import_pyplot():
+    try:
+        import matplotlib
+        matplotlib.use("Agg")           # no display, and none wanted
+        import matplotlib.pyplot as plt
+        return plt
+    except ImportError:
+        raise OptionalDependencyError(
+            "--spectrogram-file needs matplotlib (pip install matplotlib), "
+            "or use --spectrogram")
+
+
+def draw_file_difference(panels, start, path, out=sys.stdout):
+    """One chart of candidate-minus-reference, instead of two to eyeball.
+
+    Side-by-side panels are the right view for "what does this sound like".
+    They are the wrong one for "what changed": the eye cannot difference two
+    magma images, so a change that moves a partial by a few dB, or that drifts
+    slowly out of time, reads as two pictures that look the same. This draws
+    the subtraction directly, so only what changed carries ink.
+
+    Two things make it honest rather than confetti:
+
+    - **A relevance mask.** In dB, two cells that are both effectively silent
+      can differ by tens of dB and mean nothing at all. Cells where BOTH sides
+      sit below the dynamic window are left blank rather than coloured, so the
+      only ink is where at least one side had real signal.
+    - **A drift marginal.** Alignment happens once, at a single global lag
+      (``show_comparison`` passes the already-shifted candidate). A constant
+      offset therefore cancels, but a tempo error does not - it accumulates,
+      and the difference grows as the track goes on. The right-hand strip is
+      per-frame RMS difference over time, which turns "it drifts" from a thing
+      you infer into a line you read.
+
+    Diverging colour, symmetric about zero: red = the candidate is louder in
+    that cell, blue = quieter, white = agreement.
+    """
+    plt = _import_pyplot()
+
+    if len(panels) != 2:
+        raise CliUsageError(
+            "the difference view needs exactly two panels "
+            f"(reference and candidate); got {len(panels)}")
+
+    (ref_label, ref_samples), (cand_label, cand_samples) = panels
+    ref_mag, cand_mag = stft(ref_samples), stft(cand_samples)
+    if not len(ref_mag) or not len(cand_mag):
+        print(TOO_SHORT, file=out)
+        return
+
+    # Renders of the same track can differ by a frame or two in length; compare
+    # the span they share rather than padding one with silence, which would
+    # otherwise draw a bogus cliff at the end.
+    frames = min(len(ref_mag), len(cand_mag))
+    ref_mag, cand_mag = ref_mag[:frames], cand_mag[:frames]
+
+    freqs = (np.arange(ref_mag.shape[1]) * RATE / SPEC_FFT)[1:]
+    ref_db = 20 * np.log10(ref_mag[:, 1:] + 1e-9)
+    cand_db = 20 * np.log10(cand_mag[:, 1:] + 1e-9)
+
+    ceiling = max(float(ref_db.max()), float(cand_db.max()))
+    floor = ceiling - SPEC_DYNAMIC_DB
+    audible = (ref_db > floor) | (cand_db > floor)
+    delta = np.where(audible, cand_db - ref_db, np.nan)
+
+    # Scale to the data, but never below 6 dB: on a near-identical pair an
+    # autoscaled colourbar magnifies rounding into an alarming picture.
+    finite = delta[np.isfinite(delta)]
+    span = max(6.0, float(np.percentile(np.abs(finite), 99)) if finite.size else 6.0)
+
+    when = start + (np.arange(frames) * (SPEC_FFT // 2) + SPEC_FFT / 2) / RATE
+    seconds = frames * (SPEC_FFT // 2) / RATE
+    rms = np.sqrt(np.nanmean(np.where(audible, cand_db - ref_db, np.nan) ** 2,
+                             axis=1))
+
+    fig, (ax, ax_drift) = plt.subplots(
+        1, 2, sharey=True, constrained_layout=True,
+        gridspec_kw={"width_ratios": [4, 1]},
+        figsize=(11.0, min(40.0, max(4.5, seconds * 0.5))))
+
+    mesh = ax.pcolormesh(freqs, when, delta, vmin=-span, vmax=span,
+                         cmap="RdBu_r", shading="nearest", rasterized=True)
+    ax.set_xscale("log")
+    ax.set_xlim(SPEC_LO_HZ, min(SPEC_HI_HZ, RATE / 2))
+    ticks = [55 * 2 ** k for k in range(8)
+             if SPEC_LO_HZ <= 55 * 2 ** k <= min(SPEC_HI_HZ, RATE / 2)]
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([hz_label(t) for t in ticks])
+    ax.set_xlabel("Hz")
+    ax.set_ylabel("seconds")
+    ax.set_title(f"{cand_label} minus {ref_label}\n"
+                 f"red = louder, blue = quieter, blank = both below "
+                 f"{SPEC_DYNAMIC_DB:.0f} dB window", fontsize=10)
+
+    ax_drift.plot(rms, when, linewidth=0.9, color="0.25")
+    ax_drift.set_xlabel("RMS |Δ| dB")
+    ax_drift.set_title("drift", fontsize=10)
+    ax_drift.grid(True, alpha=0.3)
+    ax_drift.set_xlim(left=0)
+
+    fig.colorbar(mesh, ax=(ax, ax_drift), label="dB, candidate minus reference")
+    fig.savefig(path)
+    plt.close(fig)
+
+    shown = int(np.count_nonzero(audible))
+    print(f"    difference spectrogram written to {path}", file=out)
+    print(f"    {shown} of {audible.size} cells above the {SPEC_DYNAMIC_DB:.0f} dB "
+          f"window; RMS |Δ| {np.nanmean(rms):.2f} dB, "
+          f"first quarter {np.nanmean(rms[:max(1, frames // 4)]):.2f} dB, "
+          f"last quarter {np.nanmean(rms[-max(1, frames // 4):]):.2f} dB",
+          file=out)
+
+
 def draw_file(panels, start, path, out=sys.stdout):
     """The same panels as draw(), at full STFT resolution, into a file.
 
@@ -1476,14 +1589,7 @@ def draw_file(panels, start, path, out=sys.stdout):
     Matplotlib is imported here rather than at module scope so the terminal
     panels, the metrics and the exit code all still work without it installed.
     """
-    try:
-        import matplotlib
-        matplotlib.use("Agg")           # no display, and none wanted
-        import matplotlib.pyplot as plt
-    except ImportError:
-        raise OptionalDependencyError(
-            "--spectrogram-file needs matplotlib (pip install matplotlib), "
-            "or use --spectrogram")
+    plt = _import_pyplot()
 
     mags = [stft(samples) for _, samples in panels]
     if any(not len(m) for m in mags):
@@ -1551,6 +1657,10 @@ class AudioView:
     inspection_channel_samples: np.ndarray | None = None
     reference_channel_samples: np.ndarray | None = None
     candidate_channel_samples: np.ndarray | None = None
+    # Draw one chart of candidate-minus-reference instead of two panels to
+    # eyeball. Comparison views only - there is nothing to subtract from a
+    # single inspected file, so show_inspection ignores it.
+    difference: bool = False
 
     def selected_views(self):
         selected = list(self.views)
@@ -1635,7 +1745,11 @@ class AudioView:
                 print("    spectrogram: range holds %d samples, need %d"
                       % (max(hi - lo, 0), SPEC_FFT), file=self.out)
             else:
-                draw_file(
+                # shifted_candidate is already aligned at the measured lag, so
+                # a constant offset cancels in the subtraction and only real
+                # spectral change - or accumulating drift - survives it.
+                render = draw_file_difference if self.difference else draw_file
+                render(
                     [(reference_label, result.reference[lo:hi]),
                      (result.data["label"], result.shifted_candidate[lo:hi])],
                     lo / RATE, self.path, out=self.out)

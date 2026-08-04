@@ -172,6 +172,7 @@ def make_view(args, *, path=None, inspection_channel_samples=None,
         layout=args.layout, width=args.view_width,
         lines_per_second=args.lines_per_second, max_lines=args.max_lines,
         axis=args.axis,
+        difference=getattr(args, "spectrogram_difference", False),
         inspection_channel_samples=inspection_channel_samples,
         reference_channel_samples=reference_channel_samples,
         candidate_channel_samples=candidate_channel_samples)
@@ -539,6 +540,11 @@ def add_visualization_options(parser, view_choices):
     parser.add_argument(
         "--spectrogram-file", metavar="PATH",
         help="write/replace a PNG/PDF/SVG; requires matplotlib")
+    parser.add_argument(
+        "--spectrogram-difference", action="store_true",
+        help="comparison commands only: draw one candidate-minus-reference "
+             "chart rather than two panels, so only what changed carries ink; "
+             "a right-hand strip shows whether the mismatch grows over time")
     parser.add_argument(
         "--view-range", "--spectrogram-range", dest="view_range",
         metavar="LO:HI",

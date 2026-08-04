@@ -94,6 +94,11 @@ def main() -> int:
                         help="render destination; provenance uses the same stem")
     parser.add_argument("--spectrogram-file",
                         help="optional PNG/PDF/SVG side-by-side spectrogram")
+    parser.add_argument("--spectrogram-difference", action="store_true",
+                        help="draw one candidate-minus-reference chart instead "
+                             "of two panels; only what changed carries ink, and "
+                             "the right-hand strip shows whether the mismatch "
+                             "grows over the track (i.e. tempo drift)")
     args = parser.parse_args()
 
     if not args.cart.is_file():
@@ -137,7 +142,8 @@ def main() -> int:
     audio_analysis.describe_wav(args.reference, reference, indent="reference ")
     audio_analysis.describe_wav(args.candidate_out, candidate,
                                 indent="  current RTL ")
-    view = audio_analysis.SpectrogramView(path=args.spectrogram_file)
+    view = audio_analysis.SpectrogramView(path=args.spectrogram_file,
+                                          difference=args.spectrogram_difference)
     result = audio_analysis.analyze_comparison(
         reference, candidate, "current RTL", policy=policy)
     audio_analysis.report_comparison(

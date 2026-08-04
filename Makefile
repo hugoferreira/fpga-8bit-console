@@ -325,14 +325,17 @@ test-psg-fidelity:
 # Full-track fidelity with candidate provenance. This target always renders the
 # current hardware-schedule RTL; it never accepts a pre-existing candidate WAV.
 #   make test-psg-track CART=... MUSIC=30 PSG_REFERENCE=build/p8ref/pico8-30.wav
+#   make test-psg-track ... SPECDIFF=1     one difference chart, not two panels
 PSG_REFERENCE ?=
+SPECDIFF ?=
 test-psg-track:
 	@test -n "$(CART)" || { echo "usage: make test-psg-track CART=<cart.p8.png> MUSIC=n PSG_REFERENCE=<pico8.wav>"; exit 2; }
 	@test -n "$(PSG_REFERENCE)" || { echo "usage: make test-psg-track CART=<cart.p8.png> MUSIC=n PSG_REFERENCE=<pico8.wav>"; exit 2; }
 	python3 tools/psg_track_gate.py --cart "$(CART)" --music "$(MUSIC)" \
 	  --reference "$(PSG_REFERENCE)" \
 	  --candidate-out "build/psg_track_gate/music$(MUSIC)-current-rtl.wav" \
-	  --spectrogram-file "build/psg_track_gate/music$(MUSIC)-comparison.png"
+	  --spectrogram-file "build/psg_track_gate/music$(MUSIC)-comparison.png" \
+	  $(if $(SPECDIFF),--spectrogram-difference,)
 
 # Celeste's five entry points cover every chained music pattern used by the
 # game. This is the final PSG integration gate.
