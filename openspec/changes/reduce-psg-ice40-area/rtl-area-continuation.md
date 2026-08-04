@@ -8232,6 +8232,44 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
 - **Repeat only if:** the pitched-noise product slice, signed rounding
   contract, or consumer pipeline boundary changes again.
 
+## ROW SCHEMA -- mandatory from 2026-08-04
+
+Every row from H163 onward MUST record the fields below. The A001 audit and
+H162 exist because the first 162 rows recorded a **single abc9 build** as the
+verdict, and that number carries +-30 cells of naming noise. Nine of eleven
+audited acceptances were real but their magnitudes were wrong by up to 8x; two
+were worth exactly zero; and no rejected row's margin can be re-checked because
+pre-map was never written down. Do not repeat that.
+
+```
+- **Instruments** (fill every line; "n/r" only if genuinely not run):
+    pre-map cells      <base> -> <cand>  <delta>    [deterministic]
+    -noabc floor       <base> -> <cand>  <delta>    [deterministic, spread 0]
+    unpackable flops   <base> -> <cand>  <delta>    [reliable]
+    LUT4               <base> -> <cand>  <delta>    [NOISY - never the verdict]
+    abc9 floor         median <base> -> <cand>, n=<N> per arm,
+                       Mann-Whitney U=<u>/<max>, p=<p>   [statistic named BEFORE looking]
+    EBR                <base> -> <cand>              [<=14 unless recompacted]
+    placed / Fmax      <...>                         [one draw; context only]
+```
+
+Rules that make those numbers mean something:
+
+1. **A single abc9 build is never a verdict.** Not for acceptance, not for
+   rejection. It is one draw from a distribution ~72 cells wide.
+2. **pre-map and `-noabc` decide direction.** If they disagree in sign with
+   each other, sample the shipped mapper -- do not pick the proxy you prefer
+   (H162's classic-abc read -28/-49 on changes abc9 could not distinguish from
+   zero).
+3. **Record unpackable flops separately from LUT4.** Flops are reliable, LUT4
+   is where the noise lives: H142 predicted -12 flops and delivered exactly
+   -12, while its LUT4 moved +17.
+4. **Isolated synthesis is not a verdict either** -- it has *more* covering
+   variance than whole-design, not less. H081 and H145 were both rejected on
+   isolated numbers alone and remain untested.
+5. **State the decision rule before measuring**, and if the data later suggests
+   a better statistic, say so and re-register rather than substituting it.
+
 ## Hypothesis H156
 
 - **ID:** H156.

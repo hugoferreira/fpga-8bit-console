@@ -415,8 +415,24 @@ rejected work every few sessions.
 - **Changed condition versus H<prior>:** why this is not a repeat. Name the
   earlier hypotheses it resembles and state the difference.
 - **Change:** what was actually done, in order.
-- **Result:** every measured number, isolated *and* canonical, plus which
-  gates ran and which were skipped.
+- **Result:** fill EVERY instrument line; "n/r" only if genuinely not run.
+  A single abc9 build is **never** a verdict - not for acceptance, not for
+  rejection.
+
+  ```
+  pre-map cells      <base> -> <cand>  <d>   [deterministic]
+  -noabc floor       <base> -> <cand>  <d>   [deterministic, spread 0]
+  unpackable flops   <base> -> <cand>  <d>   [reliable]
+  LUT4               <base> -> <cand>  <d>   [NOISY - never the verdict]
+  abc9 floor         median <b> -> <c>, n>=16/arm, U=<u>/<max>, p=<p>
+  EBR / placed / Fmax                        [placed+Fmax are one draw]
+  ```
+
+  Record unpackable flops **separately** from LUT4: flops are reliable, LUT4 is
+  where the noise lives. One candidate predicted -12 flops and delivered
+  exactly -12 while its LUT4 moved +17. And isolated synthesis is not a verdict
+  either - a small cone gives the mapper fewer covering options, so it has
+  *more* variance than whole-design, not less.
 - **Decision:** accepted / rejected and reverted / rejected before production.
 - **Repeat only if:** the specific condition that would make a retry sensible
   ("only after multiplier operand bounds, radix classes, or payload width
