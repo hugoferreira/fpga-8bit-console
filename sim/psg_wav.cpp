@@ -77,6 +77,9 @@ static int wr_hold = 1;
 static void wr(uint8_t addr, uint8_t data) {
     dut->cs = 1; dut->rw = 1; dut->addr = addr; dut->di = data;
     for (int i = 0; i < wr_hold; i++) tick();
+    // Frozen-CPU emulation: a wait-stated access (RDY low) holds the bus
+    // until the PSG commits it, exactly as the 65C02 core does.
+    while (!dut->rdy) tick();
     dut->cs = 0; dut->rw = 0; dut->addr = 0; dut->di = 0;
     tick();
 }

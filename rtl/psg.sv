@@ -54,6 +54,9 @@ module psg #(
     input  logic [7:0]         addr,
     input  logic [7:0]         di,
     output logic [7:0]         dout,
+    // Wait-state handshake: low while a migrated-register access is held;
+    // AND into the CPU's RDY. Constant 1 when no access is stalled.
+    output logic               rdy,
     output logic signed [15:0] pcm,
 
     // Optional simulator trace: pattern, slot activity, SFX ids, rows.
@@ -167,9 +170,14 @@ module psg #(
   // ---- CPU edge adapter and audio RAM ----
   // Convert a level-style bus write into one pulse in the PSG clock domain.
   // Reads retain level semantics.
+  // A migrated-register access may stall: cpu_stall (from the sequencer's
+  // CPU state-memory lane) holds RDY low and defers the commit pulse, so the
+  // level-holding CPU is itself the staging register.
   logic cs_wr_q;
-  always_ff @(posedge clk) cs_wr_q <= cs && rw;
-  wire  cs_wr = (cs && rw) && !cs_wr_q;
+  wire  cpu_stall;
+  always_ff @(posedge clk) cs_wr_q <= cs && rw && (cs_wr_q || !cpu_stall);
+  wire  cs_wr = (cs && rw) && !cs_wr_q && !cpu_stall;
+  assign rdy = !cpu_stall;
   wire  aram_cpu_rd = cs && !rw && addr == 8'h02;
   wire [7:0] aram_cpu_q;
 
@@ -222,7 +230,7 @@ module psg #(
   // Tick-sequencer publication and arithmetic requests consumed by the walk
   // or by the shared top-level services.
   wire [PSG_NV-1:0] play_bits, trig_req, clr_tog;
-  wire [PSG_NCH*6-1:0] aud_sfx_bits;
+  wire [5:0]           rb_sfx;
   wire [PSG_NCH*5-1:0] aud_row_bits;
   wire         mus_playing, spar_bank, bank_ready;
   wire [5:0]   mus_pat;
@@ -351,7 +359,13 @@ module psg #(
     .clk(clk), .reset(reset),
     .cs(cs_wr), .rw(rw), .addr(addr), .di(di),
     .play_bits(play_bits), .trig_req(trig_req),
-    .aud_sfx_bits(aud_sfx_bits), .aud_row_bits(aud_row_bits),
+    .rb_sfx(rb_sfx), .aud_row_bits(aud_row_bits),
+    // wr_pend deliberately omits rw: the 65C02 gates WE with RDY, so a stall
+    // predicate that reads rw is a combinational loop through the CPU. The
+    // frozen core holds cs/addr/di stable, which is what the lane decodes.
+    .wr_pend(cs && !cs_wr_q), .rd_lvl(cs && !rw),
+    .wlk_we_i(state_sample_we), .wlk_rd_i(state_sample_read),
+    .cpu_stall(cpu_stall),
     .mus_playing(mus_playing), .mus_pat(mus_pat), .mus_mask(mus_mask),
     .fade_len(fade_len),
     .sample_en(sample_en), .tick_en_d(tick_en_d), .pre_tick(pre_tick),
@@ -403,7 +417,7 @@ module psg #(
 
             dout <= (addr[3:2] == 2'd1)
                       ? {play_bits[aud_sl(addr[1:0], play_bits)], 1'b0,
-                         aud_sfx_bits[addr[1:0]*6 +: 6]}
+                         rb_sfx}
                       : {play_bits[aud_sl(addr[1:0], play_bits)], 2'b0,
                          aud_row_bits[addr[1:0]*5 +: 5]};
           else
@@ -417,13 +431,19 @@ module psg #(
   // Keep debug generation removable when no hardware consumer exists.
   generate
     if (DBG_PORT == 1) begin : g_dbg
+      // Simulator-trace shadow of the state-memory-resident sfx ids, snooped
+      // off the sequencer write lane. Debug-build cost only.
+      logic [5:0] sfx_shadow[0:PSG_NV-1];
+      always_ff @(posedge clk)
+        if (etk_we && etk_wa[5:0] == PSG_V_SFX)
+          sfx_shadow[etk_wa[PSG_VADR-1:6]] <= etk_wd[5:0];
       always_comb begin
         dbg = 64'b0;
         dbg[7:0]   = {mus_playing, 1'b0, mus_pat};
         dbg[11:8]  = play_bits[3:0];
         dbg[15:12] = play_bits[7:4];
         for (int ch = 0; ch < PSG_NCH; ch++) begin
-          dbg[16 + ch*6 +: 6] = aud_sfx_bits[ch*6 +: 6];
+          dbg[16 + ch*6 +: 6] = sfx_shadow[aud_sl(2'(ch), play_bits)];
           dbg[40 + ch*6 +: 6] = {1'b0, aud_row_bits[ch*5 +: 5]};
         end
       end
