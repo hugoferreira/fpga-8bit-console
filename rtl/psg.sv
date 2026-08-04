@@ -254,7 +254,8 @@ module psg #(
   wire [1:0]   s_ch_det, old_mode_r;
   wire         old_alt_r;
   wire [15:0]  s_phase, s_old_phase;
-  wire [23:0]  s_phase2;
+  localparam int PH2_W = REALTIME_PREVIEW ? 24 : 17;
+  wire [PH2_W-1:0] s_phase2;
   wire [13:0]  s_eff_inc, s_old_inc;
   wire [16:0]  old_q0;
   wire [15:0]  ctrl_q;

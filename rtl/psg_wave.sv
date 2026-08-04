@@ -185,7 +185,9 @@ module psg_wave_ctx(input  bit          clk,
 endmodule
 
 // Walk-facing context selector, detune increment, and phase-view adapter.
-module psg_wave #(parameter REALTIME_PREVIEW = 0)
+module psg_wave #(parameter REALTIME_PREVIEW = 0,
+                  // Mirrors psg_walk's PH2_W: the s_phase2 port width.
+                  localparam int PH2_W = REALTIME_PREVIEW ? 24 : 17)
                  (input  bit   clk,
 
                   // Requested context: live secondary, preceding primary, or
@@ -202,7 +204,7 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
                   input  logic        s_ch_buzz,
 
                   input  logic [15:0] s_phase_hi,
-                  input  logic [23:0] s_phase2,
+                  input  logic [PH2_W-1:0] s_phase2,
                   input  logic [12:0] s_eff_inc_hi,
 
                   // Preceding-arm tuple retained during a transition.
@@ -330,12 +332,14 @@ module psg_wave #(parameter REALTIME_PREVIEW = 0)
   // Triangle/phaser use the unshifted 17-bit
   // accumulator, detune mode 2 doubles the other built-in waves, and preview
   // retains its compact 24-bit phase representation.
+  // Zero-extended view for the PREVIEW-only wide slice below.
+  wire [23:0] ph2_pad = 24'(s_phase2);
   wire q_old_ctx = iss_os && !s_snd_wt;
   wire [2:0] qv_wave = q_old_ctx ? s_old_wave : s_snd_wave;
   wire [1:0] qv_mode = q_old_ctx ? old_mode_r : s_ch_det;
   wire [15:0] qv_lo = q_old_ctx ? old_q0_lo : s_phase2[15:0];
   assign q16 =
-      REALTIME_PREVIEW ? s_phase2[23:8]
+      REALTIME_PREVIEW ? ph2_pad[23:8]
     : (!s_snd_wt && (qv_wave == 3'd0 || qv_wave == 3'd7))
         ? qv_lo
     : (qv_mode == 2'd2) ? {qv_lo[14:0], 1'b0}

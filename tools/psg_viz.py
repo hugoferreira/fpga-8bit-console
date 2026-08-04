@@ -369,8 +369,11 @@ def expression_dnf(expr):
     return [[strip_outer_parens(expr)]]
 
 
+# The width prefix may be a literal (`7'`) or a named localparam width
+# (`PPH_W'`): phase widths are sized by the schedule (sizing audit), and the
+# phase VALUE inside the cast is what this tool needs.
 PPH_VALUE_RE = re.compile(
-    r"pph\s*==\s*(?:\d+\s*)?'\s*(?:\(([^)]*)\)|d\s*(\d+))")
+    r"pph\s*==\s*(?:\w+\s*)?'\s*(?:\(([^)]*)\)|d\s*(\d+))")
 
 
 def pph_exprs(text):
@@ -648,7 +651,9 @@ def parse_pph_events(lines, lo, hi, label):
     return events
 
 
-ARM_RE = re.compile(r"\s*\d+'(?:d\s*(\d+)|\s*\(([^)]*)\))\s*:")
+# Case-arm labels may cast with a literal width (`7'd4`, `7'(PWORK)`) or a
+# named localparam width (`PPH_W'(4)`): the value, not the width, is the key.
+ARM_RE = re.compile(r"\s*\w+'(?:d\s*(\d+)|\s*\(([^)]*)\))\s*:")
 
 
 def case_signal_re(signal):
@@ -1109,7 +1114,7 @@ def parse_mul_arms(lines, phase_requests=None):
         elif ("cap[" in q.replace(" ", "")
               or any(re.search(r"\b" + re.escape(req) + r"\b", q)
                      for req in phase_requests)
-              or re.match(r"\d+'d\d+\s*:", q)) \
+              or re.match(r"(?:\d+'d\d+|\w+'\([^)]*\))\s*:", q)) \
                 and re.search(r":\s*(?:begin|if\b.*\bbegin)\s*$", q):
             label, tail = q.split(":", 1)
             heads.append((i, label.strip(), tail.strip()))
@@ -1124,6 +1129,10 @@ def parse_mul_arms(lines, phase_requests=None):
         ids = list(guards)
         if not ids:
             ids = [int(x) for x in re.findall(r"\d+'d(\d+)", label)]
+            if not ids:
+                m2 = re.fullmatch(r"\w+'\(([^)]*)\)", label.strip())
+                if m2 and re.fullmatch(r"\d+", m2.group(1).strip()):
+                    ids = [int(m2.group(1))]
             guards = {x: {""} for x in ids}
 
         # A direct label can carry its runtime guard after the colon.
