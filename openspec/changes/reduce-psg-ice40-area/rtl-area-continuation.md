@@ -10044,5 +10044,21 @@ now has a first-principles width story.
   decides whether the class scales to the other three. No claims before
   that lands. Riders to bundle with any accepted H170 build: wt_x1 into
   mx_new's window, fmc/fsel rehoming (see chapter E addendum).
-- **Status:** open; bl_cnt rider landed independently (floor 8,618,
-  placed 6,838 at the rider's draw).
+- **Status: REFUTED BY MEASUREMENT (2026-08-05), no build required.**
+  The netlist check that should precede any decode-conversion design:
+  `sst` is fsm-encoded into **6 bits** (not one-hot), and only **15
+  LUT4s in the whole design consume any sst bit directly** — the first
+  level of ALL nine case(sst) decoders together. The fsm pass + abc9
+  already share the state-decode terms; everything downstream is data
+  steering the split-conversion would retain. The replaceable fabric is
+  ~an order of magnitude below the −250..−400 claim, which rested on
+  the pre-map-ceiling illusion its own pool note flagged. The pph
+  precedent was the same phenomenon, now understood: **fsm-encoded
+  state decode is already a compressed control store; a ROM re-adds
+  the staging that compression removed.** Closed verdict for the whole
+  microcode/control-ROM class on this design.
+- bl_cnt rider landed independently (floor 8,618, placed 6,838).
+- **Goal implication:** with H170 dead and crossfade removal vetoed, no
+  identified structural door remains for the goal's last 192; the pool's
+  surviving items are user-decision doors (H2' EBR-topology change, H3'
+  render-changing wave ROM) plus sub-band riders (~15-25).
