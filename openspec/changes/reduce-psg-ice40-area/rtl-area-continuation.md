@@ -9757,7 +9757,7 @@ inventory of why each width is what it is.
 | 6 | `s_eff_inc`/`s_old_inc` (dp) and the dq datapath | 14 bits | **14 — TIGHT** | **CLOSED 2026-08-05: H168 attempted and REFUTED by the fidelity battery.** The analytical bound was wrong by one octave: `dx_for_note`'s reference octave is 3, not 4 (psg_binary_model.py:94), so dp_max = 7,394 and the published `2*dp` reaches **14,788 — bit 13 is live for every pitch >= 60**. A one-bit narrowing measured −110 pre-map / −84 floor and passed lint, but the PICO-8 statistical gates failed within minutes (pitch-60 noise: >4 kHz share 0.69x, rms/centroid trends 0.68x — the too-slow-LFSR signature) and the change was reverted whole. **Lesson: an amplitude-plausible width reduction was refuted only by the fidelity corpus; never land a width cut on the analytical bound alone.** pclamp's pitch<=63 bound is real; the table scale was the error. |
 | 7 | `dq17` result bus | named 17, carries 14 | 14 live (top 3 = 3'b0 by construction) | noted 2026-08-05: naming over-states width; likely const-folded (netlist check first); rename-with-localparam is C-series material |
 | 8 | counter family: `scnt` (==182/==176 compares), `bl_cnt` 0..64, `vcnt`, `m_cnt` | — | terminal-value encodings | queued (chapter B) |
-| 9 | `m_res` 34-bit multiplier bus | 34 | live consumer slices unknown | queued (chapter C): audit each consumer's slice against the landing law (psg-mul-alignment memory); potentially the widest bus carrying dead bits |
+| 9 | `m_res` 34-bit multiplier bus | 34 | **CLOSED 2026-08-05: proven optimal.** Twelve consumer slices inventoried; the union stops at bit 28, consistent with |P| < 2^29 (18-bit x 12-bit magnitudes). Netlist: [33:31] const-folded already (the mulsvc comment's "public alignment" costs zero cells); [30:29] are flopped but LIVE — partial-sum staging the recurrence consumes via m_acc = m_p[30:12], shifting down each iteration. No dead flops. Chapter C's alignment-aware reading also CORRECTED a chapter-A note: the music-gain path is mode 1 (product lands <<2), so m_res[20:10] = P>>8 — **exact unity at mus_gain 255** (a*256/256 = a), not the "/4, <=448" previously recorded; the <=1,792 bound conclusion was unaffected. Remaining chapter C value is documentation: the full slice-x-mode alignment table (gz mode 2 and music mode 1 verified; wt/nz/blend/slide/div/ptick/chained-mode-3 pairings unwritten). |
 | 10 | state-word layout census | 64x16 stride | constant/pad bits uncounted | queued (chapter D): inventory pad bits across pack sites — free storage for future H4'-style migrations (words 33-35 are precedent) |
 
 **Chapter A (opened 2026-08-05): the amplitude/gain chain** — the third of
@@ -9789,7 +9789,8 @@ model:**
 
 **Chapter A, d_res bound and netlist checks (2026-08-05):** every vol_r
 writer is bounded — instrument scaling is `vol * ins_vol / 7` (div_d = 7,
-result <= operand), music gain is `a_post * (mus_gain+1) >> 10 <= 448`,
+result <= operand), music gain is mode-1-aligned `P>>8` — exact unity at
+mus_gain 255, bound = a <= 1,792 (mechanism corrected by chapter C),
 fades/slides interpolate within endpoints <= 1,792, and the source bound
 `A0 = vol << 8` with a 3-bit volume field is instruction-verified. Netlist
 (merged main, -noabc): vol_r[11], s_eff_a[11], s_old_G[12], s_last_G[12]
