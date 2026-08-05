@@ -36,7 +36,13 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   H167/H169/bl_cnt/scnt/H171 plus edd1178's absorbed fix. Deterministic
   companions: pre-map 13,349 -> 13,230, -noabc floor 8,791 -> 8,616,
   placed (single draws) 7,027 -> 6,839.
-- Next hypothesis ID:- Next hypothesis ID: H170. H169 (volume-chain narrowing) accepted at a55b349; H168 was consumed by the refuted dp/dq narrowing (entry 6). Chapter A of the sizing audit is CLOSED; chapters B/C/D queued (entries 8-10), C recommended next. H167 (trg/aud stage 2, −107 floor, oracle 59/59) is measured on branch h167-trg-aud, pending the canonical seed-1 route and pico8 stage. C012 (width intent) merged at 6cb0539. H166 (timing-accumulator gcd reduction) accepted on branch h166-timing-gcd; it opens the Sizing Audit section. H165 (RDY wait-states + sfx_id BRAM migration, stage 1) is measured CANDIDATE on a worktree branch, held for the mix-four anchor decision — see its row. The 2026-08-03 `/goal` reopened the area loop
+- **VERIFICATION SWEEP COMPLETE (2026-08-05):** celeste five-frame smoke
+  PASS on final main; Tang Nano 20K build (`REVERB=1, MULTIPUMP=0,
+  PLAST=67` — the config untouched all season) packs
+  `bin/tangnano20k-psg.fs` with timing PASS (69.43/90.11 MHz vs 12 MHz).
+  Every battery stage has now run green against the merged
+  H165/H166/C012/H167/H169/bl_cnt/scnt/H171 main on both boards.
+- Next hypothesis ID:- Next hypothesis ID:- Next hypothesis ID: H170. H169 (volume-chain narrowing) accepted at a55b349; H168 was consumed by the refuted dp/dq narrowing (entry 6). Chapter A of the sizing audit is CLOSED; chapters B/C/D queued (entries 8-10), C recommended next. H167 (trg/aud stage 2, −107 floor, oracle 59/59) is measured on branch h167-trg-aud, pending the canonical seed-1 route and pico8 stage. C012 (width intent) merged at 6cb0539. H166 (timing-accumulator gcd reduction) accepted on branch h166-timing-gcd; it opens the Sizing Audit section. H165 (RDY wait-states + sfx_id BRAM migration, stage 1) is measured CANDIDATE on a worktree branch, held for the mix-four anchor decision — see its row. The 2026-08-03 `/goal` reopened the area loop
   after the clarity campaign closed it at H139. H155 (the H055 shared-limb
   retry) is accepted; it also restores a routable seed-1 canonical build,
   which clean `644d68f` had silently lost (see the H155 row). H161 is the
