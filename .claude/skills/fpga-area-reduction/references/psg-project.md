@@ -99,6 +99,11 @@ but see THE LAW §5: on a flattened netlist a cone is named after the flop it
 drives, not the module it came from.
 
 **Placed LC + routed Fmax** — the tail of `make synth-<unit>`, seed 1.
+Router2 can wedge on a single overused wire (overuse=1 flatlined >20k
+iterations — H055/H155/H167 signature). The ledger's ROUTABILITY DOCTRINE
+(2026-08-05) governs: attempt the canonical draw, document the wedge, then
+dual evidence (seed-1 router1 + seed-2 router2, both timing-clean)
+satisfies routability. Placed LC is still quoted from the seed-1 placement.
 `synth_ice40` already defaults to abc9 (yosys 0.67); flag experiments are a
 measured dead end and `-abc2` is worse. The `-dff` flag measured −19: noise.
 

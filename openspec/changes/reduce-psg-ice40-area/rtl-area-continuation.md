@@ -61,6 +61,20 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   | `-noabc9` classic abc floor | 6,947 | 9 |
   | abc9 floor | ~6,840 median | **62-72** |
 
+  **ROUTABILITY DOCTRINE (user-amended 2026-08-05).** The canonical build
+  remains seed-1 router2. When and only when it exhibits the single-wire
+  oscillation (overuse=1 flatlined for >20k router2 iterations with placement
+  complete — the H055/H155 signature, drawn three times by H167 across
+  distinct source texts), the routability requirement is satisfied by DUAL
+  EVIDENCE: the same netlist must route with seed-1 router1 AND seed-2
+  router2, both meeting timing, and the row must record all three results
+  plus the oscillation. Rationale: placement is router-independent, so the
+  canonical placed-LC number is still the seed-1 figure; the pathology is
+  router2's rip-up loop, not the netlist, and two independent routing proofs
+  preserve the contract's intent (reproducible evidence the design fits and
+  times). The fallback is NOT permission to skip the canonical draw — it
+  must be attempted and its wedge documented every time.
+
   **Procedure.** `scripts/detfloor.sh psg` gives the deterministic numbers;
   they must move in the right direction first. Only then sample abc9 with
   `tools/psg_area_dist.sh N label` (n>=16/arm) and compare with a rank test
@@ -9798,9 +9812,13 @@ all 17 bits (LSB into amplitude) for triangle/phaser.
   robust to one source nudge; second nudge (dqsvc comment) in flight.
   **Placement is identical and healthy (6,884 LC); this is a router
   pathology, not a netlist defect.**
-- **Decision:** pending the canonical-route resolution and the pico8
-  full-track stage (both running). If the lottery fails again the
-  measurement-contract question (seed1+router2 exhibits tool pathology —
-  does a documented dual-evidence fallback satisfy routability?) goes to
-  the user.
+- **Decision:** the canonical seed1+router2 draw wedged identically across
+  THREE source texts (overuse=1, wires=83442) — the text lottery does not
+  converge here. The user amended the contract (2026-08-05) with the
+  dual-evidence fallback now in the ROUTABILITY DOCTRINE above; H167's
+  routability is satisfied by seed-1 router1 (34.32/147.15 MHz PASS) +
+  seed-2 router2 (33.26/137.89 MHz PASS), canonical placed 6,884 LC.
+  A first pico8 full-track run failed from mid-run contamination by the
+  since-refuted H168 edits (the harness rebuilds from source); the clean
+  rerun on unmodified stage 2 decides the merge.
 - **Repeat only if:** n/a — active.
