@@ -5,6 +5,10 @@
 //     floor(K * dp / 256),
 //
 // where dp is 13 bits and K is one of 193, 250, 254, 255, 256, 384, or 508.
+// Musically (u16-view waves): K=256 is the exact sub-octave shadow that
+// gives every PICO-8 voice its body; 250/254/255 beat against it; 384 sits
+// a fourth below; 508 is the near-unison shimmer. K=508 also bounds the
+// 14-bit result: floor(508 * 8191 / 256) = 16,252.
 // One five-step radix-4 recurrence computes the correction. Its terminal step
 // may also accept the next request, allowing the live and preceding-voice
 // transactions to occupy consecutive five-cycle windows without an idle
