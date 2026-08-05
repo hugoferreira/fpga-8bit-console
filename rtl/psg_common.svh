@@ -58,6 +58,8 @@ localparam logic [5:0] PSG_V_PAR0 = 6'd24;
 localparam logic [5:0] PSG_V_PAR1 = 6'd28;
 localparam logic [5:0] PSG_V_SEQ  = 6'd32;
 localparam logic [5:0] PSG_V_SFX  = 6'd33;
+localparam logic [5:0] PSG_V_TROW = 6'd34;
+localparam logic [5:0] PSG_V_TLEN = 6'd35;
 
 // Packed record fields are listed most-significant first. The macro suffix is
 // the per-slot state-memory word written or read by the sequencer.

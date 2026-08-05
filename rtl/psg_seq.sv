@@ -25,7 +25,6 @@ module psg_seq (input  bit   clk,
                 output logic [PSG_NV-1:0] trig_req,
 
                 output logic [5:0] rb_sfx,
-                output logic [PSG_NCH*5-1:0] aud_row_bits,
 
                 // CPU wait-state lane. sfx_id lives in state-memory word
                 // PSG_V_SFX; a CPU access commits only while the engine idles
@@ -108,18 +107,14 @@ module psg_seq (input  bit   clk,
   // CPU SFX registers address foreground slots only.
   wire [PSG_VW-1:0] fg_sl = {1'b0, addr[1:0]};
 
-  // Tick-sampled row status for the currently audible slot of each channel.
-  logic [4:0]  aud_row[0:PSG_NCH-1];
-
-  always_comb begin
-    for (int ch = 0; ch < PSG_NCH; ch++)
-      aud_row_bits[ch*5 +: 5] = aud_row[ch];
-  end
-  logic [4:0]  trg_row[0:PSG_NCH-1];
-
-  // Start row/length are consumed by the next foreground trigger. released is
-  // per-slot because both foreground and music records can loop.
-  logic [5:0]  trg_len[0:PSG_NCH-1];
+  // Start row/length live in state words PSG_V_TROW/PSG_V_TLEN of the
+  // foreground voice (CPU-written through the wait-state lane, consumed and
+  // cleared by the next trigger). The audible row is served straight from
+  // word PSG_V_SEQ on readback: word 32 and the old aud_row register were
+  // provably equal whenever the CPU could observe them, because reads only
+  // commit while the engine idles.
+  logic [4:0]  w_trg_row;
+  logic [5:0]  w_trg_len;
   logic        released[0:PSG_NV-1];
 
   // ---- Current-slot record working set ----
@@ -703,8 +698,6 @@ module psg_seq (input  bit   clk,
         released[i] <= 0;
       end
       for (int i = 0; i < PSG_NCH; i++) begin
-        trg_row[i] <= 0;
-        trg_len[i] <= 0;
       end
 
       vcnt <= 0;
@@ -774,9 +767,11 @@ module psg_seq (input  bit   clk,
                     <= state_q[13:6];
             4'd7: {w_clr_tog, w_row} <= state_q[5:0];
             4'd8: w_sfx <= state_q[5:0];
+            4'd9: w_trg_row <= state_q[4:0];
+            4'd10: w_trg_len <= state_q[5:0];
             default: ;
           endcase
-          if (vcnt == 4'd8) begin
+          if (vcnt == 4'd10) begin
             vcnt <= 0;
             sst <= K_ADV;
           end else
@@ -785,8 +780,6 @@ module psg_seq (input  bit   clk,
 
         V_ST: begin
 
-          if (vcnt == 4'd4 && aud_sl(c[1:0], play_bits) == c)
-            aud_row[c[1:0]] <= w_row;
           if (vcnt == 4'd4) begin
             vcnt <= 0;
             if (c == PSG_VW'(PSG_NV-1)) begin
@@ -821,13 +814,11 @@ module psg_seq (input  bit   clk,
           pend_stop[c] <= 0;
           pend_stop2[c] <= 0;
 
-          w_row <= is_mus(c) ? 5'd0 : trg_row[c[1:0]];
+          w_row <= is_mus(c) ? 5'd0 : w_trg_row;
 
-          wrd[13:8] <= is_mus(c) ? 6'd0 : trg_len[c[1:0]];
-          if (!is_mus(c)) begin
-            trg_row[c[1:0]] <= 0;
-            trg_len[c[1:0]] <= 0;
-          end
+          wrd[13:8] <= is_mus(c) ? 6'd0 : w_trg_len;
+          // The consumed trigger words clear through the state-memory write
+          // lane: T_FL zeroes PSG_V_TROW, T_SP zeroes PSG_V_TLEN.
           released[c] <= 0;
           w_prev_pitch <= 6'd24;
           w_prev_vol <= 0;
@@ -1287,9 +1278,8 @@ module psg_seq (input  bit   clk,
 
               playing[fg_sl] <= 0;
             end
-          2'd1: trg_row[addr[1:0]] <= di[4:0];
-          2'd2:
-            trg_len[addr[1:0]] <= trg_len_over ? 6'd32 : di[5:0];
+          // 2'd1/2'd2 (trg_row/trg_len) land in state memory through the
+          // CPU lane; see cpu_trg_commit below.
           default: ;
         endcase
       end
@@ -1344,6 +1334,8 @@ module psg_seq (input  bit   clk,
       4'd4: tick_load_word = 6'd9;
       4'd6: tick_load_word = PSG_V_SEQ;
       4'd7: tick_load_word = PSG_V_SFX;
+      4'd8: tick_load_word = PSG_V_TROW;
+      4'd9: tick_load_word = PSG_V_TLEN;
 
       default: tick_load_word = (bank ? PSG_V_PAR1 : PSG_V_PAR0) + 6'd2;
     endcase
@@ -1414,6 +1406,11 @@ module psg_seq (input  bit   clk,
     eng_wd = 16'd0;
     eng_va = c;
     case (sst)
+      // Consumed foreground trigger words clear on the trigger path.
+      T_FL: begin eng_wa = PSG_V_TROW; eng_wd = 16'd0;
+                  eng_we = !is_mus(c); end
+      T_SP: begin eng_wa = PSG_V_TLEN; eng_wd = 16'd0;
+                  eng_we = !is_mus(c); end
       // Music launch: sfx_id of music slot {1,ch} into its PSG_V_SFX word.
       ML_L0: begin eng_va = 3'b100; eng_wa = PSG_V_SFX;
                    eng_wd = {10'b0, seq_q[5:0]}; eng_we = !seq_q[6]; end
@@ -1463,6 +1460,8 @@ module psg_seq (input  bit   clk,
   wire state_tick_we = (sst == V_ST) && !seq_hold;
   logic [3:0] tick_issue;
 
+  // Ledger: H165 established this lane (sfx_id, stage 1); H167 widened it
+  // to the trigger words and retired aud_row into word PSG_V_SEQ readback.
   // ---- CPU wait-state lane ----
   // The sequencer lends its state-memory port halves to the CPU while idle.
   // Writes: the $10-$13 trigger form carries sfx_id; it commits on the first
@@ -1471,7 +1470,11 @@ module psg_seq (input  bit   clk,
   // address, captures state_q the next cycle, then releases the stall.
   wire cpu_sfx_wr_lvl = wr_pend && addr[7:4] == 4'h1 && addr[3:2] == 2'd0
                         && !di[7] && di != 8'h81;
-  wire cpu_sfx_rd_lvl = rd_lvl && addr[7:4] == 4'h1 && addr[3:2] == 2'd1;
+  wire cpu_trg_wr_lvl = wr_pend && addr[7:4] == 4'h1
+                        && (addr[3:2] == 2'd1 || addr[3:2] == 2'd2);
+  // Every $1x readback is served from state memory: $14-$17 read the audible
+  // slot's sfx id (word PSG_V_SFX), the rest its row (word PSG_V_SEQ).
+  wire cpu_sfx_rd_lvl = rd_lvl && addr[7:4] == 4'h1;
 
   wire cpu_wr_lane_ok = (sst == S_IDLE) && !wlk_we_i;
   wire cpu_rd_lane_ok = (sst == S_IDLE) && !wlk_rd_i;
@@ -1496,15 +1499,17 @@ module psg_seq (input  bit   clk,
     end
   end
 
-  assign cpu_stall = (cpu_sfx_wr_lvl && !cpu_wr_lane_ok)
+  assign cpu_stall = ((cpu_sfx_wr_lvl || cpu_trg_wr_lvl) && !cpu_wr_lane_ok)
                    | (cpu_sfx_rd_lvl && !rb_done);
 
   // `cs` is the commit pulse: it only fires while cpu_stall is low, so the
   // lane conditions hold on the committing cycle by construction.
   wire cpu_sfx_commit = cs && rw && addr[7:4] == 4'h1 && addr[3:2] == 2'd0
                         && !di[7] && di != 8'h81;
+  wire cpu_trg_commit = cs && rw && addr[7:4] == 4'h1
+                        && (addr[3:2] == 2'd1 || addr[3:2] == 2'd2);
 
-  assign etk_we = eng_we | state_tick_we | cpu_sfx_commit;
+  assign etk_we = eng_we | state_tick_we | cpu_sfx_commit | cpu_trg_commit;
   always_comb begin
 
     tick_issue = vcnt;
@@ -1514,10 +1519,16 @@ module psg_seq (input  bit   clk,
     etk_ra = eng_rd ? {c, eng_word}
                     : {c, tick_load_word(tick_issue, spar_bank)};
     if (rb_take)
-      etk_ra = {aud_sl(addr[1:0], play_bits), PSG_V_SFX};
+      etk_ra = {aud_sl(addr[1:0], play_bits),
+                (addr[3:2] == 2'd1) ? PSG_V_SFX : PSG_V_SEQ};
     if (cpu_sfx_commit) begin
       etk_wa = {fg_sl, PSG_V_SFX};
       etk_wd = {10'b0, di[5:0]};
+    end else if (cpu_trg_commit) begin
+      etk_wa = {fg_sl, (addr[3:2] == 2'd1) ? PSG_V_TROW : PSG_V_TLEN};
+      etk_wd = (addr[3:2] == 2'd1)
+                 ? {11'b0, di[4:0]}
+                 : {10'b0, trg_len_over ? 6'd32 : di[5:0]};
     end else if (eng_we) begin
       etk_wa = {eng_va, eng_wa};
       etk_wd = eng_wd;

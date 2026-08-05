@@ -231,7 +231,6 @@ module psg #(
   // or by the shared top-level services.
   wire [PSG_NV-1:0] play_bits, trig_req, clr_tog;
   wire [5:0]           rb_sfx;
-  wire [PSG_NCH*5-1:0] aud_row_bits;
   wire         mus_playing, spar_bank, bank_ready;
   wire [5:0]   mus_pat;
   wire [3:0]   mus_mask;
@@ -381,7 +380,7 @@ module psg #(
     .clk(clk), .reset(reset),
     .cs(cs_wr), .rw(rw), .addr(addr), .di(di),
     .play_bits(play_bits), .trig_req(trig_req),
-    .rb_sfx(rb_sfx), .aud_row_bits(aud_row_bits),
+    .rb_sfx(rb_sfx),
     // wr_pend deliberately omits rw: the 65C02 gates WE with RDY, so a stall
     // predicate that reads rw is a combinational loop through the CPU. The
     // frozen core holds cs/addr/di stable, which is what the lane decodes.
@@ -441,7 +440,7 @@ module psg #(
                       ? {play_bits[aud_sl(addr[1:0], play_bits)], 1'b0,
                          rb_sfx}
                       : {play_bits[aud_sl(addr[1:0], play_bits)], 2'b0,
-                         aud_row_bits[addr[1:0]*5 +: 5]};
+                         rb_sfx[4:0]};
           else
             dout <= 8'h00;
       endcase
@@ -453,12 +452,21 @@ module psg #(
   // Keep debug generation removable when no hardware consumer exists.
   generate
     if (DBG_PORT == 1) begin : g_dbg
-      // Simulator-trace shadow of the state-memory-resident sfx ids, snooped
-      // off the sequencer write lane. Debug-build cost only.
+      // Simulator-trace shadows of the state-memory-resident sfx ids and
+      // per-voice rows, snooped off the sequencer write lane. Debug-build
+      // cost only; initialized like the state memory for deterministic sim.
       logic [5:0] sfx_shadow[0:PSG_NV-1];
-      always_ff @(posedge clk)
+      logic [4:0] row_shadow[0:PSG_NV-1];
+      initial for (int i = 0; i < PSG_NV; i++) begin
+        sfx_shadow[i] = 6'd0;
+        row_shadow[i] = 5'd0;
+      end
+      always_ff @(posedge clk) begin
         if (etk_we && etk_wa[5:0] == PSG_V_SFX)
           sfx_shadow[etk_wa[PSG_VADR-1:6]] <= etk_wd[5:0];
+        if (etk_we && etk_wa[5:0] == PSG_V_SEQ)
+          row_shadow[etk_wa[PSG_VADR-1:6]] <= etk_wd[4:0];
+      end
       always_comb begin
         dbg = 64'b0;
         dbg[7:0]   = {mus_playing, 1'b0, mus_pat};
@@ -466,7 +474,7 @@ module psg #(
         dbg[15:12] = play_bits[7:4];
         for (int ch = 0; ch < PSG_NCH; ch++) begin
           dbg[16 + ch*6 +: 6] = sfx_shadow[aud_sl(2'(ch), play_bits)];
-          dbg[40 + ch*6 +: 6] = {1'b0, aud_row_bits[ch*5 +: 5]};
+          dbg[40 + ch*6 +: 6] = {1'b0, row_shadow[aud_sl(2'(ch), play_bits)]};
         end
       end
     end else if (DBG_PORT == 2) begin : g_pcm_dbg
