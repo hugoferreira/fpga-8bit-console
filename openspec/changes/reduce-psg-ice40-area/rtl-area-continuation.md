@@ -9756,6 +9756,16 @@ inventory of why each width is what it is.
 | 5 | `fade_acc`/`fade_step` vs fade_sum[16] bound | — | — | open: derive the real range |
 | 6 | `s_eff_inc`/`s_old_inc` (dp) and the dq datapath | 14 bits | **14 — TIGHT** | **CLOSED 2026-08-05: H168 attempted and REFUTED by the fidelity battery.** The analytical bound was wrong by one octave: `dx_for_note`'s reference octave is 3, not 4 (psg_binary_model.py:94), so dp_max = 7,394 and the published `2*dp` reaches **14,788 — bit 13 is live for every pitch >= 60**. A one-bit narrowing measured −110 pre-map / −84 floor and passed lint, but the PICO-8 statistical gates failed within minutes (pitch-60 noise: >4 kHz share 0.69x, rms/centroid trends 0.68x — the too-slow-LFSR signature) and the change was reverted whole. **Lesson: an amplitude-plausible width reduction was refuted only by the fidelity corpus; never land a width cut on the analytical bound alone.** pclamp's pitch<=63 bound is real; the table scale was the error. |
 | 7 | `dq17` result bus | named 17, carries 14 | 14 live (top 3 = 3'b0 by construction) | noted 2026-08-05: naming over-states width; likely const-folded (netlist check first); rename-with-localparam is C-series material |
+| 8 | counter family: `scnt` (==182/==176 compares), `bl_cnt` 0..64, `vcnt`, `m_cnt` | — | terminal-value encodings | queued (chapter B) |
+| 9 | `m_res` 34-bit multiplier bus | 34 | live consumer slices unknown | queued (chapter C): audit each consumer's slice against the landing law (psg-mul-alignment memory); potentially the widest bus carrying dead bits |
+| 10 | state-word layout census | 64x16 stride | constant/pad bits uncounted | queued (chapter D): inventory pad bits across pack sites — free storage for future H4'-style migrations (words 33-35 are precedent) |
+
+**Chapter A (opened 2026-08-05): the amplitude/gain chain** — the third of
+the voice triad (phase and increment are done). Targets: `a`/A0, `G =
+tz(3a/2)`, scale divisors 3072 vs 2048, the +-6143 clamps, kick /1792, tilt
+skew 24572/12286, `vol_r`/`a_pub` 12 bits, `mus_gain` 8, `gz_filt_r` 17,
+`s_old_G`/`s_last_G` 13. Post-H168 rule in force: the analytical bound
+proposes, the fidelity corpus disposes.
 
 Each entry needs the H166 treatment: state the invariant that bounds the
 value, prove the reduction exact against it, land only on a deterministic
