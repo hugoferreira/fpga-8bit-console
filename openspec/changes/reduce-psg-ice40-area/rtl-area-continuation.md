@@ -28,7 +28,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134; H155 accepted atop the C001--C011 clarity lineage.
-- Next hypothesis ID: H169 (H168 was consumed by the refuted dp/dq narrowing — see sizing-audit entry 6). H167 (trg/aud stage 2, −107 floor, oracle 59/59) is measured on branch h167-trg-aud, pending the canonical seed-1 route and pico8 stage. C012 (width intent) merged at 6cb0539. H166 (timing-accumulator gcd reduction) accepted on branch h166-timing-gcd; it opens the Sizing Audit section. H165 (RDY wait-states + sfx_id BRAM migration, stage 1) is measured CANDIDATE on a worktree branch, held for the mix-four anchor decision — see its row. The 2026-08-03 `/goal` reopened the area loop
+- Next hypothesis ID: H170. H169 (volume-chain narrowing) accepted at a55b349; H168 was consumed by the refuted dp/dq narrowing (entry 6). Chapter A of the sizing audit is CLOSED; chapters B/C/D queued (entries 8-10), C recommended next. H167 (trg/aud stage 2, −107 floor, oracle 59/59) is measured on branch h167-trg-aud, pending the canonical seed-1 route and pico8 stage. C012 (width intent) merged at 6cb0539. H166 (timing-accumulator gcd reduction) accepted on branch h166-timing-gcd; it opens the Sizing Audit section. H165 (RDY wait-states + sfx_id BRAM migration, stage 1) is measured CANDIDATE on a worktree branch, held for the mix-four anchor decision — see its row. The 2026-08-03 `/goal` reopened the area loop
   after the clarity campaign closed it at H139. H155 (the H055 shared-limb
   retry) is accepted; it also restores a routable seed-1 canonical build,
   which clean `644d68f` had silently lost (see the H155 row). H161 is the
@@ -9921,3 +9921,32 @@ all 17 bits (LSB into amplitude) for triangle/phaser.
   the CPU wait-state lane is the established mechanism, and the register-
   interface-to-BRAM class has two landed wins and a proven lane for more.
 - **Repeat only if:** n/a — active.
+
+## Hypothesis H169
+
+- **ID:** H169.
+- **Hypothesis:** the volume/G chain carries one dead bit end-to-end: A0 =
+  vol<<8 with a 3-bit cart volume field bounds every writer at 1,792
+  (instrument /7, music gain >>10 <= 448, fades within endpoints), so
+  vol_r/a_pub/s_eff_a/fade datapath narrow 12->11 and g_a/g_live/
+  s_old_G/s_last_G narrow 13->12. State layouts keep the retired bits as
+  explicit zero pads — BRAM contents byte-identical.
+- **Baseline:** merged main `5031762` — floor 8,645; classic 6,721; placed
+  6,884 (H167 dual-evidence).
+- **Change:** branch `h169-volume-width`, merged at `a55b349`. One
+  consumer (`12'(g_live)`) had already truncated the dead bit; the
+  `vol_r[11:8]` digit extractor became [10:8].
+- **Result** (rtl `80c6ff7add23`): pre-map 13,281 -> 13,240 (−41);
+  -noabc floor 8,645 -> **8,621 (−24**, spread 0); classic 6,721 ->
+  **6,643..6,662** across the consumer-fix respin. **Placed 6,853 (−31),
+  canonical seed-1 router2 completing normally** — 31.15/138.89 MHz PASS,
+  14 EBR (the H167 wedge was netlist-specific). test-psg ALL PASSED incl.
+  the statistical fidelity stage that refuted H168; test-clocks PASS;
+  oracle 59/59; pico8 full-track PASS. Lint at the five established
+  warnings.
+- **Decision:** accepted and merged. Chapter A of the sizing audit closes
+  with it: phase (16/17, orbit theorem), increment (14/14, tight via the
+  octave-3 reference), amplitude (11/12/17, this row plus the gz_filt_r
+  wrap-semantics proof).
+- **Repeat only if:** the volume field ever exceeds 3 bits (a cart-format
+  change), or a new writer bypasses the pclamp/divider paths.
