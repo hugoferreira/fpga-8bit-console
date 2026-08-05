@@ -10012,3 +10012,37 @@ now has a first-principles width story.
   wrap-semantics proof).
 - **Repeat only if:** the volume field ever exceeds 3 bits (a cart-format
   change), or a new writer bypasses the pclamp/divider paths.
+
+## Hypothesis H170 — OPENED (orientation verdict, 2026-08-05)
+
+- **ID:** H170 = the clean-room pool's H1' (control-ROM the sequencer
+  decodes into crom[64..255]).
+- **Orientation findings:**
+  1. **The naive ceiling is unusable.** Constant-stubbing the four big
+     `case (sst)` decoders (pub_wd, eng_rd/eng_word, eng_we bundle, smul
+     request) measures −2,242 pre-map — CAP_W0-artifact class: it kills
+     the sequencer's entire output and folds the engine. Do not cite it.
+  2. **The crom port is contended three ways:** the walk owns it during
+     prun (ctrl_addr = 144 + pph_nxt), the seq's pitch reads own it via
+     pinc_addr otherwise, and replay reuses held words. The engine holds
+     under seq_hold ~= prun, so control-word prefetch cycles exist only
+     on engine-advancing cycles whose state does not consume pinc_q —
+     a per-state port schedule must be proven before any conversion.
+  3. **The decoders are NOT pure constant tables.** Arms mix static
+     per-state constants (word ids 0..8, PSG_V_* addresses) with runtime
+     terms (abank/e_insfx/seq_hold selects, par_cpy+k adders). The viable
+     shape is a SPLIT conversion: ROM fields for the static constants
+     (e.g. both abank arms as two fields + one retained runtime 2:1;
+     par_cpy + ROM field through ONE shared adder), runtime muxes kept.
+  4. **The FSM computes next-state in the clocked block** — a one-cycle-
+     ahead control fetch needs next_sst exposed combinationally: a real
+     restructuring, the same class the pph precedent priced at
+     −75 pre-map / **+21 mapped** plus a block.
+- **Gate-1 plan (next session):** prototype the SMALLEST decoder only
+  (eng_rd/eng_word, 31 lines, 7 control bits) with the split-conversion
+  shape and an explicit port-schedule proof; deterministic floor verdict
+  decides whether the class scales to the other three. No claims before
+  that lands. Riders to bundle with any accepted H170 build: wt_x1 into
+  mx_new's window, fmc/fsel rehoming (see chapter E addendum).
+- **Status:** open; bl_cnt rider landed independently (floor 8,618,
+  placed 6,838 at the rider's draw).
