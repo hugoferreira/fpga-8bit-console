@@ -548,10 +548,14 @@ optional detune: the output of every built-in waveform is
 `q0` is a secondary 17-bit phase (`s_phase2[16:0]`) advancing at a rate
 derived from `dp` by wave- and detune-mode-dependent ratios — the `dq`
 formulas with their exact integer ceil corrections (the 524,288-case dq
-sweep in `make test-psg` pins them). Near-unity ratios make the pair beat
-slowly: that chorus body is the PICO-8 "thick" sound, and it is why a
-textbook single-oscillator reimplementation sounds thin and never matches
-bit-for-bit.
+sweep in `make test-psg` pins them). CONFIRMED against the binary-verified
+dq contract (psg_dqsvc: dq = floor(K*dp13/256), K in {193, 250, 254, 255,
+256, 384, 508}): for the u16-view waves the secondary sits at or near the
+SUB-OCTAVE — K=256 is exactly half frequency, 250/254/255 beat slowly
+against it, 384 is a fourth below, 508 the near-unison shimmer. Every
+PICO-8 voice carries a half-weight sub-octave shadow; that body is the
+"thick" sound, and it is why a textbook single-oscillator
+reimplementation sounds thin and never matches bit-for-bit.
 
 **The pair is asymmetric by organic accretion, not design.** Most waveforms
 read the secondary through a 16-bit view (`u16(q0 << (mode==2))`), so for
