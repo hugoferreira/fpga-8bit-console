@@ -9739,7 +9739,9 @@ inventory of why each width is what it is.
 | 2 | `psg_timing.scnt` compares (==182, ==176) | two 8-bit equalities | down-counter sign bit | open; scnt is an exported port the sequencer schedules against — blast radius beyond the module |
 | 3 | `s_phase2` | 24 bits | 17 live (clean-room oddity list) | **CLOSED 2026-08-04: already optimal.** Netlist check: only [16:0] are flopped — yosys const-folds [23:17] in hardware builds ([23:17] is live only under REALTIME_PREVIEW's 24-bit accumulate). The 24-bit declaration costs zero cells; do not respell (C-series source-text sensitivity). |
 | 4 | `pph` | [6:0] | PLAST=61 (MULTIPUMP) fits [5:0] | **CLOSED 2026-08-04: real but not taken.** All 7 bits ARE flopped — a genuine invisible bound (counter reachability is not statically provable), but the prize is ~2-4 cells and it lives in psg_walk.sv, whose source-text sensitivity has unrouted the canonical build before. Risk/reward negative at this size. |
-| 5 | `fade_acc`/`fade_step` vs fade_sum[16] bound | — | — | candidate: derive the real range |
+| 5 | `fade_acc`/`fade_step` vs fade_sum[16] bound | — | — | open: derive the real range |
+| 6 | `s_eff_inc`/`s_old_inc` (dp) and the dq datapath | 14 bits | **13** | **CLOSED 2026-08-05 → candidate H168.** pclamp (psg_seq.sv) bounds the transposed pitch to [0,63] BEFORE the increment lookup, so dp <= ~7,515 < 2^13 (ASM: dp = 2.9712*Hz, top pitch ~2,489 Hz, vibrato x130/128); dq = floor(K*dp13/256), K<=508 then fits 13 bits as well. These bits round-trip through BRAM state words, so synthesis CANNOT trim them (unlike s_phase2[23:17]) — real flops, adder stages and dqsvc datapath. Pre-check before H168: the wavetable arm consumes {einc, 7'b0} — verify the wavetable pitch pipeline shares pclamp's bound. |
+| 7 | `dq17` result bus | named 17, carries 14 | 14 live (top 3 = 3'b0 by construction) | noted 2026-08-05: naming over-states width; likely const-folded (netlist check first); rename-with-localparam is C-series material |
 
 Each entry needs the H166 treatment: state the invariant that bounds the
 value, prove the reduction exact against it, land only on a deterministic
