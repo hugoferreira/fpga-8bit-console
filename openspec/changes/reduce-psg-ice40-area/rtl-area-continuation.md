@@ -9753,7 +9753,7 @@ inventory of why each width is what it is.
 | 2 | `psg_timing.scnt` compares (==182, ==176) | two 8-bit equalities | down-counter sign bit | open; scnt is an exported port the sequencer schedules against — blast radius beyond the module |
 | 3 | `s_phase2` | 24 bits | 17 live (clean-room oddity list) | **CLOSED 2026-08-04: already optimal.** Netlist check: only [16:0] are flopped — yosys const-folds [23:17] in hardware builds ([23:17] is live only under REALTIME_PREVIEW's 24-bit accumulate). The 24-bit declaration costs zero cells; do not respell (C-series source-text sensitivity). |
 | 4 | `pph` | [6:0] | PLAST=61 (MULTIPUMP) fits [5:0] | **CLOSED 2026-08-04: real but not taken.** All 7 bits ARE flopped — a genuine invisible bound (counter reachability is not statically provable), but the prize is ~2-4 cells and it lives in psg_walk.sv, whose source-text sensitivity has unrouted the canonical build before. Risk/reward negative at this size. |
-| 5 | `fade_acc`/`fade_step` vs fade_sum[16] bound | — | — | open: derive the real range |
+| 5 | `fade_acc`/`fade_step` vs fade_sum[16] bound | — | — | **CLOSED 2026-08-05 by inspection:** fade_acc is 8.8 fixed point (mus_gain byte + fraction), fade_sum[16] is the terminal carry, fade_step is the 13-bit crom field. Correctly sized. |
 | 6 | `s_eff_inc`/`s_old_inc` (dp) and the dq datapath | 14 bits | **14 — TIGHT** | **CLOSED 2026-08-05: H168 attempted and REFUTED by the fidelity battery.** The analytical bound was wrong by one octave: `dx_for_note`'s reference octave is 3, not 4 (psg_binary_model.py:94), so dp_max = 7,394 and the published `2*dp` reaches **14,788 — bit 13 is live for every pitch >= 60**. A one-bit narrowing measured −110 pre-map / −84 floor and passed lint, but the PICO-8 statistical gates failed within minutes (pitch-60 noise: >4 kHz share 0.69x, rms/centroid trends 0.68x — the too-slow-LFSR signature) and the change was reverted whole. **Lesson: an amplitude-plausible width reduction was refuted only by the fidelity corpus; never land a width cut on the analytical bound alone.** pclamp's pitch<=63 bound is real; the table scale was the error. |
 | 7 | `dq17` result bus | named 17, carries 14 | 14 live (top 3 = 3'b0 by construction) | noted 2026-08-05: naming over-states width; likely const-folded (netlist check first); rename-with-localparam is C-series material |
 | 8 | counter family: `scnt` (==182/==176 compares), `bl_cnt` 0..64, `vcnt`, `m_cnt` | — | terminal-value encodings | queued (chapter B) |
@@ -10012,6 +10012,32 @@ now has a first-principles width story.
   wrap-semantics proof).
 - **Repeat only if:** the volume field ever exceeds 3 bits (a cart-format
   change), or a new writer bypasses the pclamp/divider paths.
+
+## Closing audit — module interfaces and engine widths (2026-08-05)
+
+**Interface audit (are we sharing more than we need): essentially no.**
+Every output of psg_walk/psg_seq/psg_wave has exactly two connection
+sites — clean point-to-point interconnect, no orphan exports, and the
+H165/H167 lane ports are fully consumed. Three zero-cell boundary-slack
+items (flatten already trims them; queued as C013 intent-capture, to be
+batched with the next verified psg_walk/psg_wave touch):
+- `old_q0` exports [16:0] but psg.sv consumes only [15:0] — bit 16 is
+  walk-internal state riding an output port.
+- `dq17` port is [16:0] carrying 14 live bits (top 3 structurally zero
+  — chapter A).
+- `trig_req` exports [7:0] but only [3:0] reaches the $03 readback;
+  the music slots' trigger bits cross the boundary dead.
+
+**Engine width census (all multi-bit registers not already audited):**
+netlist-checked wholesale. Verdict: the engines are width-tight. The
+already-trimmed class is comb aliases and padded views (correct by
+construction); the fully-flopped wide registers all carry live bounds
+(smp_a/smp_b/z arms sized by the z_new_c SUM; fstk by the soft-add
+level-1 bound; s_lp/mx_* by the noise arm; d_res/nz_m/bl_res are
+service-width aliases). Identified slack: ~1 bit each in fstk/smp
+staging that washes against the shared-ALU width — sub-band, wash-class,
+not queued. With entry 5 closed, the sizing audit has NO open width
+questions in either engine.
 
 ## Hypothesis H170 — OPENED (orientation verdict, 2026-08-05)
 
