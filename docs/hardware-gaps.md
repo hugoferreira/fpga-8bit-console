@@ -563,15 +563,29 @@ plunging ~5x the primary's depth, i.e. a strong octave-below component with
 sawtooth asymmetry. Almost certainly a masking accident (`& 0x1ffff`) that
 shipped and became the spec.
 
-**Why 17 bits and not 16 + halved dq:** the extra bit is not amplitude —
-the `/8` weighting eats amplitude LSBs anyway. It is a FRACTIONAL PHASE
-bit: in primary-phase units the triangle-arm phase is `q0/2`, so the 17-bit
-integer `q0` is exactly a 16.1 fixed-point phase. `dq` is odd for half of
-all pitches, so halving the space floors `dq/2` and the phase error
-accumulates linearly — the pair's beat frequency (resolution Fs/2^17 ~
-0.17 Hz) shifts, and the chorus audibly changes over any held note. Same
-argument as a fractional clock divider: drop the fractional bit and you
-don't lose precision, you gain drift.
+**Why 17 bits and not 16 + halved dq — the orbit theorem.** An odd `dq`
+is coprime to 2^17, so the phase orbit visits all 131,072 states with
+period 2^17 samples, and the output sequence inherits that period because
+`tri_raw` is not 2^16-periodic over the extended domain
+(`tri_raw(x) != tri_raw(x + 65536)` except at 0). A 16-bit-state generator
+has period at most 2^16, so no reformulation reproduces the sequence: the
+17th bit is irreducible state. Dither schemes (alternate floor/ceil
+increments in 16-bit space) merely relocate the bit into a carry flop —
+fractional rate implies fractional state, somewhere. Same conservation law
+as the Bresenham sample clock (H166).
+
+**But it is NOT a clean fixed-point split.** The litmus test: a true
+"16 integer + 1 fractional bit" design would have the waveform read
+`q0[16:1]` and keep `q0[0]` out of the output entirely (pure accumulation
+carry). PICO-8 fails that test twice: the u16-view waves read `q0[15:0]`
+(for them bit 16 is invisible, neither integer nor fraction), and the
+triangle arm feeds ALL 17 bits into the amplitude — slope 3 means `q0[0]`
+adds +-3 pre-`/8`, sub-quantum dither that occasionally flips a truncation
+boundary, so the LSB is faintly audible. The register is one 17-bit
+integer serving two incompatible phase conventions at once: a mod-2^16
+full-rate phase for most waves and a mod-2^17 half-rate domain for
+triangle/phaser. "16.1 fixed point" is the correct RATE model (it is why
+halving dq drifts the chorus); it is not the bit layout.
 
 **This PSG adds a second, deliberate layer on top:** the two oscillators
 exist per voice as state, but share ONE serialized wave shaper, gain
