@@ -12,8 +12,11 @@ module psg_timing #(
     output logic       tick_en,
     output logic       tick_en_d,
     output logic       pre_tick,
-    output logic [7:0] scnt
+    // The sample counter is internal; consumers get scheduled strobes
+    // (interface audit: one external compare existed, scnt == 3).
+    output logic       scnt_is3
 );
+  logic [7:0] scnt;
 
   // divd is the sample accumulator offset by its wrap threshold. Its sign
   // selects between adding 22050 and subtracting CLK_HZ-22050.
@@ -42,6 +45,7 @@ module psg_timing #(
   // scnt is the 0..182 tick cadence; tick_hold produces the delayed boundary
   // used to publish the bank prepared by the preceding tick program.
   logic [1:0] tick_hold;
+  always_comb scnt_is3 = (scnt == 8'd3);
   wire logic signed [DIV_W-1:0] div_step = divd[DIV_W-1]
       ? DIV_UP : -DIV_DOWN;
 

@@ -44,7 +44,7 @@ module psg_seq (input  bit   clk,
                 input  logic sample_en,
                 input  logic tick_en_d,
                 input  logic pre_tick,
-                input  logic [7:0] scnt,
+                input  logic scnt_is3,
 
                 input  logic walk_frozen,
                 output logic spar_bank,
@@ -733,7 +733,7 @@ module psg_seq (input  bit   clk,
         pend_stop <= 0;
       end
 
-      if (sample_en && scnt == 8'd3) begin
+      if (sample_en && scnt_is3) begin
         for (int i = 0; i < PSG_NV; i++)
           if (pend_stop2[i]) playing[i] <= 0;
         pend_stop2 <= 0;

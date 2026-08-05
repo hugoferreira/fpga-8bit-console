@@ -66,14 +66,14 @@ module psg #(
   // Timing grid. pre_tick precedes tick_en by six sample intervals;
   // tick_en_d marks the sample two intervals after tick_en.
   logic        sample_en;
-  logic [7:0]  scnt;
+  logic        scnt_is3;
   logic        tick_en, tick_en_d;
   logic        pre_tick;
 
   psg_timing #(.CLK_HZ(CLK_HZ)) u_timing(
     .clk(clk), .reset(reset),
     .sample_en(sample_en), .tick_en(tick_en), .tick_en_d(tick_en_d),
-    .pre_tick(pre_tick), .scnt(scnt));
+    .pre_tick(pre_tick), .scnt_is3(scnt_is3));
 
   wire  [12:0] seq_addr;
   wire  [7:0]  seq_q;
@@ -390,7 +390,7 @@ module psg #(
     .mus_playing(mus_playing), .mus_pat(mus_pat), .mus_mask(mus_mask),
     .fade_len(fade_len),
     .sample_en(sample_en), .tick_en_d(tick_en_d), .pre_tick(pre_tick),
-    .scnt(scnt),
+    .scnt_is3(scnt_is3),
     .walk_frozen(walk_frozen), .spar_bank(spar_bank),
     .clr_tog(clr_tog), .bank_ready(bank_ready),
     .seq_addr(seq_addr), .seq_q(seq_q),
