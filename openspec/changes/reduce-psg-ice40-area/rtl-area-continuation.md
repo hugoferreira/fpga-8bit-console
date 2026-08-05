@@ -28,7 +28,15 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134; H155 accepted atop the C001--C011 clarity lineage.
-- Next hypothesis ID: H170. H169 (volume-chain narrowing) accepted at a55b349; H168 was consumed by the refuted dp/dq narrowing (entry 6). Chapter A of the sizing audit is CLOSED; chapters B/C/D queued (entries 8-10), C recommended next. H167 (trg/aud stage 2, −107 floor, oracle 59/59) is measured on branch h167-trg-aud, pending the canonical seed-1 route and pico8 stage. C012 (width intent) merged at 6cb0539. H166 (timing-accumulator gcd reduction) accepted on branch h166-timing-gcd; it opens the Sizing Audit section. H165 (RDY wait-states + sfx_id BRAM migration, stage 1) is measured CANDIDATE on a worktree branch, held for the mix-four anchor decision — see its row. The 2026-08-03 `/goal` reopened the area loop
+- **CLOSING DISTRIBUTION (2026-08-05, rtl `a1867b4f8d0c`):** n=16 abc9
+  floor median **6,628.0** (6,599-6,658, spread 59, IQR 21) vs the
+  session-start distribution's 6,811.5 (6,777-6,849) at `67c30f6`:
+  **median -183.5 with ZERO overlap** (final max 6,658 < start min
+  6,777). Distribution-certified session yield across H165/H166/C012/
+  H167/H169/bl_cnt/scnt/H171 plus edd1178's absorbed fix. Deterministic
+  companions: pre-map 13,349 -> 13,230, -noabc floor 8,791 -> 8,616,
+  placed (single draws) 7,027 -> 6,839.
+- Next hypothesis ID:- Next hypothesis ID: H170. H169 (volume-chain narrowing) accepted at a55b349; H168 was consumed by the refuted dp/dq narrowing (entry 6). Chapter A of the sizing audit is CLOSED; chapters B/C/D queued (entries 8-10), C recommended next. H167 (trg/aud stage 2, −107 floor, oracle 59/59) is measured on branch h167-trg-aud, pending the canonical seed-1 route and pico8 stage. C012 (width intent) merged at 6cb0539. H166 (timing-accumulator gcd reduction) accepted on branch h166-timing-gcd; it opens the Sizing Audit section. H165 (RDY wait-states + sfx_id BRAM migration, stage 1) is measured CANDIDATE on a worktree branch, held for the mix-four anchor decision — see its row. The 2026-08-03 `/goal` reopened the area loop
   after the clarity campaign closed it at H139. H155 (the H055 shared-limb
   retry) is accepted; it also restores a routable seed-1 canonical build,
   which clean `644d68f` had silently lost (see the H155 row). H161 is the
