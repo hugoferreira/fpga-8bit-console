@@ -73,7 +73,7 @@ localparam logic [5:0] PSG_V_TLEN = 6'd35;
 // Oscillator-record packs follow the same convention: the suffix is the
 // per-slot state-memory word used by the sample walk.
 `define PSG_OSC_W14 {s_lp[16], old_mode_r, s_brown}
-`define PSG_OSC_W17 {bl_cnt, old_q0[16:8]}
+`define PSG_OSC_W17 {blend_done, bl_cnt, old_q0[16:8]}
 `define PSG_OSC_W22 {old_alt_r, last_alt_r, last_mode_r, s_old_wave, \
                      s_last_G[7:0]}
 

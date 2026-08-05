@@ -136,7 +136,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   logic        last_alt_r;
 
   logic [1:0]  old_rev_r, last_rev_r;
-  logic [6:0]  bl_cnt;
+  // The blend counts exactly 64 samples: a 6-bit counter whose wrap
+  // carry latches blend_done, replacing the ==64/!=64 comparators with
+  // one flag bit (sizing audit chapter E rider).
+  logic [5:0]  bl_cnt;
+  logic        blend_done;
 
   // Full mode streams the per-slot clear acknowledgement through a spare
   // oscillator-record bit. Preview keeps random access for its phase-0 skip.
@@ -645,7 +649,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       bl_acc + (bl_acc[23] ? 24'sd63 : 24'sd0);
 
   wire signed [16:0] blend_y =
-      (bl_cnt == 7'd64) ? cmb_new : 17'(bl_acc_tz >>> 6);
+      blend_done ? cmb_new : 17'(bl_acc_tz >>> 6);
 
   wire signed [18:0] dmp_mul = (s_ch_damp == 2'd1)
                                  ? {{2{s_lp[16]}}, s_lp}
@@ -663,7 +667,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
 `ifndef SYNTHESIS
   wire [17:0] blend_mag_check = blend_diff[17]
                                     ? 18'(-blend_diff) : 18'(blend_diff);
-  wire [23:0] blend_prod_check = blend_mag_check * bl_cnt[5:0];
+  wire [23:0] blend_prod_check = blend_mag_check * bl_cnt;
 `endif
   // ---- Shared multiplier request schedule ----
   // Full-schedule multiplier requests are grouped by operand shape:
@@ -710,10 +714,10 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
             wmul_b = 12'd341;
             wmul_mode = 2'd3;
           end
-          cap[CAP_W75]: if (bl_cnt != 7'd64) begin
+          cap[CAP_W75]: if (!blend_done) begin
             wmul_start   = 1'b1;
             wmul_a = 25'(blend_diff);
-            wmul_b = {6'b0, bl_cnt[5:0]};
+            wmul_b = {6'b0, bl_cnt};
             wmul_mode = 2'd1;
             wmul_short = 1'b1;
           end
@@ -1226,7 +1230,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
             end
 
             if (blend_restart) begin
-              bl_cnt <= 7'd0;
+              bl_cnt <= 6'd0;
+              blend_done <= 1'b0;
               s_old_phase <= s_phase;
               old_q0 <= s_phase2[16:0];
               s_old_inc <= s_last_inc;
@@ -1240,8 +1245,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
                 s_phase <= 0;
                 s_phase2 <= 0;
               end
-            end else if (bl_cnt != 7'd64)
-              bl_cnt <= bl_cnt + 7'd1;
+            end else if (!blend_done)
+              {blend_done, bl_cnt} <= {1'b0, bl_cnt} + 7'd1;
             noise_filt_step(play_bits[pc_ch] && s_eff_a != 0);
           end
           cap[CAP_W1]: begin
@@ -1344,7 +1349,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
           // combinational result feeds the dampen filter directly.
           cap[CAP_W84]: begin
 `ifndef SYNTHESIS
-            if (bl_cnt != 7'd64 && bl_res != blend_prod_check[22:0])
+            if (!blend_done && bl_res != blend_prod_check[22:0])
               $fatal(1, "psg_walk: early blend consume got %0d, expected %0d, busy=%0b",
                      bl_res, blend_prod_check[22:0], m_busy);
 `endif
@@ -1366,7 +1371,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
         if ((nz_req_old || nz_req_live) && m_busy)
           $error("psg_walk: noise product dropped, m service busy at pph %0d",
                  pph);
-        if (cap[CAP_W75] && bl_cnt != 7'd64 && m_busy)
+        if (cap[CAP_W75] && !blend_done && m_busy)
           $fatal(1, "psg_walk: blend product dropped, m service busy at pph %0d",
                  pph);
 `endif
