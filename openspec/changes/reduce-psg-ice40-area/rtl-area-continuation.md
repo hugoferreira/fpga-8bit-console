@@ -9956,6 +9956,30 @@ schedule pins mode latencies, and the multipump already doubles
 effective radix in time — radix-4 magnitude-only is fabric-optimal;
 closed as a question (H154's +51 is the adjacent measured refutation).
 
+**Chapter E addendum — the crossfade optimization pocket (2026-08-05,
+user-directed after ruling out removal):**
+- **Old-arm steering is irreducible by lifetime overlap (probe 3, closed).**
+  make psg-lifetimes (anchor fixed for C012): nz_old_out_r lives 30..44,
+  smp_a/smp_b 30..44, mx_new 44..59, mx_old 54..59 — the old and new arms
+  are SIMULTANEOUSLY live between capture and blend inside every walk, so
+  write-side register sharing (the cheap alternative to read-side steering)
+  is structurally unavailable. The -400..-600 attribution is the
+  serialization law, now with lifetime evidence.
+- **The old_/last_ dual generation is a pipeline, not duplication (probe 1,
+  closed).** last_* detects tuple changes and becomes the next blend
+  source; old_* feeds the live blend; the `blend_restart ? last : old`
+  muxes are single-cycle WRITE FORWARDING of the pending old_ <= last_
+  copy, not dual storage — removable only by deferring the dq/nz request
+  phases (a load-bearing schedule change). Both generations are already
+  BRAM-streamed. Yield ~0 without schedule surgery.
+- **Actionable remainder (sub-band, riders only):** bl_cnt as a 6-bit
+  counter + wrap-carry blend_done flag (the ==64/!=64 comparators collapse
+  to one flag bit; the multiply operand k is 0..63 and takes the counter
+  directly) ~4-6 LUTs; plus the lifetimes tool's incidental packing
+  candidates (wt_x1 into mx_new's dead window 8 flops; fmc/fsel rehoming
+  4+3 flops) — the "reliable but least predictable" class. Bundle with the
+  next psg_walk-touching hypothesis; never as standalone sub-band rows.
+
 With chapters A, C and E closed and B/D queued as documentation, every
 arithmetic quarter of the PSG — oscillators, voices, magnitude, mixer —
 now has a first-principles width story.
