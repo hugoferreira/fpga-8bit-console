@@ -10013,7 +10013,7 @@ now has a first-principles width story.
 - **Repeat only if:** the volume field ever exceeds 3 bits (a cart-format
   change), or a new writer bypasses the pclamp/divider paths.
 
-## Candidate H171 — scheduled compares onto the free cap bits (designed, not built)
+## Hypothesis H171 — LANDED (2026-08-05): PNZ compares onto cap bits 14/15
 
 The bl_cnt/H166 pattern generalized (user-directed close-out): counters
 with explicit width + carry displace comparators. The compare census
@@ -10021,10 +10021,20 @@ finds ~8 distinct hardware pph equality decodes plus one range; **ctrl
 ROM cap bits 14-15 are FREE**, and unlike H170's refuted class the read
 path already exists (ctrl_q arrives every walk cycle — zero new staging).
 Best pairing: PNZ_OLD/PNZ_LIVE (4 sites, 2 bits) or the PSTOR+6/7/8 trio.
-**Proof obligation that gates this:** pph HOLDS during ctrl_stall (level
-semantics) while cap is forced zero (pulse semantics) — each displaced
-site needs a stall-coincidence proof, and test-clocks /4 /5 /6 is the
-arbiter since ctrl_stall density is clock-dependent. Claim ~10-20 cells.
+**The stall proofs resolved better than the design note feared:** all
+three request sites were ALREADY !ctrl_stall-gated (pulse semantics
+today), and dq_start_old's level-ness is dead because every consumer
+samples it under a stall-gated launch — the displacement is algebraically
+exact, no coincidence argument needed. A permanent SYNTHESIS-off contract
+in psg_walk $fatals if cap[CAP_WNZO/WNZL] ever disagrees with the retired
+compares; it ran armed through test-psg, test-clocks /4/5/6 and the
+oracle corpus. gen_psg_ctrl owns the bit layout (one-hot-per-word holds:
+phases 19/24 carry no action); psg_viz resolves cap-bit requests through
+it. **Measured: floor 8,618 -> 8,616 (-2), placed 6,839, timing PASS —
+the honest magnitude: post-fsm/abc9 the two comparators were already
+shared down to a few cells (the H170 lesson bounding its own sibling).**
+Both spare cap bits are now spent; the PSTOR trio and PLAST pair stay
+as compares.
 Also landed from the same census: scnt is now internal to psg_timing
 (consumers take the scnt_is3 strobe; the 8-bit bus is gone from the
 interface, and the counter can re-encode freely in-module).
