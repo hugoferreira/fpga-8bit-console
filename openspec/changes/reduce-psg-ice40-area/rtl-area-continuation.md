@@ -9787,6 +9787,22 @@ model:**
   Both need the instrument-volume division path (`d_res[11:0]`) bounded
   before any cut, and the full fidelity battery regardless.
 
+**Chapter A, d_res bound and netlist checks (2026-08-05):** every vol_r
+writer is bounded — instrument scaling is `vol * ins_vol / 7` (div_d = 7,
+result <= operand), music gain is `a_post * (mus_gain+1) >> 10 <= 448`,
+fades/slides interpolate within endpoints <= 1,792, and the source bound
+`A0 = vol << 8` with a 3-bit volume field is instruction-verified. Netlist
+(merged main, -noabc): vol_r[11], s_eff_a[11], s_old_G[12], s_last_G[12]
+are ALL real flops — BRAM round-trips make them untrimmable. **H169
+candidate: narrow the volume/G chain one bit** (vol_r/a_pub/s_eff_a/fade
+datapath 12->11; g_a/g_live/s_old_G/s_last_G 13->12; pack slots follow),
+est. 15-30 cells plus folded consumers of s_eff_a[11]. Gate protocol
+(post-H168 rule): implement in an isolated worktree with NO concurrent
+gate runs; detfloor; then the FULL battery including pico8 statistical
+fidelity BEFORE any ledger claim — the volume bound rests on a 3-bit cart
+field rather than an octave-scaled table, but the corpus still disposes.
+gz_filt_r's 17-bit bound is chapter A's remaining derivation.
+
 Each entry needs the H166 treatment: state the invariant that bounds the
 value, prove the reduction exact against it, land only on a deterministic
 verdict. The Operation Cost Catalog prices whole operations; this table
