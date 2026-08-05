@@ -28,7 +28,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134; H155 accepted atop the C001--C011 clarity lineage.
-- Next hypothesis ID: H167. H166 (timing-accumulator gcd reduction) accepted on branch h166-timing-gcd; it opens the Sizing Audit section. H165 (RDY wait-states + sfx_id BRAM migration, stage 1) is measured CANDIDATE on a worktree branch, held for the mix-four anchor decision — see its row. The 2026-08-03 `/goal` reopened the area loop
+- Next hypothesis ID: H168. H167 (trg/aud stage 2, −107 floor, oracle 59/59) is measured on branch h167-trg-aud, pending the canonical seed-1 route and pico8 stage. C012 (width intent) merged at 6cb0539. H166 (timing-accumulator gcd reduction) accepted on branch h166-timing-gcd; it opens the Sizing Audit section. H165 (RDY wait-states + sfx_id BRAM migration, stage 1) is measured CANDIDATE on a worktree branch, held for the mix-four anchor decision — see its row. The 2026-08-03 `/goal` reopened the area loop
   after the clarity campaign closed it at H139. H155 (the H055 shared-limb
   retry) is accepted; it also restores a routable seed-1 canonical build,
   which clean `644d68f` had silently lost (see the H155 row). H161 is the
@@ -9745,3 +9745,60 @@ Each entry needs the H166 treatment: state the invariant that bounds the
 value, prove the reduction exact against it, land only on a deterministic
 verdict. The Operation Cost Catalog prices whole operations; this table
 prices their bookkeeping.
+
+## Clarity C012 — width intent for pph and s_phase2 (2026-08-05)
+
+Sizing-audit intent capture, user-directed ("the source should capture the
+intent even where synthesis already trims"). `PPH_W = $clog2(PLAST+1)` sizes
+the walk phase counter (6 under MULTIPUMP, 7 otherwise); `PH2_W =
+REALTIME_PREVIEW ? 24 : 17` is declared with the psg_walk/psg_wave
+parameters because the s_phase2 port needs it, with a zero-extended
+`ph2_pad` view keeping the PREVIEW-only wide slices width-stable in both
+elaborations. tools/psg_viz.py's PPH_VALUE_RE/ARM_RE now accept named
+localparam width casts, per its own renames-are-source-only doctrine.
+Verified vs merged main `4a1836c30279`: pre-map −18, -noabc floor −9,
+classic +3 (neutral within instrument spread); routes at 6,986 LC / 14 EBR /
+31.66/131.93 MHz; test-psg, test-clocks, oracle 59/59, psg_viz 13/13; lint
+at the five established warnings. Merged at `6cb0539`.
+
+**The 17 in PH2_W is now proven, not transcribed** (session discussion,
+2026-08-05, recorded in docs/hardware-gaps.md "Voice architecture"): an odd
+dq is coprime to 2^17, the orbit has period 2^17 samples, tri_raw is not
+2^16-periodic over the extended domain, so no 16-bit-state generator can
+emit the sequence — the bit is irreducible, and dither reformulations
+merely relocate it. It is also NOT a clean fixed-point split: a fractional-
+precision design would read q0[16:1]; PICO-8 reads [15:0] for u16 waves and
+all 17 bits (LSB into amplitude) for triangle/phaser.
+
+## Hypothesis H167
+
+- **ID:** H167.
+- **Hypothesis:** stage 2 of the H165 lane — trg_row/trg_len into per-voice
+  words PSG_V_TROW=34/PSG_V_TLEN=35 (CPU wait-state writes, V_LD-loaded
+  working copies, T_FL/T_SP clears through the engine lane), and aud_row
+  DELETED: word PSG_V_SEQ[4:0] of the audible voice equals it at every
+  CPU-observable instant because reads only commit while the engine idles.
+- **Baseline:** merged main `4a1836c30279 @ 4e231a7` — premap 13,363
+  (edd1178 added ~+50 over the pre-merge floor); -noabc floor 8,761;
+  classic 6,840; C012 tip premap 13,345 / floor 8,752 / classic 6,843.
+- **Change:** branch `h167-trg-aud` (worktree), commits `<stage2>` +
+  dqsvc K-table comment. V_LD extends to vcnt 10 (+16 clk/service; tick
+  budget margin measured 1,171 spare, IMPROVED vs stage 1's 1,095).
+- **Result** (rtl `4e1b0c8e377b`, pre-nudge): pre-map 13,345 → 13,281
+  (−64); -noabc floor 8,752 → **8,645 (−107**, unpack 503 → **450, −53**);
+  classic 6,843 → **6,721 (−122)**. Placed seed-1 **6,884 LC (−102)**.
+  test-psg ALL PASSED; test-clocks PASS; **oracle 59/59 byte-identical**
+  (trg writes precede their triggers — the stall window never engages, so
+  unlike stage 1 there is no anchor delta at all). Lint clean.
+- **Physical:** routes under seed1+router1 (34.32/147.15 MHz PASS) and
+  seed2+router2 (33.26/137.89 MHz PASS). The canonical seed1+router2 draw
+  wedges at overuse=1 (the H055/H155 single-wire router2 oscillation),
+  robust to one source nudge; second nudge (dqsvc comment) in flight.
+  **Placement is identical and healthy (6,884 LC); this is a router
+  pathology, not a netlist defect.**
+- **Decision:** pending the canonical-route resolution and the pico8
+  full-track stage (both running). If the lottery fails again the
+  measurement-contract question (seed1+router2 exhibits tool pathology —
+  does a documented dual-evidence fallback satisfy routability?) goes to
+  the user.
+- **Repeat only if:** n/a — active.
