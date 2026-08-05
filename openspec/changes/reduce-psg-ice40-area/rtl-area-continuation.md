@@ -10013,6 +10013,22 @@ now has a first-principles width story.
 - **Repeat only if:** the volume field ever exceeds 3 bits (a cart-format
   change), or a new writer bypasses the pclamp/divider paths.
 
+## Candidate H171 — scheduled compares onto the free cap bits (designed, not built)
+
+The bl_cnt/H166 pattern generalized (user-directed close-out): counters
+with explicit width + carry displace comparators. The compare census
+finds ~8 distinct hardware pph equality decodes plus one range; **ctrl
+ROM cap bits 14-15 are FREE**, and unlike H170's refuted class the read
+path already exists (ctrl_q arrives every walk cycle — zero new staging).
+Best pairing: PNZ_OLD/PNZ_LIVE (4 sites, 2 bits) or the PSTOR+6/7/8 trio.
+**Proof obligation that gates this:** pph HOLDS during ctrl_stall (level
+semantics) while cap is forced zero (pulse semantics) — each displaced
+site needs a stall-coincidence proof, and test-clocks /4 /5 /6 is the
+arbiter since ctrl_stall density is clock-dependent. Claim ~10-20 cells.
+Also landed from the same census: scnt is now internal to psg_timing
+(consumers take the scnt_is3 strobe; the 8-bit bus is gone from the
+interface, and the counter can re-encode freely in-module).
+
 ## Closing audit — module interfaces and engine widths (2026-08-05)
 
 **Interface audit (are we sharing more than we need): essentially no.**
