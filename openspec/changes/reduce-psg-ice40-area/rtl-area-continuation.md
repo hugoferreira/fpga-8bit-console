@@ -9767,6 +9767,26 @@ skew 24572/12286, `vol_r`/`a_pub` 12 bits, `mus_gain` 8, `gz_filt_r` 17,
 `s_old_G`/`s_last_G` 13. Post-H168 rule in force: the analytical bound
 proposes, the fidelity corpus disposes.
 
+**Chapter A first findings (2026-08-05), constants decoded from the RE
+model:**
+- `a = vol << 8`, vol 0..7 → **a <= 1,792 — the noise kick's /1792 is
+  max-amplitude normalization.**
+- `scale(z) = tz(G*z/3072)` with `G = tz(3a/2)`: **the 3s cancel** —
+  G/3072 = a/2048. 3072 = 3*1024 exists so the x3/2-then-divide
+  factorization keeps every intermediate truncation integer-exact.
+- Noise's /2048 against the same G: 3a*z/4096 = **1.5x hotter per
+  amplitude unit than tones**, by design.
+- The 6,143 family: tri_raw spans +-49,152 = 8*6,144; /4 primary and /8
+  secondary land on the +-6,144 full-scale unit; the square's +-6143,
+  the accumulator clamp, R(12286)=2*6143 noise, and the tilt skew's
+  12286/24572 are all 1-2-4x that unit minus/around one LSB.
+- **Two width questions raised (H168-class, corpus-gated):** `vol_r`/
+  `s_eff_a` are 12 bits for values bounded by 1,792 (11 bits) — and the
+  noise gain tap `s_eff_a[10:8]` recovers vol as if bit 11 were dead;
+  `s_old_G`/`s_last_G` are 13 bits for G <= 3,360 with boost (12 bits).
+  Both need the instrument-volume division path (`d_res[11:0]`) bounded
+  before any cut, and the full fidelity battery regardless.
+
 Each entry needs the H166 treatment: state the invariant that bounds the
 value, prove the reduction exact against it, land only on a deterministic
 verdict. The Operation Cost Catalog prices whole operations; this table
