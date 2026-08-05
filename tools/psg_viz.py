@@ -669,16 +669,30 @@ def parse_phase_requests(lines):
     request a source-only change.
     """
     text = "\n".join(strip_comment(line) for line in lines)
+
+    # H171: request pulses may also ride control-store bits. Resolve
+    # cap[CAP_X] to its phase through the generator (the single source of
+    # truth for the bit layout) plus the RTL's CAP_* localparam list.
+    import gen_psg_ctrl as _ctrl
+    bit_phase = {bit: _ctrl.PWORK + off for off, bit in _ctrl.CAPS.items()}
+    cap_bits = dict((nm, int(v)) for nm, v in
+                    re.findall(r"(CAP_\w+)\s*=\s*(\d+)", text))
+
+    def cap_exprs(stmt):
+        return [str(bit_phase[cap_bits[nm]])
+                for nm in re.findall(r"cap\[(CAP_\w+)\]", stmt)
+                if nm in cap_bits and cap_bits[nm] in bit_phase]
+
     out = {}
     for stmt in text.split(";"):
-        exprs = pph_exprs(stmt)
+        exprs = pph_exprs(stmt) or cap_exprs(stmt)
         if not exprs:
             continue
         m = re.search(
             r"(?:^|\n)\s*(?:(?:wire|logic|reg)\b(?:\s+signed)?"
             r"(?:\s*\[[^]]*\])?\s+|assign\s+)"
             r"([a-zA-Z_][a-zA-Z0-9_]*)\s*=", stmt)
-        if m and len(set(exprs)) == 1:
+        if m and len(set(exprs)) >= 1:
             out[m.group(1)] = exprs[0]
     return out
 

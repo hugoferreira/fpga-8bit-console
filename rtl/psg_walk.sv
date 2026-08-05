@@ -250,7 +250,11 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       CAP_W0 = 0, CAP_W1 = 1, CAP_W2 = 2, CAP_W3 = 3,
       CAP_W4 = 4, CAP_W5 = 5, CAP_W6 = 6, CAP_W15 = 7,
       CAP_W26 = 8, CAP_W27 = 9, CAP_W40 = 10, CAP_W51 = 11,
-      CAP_W75 = 12, CAP_W84 = 13;
+      CAP_W75 = 12, CAP_W84 = 13,
+      // H171: displaced pph == PNZ_OLD/PNZ_LIVE comparators (see
+      // tools/gen_psg_ctrl.py). The sites were already !ctrl_stall-gated,
+      // so the cap bits are algebraically identical.
+      CAP_WNZO = 14, CAP_WNZL = 15;
   wire [PPH_W-1:0] pph_nxt = ctrl_stall ? pph
                          : (!prun || pph == PPH_W'(PLAST)) ? PPH_W'(0) : pph + PPH_W'(1);
   always_comb ctrl_addr = 8'd144 + 8'(pph_nxt);
@@ -277,6 +281,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
         7'd54: single_clock_cap[CAP_W40] = 1'b1;
         7'd60: single_clock_cap[CAP_W51] = 1'b1;
         7'd61: single_clock_cap[CAP_W75] = 1'b1;
+        7'd19: single_clock_cap[CAP_WNZO] = 1'b1;
+        7'd24: single_clock_cap[CAP_WNZL] = 1'b1;
         7'd65: single_clock_cap[CAP_W84] = 1'b1;
         default: ;
       endcase
@@ -286,10 +292,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   wire [15:0] scheduled_cap = MULTIPUMP ? ctrl_q : single_clock_cap(7'(pph));
   wire [15:0] cap = (pph == PPH_W'(0) || ctrl_stall) ? 16'd0 : scheduled_cap;
 
-  wire nz_req_old  = !REALTIME_PREVIEW && !ctrl_stall
-                       && (pph == PPH_W'(PNZ_OLD));
-  wire nz_req_live = !REALTIME_PREVIEW && !ctrl_stall
-                       && (pph == PPH_W'(PNZ_LIVE));
+  wire nz_req_old  = !REALTIME_PREVIEW && cap[CAP_WNZO];
+  wire nz_req_live = !REALTIME_PREVIEW && cap[CAP_WNZL];
   // ---- Built-in waveform context and shared phase ALU ----
   // Context requests into psg_wave.
   assign iss_sec = REALTIME_PREVIEW ? (pph == PPH_W'(PWORK))
@@ -489,9 +493,22 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
     end
   endfunction
 
-  wire dq_start = !REALTIME_PREVIEW && prun && !ctrl_stall
-                  && (pph == PPH_W'(PNZ_OLD) || pph == PPH_W'(PNZ_LIVE));
-  wire dq_start_old = pph == PPH_W'(PNZ_LIVE);
+  wire dq_start = !REALTIME_PREVIEW && prun
+                  && (cap[CAP_WNZO] || cap[CAP_WNZL]);
+  // Level-vs-pulse is dead here: every consumer samples dq_start_old under
+  // a stall-gated launch, so the cap pulse is exact.
+  wire dq_start_old = !REALTIME_PREVIEW && cap[CAP_WNZL];
+`ifndef SYNTHESIS
+  // The displacement contract, checked by every simulation forever: the
+  // cap bits fire exactly where the retired comparators did.
+  always_ff @(posedge clk)
+    if (!reset && !REALTIME_PREVIEW && MULTIPUMP && prun && !ctrl_stall) begin
+      if (cap[CAP_WNZO] != (pph == PPH_W'(PNZ_OLD)))
+        $fatal(1, "H171: CAP_WNZO disagrees with pph==PNZ_OLD");
+      if (cap[CAP_WNZL] != (pph == PPH_W'(PNZ_LIVE)))
+        $fatal(1, "H171: CAP_WNZL disagrees with pph==PNZ_LIVE");
+    end
+`endif
   wire [13:0] dq_old_inc_now = blend_restart ? s_last_inc : s_old_inc;
   wire [2:0] dq_old_wave_now = blend_restart ? s_last_wave : s_old_wave;
   wire [1:0] dq_old_mode_now = blend_restart ? last_mode_r : old_mode_r;

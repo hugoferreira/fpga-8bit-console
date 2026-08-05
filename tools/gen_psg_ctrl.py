@@ -35,7 +35,13 @@ late state write shares PLAST with slot close and fold launch.
 Bit layout (must match rtl/psg_walk.sv's CAP_* one-hot indices):
 
   0 W0   1 W1   2 W2   3 W3   4 W4   5 W5   6 W6   7 W15
-  8 W26  9 W27 10 W40 11 W51 12 W75 13 W84 14 spare  15 spare
+  8 W26  9 W27 10 W40 11 W51 12 W75 13 W84 14 WNZO  15 WNZL
+
+Bits 14/15 (H171) displace the walk's `pph == PNZ_OLD/PNZ_LIVE`
+comparators: those phases carry no action word, so each new bit is the
+only bit of its word and the one-hot-per-word invariant holds. The
+displaced sites were already `!ctrl_stall`-gated (pulse semantics), so
+`cap[bit]` is algebraically identical to the compare it replaces.
 """
 
 # Hardware-flavour schedule constants (rtl/psg_walk.sv, REALTIME_PREVIEW=0).
@@ -44,6 +50,8 @@ PWORK = 29
 PFOLD = 61
 PSTOR = 46
 PLAST = 61
+PNZ_OLD = 19
+PNZ_LIVE = 24
 
 # pph offset from PWORK -> one-hot bit index.
 CAPS = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6,
@@ -53,7 +61,9 @@ CAPS = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6,
         20: 10,         # W40: reciprocal limb, both profiles
         25: 11,         # W51: mx_new / mx_old
         26: 12,         # W75: blend launch
-        30: 13}         # W84: blend consume and dampen/filter commit
+        30: 13,         # W84: blend consume and dampen/filter commit
+        PNZ_OLD - PWORK: 14,   # WNZO: old-arm noise/dq request phase
+        PNZ_LIVE - PWORK: 15}  # WNZL: live noise/dq request phase
 
 
 def build():
