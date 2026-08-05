@@ -9818,10 +9818,24 @@ gz_filt_r's 17-bit bound is chapter A's remaining derivation.
   ([16:1], :608). One consumer uses the full 17 ({gz_filt_r[16], ...},
   :769) and the filter feedback adds it into m_res[28:3] (:603).
 - Netlist: all 17 bits flopped (BRAM-opaque via the oscillator words).
-- Next: pin mode 2's arithmetic in psg_mulsvc/psg_mulmp against the
-  scale() formula, derive the true max over all 8 waves (incl. the noise
-  kick's int16 WRAP, which the RE doc says escapes at high pitch — a
-  deliberate overflow the bound must respect), THEN decide 17 vs 16.
+- **Mode 2 PINNED (2026-08-05):** the service has one accumulator
+  boundary; an N-iteration request lands the exact product shifted left
+  by (12−N) — mode 2 retires all 12 multiplier bits, so it is the PLAIN
+  product at natural alignment (tools/psg_mul_model.py docstring is the
+  authority). No scaling hides in the multiply.
+- **The /3072 decomposes across the consumers:** gz_filt_r <= m_res[26:10]
+  is z*G >> 10. The TONE arm then applies x(2/3) via the gz_171
+  reciprocal recombination (171 ~ 2/3 * 256; shift-add slices of the
+  product summed into gz_q3acc) and consumes only gz_q3acc[33:19] — 15
+  bits — giving G*z/3072 exactly. The NOISE arm skips the /3: it halves
+  the raw register ({1'b0, gz_filt_r[16:1]} = z*G/2048), matching the RE
+  doc's noise divisor. **The noise arm alone sizes the register:** tones
+  use <=15 bits of it, so the 17-vs-16 question reduces to
+  max|z_noise * G| / 1024 — one unknown, the noise sample bound,
+  entangled with the deliberate int16 wrap the RE doc documents at high
+  pitch. That bound (nz_z's range through the kick machinery) is the
+  remaining derivation; nothing is cut before it is pinned AND the
+  corpus rules.
 
 Each entry needs the H166 treatment: state the invariant that bounds the
 value, prove the reduction exact against it, land only on a deterministic
