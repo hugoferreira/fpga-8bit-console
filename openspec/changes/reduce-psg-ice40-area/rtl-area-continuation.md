@@ -9833,9 +9833,24 @@ gz_filt_r's 17-bit bound is chapter A's remaining derivation.
   use <=15 bits of it, so the 17-vs-16 question reduces to
   max|z_noise * G| / 1024 — one unknown, the noise sample bound,
   entangled with the deliberate int16 wrap the RE doc documents at high
-  pitch. That bound (nz_z's range through the kick machinery) is the
-  remaining derivation; nothing is cut before it is pinned AND the
-  corpus rules.
+  pitch. **DERIVED (2026-08-05), chapter A closes: 17 bits is TIGHT and
+  semantically exact — it is PICO-8's int16 noise buffer, one bit up.**
+  The chain: nz_out_r holds the PRE-clamp accumulator (the RE doc's
+  "output reads r before the clamp"), |nz_pre| <= 6,143 + J/2 (J = 8dp
+  + 1120 <= 60,272) + kick <= ~42,400; >>6 then the exact x80/x68
+  shift-add (the k = 2048/den + 48 table; einc[13] selects the
+  high-pitch x68 arm — the very bit H168 tried to delete) gives
+  |nz_z| <= ~53,000; times G <= 3,360, >>10 gives up to ~174,000 —
+  which EXCEEDS 2^17. That overflow is not a bug: the [26:10] slice
+  truncation reproduces PICO-8's documented int16 WRAP ("which big kick
+  escapes at high pitch", movw). gz_filt_r holds 2y where y is the
+  int16-wrapped noise sample (the noise consumer halves [16:1]), so
+  **17 = 1 + 16: the pre-halved representation of a wrapping int16.
+  Not a dead bit — a semantic width.** The amplitude triad is complete:
+  every per-voice quantity (phase 16/17, increment 14/14, amplitude
+  11/12/17) now has a first-principles answer, and chapter A produced
+  one landed win (H169), one refutation (H168), and three proofs of
+  existing tightness.
 
 Each entry needs the H166 treatment: state the invariant that bounds the
 value, prove the reduction exact against it, land only on a deterministic
