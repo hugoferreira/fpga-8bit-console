@@ -197,7 +197,7 @@ def main():
 
     exported = set(re.findall(r"^\s*(?:input|output)\s+(?:logic|bit)\s*"
                               r"(?:signed\s*)?(?:\[[^\]]*\]\s*)?(\w+)",
-                              src[:src.index("logic [6:0]  pph")], re.M))
+                              src[:src.index("logic [PPH_W-1:0] pph")], re.M))
     widths, regs = {}, []
     for m in re.finditer(r"^\s*logic\s+(?:signed\s+)?(?:\[(\d+):(\d+)\]\s*)?"
                          r"([a-z_]\w*(?:\s*,\s*[a-z_]\w*)*)\s*;", src, re.M):
