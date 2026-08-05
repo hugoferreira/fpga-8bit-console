@@ -9803,6 +9803,26 @@ fidelity BEFORE any ledger claim — the volume bound rests on a 3-bit cart
 field rather than an octave-scaled table, but the corpus still disposes.
 gz_filt_r's 17-bit bound is chapter A's remaining derivation.
 
+**gz_filt_r exploration (2026-08-05, fact sheet — derivation open):**
+- Producer: `gz_filt_r <= m_res[26:10]` from the mode-2 shared multiply of
+  `z_new_c/z_old_sel` (18-bit signed wave value, tri_v spans +-49,152) by
+  `12'(g_live)`/`12'(s_old_G)` — the exact mode-2 product scaling (where
+  scale()'s /3 lands) is the open piece; the landing law
+  (psg-mul-alignment memory) governs the [26:10] slice.
+- Rough bound via the cancelled form a*z/2048: |gz| <= ~16,128 for the
+  mixed tri arms — which would make 17 bits one over (15+sign suffices),
+  BUT this is exactly an H168-shaped trap until mode 2 is pinned.
+- Three consumers already treat it as 16-bit: the reverb ring stores
+  gz_filt_r[15:0] (psg_walk.sv:897), one path sign-extends [15:0]
+  ({gz_filt_r[15], gz_filt_r[15:0]}, :736), and the noise arm halves
+  ([16:1], :608). One consumer uses the full 17 ({gz_filt_r[16], ...},
+  :769) and the filter feedback adds it into m_res[28:3] (:603).
+- Netlist: all 17 bits flopped (BRAM-opaque via the oscillator words).
+- Next: pin mode 2's arithmetic in psg_mulsvc/psg_mulmp against the
+  scale() formula, derive the true max over all 8 waves (incl. the noise
+  kick's int16 WRAP, which the RE doc says escapes at high pitch — a
+  deliberate overflow the bound must respect), THEN decide 17 vs 16.
+
 Each entry needs the H166 treatment: state the invariant that bounds the
 value, prove the reduction exact against it, land only on a deterministic
 verdict. The Operation Cost Catalog prices whole operations; this table
