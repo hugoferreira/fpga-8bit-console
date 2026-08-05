@@ -121,7 +121,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   logic [2:0]  s_snd_id;
   logic        s_ch_noiz;
   logic [1:0]  s_ch_rev, s_ch_damp;
-  logic [11:0] s_eff_a;
+  logic [10:0] s_eff_a;
   logic signed [7:0] s_nz_hold;
   logic [3:0]  s_nz_ph;
   logic signed [12:0] s_brown;
@@ -129,7 +129,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   logic signed [15:0] s_noise_lp;
 
   logic [13:0] s_last_inc;
-  logic [12:0] s_old_G, s_last_G;
+  logic [11:0] s_old_G, s_last_G;
   logic [2:0]  s_last_wave;
 
   logic [1:0]  last_mode_r;
@@ -197,7 +197,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
         4'd1:    sosc_wd = {s_nz_hold, old_q0[7:0]};
         4'd2:    sosc_wd = s_phase2[15:0];
 
-        4'd3:    sosc_wd = {s_clr_ack, s_old_G[12:8], s_last_G[12:8],
+        4'd3:    sosc_wd = {s_clr_ack, 1'b0, s_old_G[11:8],
+                            1'b0, s_last_G[11:8],
                             s_nz_ph, s_phase2[16]};
         4'd4:    sosc_wd = `PSG_OSC_W14;
         4'd5:    sosc_wd = s_lp[15:0];
@@ -586,9 +587,9 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   // g* builds note gain; mx* holds signed arms; cmb* applies the reverb comb.
   wire g_boost = (s_ch_det != 2'd0) && !s_snd_wt
                  && !(s_snd_wave[2] & s_snd_wave[1]);
-  wire [12:0] g_a = g_boost ? ({1'b0, s_eff_a} + {3'b0, s_eff_a[11:2]})
+  wire [11:0] g_a = g_boost ? ({1'b0, s_eff_a} + {3'b0, s_eff_a[10:2]})
                             : {1'b0, s_eff_a};
-  wire [12:0] g_live = g_a + {1'b0, g_a[12:1]};
+  wire [11:0] g_live = g_a + {1'b0, g_a[11:1]};
 
   // The gain-series limb is dead after W51; W84 reuses the same 17-bit
   // register for the final filtered sample consumed by the store/fold tail.
@@ -617,7 +618,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
       mxs_old ? -$signed(gz_old_scaled) : $signed(gz_old_scaled);
 
   wire signed [16:0] mx_old_eff =
-      s_snd_wt ? ((s_old_G == 13'd0) ? 17'sd0 : mx_new) : mx_old;
+      s_snd_wt ? ((s_old_G == 12'd0) ? 17'sd0 : mx_new) : mx_old;
 
   // Reverb combs current and previous arms independently before crossfade;
   // dampen then filters the blended sample.
@@ -725,7 +726,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
   // Preview keeps its local sample-by-volume multiply; the full schedule uses
   // only the shared multiplier above.
   wire [20:0]  pv_mag   = z_new_c[17] ? (21'd0 - 21'(z_new_c)) : 21'(z_new_c);
-  wire [28:0]  pv_full  = pv_mag * {13'b0, s_eff_a[11:4]};
+  wire [28:0]  pv_full  = pv_mag * {14'b0, s_eff_a[10:4]};
   wire [15:0]  pv_slice = pv_full[22:7];
   logic [15:0] pv_prod_r;
 
@@ -1082,8 +1083,8 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
                 end
                 else begin
                   s_clr_ack       <= state_q[15];
-                  s_old_G[12:8]  <= state_q[14:10];
-                  s_last_G[12:8] <= state_q[9:5];
+                  s_old_G[11:8]  <= state_q[13:10];
+                  s_last_G[11:8] <= state_q[8:5];
                   s_nz_ph        <= state_q[4:1];
                   s_phase2[16] <= state_q[0];
                 end
@@ -1127,7 +1128,7 @@ module psg_walk #(parameter REVERB = 1, parameter REALTIME_PREVIEW = 0,
             {s_ch_damp, s_ch_rev, s_ch_det, s_ch_buzz,
              s_ch_noiz} <= state_q[13:6];
           PPH_W'(PLOSC + 4): begin
-            s_eff_a <= state_q[11:0];
+            s_eff_a <= state_q[10:0];
             if (!REALTIME_PREVIEW)
               s_clr_tog <= state_q[13];
           end

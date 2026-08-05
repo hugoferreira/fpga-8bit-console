@@ -410,12 +410,15 @@ module psg_seq (input  bit   clk,
 
   wire [12:0] base_inc = pinc_q;
 
-  wire [11:0] vol_direct  = w_ins_done ? 12'd0 : {1'b0, w_cur_vol, 8'b0};
-  wire [11:0] pvol_direct = {1'b0, w_prev_vol, 8'b0};
+  wire [10:0] vol_direct  = w_ins_done ? 11'd0 : {w_cur_vol, 8'b0};
+  // The volume chain is 11-bit: a = vol<<8 with a 3-bit volume field
+  // bounds every writer at 1,792 (instrument /7, music gain >>10 <= 448,
+  // fades interpolate within endpoints) - sizing audit chapter A / H169.
+  wire [10:0] pvol_direct = {w_prev_vol, 8'b0};
 
   logic [3:0]  xs;
 
-  logic [11:0] vol_r;
+  logic [10:0] vol_r;
 
   logic signed [2:0] lfo;
   always_comb begin
@@ -430,11 +433,11 @@ module psg_seq (input  bit   clk,
   wire       lfo_neg = lfo[2];
   wire [1:0] lfo_mag = lfo_neg ? 2'(-lfo) : 2'(lfo);
 
-  wire [11:0] pvol_now = e_insfx ? {1'b0, w_ins_prev_vol, 8'b0}
+  wire [10:0] pvol_now = e_insfx ? {w_ins_prev_vol, 8'b0}
                                  : pvol_direct;
-  wire signed [12:0] vl_d   = $signed({1'b0, vol_r})
+  wire signed [11:0] vl_d   = $signed({1'b0, vol_r})
                              - $signed({1'b0, pvol_now});
-  wire               vl_neg = vl_d[12];
+  wire               vl_neg = vl_d[11];
   wire signed [6:0]  slp_d = $signed({1'b0, e_pitch})
                             - $signed({1'b0, e_prevp});
   wire               slp_neg = slp_d[6];
@@ -485,7 +488,7 @@ module psg_seq (input  bit   clk,
   wire [12:0] fxp_op  = {6'b0, vib_full[13:7]};
   wire [12:0] fxp_res = base_inc + (lfo_neg ? ~fxp_op : fxp_op)
                       + {12'b0, (lfo_neg & ~vib_cb)};
-  logic [11:0] fxv_next;
+  logic [10:0] fxv_next;
 
   logic signed [24:0] mul_a;
   logic [11:0] mul_b;
@@ -508,20 +511,20 @@ module psg_seq (input  bit   clk,
       4'd5: case (e_fx)
               3'd1: begin mul_a = 25'(vl_d); mul_b = {4'b0, eff_fcnt};
                           mul_go = 1'b1; end
-              3'd4: begin mul_a = {13'b0, vol_r};  mul_b = {4'b0, eff_fcnt};
+              3'd4: begin mul_a = {14'b0, vol_r};  mul_b = {4'b0, eff_fcnt};
                           mul_go = 1'b1; end
-              3'd5: begin mul_a = {13'b0, vol_r};
+              3'd5: begin mul_a = {14'b0, vol_r};
                           mul_b = eff_rem;
                           mul_go = 1'b1; end
               default: ;
             endcase
 
       4'd8: if (ins_use) begin
-              mul_a = e_insfx ? {14'b0, w_cur_vol, 8'b0} : {13'b0, vol_r};
-              mul_b = e_insfx ? {8'b0, vol_r[11:8]} : {9'b0, w_ins_vol};
+              mul_a = e_insfx ? {14'b0, w_cur_vol, 8'b0} : {14'b0, vol_r};
+              mul_b = e_insfx ? {9'b0, vol_r[10:8]} : {9'b0, w_ins_vol};
               mul_go = 1'b1;
             end
-      4'd10: begin mul_a = {13'b0, a_post};
+      4'd10: begin mul_a = {14'b0, a_post};
                    mul_b = {4'b0, mus_gain} + 12'd1; mul_md = 2'd1;
                    mul_go = 1'b1; end
       4'd4: case (e_fx)
@@ -536,7 +539,7 @@ module psg_seq (input  bit   clk,
 
   // Slide uses two exact divisions; volume effects and instrument scaling use
   // the same divider with their own numerator and rounding rule.
-  wire [11:0] a_post = ins_use ? d_res[11:0] : vol_r;
+  wire [10:0] a_post = ins_use ? d_res[10:0] : vol_r;
 
   wire vol_div = (e_fx == 3'd1) || (e_fx == 3'd4) || (e_fx == 3'd5);
 
@@ -560,10 +563,10 @@ module psg_seq (input  bit   clk,
   always_comb begin
     fxv_next = vol_r;
     case (e_fx)
-      3'd1: fxv_next = pvol_now + (vl_neg ? ~d_res[11:0] : d_res[11:0])
-                     + {11'b0, vl_neg};
-      3'd4: fxv_next = d_res[11:0];
-      3'd5: fxv_next = d_res[11:0];
+      3'd1: fxv_next = pvol_now + (vl_neg ? ~d_res[10:0] : d_res[10:0])
+                     + {10'b0, vl_neg};
+      3'd4: fxv_next = d_res[10:0];
+      3'd5: fxv_next = d_res[10:0];
       default: ;
     endcase
   end
@@ -589,7 +592,7 @@ module psg_seq (input  bit   clk,
   wire [13:0] pub_inc = (w_ins_on && w_ins_wt && w_ins_fx[0])
                           ? {1'b0, fxi_pub} : {fxi_pub, 1'b0};
 
-  wire [11:0] a_pub = vol_r;
+  wire [10:0] a_pub = vol_r;
   logic [15:0] pub_wd;
   always_comb begin
     case (sst)
@@ -623,7 +626,7 @@ module psg_seq (input  bit   clk,
                           || (ins_use
                               && (w_cur_fx == 3'd4
                                   || w_cur_fx == 3'd5))),
-                         a_pub};
+                         1'b0, a_pub};
     endcase
   end
 
@@ -1095,14 +1098,14 @@ module psg_seq (input  bit   clk,
         K_FX: if (!m_busy && !((xs == 4'd7 || xs == 4'd10) && d_busy)) begin
           case (xs)
 
-            4'd3: vol_r  <= (w_ins_done && ins_use) ? 12'd0
-                          : e_insfx ? {1'b0, w_ins_vol, 8'b0}
+            4'd3: vol_r  <= (w_ins_done && ins_use) ? 11'd0
+                          : e_insfx ? {w_ins_vol, 8'b0}
                                     : vol_direct;
             4'd7: begin
               vol_r <= fxv_next;
             end
             4'd10: vol_r <= a_post;
-            4'd11: if (is_mus(c)) vol_r <= m_res[21:10];
+            4'd11: if (is_mus(c)) vol_r <= m_res[20:10];
             default: ;
           endcase
           if (xs == 4'd2 && e_fx == 3'd1) begin
