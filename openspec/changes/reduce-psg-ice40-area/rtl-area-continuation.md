@@ -28,7 +28,7 @@ loop. Detailed earlier area history remains in `design.md`, `tasks.md`, and
   accepted; H095 accepted on the direct lineage; H096 accepted atop merged
   main; H102 accepted atop H096; H134 accepted atop H102; H139 accepted atop
   H134; H155 accepted atop the C001--C011 clarity lineage.
-- Next hypothesis ID: H168. H167 (trg/aud stage 2, −107 floor, oracle 59/59) is measured on branch h167-trg-aud, pending the canonical seed-1 route and pico8 stage. C012 (width intent) merged at 6cb0539. H166 (timing-accumulator gcd reduction) accepted on branch h166-timing-gcd; it opens the Sizing Audit section. H165 (RDY wait-states + sfx_id BRAM migration, stage 1) is measured CANDIDATE on a worktree branch, held for the mix-four anchor decision — see its row. The 2026-08-03 `/goal` reopened the area loop
+- Next hypothesis ID: H169 (H168 was consumed by the refuted dp/dq narrowing — see sizing-audit entry 6). H167 (trg/aud stage 2, −107 floor, oracle 59/59) is measured on branch h167-trg-aud, pending the canonical seed-1 route and pico8 stage. C012 (width intent) merged at 6cb0539. H166 (timing-accumulator gcd reduction) accepted on branch h166-timing-gcd; it opens the Sizing Audit section. H165 (RDY wait-states + sfx_id BRAM migration, stage 1) is measured CANDIDATE on a worktree branch, held for the mix-four anchor decision — see its row. The 2026-08-03 `/goal` reopened the area loop
   after the clarity campaign closed it at H139. H155 (the H055 shared-limb
   retry) is accepted; it also restores a routable seed-1 canonical build,
   which clean `644d68f` had silently lost (see the H155 row). H161 is the
@@ -9850,5 +9850,9 @@ all 17 bits (LSB into amplitude) for triangle/phaser.
   seed-2 router2 (33.26/137.89 MHz PASS), canonical placed 6,884 LC.
   A first pico8 full-track run failed from mid-run contamination by the
   since-refuted H168 edits (the harness rebuilds from source); the clean
-  rerun on unmodified stage 2 decides the merge.
+  rerun on unmodified stage 2 PASSED. **Accepted and merged to main at
+  `824d18b` (2026-08-05).** Combined H165+H167 against the pre-campaign
+  8,791 floor: state memory now holds what four fabric register files held,
+  the CPU wait-state lane is the established mechanism, and the register-
+  interface-to-BRAM class has two landed wins and a proven lane for more.
 - **Repeat only if:** n/a — active.
