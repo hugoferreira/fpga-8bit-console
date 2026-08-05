@@ -537,6 +537,51 @@ in RTL, and both are wrong. NEMO's title music uses both.
 - Simulator pixels are now 3 clocks (the /4 dated from the retired
   textbuffer); the PPU display pipeline needs exactly 3.
 
+## Voice architecture: every voice is an oscillator pair (2026-08-05)
+
+Orientation distilled from the app-bundle disassembly (`pico8-psg-re.md`);
+formulas live there, this is the mental model.
+
+**Every PICO-8 voice is structurally TWO oscillators**, not one with an
+optional detune: the output of every built-in waveform is
+`shape(p) + shape(q)/2`. `p` is the primary 16-bit phase (`s_phase` here);
+`q0` is a secondary 17-bit phase (`s_phase2[16:0]`) advancing at a rate
+derived from `dp` by wave- and detune-mode-dependent ratios — the `dq`
+formulas with their exact integer ceil corrections (the 524,288-case dq
+sweep in `make test-psg` pins them). Near-unity ratios make the pair beat
+slowly: that chorus body is the PICO-8 "thick" sound, and it is why a
+textbook single-oscillator reimplementation sounds thin and never matches
+bit-for-bit.
+
+**The pair is asymmetric by organic accretion, not design.** Most waveforms
+read the secondary through a 16-bit view (`u16(q0 << (mode==2))`), so for
+them `q0`'s bit 16 is unobservable. Triangle (0) and phaser (7) instead
+evaluate the RAW 17-bit phase: `tri_raw`'s second branch is an unguarded
+`else` in the machine code, extending over `[65536, 131071]` — the
+secondary triangle is a 2^17-periodic quarter-up / three-quarters-down ramp
+plunging ~5x the primary's depth, i.e. a strong octave-below component with
+sawtooth asymmetry. Almost certainly a masking accident (`& 0x1ffff`) that
+shipped and became the spec.
+
+**Why 17 bits and not 16 + halved dq:** the extra bit is not amplitude —
+the `/8` weighting eats amplitude LSBs anyway. It is a FRACTIONAL PHASE
+bit: in primary-phase units the triangle-arm phase is `q0/2`, so the 17-bit
+integer `q0` is exactly a 16.1 fixed-point phase. `dq` is odd for half of
+all pitches, so halving the space floors `dq/2` and the phase error
+accumulates linearly — the pair's beat frequency (resolution Fs/2^17 ~
+0.17 Hz) shifts, and the chorus audibly changes over any held note. Same
+argument as a fractional clock divider: drop the fractional bit and you
+don't lose precision, you gain drift.
+
+**This PSG adds a second, deliberate layer on top:** the two oscillators
+exist per voice as state, but share ONE serialized wave shaper, gain
+multiplier and mix path — the `iss_om`/`iss_os` slots, the `qv_*` steering
+and the `mxs_*` sign/magnitude handling are that time-multiplexing. When
+the walk reads as "one oscillator with complex logic", two layers are in
+view at once: PICO-8's asymmetric pair (inherent, preserved bit-for-bit)
+and this design's serialization of it (chosen; the steering muxes are
+cheaper than a second shaper — see the area ledger's LAW).
+
 ## PSG vs the PICO-8 binary (reverse-engineering notes, 2026-07-25)
 
 Source: `/Applications/PICO-8.app/Contents/MacOS/pico8-psg-re.md` - a
