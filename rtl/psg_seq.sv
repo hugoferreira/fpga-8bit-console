@@ -412,8 +412,9 @@ module psg_seq (input  bit   clk,
 
   wire [10:0] vol_direct  = w_ins_done ? 11'd0 : {w_cur_vol, 8'b0};
   // The volume chain is 11-bit: a = vol<<8 with a 3-bit volume field
-  // bounds every writer at 1,792 (instrument /7, music gain >>10 <= 448,
-  // fades interpolate within endpoints) - sizing audit chapter A / H169.
+  // bounds every writer at 1,792 (instrument /7; music gain is the mode-1
+  // product's [20:10] slice = P>>8, exact unity at mus_gain 255; fades
+  // interpolate within endpoints) - sizing audit chapters A/C, H169.
   wire [10:0] pvol_direct = {w_prev_vol, 8'b0};
 
   logic [3:0]  xs;
