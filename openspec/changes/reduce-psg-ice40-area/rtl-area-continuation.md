@@ -9923,6 +9923,43 @@ all 17 bits (LSB into amplitude) for triangle/phaser.
   interface-to-BRAM class has two landed wins and a proven lane for more.
 - **Repeat only if:** n/a — active.
 
+## Sizing Audit — Chapter E: the mixer (2026-08-05)
+
+The last quarter of the architecture: 8 slot leaves (18-bit signed) reduce
+through a serial binary tree of seven soft_adds on ONE shared 18-bit ALU
+with a 3-level stack (fstk[0:2] — minimal for an 8-leaf tree); dry16 is
+the final [15:0]. H164 already mined the composition stage's cheap half.
+
+**The constants are a joint fixed-point design, derived:** soft_add is
+linear inside +-24,576 and compresses the excess 5:1 (exact nearest /5 via
+the t0/t1/t2 shift-add chain). 24,576 = 0.75 x 32,768, and solving
+B = 24,576 + (2B - 24,576)/5 gives **B = 32,768 exactly**: the knee at 75%
+of full scale with 5:1 compression makes the reduction SELF-LIMITING at
+precisely int16 range for any number of voices. Neither constant is
+arbitrary; they are two unknowns solving "converge to full scale."
+
+**Width verdicts:** 18-bit leaves (the noise arm's sign-extended 17-bit
+wrapped sample sets the floor); 19-bit sum inside soft_add (tight);
+18-bit stack (the fixed-point bound); dry16's [15:0] slice justified by
+the same bound, with a one-LSB boundary question (an exact +-32,768 hit
+rounds to the int16 edge) left open but corpus-covered.
+
+**Closed candidates re-affirmed:** H5' (four-leaf mixer, at most 4 of 8
+leaves audible) stays blocked by soft_add's non-identity on zero —
+soft_add(x, 0) re-compresses any |x| >= 24,576, so dropping zero leaves
+changes loud renders; the catalog's -202 compression ceiling is the
+architecture, not fabric. Radix-4 question (same day, conversational):
+the multiply core's radix is width-invariant to first order (product
+bound dominates; staging = radix_bits), the 3a pre-adder rides a carry
+chain while Booth recode would ride LUT selection (the LAW), the
+schedule pins mode latencies, and the multipump already doubles
+effective radix in time — radix-4 magnitude-only is fabric-optimal;
+closed as a question (H154's +51 is the adjacent measured refutation).
+
+With chapters A, C and E closed and B/D queued as documentation, every
+arithmetic quarter of the PSG — oscillators, voices, magnitude, mixer —
+now has a first-principles width story.
+
 ## Hypothesis H169
 
 - **ID:** H169.
