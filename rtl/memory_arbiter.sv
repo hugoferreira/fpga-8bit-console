@@ -12,6 +12,7 @@ module memory_arbiter(
   // CPU interface
   input  logic [15:0] cpu_addr,     // CPU address bus
   input  logic cpu_write,           // CPU write signal (1=write, 0=read)
+  input  logic cpu_write_pend,      // ...the same, before the RDY gate
   input  logic [7:0] cpu_data_out,  // Data from CPU to memory
   output logic [7:0] cpu_data_in,   // Data from memory to CPU
   output logic cpu_rdy,             // CPU ready signal (1=ready, 0=halt)
@@ -24,6 +25,12 @@ module memory_arbiter(
   output logic psg_cs,              // PSG chip select ($4100 window)
   output logic [15:0] mem_addr,     // Memory address bus
   output logic mem_write,           // Memory write signal
+  // `mem_write` before the RDY gate. Identical to `mem_write` except while the
+  // CPU is stalled, where `mem_write` reads 0 for a write that has not
+  // committed yet and this holds the true intent. Only a slave that produces
+  // RDY may use it - a write enable driven from this would commit repeatedly
+  // for the whole stall. See rtl/cpu6502_core.sv's WE_PEND.
+  output logic mem_write_pend,
   output logic [7:0] mem_data_out,  // Data to memory
   input  logic [7:0] ram_data_in,   // Data from RAM
   input  logic [7:0] tb_data_in,    // Data from text buffer
@@ -101,16 +108,20 @@ module memory_arbiter(
       // During reset, drive default values
       mem_addr = 16'h0000;
       mem_write = 0;      // Read during reset
+      mem_write_pend = 0;
       mem_data_out = 8'h00;
     end else if (dma_active) begin
       // DMA has control of memory bus during VBLANK
       mem_addr = dma_addr;
       mem_write = dma_write;
+      // The DMA is never stalled by RDY, so intent and gated value coincide.
+      mem_write_pend = dma_write;
       mem_data_out = dma_data_out;
     end else begin
       // CPU has control of memory bus during normal operation
       mem_addr = cpu_addr;
       mem_write = cpu_write;
+      mem_write_pend = cpu_write_pend;
       mem_data_out = cpu_data_out;
     end
   end

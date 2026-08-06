@@ -54,6 +54,8 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
   wire  [15:0] cpu_addr;
   logic [7:0]  cpu_di, cpu_do;
   logic        cpu_write;
+  logic        cpu_write_pend;
+  logic        mem_write_pend;
   logic        cpu_rdy;
   wire         psg_rdy;
   
@@ -104,6 +106,8 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
     // CPU interface
     .cpu_addr(cpu_addr),
     .cpu_write(cpu_write),
+    .cpu_write_pend(cpu_write_pend),
+    .mem_write_pend(mem_write_pend),
     .cpu_data_out(cpu_do),
     .cpu_data_in(cpu_di),
     .cpu_rdy(cpu_rdy),
@@ -183,6 +187,7 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
     .data_in(cpu_di),
     .data_out(cpu_do),
     .write(cpu_write),
+    .write_pend(cpu_write_pend),
     // The PSG adds wait-states for state-memory-resident register accesses;
     // both ready sources freeze the core identically.
     .rdy(cpu_rdy && psg_rdy)
@@ -274,6 +279,7 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
         .reset(reset),
         .cs(psg_cs),
         .rw(mem_write),
+        .rw_pend(mem_write_pend),
         .addr(psg_cs ? mem_addr[7:0] : 8'h0),
         .di(mem_data_out),
         .dout(psg_do),

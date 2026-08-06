@@ -37,7 +37,7 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   psg #(.CLK_HZ(CLKHZ), .REALTIME_PREVIEW(PREVIEW_P),
         .MULTIPUMP(MULTIPUMP_P)) dut(
     .clk(clk), .fastclk(fastclk), .reset(reset),
-    .cs(cs), .rw(rw), .addr(addr), .di(di),
+    .cs(cs), .rw(rw), .rw_pend(rw), .addr(addr), .di(di),
     .dout(dout), .rdy(rdy), .pcm(pcm),
     .dbg());
 

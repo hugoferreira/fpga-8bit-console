@@ -56,6 +56,7 @@ module cpu6502_tb();
     .DI(DI),        // Data in from RAM
     .DO(DO),        // Data out to RAM
     .WE(WE),        // Write enable
+    .WE_PEND(),     // ungated write intent; unused here
     .IRQ(IRQ),
     .NMI(NMI),
     .RDY(RDY),

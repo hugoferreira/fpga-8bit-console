@@ -32,6 +32,10 @@ module cpu6502(
   input  logic [7:0] data_in,
   output logic [7:0] data_out,
   output bit         write,
+  // `write` before the RDY gate. A stall predicate that reads `write` is a
+  // combinational loop through the core; see the comment on WE_PEND in
+  // rtl/cpu6502_core.sv.
+  output bit         write_pend,
   // New signal - exposes RDY pin for memory arbiter
   input  bit         rdy
 );
@@ -48,6 +52,7 @@ module cpu6502(
     .DI(data_in),     // Data in
     .DO(data_out),    // Data out
     .WE(write),       // Write enable
+    .WE_PEND(write_pend), // ...and the same, ungated by RDY
     .IRQ(IRQ),
     .NMI(NMI),
     .RDY(rdy),        // Ready - the memory arbiter stalls the core with this

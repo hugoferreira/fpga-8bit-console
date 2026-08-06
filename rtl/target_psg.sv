@@ -83,7 +83,7 @@ module target_psg (
     psg #(.CLK_HZ(32'd18_750_000), .REVERB(0), .DBG_PORT(0),
           .MULTIPUMP(1)) psg0 (
         .clk(psgclk), .fastclk(fastclk), .reset(rst),
-        .cs(cs), .rw(rw), .addr(addr), .di(di),
+        .cs(cs), .rw(rw), .rw_pend(rw), .addr(addr), .di(di),
         .dout(dout), .rdy(rdy), .pcm(pcm), .dbg()
     );
     /* verilator lint_on PINCONNECTEMPTY */

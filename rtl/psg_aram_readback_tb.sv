@@ -20,7 +20,7 @@ module psg_aram_readback_tb;
 
   psg #(.CLK_HZ(18_750_000), .REVERB(0), .DBG_PORT(0),
         .SEQ_BUDGET(0), .MULTIPUMP(0)) dut(
-    .clk, .fastclk(clk), .reset, .cs, .rw, .addr, .di, .dout, .rdy(), .pcm,
+    .clk, .fastclk(clk), .reset, .cs, .rw, .rw_pend(rw), .addr, .di, .dout, .rdy(), .pcm,
     .dbg());
 
   task automatic write_reg(input logic [7:0] a, input logic [7:0] d);

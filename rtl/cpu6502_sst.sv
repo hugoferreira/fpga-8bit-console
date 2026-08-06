@@ -62,7 +62,7 @@ module cpu6502_sst (
   // The new core has a real test interface, so nothing here reaches into it.
   cpu6502_core u_cpu (
       .clk(clk), .reset(reset),
-      .AB(ab), .DI(di), .DO(dout), .WE(we),
+      .AB(ab), .DI(di), .DO(dout), .WE(we), .WE_PEND(),
       .IRQ(irq), .NMI(nmi), .RDY(rdy),
       .dbg_pc(o_pc), .dbg_a(o_a), .dbg_x(o_x), .dbg_y(o_y),
       .dbg_s(o_s), .dbg_p(o_p), .dbg_b(),

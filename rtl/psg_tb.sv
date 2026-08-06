@@ -30,7 +30,7 @@ module psg_tb;
   logic rdy;
   psg #(.CLK_HZ(CLKHZ), .MULTIPUMP(1)) dut(
     .clk(clk), .fastclk(fastclk), .reset(reset),
-    .cs(cs), .rw(rw), .addr(addr), .di(di),
+    .cs(cs), .rw(rw), .rw_pend(rw), .addr(addr), .di(di),
     .dout(dout), .rdy(rdy), .pcm(pcm),
     .dbg());
 

@@ -51,6 +51,10 @@ module psg #(
 
     input  bit                 cs,
     input  bit                 rw,
+    // `rw` before the bus master's RDY gate. Equal to `rw` except while this
+    // PSG is stalling the CPU, where `rw` collapses to 0 (see `rd_lvl` below).
+    // A master with no RDY input ties this to its `rw`.
+    input  bit                 rw_pend,
     input  logic [7:0]         addr,
     input  logic [7:0]         di,
     output logic [7:0]         dout,
@@ -178,6 +182,11 @@ module psg #(
   always_ff @(posedge clk) cs_wr_q <= cs && rw && (cs_wr_q || !cpu_stall);
   wire  cs_wr = (cs && rw) && !cs_wr_q && !cpu_stall;
   assign rdy = !cpu_stall;
+  // Still the GATED rw, deliberately. This decode has the same blind spot as
+  // rd_lvl did - a stalled write reads as a read - but it is not in the stall
+  // loop, and it only steers `aram_cpu_q` into `dout`, which the CPU is not
+  // sampling while it is stalled. Switching it to rw_pend is a behaviour change
+  // in the audio RAM read path and wants the golden-audio gate, not this fix.
   wire  aram_cpu_rd = cs && !rw && addr == 8'h02;
   wire [7:0] aram_cpu_q;
 
@@ -384,7 +393,18 @@ module psg #(
     // wr_pend deliberately omits rw: the 65C02 gates WE with RDY, so a stall
     // predicate that reads rw is a combinational loop through the CPU. The
     // frozen core holds cs/addr/di stable, which is what the lane decodes.
-    .wr_pend(cs && !cs_wr_q), .rd_lvl(cs && !rw),
+    //
+    // rd_lvl needs the read/write sense and so cannot dodge it the same way -
+    // it takes the UNGATED rw instead. Using `rw` here was the loop that
+    // comment warns about, and it was a real one, closing
+    //   cpu_stall -> rdy -> cpu6502_core WE = we_c & RDY -> arbiter mem_write
+    //             -> rw -> rd_lvl -> cpu_sfx_rd_lvl -> cpu_stall
+    // through the CPU core. It also mis-decoded: a WRITE that stalls drives WE
+    // low, so the bus reads as a read, and a stalled $1x write asserted the
+    // readback stall term and ran a spurious state-memory readback. rw_pend is
+    // `we_c` before the RDY gate, so it holds the true intent for the whole
+    // stall and the cycle is cut at its only combinational link.
+    .wr_pend(cs && !cs_wr_q), .rd_lvl(cs && !rw_pend),
     .wlk_we_i(state_sample_we), .wlk_rd_i(state_sample_read),
     .cpu_stall(cpu_stall),
     .mus_playing(mus_playing), .mus_pat(mus_pat), .mus_mask(mus_mask),

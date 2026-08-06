@@ -49,6 +49,14 @@ module cpu6502_core (
     input  logic [7:0]  DI,
     output logic [7:0]  DO,
     output logic        WE,
+    // The SAME write intent, NOT gated by RDY. `WE` is `we_c & RDY`, so while
+    // the core is stalled the bus reports "read" whatever the access really is.
+    // Anything that decides read-versus-write in order to *produce* RDY must
+    // use this instead, or it closes a combinational loop through the core:
+    // RDY -> WE -> bus rw -> stall predicate -> RDY. `we_c` is a function of
+    // registers that RDY holds frozen, so this is stable for the whole stall.
+    // See the `rd_lvl` note in rtl/psg.sv, which is the consumer that needs it.
+    output logic        WE_PEND,
     input  logic        IRQ,
     input  logic        NMI,
     input  logic        RDY,
@@ -766,6 +774,7 @@ module cpu6502_core (
     assign AB = ab_c;
     assign DO = do_c;
     assign WE = we_c & RDY;
+    assign WE_PEND = we_c;
 
     assign dbg_pc      = pc - 16'd1;
     assign dbg_a       = a;
