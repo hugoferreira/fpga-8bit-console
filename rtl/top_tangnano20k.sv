@@ -72,7 +72,17 @@ module top(input  bit clk,                    // 27 MHz crystal, pin 4
   // board pin. 27 MHz in, 112.5 MHz out, exactly (rtl/pll_gowin.v), so this is
   // the same number the BlackIce top uses and the PSG needs no board-specific
   // retune to land on its 22050 Hz virtual sample rate.
-  localparam PSG_CLK_HZ = 32'd112_500_000;
+  // ONE knob for the PSG's rate, as rtl/top.sv has it: PSG_DIV is both the
+  // divider clocks.sv uses and the divisor on the frequency the PSG computes
+  // its sample rate from, so the two cannot drift apart.
+  //
+  // This top used to hand the PSG the UNDIVIDED 112.5 MHz, which rtl/clocks.sv
+  // says in capitals does not close - and it also gave the PSG 5102 clocks per
+  // sample instead of 850, so this board rendered different audio from the
+  // BlackIce and the simulator. 18.75 MHz is the design's stated operating
+  // point; rtl/target_psg.sdc has constrained psgclk to 53.333 ns all along.
+  localparam PSG_DIV    = 6;
+  localparam PSG_CLK_HZ = 32'd112_500_000 / PSG_DIV;   // 18.75 MHz
 
   logic reset;
   logic masterclk;
@@ -98,12 +108,18 @@ module top(input  bit clk,                    // 27 MHz crystal, pin 4
   // The BlackIce top keeps the counter because SB_PLL40_CORE has no second
   // divided output to use instead. That board should be re-checked for the same
   // hazard; it has never been placed, so nobody has looked.
+  // clocks.sv supplies the reset counter AND the PSG clock now; its /32 outputs
+  // stay unconnected because the rPLL's CLKOUTD does that on a real clock
+  // network. psgclk has no second PLL output to use, so it is clocks.sv's
+  // modulo-6 divider output - a flip-flop net. nextpnr-himbaechel promotes
+  // clock nets to the global network by itself (there is no BUFG in yosys's
+  // Gowin library to force it); if that ever stops happening the symptom is
+  // hold violations, which the build checks for.
   /* verilator lint_off PINCONNECTEMPTY */
-  clocks clocks0(.clk(pllclk), .reset,
-                 .masterclk(), .videoclk(), .cpuclk(), .psgclk());
+  clocks #(.PSGDIV(PSG_DIV)) clocks0(.clk(pllclk), .reset,
+                 .masterclk(), .videoclk(), .cpuclk(), .psgclk(psgclk));
   /* verilator lint_on PINCONNECTEMPTY */
 
-  assign psgclk    = pllclk;
   assign masterclk = pllclk_div32;
   assign videoclk  = pllclk_div32;
   assign cpuclk    = pllclk_div32;
@@ -157,7 +173,7 @@ module top(input  bit clk,                    // 27 MHz crystal, pin 4
   /* verilator lint_off PINCONNECTEMPTY */
   // psg_dbg is a verification-only bus; unconnected here so it synthesises away.
   chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE), .CLK_HZ(PSG_CLK_HZ),
-         .RAM_ADDR_BITS(16), .PSG_DBG(0), .PSG_MULTIPUMP(0))
+         .RAM_ADDR_BITS(16), .PSG_DBG(0), .PSG_MULTIPUMP(0), .REVERB(0))
     chip(.clk(masterclk), .cpuclk(cpuclk), .psgclk(psgclk),
          .psgfastclk(pllclk), .reset, .vsync,
          .hsync, .vpos, .hpos,
@@ -179,7 +195,12 @@ module top(input  bit clk,                    // 27 MHz crystal, pin 4
   // Both run on psgclk: a delta-sigma modulator's noise shaping is only as
   // good as its oversampling ratio, and the I2S divider wants the fast clock
   // to reach a sane bit rate.
-  i2s_out i2s0(.clk(psgclk), .reset(reset), .pcm(audio),
+  // HALF is retuned with PSG_DIV: psgclk is 18.75 MHz now, not 112.5, so
+  // HALF = 6 gives BCLK = 18.75 / 12 = 1.5625 MHz and LRCK = 48.83 kHz - still
+  // inside the MAX98357A's 8-96 kHz window, and about twice the PSG's 22050 Hz
+  // virtual rate, which is the zero-order hold this stage has always relied on.
+  // Leaving HALF at 40 would have put LRCK at 7.3 kHz, below the part's floor.
+  i2s_out #(.HALF(6)) i2s0(.clk(psgclk), .reset(reset), .pcm(audio),
                .bclk(i2s_bclk), .lrck(i2s_lrck), .din(i2s_din));
   assign pa_en = pll_locked & ~reset;
 

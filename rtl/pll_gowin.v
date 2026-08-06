@@ -1,12 +1,18 @@
 /**
- * PLL configuration - Gowin GW2A/GW2AR (Tang Nano 20K)
+ * PLL configuration - Gowin GW2A/GW2AR
+ *
+ * Shared by BOTH Gowin boards: the Tang Nano 20K (GW2AR-18C) and the Tang
+ * Primer 20K (GW2A-18C). They are the same die and both run from a 27 MHz
+ * crystal, so this file needs no retune between them and neither board has a
+ * variant of it. Only the input BALL differs - Nano pin 4, Primer H11 - which
+ * is a constraints matter and appears in neither this file nor `clocks.sv`.
  *
  * The Gowin counterpart of rtl/pll.v, which is an SB_PLL40_CORE and therefore
  * iCE40-only. Same contract: one input clock in, 112.5 MHz out, plus a lock
  * flag. rtl/clocks.sv derives everything else by integer division, so nothing
  * downstream of here knows which device it is running on.
  *
- *   Input:  27.000 MHz (the board crystal, FPGA pin 4)
+ *   Input:  27.000 MHz (the board crystal: Nano pin 4, Primer ball H11)
  *   Output: 112.500 MHz (achieved exactly)
  *
  * Exactly, not approximately, which is the reason this board needed no retune:
@@ -27,7 +33,7 @@
  * Both are comfortably inside their windows, so this is not a marginal PLL
  * setting that a speed-grade change would invalidate.
  *
- * Note the crystal on pin 4 is the 27 MHz oscillator, NOT the MS5351 clock
+ * On the Tang Nano 20K only: the crystal on pin 4 is the 27 MHz oscillator, NOT the MS5351 clock
  * generator on pins 10/11/13. The MS5351 outputs are programmed over I2C by
  * the onboard BL616 and default to 27 MHz too, but they are reported not to
  * bring an rPLL's LOCK high when used as its reference. Pin 4 is the one to

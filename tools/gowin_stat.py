@@ -27,7 +27,12 @@ import json
 import sys
 from collections import Counter
 
-# GW2AR-LV18QN88C8/I7. Totals as nextpnr-himbaechel reports them for this part.
+# The two Gowin boards are the SAME DIE - the Tang Nano 20K's GW2AR-18C is the
+# Tang Primer 20K's GW2A-18C with SDRAM added inside the package - so one set of
+# limits serves both and only the name printed at the top differs. Pass it as
+# the second argument; nothing below it is device-specific.
+#
+# Totals are as nextpnr-himbaechel reports them for these parts.
 DEVICE = "GW2AR-18C"
 LIMITS = {
     "LUT4": 20736, "ALU": 15552, "DFF": 15552, "BSRAM": 46,
@@ -55,7 +60,7 @@ def row(label, used, total):
     return f"    {label:<12} {used:>6} of {total:<6} {100.0 * used / total:5.1f}%"
 
 
-def main(path):
+def main(path, device=DEVICE):
     with open(path) as f:
         design = json.load(f)
 
@@ -82,7 +87,7 @@ def main(path):
                              if t.startswith("RAM16S")),
         }
 
-        print(f"  {mod_name} on the {DEVICE} (yosys estimate; "
+        print(f"  {mod_name} on the {device} (yosys estimate; "
               f"nextpnr's own report is the authority):")
         for label, total in LIMITS.items():
             if counted[label] or label in ("LUT4", "ALU", "DFF", "BSRAM"):
@@ -98,4 +103,5 @@ def main(path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "build/gowin/top.json")
+    main(sys.argv[1] if len(sys.argv) > 1 else "build/gowin/top.json",
+         sys.argv[2] if len(sys.argv) > 2 else DEVICE)

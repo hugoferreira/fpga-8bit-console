@@ -1108,6 +1108,11 @@ gates-psg:
 # ------------------------------------------------------------------------------
 GOWIN_TOP     = rtl/top_tangnano20k.sv
 GOWIN_CST     = rtl/tangnano20k.cst
+# Per-clock timing constraints, shared by both Gowin boards. Without it nextpnr
+# targets 12 MHz by default and its "Max frequency" line is a lower bound taken
+# under no timing pressure - see the header of the file, which is worth reading
+# before quoting any Fmax number from this flow.
+GOWIN_SDC     = rtl/gowin_boards.sdc
 # The part as nextpnr names it, the die as apicula names it. The GW2AR-18C is
 # the GW2A-18C die with 64 Mbit of SDRAM in the package, so the chipdb and the
 # packer both want the plain GW2A-18C.
@@ -1132,6 +1137,16 @@ OFL_BOARD     = tangnano20k
 # the RTL. Worth re-testing against a newer nextpnr before chasing it further.
 GOWIN_SEED   ?= 1
 
+# ...and the Tang Nano 20K needs a different one, as of 2026-08-06. That board's
+# current netlist hits the segfault above at seed 1, deterministically, on
+# 'chip.mem_addr[2]'. Seed 2 places those nets elsewhere and routes clean. The
+# Tang Primer 20K is the same design on the same die and is fine at seed 1, so
+# this is placement luck, not an RTL property - expect it to move again the next
+# time the design changes. Override exactly like GOWIN_SEED:
+#
+#   make tangnano20k TANGNANO_SEED=3
+TANGNANO_SEED ?= 2
+
 # Not INCLUDE_FILES: that is `rtl/**/*.v`, and make does not know `**`, so it
 # globs to `rtl/*/*.v` and then demands a rule for the literal `rtl/golden/*.v`
 # when no file matches. The design is one flat directory, so say so.
@@ -1155,30 +1170,23 @@ build/gowin/top.json: ${GOWIN_TOP} ${GOWIN_SRC} ${FONT_HEX} hex
 tangnano20k-synth: build/gowin/top.json
 	@python3 tools/gowin_stat.py $<
 
-build/gowin/top_pnr.json: build/gowin/top.json ${GOWIN_CST}
+build/gowin/top_pnr.json: build/gowin/top.json ${GOWIN_CST} ${GOWIN_SDC}
+	@# --sdc gives nextpnr the REAL per-clock periods, so placement and routing
+	@# are timing-driven at 112.5/3.515625 MHz rather than at its 12 MHz default,
+	@# and the Fmax it prints is a verdict instead of a lower bound taken under
+	@# no timing pressure. --timing-allow-fail keeps a missing domain from
+	@# aborting the build: the PSG's domain is known short, and blocking the
+	@# bitstream would block board bring-up on the 20x-margin console logic too.
+	@# The report below is loud about it instead.
 	${NEXTPNR_GOWIN} --json $< --write $@ \
 	    --device ${GOWIN_DEVICE} \
 	    --vopt family=${GOWIN_FAMILY} \
 	    --vopt cst=${GOWIN_CST} \
-	    --seed ${GOWIN_SEED} > build/gowin/pnr.log 2>&1
+	    --sdc ${GOWIN_SDC} --timing-allow-fail \
+	    --seed ${TANGNANO_SEED} > build/gowin/pnr.log 2>&1
 	@grep -E '(LUT4|ALU|DFF|BSRAM|MULT18X18|rPLL|IOB): +[0-9]+/' build/gowin/pnr.log \
 	  | sed 's/^Info:/ /' || true
-	@# nextpnr is run WITHOUT a frequency target, on purpose. `--freq` applies one
-	@# number to every unconstrained domain, and this design has three that differ
-	@# by 32x - constraining cpuclk at the PSG's 112.5 MHz would report a domain
-	@# with 14x of margin as failing. So take the per-domain Fmax nextpnr reports
-	@# anyway and check each against what the design actually asks of it
-	@# (rtl/clocks.sv). Fmax is printed twice per clock, after placement and after
-	@# routing; keep the LAST, which is the routed one.
-	@echo "  timing, against what rtl/clocks.sv asks of each domain:"
-	@grep 'Max frequency for clock' build/gowin/pnr.log \
-	  | sed "s/.*clock *'//; s/': */ /; s/ MHz.*//" \
-	  | awk '{ f[$$1] = $$2 } END { \
-	      need["pllclk"] = 112.5; need["cpuclk"] = 3.515625; \
-	      for (c in f) if (c in need) \
-	        printf "    %-9s %8.2f MHz achieved, %10.4f needed   %s\n", \
-	               c, f[c], need[c], (f[c] >= need[c] ? "ok" : "*** SHORT ***"); \
-	      else printf "    %-9s %8.2f MHz achieved   (derived clock, no target)\n", c, f[c] }'
+	@python3 tools/gowin_timing.py build/gowin/pnr.log
 
 bin/toplevel.fs: build/gowin/top_pnr.json
 	@mkdir -p bin
@@ -1194,6 +1202,78 @@ tangnano20k-prog: bin/toplevel.fs
 tangnano20k-flash: bin/toplevel.fs
 	${OFL} -b ${OFL_BOARD} -f bin/toplevel.fs
 
+# ------------------------------------------------------------------------------
+# Board: Sipeed Tang Primer 20K + Dock ext-board (Gowin GW2A-LV18PG256C8/I7)
+#
+# The third board, and much the cheapest of the three to have added: the Primer
+# 20K's GW2A-18C is the SAME DIE as the Tang Nano 20K's GW2AR-18C - the `R` part
+# is that die with SDRAM inside the package - so the chipdb, the family, the
+# packer argument and the 27 MHz crystal are all shared with the block above.
+# Only the top, the constraints and the part string differ.
+#
+#   make tangprimer20k          bin/tangprimer20k.fs, the bitstream
+#   make tangprimer20k-synth    area report only, no place-and-route
+#   make tangprimer20k-prog     load into SRAM (volatile, gone at power-off)
+#   make tangprimer20k-flash    write to the onboard flash (persistent)
+#
+# GAME selects the program here as everywhere else: make tangprimer20k GAME=nemo
+#
+# Same four tools as the Tang Nano path. Two things differ at the board:
+#
+#   * The DIP switch on the Dock has to enable the core board or the debugger
+#     cannot reach the FPGA's JTAG at all. See docs/boards.md.
+#   * Audio is a PT8211 DAC, not an I2S amplifier - rtl/pt8211_out.sv, not
+#     rtl/i2s_out.sv. They are not interchangeable.
+# ------------------------------------------------------------------------------
+GOWIN_PRIMER_TOP    = rtl/top_tangprimer20k.sv
+GOWIN_PRIMER_CST    = rtl/tangprimer20k.cst
+# The package differs (PG256 BGA, not the Nano's QN88), so the part string does;
+# the die does not, so GOWIN_FAMILY and GOWIN_DIE above are reused as they are.
+GOWIN_PRIMER_DEVICE = GW2A-LV18PG256C8/I7
+GOWIN_PRIMER_DIR    = build/gowin_primer
+GOWIN_PRIMER_FS     = bin/tangprimer20k.fs
+OFL_PRIMER_BOARD    = tangprimer20k
+
+$(GOWIN_PRIMER_DIR)/top.json: $(GOWIN_PRIMER_TOP) $(GOWIN_SRC) ${FONT_HEX} hex
+	@mkdir -p $(GOWIN_PRIMER_DIR)
+	yosys -p "read_verilog -Irtl -sv $(GOWIN_PRIMER_TOP); \
+	          synth_gowin -top top -json $@; \
+	          delete t:\$$print; \
+	          write_json $@" > $(GOWIN_PRIMER_DIR)/synth.log 2>&1
+
+tangprimer20k-synth: $(GOWIN_PRIMER_DIR)/top.json
+	@python3 tools/gowin_stat.py $< GW2A-18C
+
+$(GOWIN_PRIMER_DIR)/top_pnr.json: $(GOWIN_PRIMER_DIR)/top.json $(GOWIN_PRIMER_CST) \
+                                 $(GOWIN_SDC)
+	@# Same SDC as the Tang Nano rule above - same die, same PLL, same clock net
+	@# names - and the same reason for --timing-allow-fail.
+	$(NEXTPNR_GOWIN) --json $< --write $@ \
+	    --device $(GOWIN_PRIMER_DEVICE) \
+	    --vopt family=$(GOWIN_FAMILY) \
+	    --vopt cst=$(GOWIN_PRIMER_CST) \
+	    --sdc $(GOWIN_SDC) --timing-allow-fail \
+	    --seed $(GOWIN_SEED) > $(GOWIN_PRIMER_DIR)/pnr.log 2>&1
+	@grep -E '(LUT4|ALU|DFF|BSRAM|MULT18X18|rPLL|IOB): +[0-9]+/' \
+	  $(GOWIN_PRIMER_DIR)/pnr.log | sed 's/^Info:/ /' || true
+	@python3 tools/gowin_timing.py $(GOWIN_PRIMER_DIR)/pnr.log
+
+$(GOWIN_PRIMER_FS): $(GOWIN_PRIMER_DIR)/top_pnr.json
+	@mkdir -p bin
+	$(GOWIN_PACK) -d $(GOWIN_DIE) -o $@ $<
+
+tangprimer20k: $(GOWIN_PRIMER_FS)
+
+# SRAM, not flash: this is the one to use while iterating, and the board comes
+# back up with whatever is in flash after a power cycle.
+tangprimer20k-prog: $(GOWIN_PRIMER_FS)
+	$(OFL) -b $(OFL_PRIMER_BOARD) $<
+
+tangprimer20k-flash: $(GOWIN_PRIMER_FS)
+	$(OFL) -b $(OFL_PRIMER_BOARD) -f $<
+
+.PHONY: tangprimer20k tangprimer20k-synth tangprimer20k-prog tangprimer20k-flash
+
 boards:
 	@echo "Boards this design targets:"
 	@echo
@@ -1204,9 +1284,21 @@ boards:
 	@printf '  %-14s %s\n' 'tangnano20k' 'Sipeed Tang Nano 20K - Gowin GW2AR-18C, 27 MHz'
 	@printf '  %-14s %s\n' ''           '  make tangnano20k / make tangnano20k-prog'
 	@printf '  %-14s %s\n' ''           '  the full 64 KB RAM, in 32 of the 46 block RAMs'
+	@printf '  %-14s %s\n' ''           '  audio: onboard MAX98357A over I2S'
+	@printf '  %-14s %s\n' ''           '  needs TANGNANO_SEED=2 (the default here) - see docs/boards.md'
+	@echo
+	@printf '  %-14s %s\n' 'tangprimer20k' 'Sipeed Tang Primer 20K + Dock - Gowin GW2A-18C, 27 MHz'
+	@printf '  %-14s %s\n' ''             '  make tangprimer20k / make tangprimer20k-prog'
+	@printf '  %-14s %s\n' ''             '  same die as the Nano 20K, so the same 64 KB RAM fit'
+	@printf '  %-14s %s\n' ''             '  audio: Dock PT8211 DAC -> 3.5mm jack (NOT I2S)'
 	@echo
 	@echo "  make tangnano20k-synth       area report, no place-and-route"
-	@echo "  See docs/boards.md for the toolchain and the pin map."
+	@echo "  make tangprimer20k-synth     likewise, for the Primer"
+	@echo "  See docs/boards.md for the toolchain and the pin maps."
+	@echo
+	@echo "  Both Gowin boards build the whole console and sit at 46/46 block"
+	@echo "  RAMs - zero headroom. That fit needs REVERB(0), which every board"
+	@echo "  top passes; the simulator keeps reverb. Neither has run on hardware."
 
 .PHONY: boards tangnano20k tangnano20k-synth tangnano20k-prog tangnano20k-flash
 

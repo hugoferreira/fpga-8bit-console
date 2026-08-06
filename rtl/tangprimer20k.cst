@@ -1,0 +1,112 @@
+// Sipeed Tang Primer 20K + Dock ext-board - physical constraints for
+// rtl/top_tangprimer20k.sv
+//
+// The third board file, after rtl/top.pcf (BlackIce MX) and
+// rtl/tangnano20k.cst. Pin names here are FPGA BALL DESIGNATORS on the
+// GW2A-LV18PG256C8/I7 (PG256, a 256-ball BGA), not header positions - the
+// Primer 20K is a bare core board in a DDR3 SODIMM outline, and every
+// peripheral lives on the ext-board it plugs into. So a ball tells you nothing
+// about where a wire goes without the Dock schematic; the CARD1 SODIMM position
+// is in the comment on each line for exactly that reason.
+//
+// Provenance, because none of this has been on hardware: ball/position pairs
+// come from litex-boards' sipeed_tang_primer_20k.py, which carries the full
+// 204-position CARD1 map and the Dock's LED/key assignment, cross-checked
+// against Sipeed's own TangPrimer-20K-example .cst files. Where the two
+// disagree nothing has been invented - see docs/boards.md.
+//
+// nextpnr-himbaechel requires EVERY top-level port to appear here - an
+// unassigned port is an error, not a warning, so this file and the port list of
+// top_tangprimer20k.sv have to be kept in step.
+//
+// ---------------------------------------------------------------------------
+// Clock
+// ---------------------------------------------------------------------------
+// The 27 MHz crystal on the CORE board, so this one ball is the same whichever
+// ext-board is fitted. 27 MHz is also the Tang Nano 20K's crystal, which is why
+// rtl/pll_gowin.v is reused here unchanged and every derived frequency in
+// rtl/clocks.sv is identical on the two Gowin boards.
+IO_LOC  "clk" H11;
+IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// ---------------------------------------------------------------------------
+// User keys (active low)
+// ---------------------------------------------------------------------------
+// The Dock has five user keys. Only ONE of them, btn_n0, is in a 3.3 V bank;
+// the other four sit in the bank the Dock's DDR3 shares, so they are 1.5 V I/O
+// and must be declared LVCMOS15 or the bank is configured at the wrong voltage.
+// That is not a workaround - Sipeed's own LiteX constraints declare them the
+// same way. This design instantiates no DDR3, but the bank VCCIO is a board
+// fact, not a design choice.
+IO_LOC  "key1" T10;  // CARD1:15,  btn_n0 - reads as button O ($4007 bit 4)
+IO_PORT "key1" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "key2" T3;   // CARD1:165, btn_n1 - reads as button X ($4007 bit 5)
+IO_PORT "key2" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+
+// ---------------------------------------------------------------------------
+// LEDs (assumed active low)
+// ---------------------------------------------------------------------------
+// Dock led0 and led1. Both mean "healthy": a working board shows two lit LEDs
+// shortly after power-on, and one lit with one dark localises a fault to one
+// side of the PLL.
+//
+// POLARITY IS UNVERIFIED. Sipeed's board self-test drives these LEDs to all-ones
+// at reset, which only makes sense if they are active low, and every other Tang
+// board here is active low - but nobody has looked at this one. If both LEDs are
+// dark on a board that is otherwise working, invert the two `assign`s in
+// rtl/top_tangprimer20k.sv; that is the whole fix.
+IO_LOC  "led_reset" L16;  // CARD1:44, led0 - lit once reset is released
+IO_PORT "led_reset" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC  "led_lock" L14;   // CARD1:46, led1 - lit once the PLL has locked
+IO_PORT "led_lock" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+
+// ---------------------------------------------------------------------------
+// SPI LCD (ST7789, 320x240) - the one thing an operator has to wire
+// ---------------------------------------------------------------------------
+// These are the balls Sipeed's own SPI_lcd example uses to drive a serial panel
+// on a 20K ext-board, which is the closest thing to an authority that exists
+// for this: six signals, the shape of one PMOD connector's eight, and not one
+// of them collides with anything the Dock assigns (HDMI, RGB FPC, Ethernet,
+// microSD, LEDs, keys, headphone DAC - all checked against the CARD1 map).
+//
+// What is NOT established is which PMOD connector they land on, because the
+// CARD1 positions of these six balls are absent from every map available here.
+// So: reserved and routable, not wired. Read them off the Dock schematic before
+// connecting a panel.
+IO_LOC  "scl" F12;      // SPI clock
+IO_PORT "scl" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "sda" L15;      // SPI data (MOSI)
+IO_PORT "sda" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "cs" C16;       // chip select
+IO_PORT "cs" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "rs" J13;       // data/command
+IO_PORT "rs" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_rst" G13;  // panel reset
+IO_PORT "lcd_rst" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+// ---------------------------------------------------------------------------
+// Audio
+// ---------------------------------------------------------------------------
+// The Dock's 3.5mm headphone jack: a PT8211 DAC into an LPA4809 amplifier.
+// Fixed by the board; these are not a choice. Note the DAC is NOT an I2S
+// receiver - see the header of rtl/pt8211_out.sv for what that costs.
+IO_LOC  "hp_bck" N15;   // CARD1:36
+IO_PORT "hp_bck" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "hp_ws" P16;    // CARD1:34
+IO_PORT "hp_ws" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "hp_din" P15;   // CARD1:30
+IO_PORT "hp_din" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "pa_en" R16;    // CARD1:28 - amplifier enable, high = enabled
+IO_PORT "pa_en" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+// The delta-sigma alternative, kept because it is the BlackIce's known-good
+// output stage and a second opinion is worth one pin when the DAC path above
+// has never been heard. Needs an RC low-pass (~1k + ~10nF) and an amplifier
+// off-board.
+//
+// This ball is `lcd_bl` in Sipeed's SPI_lcd example - the panel backlight,
+// which rtl/lcd.sv has no concept of and never drives. If your panel needs a
+// switched backlight rather than a tie to 3V3, take this pin for it and move
+// audio_pwm to another free position on the same connector.
+IO_LOC  "audio_pwm" P12;
+IO_PORT "audio_pwm" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
