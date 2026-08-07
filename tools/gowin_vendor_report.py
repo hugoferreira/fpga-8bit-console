@@ -60,6 +60,29 @@ def main(dirname):
     if m:
         print(f"    {'breakdown':<10} {' '.join(m.group(1).split())}")
 
+    # ---- clock networks -------------------------------------------------
+    # Every real clock must land on a global resource. This is checked rather
+    # than assumed because the open-source flow does NOT manage it: under
+    # nextpnr, psgclk stays on ordinary routing and picks up 0.53 ns of skew on
+    # the Tang Nano and 1.06 ns on the Primer - the same shape of fault that
+    # once cost cpuclk three hold violations, surviving on placement luck.
+    # Gowin promotes all three to PRIMARY. If that ever stops, say so loudly.
+    i = rpt.find("Global Clock Signals:")
+    if i >= 0:
+        table = rpt[i:i + 1200]
+        seen = dict(re.findall(r"\|\s*([A-Za-z_][\w./]*)\s*\|\s*\|\s*"
+                               r"(PRIMARY|GCLK|HCLK|LW)\s*\|", table))
+        print("  clock networks:")
+        for name in ("pllclk", "pllclk_div32", "psgclk"):
+            res = seen.get(name)
+            if res in ("PRIMARY", "GCLK", "HCLK"):
+                print(f"    {name:<14} {res}")
+            elif res:
+                print(f"    {name:<14} {res}   *** NOT A GLOBAL CLOCK - "
+                      f"expect skew and hold violations ***")
+            else:
+                print(f"    {name:<14} *** not on any global clock network ***")
+
     # Timing: the report pairs a constraint with the frequency achieved.
     tr = text_of(next(iter(d.glob("impl/pnr/*_tr_content.html")), Path("/nonexistent")))
     freqs = re.findall(r"\|\s*([0-9]+\.[0-9]+)\(MHz\)\s*\|", tr)

@@ -397,7 +397,22 @@ Two things this does **not** retract:
 
 - The critical path description below is still a real measurement of where the
   PSG's longest path runs. It is simply no longer a failing path.
-- **`psgclk` does NOT get a global clock network, and this is the loose end.**
+- **`psgclk` gets a global clock network under the vendor flow, and does not
+  under nextpnr.** Gowin puts all three clocks on PRIMARY networks, which
+  `tools/gowin_vendor_report.py` now asserts on every build rather than leaving
+  to luck:
+
+  ```
+    clock networks:
+      pllclk         PRIMARY
+      pllclk_div32   PRIMARY
+      psgclk         PRIMARY
+  ```
+
+  Since the Tang boards default to that flow, the hazard below applies only to
+  `PNR=nextpnr` builds.
+
+- **Under `PNR=nextpnr`, `psgclk` does NOT get a global clock network.**
   It is a flip-flop output from `clocks.sv`'s modulo-6 divider, and
   `nextpnr-himbaechel` promotes `pllclk` ("global resources only") and `cpuclk`
   ("partially") but **not** `psgclk`. There is no lever to force it: `BUFG` does
@@ -414,11 +429,12 @@ Two things this does **not** retract:
   Both build clean, so this is not a present fault. But it is clean *by
   placement luck* — the same design skews by 2x between two boards, and 2.04 ns
   is what produced three hold violations on `cpuclk`. Read a hold violation here
-  as "the promotion did not happen", not as an RTL bug. **The robust fix is the
-  second rPLL** (1 of 2 free): cascade it from 112.5 MHz at 1/6 — PFD 18.75 MHz,
-  VCO 600 MHz at ODIV 32, both legal — making `psgclk` a real PLL clock. Its
-  cost is that `PSGDIV` and the PLL settings become two places to keep in step,
-  which is the drift `clocks.sv` warns detunes audio silently.
+  as "the promotion did not happen", not as an RTL bug. **The fix that was
+  actually taken is the default flow**: Gowin's tools promote `psgclk` by
+  themselves, so the problem does not arise there. If the nextpnr path ever has
+  to carry hardware, the remaining option is the free second rPLL cascaded from
+  112.5 MHz at 1/6 (PFD 18.75 MHz, VCO 600 MHz at ODIV 32, both legal), at the
+  cost of `PSGDIV` and the PLL settings becoming two places to keep in step.
 
 The critical path, as measured when the domain was over-constrained: it runs
 from the reset counter through the arbiter's PSG select decode into the PSG's
@@ -871,6 +887,51 @@ the RTL loads memory images both relative to the working directory
 (`./rtl/attrram.hex`) and by bare name (`setup_st7789_565.hex`) — running
 anywhere else breaks one or the other — and because it keeps Gowin's `impl/`
 tree out of the repository root.
+
+### Two SDCs, one source of truth
+
+`make sdc-check` (also run by `gowin-check`) derives the clock frequencies
+**from the RTL** — the rPLL dividers in `rtl/pll_gowin.v`, `PSG_DIV` from the
+board tops — and checks both SDC files against them:
+
+```
+  clock frequencies the RTL defines:
+    cpuclk       3.5156 MHz
+    pllclk     112.5000 MHz
+    psgclk      18.7500 MHz
+    gowin_boards.sdc       3 clock(s)
+    gowin_vendor.sdc       2 clock(s), not constrained: cpuclk
+  sdc-check: both SDCs agree with the RTL
+```
+
+It checks against the design rather than merely comparing the two files against
+each other, because the failure this closes was exactly that: a board top and a
+constraint both disagreed with `rtl/clocks.sv`, and the resulting "the PSG
+misses its clock by 2.3x" stood for two weeks. A clock a file deliberately does
+not constrain is reported, not failed.
+
+### Incremental builds, and Apple's make
+
+`make tangprimer20k` twice in a row used to redo everything, because `hex` was a
+phony target and every expensive rule named it as a prerequisite. It is now a
+real file target keyed on a per-GAME stamp (`build/.game-<name>`), so a no-op
+rebuild is **0.04 s** instead of the full flow.
+
+Getting that right needed two attempts, both defeated by **GNU Make 3.81** —
+the 2006 version Apple still ships:
+
+- A stamp that `rtl/ram.hex` merely *depends* on fails: 3.81 compares mtimes at
+  1-second granularity, and switching `GAME` writes the stamp ~40 ms after the
+  previous hex. Make prints `is newer than target` and `No need to remake
+  target` on consecutive lines.
+- Having the stamp's recipe *delete* `rtl/ram.hex` fails too: 3.81 stats the
+  target before running prerequisite recipes, so it never notices the file went
+  away and simply leaves it deleted.
+
+So the stamp and the hex are made by **one recipe**, which depends on neither
+sub-second timestamps nor restat behaviour. Verified both ways: switching
+`GAME` back and forth regenerates the right image every time, and an unchanged
+rebuild does nothing.
 
 ### `make gowin-check`, and why it exists
 

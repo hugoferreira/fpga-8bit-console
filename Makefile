@@ -140,23 +140,75 @@ check-customasm-version:
 	     exit 1;; \
 	esac
 
-# `hex`/`hex-ca65` are phony on purpose: they must re-stamp whenever GAME
-# changes, and make cannot see that from timestamps alone.
+# rtl/ram.hex is a REAL file target, and `hex` is a phony alias for it.
+#
+# It used to be the other way round - `hex` carried the recipe - with the
+# reasoning that it "must re-stamp whenever GAME changes, and make cannot see
+# that from timestamps alone". True, but the cost was severe: every expensive
+# target that named `hex` as a prerequisite inherited a phony one and so could
+# never be up to date. `make tangprimer20k` twice in a row re-ran synthesis and
+# place-and-route the second time with nothing changed - ~10 minutes on the
+# nextpnr path, for nothing.
+#
+# The GAME problem is solved properly instead, by a stamp file whose NAME
+# encodes the selection. Switching GAME makes build/.game-<new> not exist, so
+# it is created, so it is newer than rtl/ram.hex, so the hex rebuilds. Leaving
+# GAME alone leaves an old stamp and the hex stands. That is a fact make can
+# see from timestamps.
+#
+# check-customasm-version is an order-only prerequisite (after the `|`): it has
+# to run first, but it is phony and must not by itself make the hex stale.
+# rtl/ram.hex is produced by a REAL file target - the per-GAME stamp - and
+# `hex` is a phony alias for it. Expensive targets depend on the stamp.
+#
+# It used to be the other way round: `hex` carried the recipe and was phony,
+# "because it must re-stamp whenever GAME changes and make cannot see that from
+# timestamps alone". The GAME reasoning was right; the cost was that every
+# expensive target naming `hex` inherited a phony prerequisite and could never
+# be up to date. `make tangprimer20k` twice in a row rebuilt everything the
+# second time - ~10 minutes on the nextpnr path, for nothing.
+#
+# The stamp solves GAME by ENCODING IT IN A FILENAME, which make can see.
+# Switching GAME means build/.game-<new> does not exist, so the recipe runs and
+# rewrites the hex; leaving GAME alone leaves a stamp newer than the sources and
+# nothing runs.
+#
+# The recipe lives on the STAMP rather than on rtl/ram.hex, and the two are made
+# together, because neither alternative survives Apple's GNU Make 3.81 (2006):
+#
+#   * a separate stamp that rtl/ram.hex merely depends on fails, because 3.81
+#     compares mtimes at 1-second granularity. Switching GAME writes the stamp
+#     ~40 ms after the previous hex, and make prints "is newer than target"
+#     and "No need to remake target" in consecutive lines.
+#   * having the stamp recipe DELETE rtl/ram.hex fails too: 3.81 stats the
+#     target before running prerequisite recipes, so it never notices the file
+#     went away and leaves it deleted.
+#
+# Making them in one recipe depends on neither sub-second timestamps nor
+# restat behaviour. check-customasm-version stays order-only: it must run
+# first, but being phony it must not make the stamp stale by itself.
+GAME_STAMP = build/.game-$(GAME)
+
 ifeq ($(GAME_ASM),customasm)
-hex: check-customasm-version $(GAME_SRC) $(GAME_DEPS)
+$(GAME_STAMP): $(GAME_SRC) $(GAME_DEPS) | check-customasm-version
 	mkdir -p build rtl
 	${CUSTOMASM} $(GAME_SRC) -t 10 --color=off --legacy=off \
 	  -f binary -o $(GAME_BIN) -- \
 	  -f symbols -o $(GAME_SYM) -- \
 	  -f readmemh,width:8 -o ${ASM_HEX}
 	@python3 tools/sym_to_lbl.py $(GAME_SYM) build/$(GAME).lbl
+	@rm -f build/.game-* && touch $@
 	@echo "rtl/ram.hex <- $(GAME_SRC) (customasm)"
 else
-hex: $(GAME_BIN)
-	mkdir -p rtl
+$(GAME_STAMP): $(GAME_BIN)
+	mkdir -p build rtl
 	${HEXDUMP} -v -e '16/1 "%02x " "\n"' $(GAME_BIN) > ${ASM_HEX}
+	@rm -f build/.game-* && touch $@
 	@echo "rtl/ram.hex <- $(GAME_BIN)"
 endif
+
+hex: $(GAME_STAMP)
+.PHONY: hex
 
 # Deprecated bridge: force the ca65/ld65 chain regardless of GAME_ASM. Only
 # meaningful for games whose source ca65 can still parse - once a game
@@ -1248,7 +1300,7 @@ GOWIN_SRC = $(wildcard rtl/*.sv) $(wildcard rtl/*.v) \
 # blocks in ram_async.sv and clocks.sv. They are simulation artifacts with no
 # hardware meaning, and handing them to a place-and-route tool is asking it to
 # find a cell type it has no bel for.
-build/gowin/top.json: ${GOWIN_TOP} ${GOWIN_SRC} ${FONT_HEX} hex
+build/gowin/top.json: ${GOWIN_TOP} ${GOWIN_SRC} ${FONT_HEX} $(GAME_STAMP)
 	@mkdir -p build/gowin
 	yosys -p "read_verilog -Irtl -sv ${GOWIN_TOP}; \
 	          synth_gowin -top top -json $@; \
@@ -1280,7 +1332,7 @@ build/gowin/top_pnr.json: build/gowin/top.json ${GOWIN_CST} ${GOWIN_SDC}
 	@python3 tools/gowin_timing.py build/gowin/pnr.log
 
 ifeq ($(PNR),gowin)
-bin/toplevel.fs: ${GOWIN_TOP} ${GOWIN_SRC} ${GOWIN_CST} ${GOWIN_VENDOR_SDC} ${FONT_HEX} hex
+bin/toplevel.fs: ${GOWIN_TOP} ${GOWIN_SRC} ${GOWIN_CST} ${GOWIN_VENDOR_SDC} ${FONT_HEX} $(GAME_STAMP)
 	@$(GOWIN_BUILD) tangnano20k GW2AR-18C ${GOWIN_DEVICE} \
 	  ${GOWIN_TOP} ${GOWIN_CST} $@
 else
@@ -1331,7 +1383,7 @@ GOWIN_PRIMER_DIR    = build/gowin_primer
 GOWIN_PRIMER_FS     = bin/tangprimer20k.fs
 OFL_PRIMER_BOARD    = tangprimer20k
 
-$(GOWIN_PRIMER_DIR)/top.json: $(GOWIN_PRIMER_TOP) $(GOWIN_SRC) ${FONT_HEX} hex
+$(GOWIN_PRIMER_DIR)/top.json: $(GOWIN_PRIMER_TOP) $(GOWIN_SRC) ${FONT_HEX} $(GAME_STAMP)
 	@mkdir -p $(GOWIN_PRIMER_DIR)
 	yosys -p "read_verilog -Irtl -sv $(GOWIN_PRIMER_TOP); \
 	          synth_gowin -top top -json $@; \
@@ -1357,7 +1409,7 @@ $(GOWIN_PRIMER_DIR)/top_pnr.json: $(GOWIN_PRIMER_DIR)/top.json $(GOWIN_PRIMER_CS
 
 ifeq ($(PNR),gowin)
 $(GOWIN_PRIMER_FS): $(GOWIN_PRIMER_TOP) $(GOWIN_SRC) $(GOWIN_PRIMER_CST) \
-                    $(GOWIN_VENDOR_SDC) ${FONT_HEX} hex
+                    $(GOWIN_VENDOR_SDC) ${FONT_HEX} $(GAME_STAMP)
 	@$(GOWIN_BUILD) tangprimer20k GW2A-18C $(GOWIN_PRIMER_DEVICE) \
 	  $(GOWIN_PRIMER_TOP) $(GOWIN_PRIMER_CST) $@
 else
@@ -1395,13 +1447,21 @@ tangprimer20k-flash: $(GOWIN_PRIMER_FS)
 # docs/boards.md records the other two rules this cell library imposes - no
 # module named ALU, no typedef enum at $unit scope. Run this before assuming
 # a change is portable.
-gowin-check: hex ${FONT_HEX}
+gowin-check: sdc-check $(GAME_STAMP) ${FONT_HEX}
 	@GOWIN_RUN=syn $(GOWIN_BUILD) tangnano20k-check GW2AR-18C ${GOWIN_DEVICE} \
 	  ${GOWIN_TOP} ${GOWIN_CST}
 	@GOWIN_RUN=syn $(GOWIN_BUILD) tangprimer20k-check GW2A-18C $(GOWIN_PRIMER_DEVICE) \
 	  $(GOWIN_PRIMER_TOP) $(GOWIN_PRIMER_CST)
 
-.PHONY: gowin-check
+# The two SDC files restate the same periods in different dialects, and both
+# must agree with what rtl/pll_gowin.v and the board tops actually build. This
+# derives the frequencies from the RTL and checks both files against them -
+# cheap, and it closes the exact gap that let "the PSG misses its clock" stand
+# for two weeks while a board top and a constraint disagreed with clocks.sv.
+sdc-check:
+	@python3 tools/sdc_check.py
+
+.PHONY: gowin-check sdc-check
 
 boards:
 	@echo "Boards this design targets:"

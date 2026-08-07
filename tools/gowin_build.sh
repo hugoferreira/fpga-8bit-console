@@ -84,6 +84,11 @@ if [ "$RUN" = syn ]; then
 fi
 
 mkdir -p "$(dirname "$OUT")"
+# Gowin writes its bitstream read-only (r-xr-xr-x) and cp preserves that, so a
+# plain copy succeeds once and then fails with "Permission denied" on every
+# rebuild. Remove the target first and leave it writable.
+rm -f "$OUT"
 cp "$DIR/impl/pnr/$BOARD.fs" "$OUT"
+chmod u+w "$OUT"
 python3 tools/gowin_vendor_report.py "$DIR" || true
 echo "  wrote $OUT"
