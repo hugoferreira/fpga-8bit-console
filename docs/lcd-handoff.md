@@ -16,7 +16,7 @@ got through the bench as it stood.
 
 Working, verified on a Tang Primer 20K + Dock with MuseLab PMODs:
 
-- 27 MHz crystal, rPLL 112.5 MHz, CLKOUTD **/8** (14.0625 MHz chip clock - it
+- 27 MHz crystal, rPLL 112.5 MHz, CLKOUTD **/12** (9.375 MHz chip clock - it
   was /32, see "The clocking" below), both user LEDs (active **low**,
   silkscreened LED4/LED5 where litex calls them led0/led1).
 - PMOD0 audio: `dsigma` -> PAM8403 -> speaker. Confirmed with a tone.
@@ -199,16 +199,27 @@ much work the engine does:
    and a multi-bit bus tears - a fault that looks like geometry, not timing.
 
 At `PIXCLK=24`, constraint 1 gives `N <= 16` and constraint 2 gives
-`N` in {8,12,24}; the intersection is 8 or 12. **8** was taken: 14.0625 MHz, a
-console pixel every 6 chip clocks, 966 chip clocks a line against the engine's
-313. `cpuclk` closes at 33.4 MHz against its 14.06 MHz constraint.
+`N` in {8,12,24}; the intersection is 8 or 12.
+
+**8 was taken first and it silenced the audio.** There is a THIRD constraint,
+and it sets an upper bound rather than a lower one: the PSG samples CPU register
+writes in its own clock domain with no handshake, so the chip clock must not
+outrun `psgclk`. At /8 that ratio is 0.75 and writes are dropped - correct
+picture at 60.6 fps, every gate green, no music. See `24dd7b3` and
+`docs/cpu-psg-write-handoff.md`.
+
+**12** is the value that satisfies all three: 9.375 MHz, exactly 2:1 against
+`psgclk`, a console pixel every 4 chip clocks, 644 chip clocks a line against
+the engine's 313. `cpuclk` closes at 31.9 MHz against its 9.375 MHz constraint,
+and `make sdc-check` now fails if the PSG ratio drops below 2.
 
 ### The three steps, as landed
 
-1. `rtl/pll_gowin.v` `DYN_SDIV_SEL` 32 -> 8, and the `cpuclk` period in
+1. `rtl/pll_gowin.v` `DYN_SDIV_SEL` 32 -> 12, and the `cpuclk` period in
    `rtl/gowin_boards.sdc` to match. `tools/sdc_check.py` derives one from the
-   other, so they cannot drift. The CPU, PPU and arbiter all get 4x faster; the
-   game loop is vsync-locked, so that is headroom rather than a speed-up.
+   other, so they cannot drift. The CPU, PPU and arbiter all get 2.7x faster;
+   the game loop is vsync-locked, so that is headroom rather than a speed-up.
+   (Landed at /8 and corrected to /12 in `24dd7b3` - see above.)
 2. `SPI_HALF` 3 -> 1: SCL 56.25 MHz, the rate the panel was qualified at.
    45.5 fps.
 3. `rtl/rgb_quant.sv` into the path and `lcd.sv` taught 12-bit packing - three

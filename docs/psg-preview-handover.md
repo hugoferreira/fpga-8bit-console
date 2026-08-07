@@ -96,7 +96,7 @@ bit-identical), `64dbc0a` (the clock-split stopgap and the numbers behind it).
 >
 > So the remaining preview work is **not** the sequencer-shrinking plan below,
 > and not fidelity. It is making the CPU->PSG write survive a psgclk slower
-> than the CPU clock. That one fix buys the simulator ~72 fps AND removes the
+> than the CPU clock - written up in full in `docs/cpu-psg-write-handoff.md`. That one fix buys the simulator ~72 fps AND removes the
 > board's `>= 2 psgclk per chip clock` constraint, which is currently the only
 > thing coupling its frame rate to its audio.
 
