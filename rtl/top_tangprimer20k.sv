@@ -156,18 +156,22 @@ module top(input  bit clk,                    // 27 MHz crystal, ball H11
   // with a 112.5 MHz PLL sitting idle.
   //
   // SPI_HALF=1 is SCL = pllclk/2 = 56.25 MHz, the rate the panel was qualified
-  // at on hardware under a per-pixel grid pattern. At RGB565 that is 45.5 fps;
-  // the remaining step to 60.6 is colour depth, not clock rate.
+  // at on hardware under a per-pixel grid pattern.
   //
   // It was 3 (18.75 MHz, 15.2 fps) because the divider was 32:1, which forced
-  // a console pixel to be at least 3 * 32 = 96 pllclk and so PIXCLK >= 48.
-  // At 8:1 the floor is PIXCLK >= 12, and 32 clears it with a console pixel
-  // every 8 masterclk. The compositor was never the binding constraint - see
-  // the header of rtl/lcd.sv, which used to claim it was.
+  // a console pixel to be at least 3 * 32 = 96 pllclk and so PIXCLK >= 48. The
+  // compositor was never the binding constraint - see the header of rtl/lcd.sv,
+  // which used to claim it was.
+  //
+  // SPI_HALF=1 AND RGB565 IS NOT A VALID PAIR at this divider, even though it
+  // would give 45.5 fps: PIXCLK would be 32, and 32/12 is not an integer, which
+  // breaks the phase argument below. The pairs that work at 12:1 are the ones
+  // whose PIXCLK divides by 12, and RGB444/SPI_HALF=1 (PIXCLK=24) is the fastest
+  // of them. Colour depth and clock rate are not independent knobs here.
   //
   // hpos/vpos/vsync change in the pllclk domain; the same header explains why
   // that is safe, and that the argument depends on PIXCLK staying an integer
-  // multiple of the 8:1 ratio. RGB444 makes PIXCLK 24, and 24/8 = 3.
+  // multiple of the 12:1 ratio. RGB444 makes PIXCLK 24, and 24/12 = 2.
   //
   // THE PANEL SEES RGB444, THE CONSOLE STAYS RGB565. rgb_quant is the whole
   // difference between 45.5 and 60.6 fps - 25% fewer bytes a frame on a link

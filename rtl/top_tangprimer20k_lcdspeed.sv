@@ -47,7 +47,7 @@ module top(input  bit clk,
 
   localparam int W = 320, H = 240;
 
-  wire pllclk, pllclk_div, pll_locked;      // 112.5 MHz, 14.0625 MHz
+  wire pllclk, pllclk_div, pll_locked;      // 112.5 MHz, 9.375 MHz
   pll_gowin pll0(.clock_in(clk), .clock_out(pllclk), .clock_div(pllclk_div),
                  .locked(pll_locked));
 

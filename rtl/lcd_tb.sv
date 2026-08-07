@@ -55,7 +55,7 @@ module lcd_tb #(parameter int SPI_HALF = 2, parameter int RGBSIZE = 16);
   // pllclk:masterclk, rtl/pll_gowin.v DYN_SDIV_SEL. vsync crosses into the
   // masterclk domain, so a pulse narrower than this can be missed entirely -
   // which is how a rendered but completely static picture happened.
-  localparam int MASTER_DIV = 8;
+  localparam int MASTER_DIV = 12;
   // `dataout` is registered, so the serialiser shifts out its reset value once
   // before the first real byte: the panel sees a leading rs=0 0x00. That is a
   // NOP to an ST7789 and harmless, but it is on the wire and the bench has to

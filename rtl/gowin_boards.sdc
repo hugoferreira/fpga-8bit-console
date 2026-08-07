@@ -42,14 +42,14 @@ create_clock -name pllclk -period 8.889 [get_nets pllclk]
 #   1000 / 18.75 = 53.333 ns
 create_clock -name psgclk -period 53.333 [get_nets psgclk]
 
-# The chip clock: the rPLL's CLKOUTD, 112.5 / 8 = 14.0625 MHz. The CPU, the
+# The chip clock: the rPLL's CLKOUTD, 112.5 / 12 = 9.375 MHz. The CPU, the
 # PPU, the compositor and the video timing all run here.
 #
 # This was 112.5 / 32 = 3.515625 MHz, and the divider is a frame-rate parameter
 # rather than a speed knob - see the header of rtl/pll_gowin.v. tools/sdc_check.py
 # derives this period from DYN_SDIV_SEL, so the two cannot drift apart silently.
-#   1000 / 14.0625 = 71.111 ns
-create_clock -name cpuclk -period 71.111 [get_nets cpuclk]
+#   1000 / 9.375 = 106.667 ns
+create_clock -name cpuclk -period 106.667 [get_nets cpuclk]
 
 # ---------------------------------------------------------------------------
 # Two things this file CANNOT express, both of which limit what the report means

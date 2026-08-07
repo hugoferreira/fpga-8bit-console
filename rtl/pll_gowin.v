@@ -77,10 +77,23 @@
  *     synchroniser, and the only thing making that safe is that PIXCLK is an
  *     integer multiple of DYN_SDIV_SEL, so the update lands at a fixed phase.
  *
- * At 8 (14.0625 MHz) both hold for PIXCLK = 24, which is RGB444 at SPI_HALF=1:
- * 60.6 fps, a console pixel every 6 chip clocks, and 966 chip clocks per LCD
+ * At 12 (9.375 MHz) both hold for PIXCLK = 24, which is RGB444 at SPI_HALF=1:
+ * 60.6 fps, a console pixel every 4 chip clocks, and 644 chip clocks per LCD
  * line against the compositor's measured 313-clock worst case
  * (rtl/golden/ppu_cycles.txt). The engine was never the constraint.
+ *
+ * THE PSG SETS THE UPPER BOUND, and 8 was tried and is wrong. rtl/clocks.sv:
+ * "the PSG samples CPU-side register writes directly, and a masterclk-domain
+ * signal is stable for at least floor(32/PSGDIV) complete PSG clocks". The
+ * PSG's write capture is a level edge-detect in the psgclk domain with no
+ * synchroniser, so that window is the whole safety argument. psgclk is
+ * pllclk/6, so a masterclk period of N pllclk holds a signal for floor(N/6)
+ * complete PSG clocks: 5 at the old 32, but only ONE at 8 - and worse,
+ * 8/6 is ragged, so some masterclk periods contain one psgclk edge and some
+ * two. Measured on hardware: the console ran and the music stopped.
+ * 12/6 = 2 exactly, every period, with the edges still half a pllclk apart
+ * because clocks.sv derives psgclk on the FALLING edge. tools/sdc_check.py
+ * fails the build if this ratio drops below 2.
  *
  * The engine, the CPU and the memory arbiter all run here and all get 4x
  * faster. The game loop is vsync-locked, so that is headroom, not a speed-up.
@@ -90,7 +103,7 @@
 module pll_gowin(
 	input  clock_in,
 	output clock_out,	// 112.5 MHz
-	output clock_div,	// 112.5 / 8 = 14.0625 MHz, on the clock network
+	output clock_div,	// 112.5 / 12 = 9.375 MHz, on the clock network
 	output locked
 	);
 
@@ -107,7 +120,7 @@ module pll_gowin(
 		.DYN_ODIV_SEL("false"),
 		.CLKOUTD_SRC("CLKOUT"),
 		.CLKOUTD_BYPASS("false"),
-		.DYN_SDIV_SEL(8),	// CLKOUTD = CLKOUT / 8 = 14.0625 MHz
+		.DYN_SDIV_SEL(12),	// CLKOUTD = CLKOUT / 12 = 9.375 MHz
 		.PSDA_SEL("0000"),
 		.DUTYDA_SEL("1000"),
 		.DYN_DA_EN("false")

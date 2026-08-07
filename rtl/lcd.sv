@@ -58,8 +58,10 @@
 //   2. PIXCLK must stay an integer multiple of the divider, for the phase
 //      argument in the sequencer below.
 //
-// At 8:1 both hold for PIXCLK=24: 60.6 fps, a console pixel every 6 chip
-// clocks, and 966 chip clocks a line against the engine's 313.
+// At 12:1 both hold for PIXCLK=24: 60.6 fps, a console pixel every 4 chip
+// clocks, and 644 chip clocks a line against the engine's 313. (8:1 also
+// satisfies both, and is wrong for a third reason that lives in the PSG - see
+// the header of rtl/pll_gowin.v.)
 //
 // WHY NOT A FAST SHIFTER WITH A SLOW PIXEL SIDE. Because a per-byte handshake
 // across the pllclk/masterclk boundary costs ~2 slow clocks against the ~142 ns
@@ -207,11 +209,11 @@ module lcd #(parameter WIDTH = 320,
   // Advances one byte per `byte_done`. hpos/vpos are consumed by the PPU in the
   // masterclk domain across NO SYNCHRONISER, and what makes that safe is a
   // phase argument, not a timing margin: PIXCLK is an integer multiple of the
-  // pllclk:masterclk ratio (8:1, rtl/pll_gowin.v DYN_SDIV_SEL), so every pixel
+  // pllclk:masterclk ratio (12:1, rtl/pll_gowin.v DYN_SDIV_SEL), so every pixel
   // boundary lands exactly on a masterclk edge and a naive update would change
   // hpos/vpos on the very edge that samples them. Updating on `byte_done` - one
   // cycle after the last SCL falling edge - offsets it by one pllclk and leaves
-  // 7 of the 8 cycles as setup.
+  // 11 of the 12 cycles as setup.
   //
   // THAT ARGUMENT IS THE CONSTRAINT ON PIXCLK, and it is why the divider and
   // the colour depth are chosen together. Break the integer ratio and the

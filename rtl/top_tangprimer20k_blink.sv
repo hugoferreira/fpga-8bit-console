@@ -61,15 +61,15 @@ module top(input  bit clk,
   always_ff @(posedge pllclk) frompll <= frompll + 1'b1;
 
   // THE ONE UNDER TEST. pllclk_div is the rPLL's CLKOUTD - 112.5/8 =
-  // 14.0625 MHz - and it is what feeds masterclk, videoclk and cpuclk in the
+  // 9.375 MHz - and it is what feeds masterclk, videoclk and cpuclk in the
   // real design. Nothing the console lights up proves this clock runs: its two
   // LEDs are driven from the pllclk domain and from the PLL's own lock flag.
   // If CLKOUTD were dead the console would show exactly what it does show -
   // both LEDs healthy, a white panel (lcd.sv is on videoclk) and a silent
   // speaker (no CPU, so nothing ever writes the PSG).
-  //   14.0625 MHz / 2^24 = 0.84 Hz, about the same rate as the raw counter.
+  //   9.375 MHz / 2^23 = 1.1 Hz, about the same rate as the raw counter.
   //   The bit moved with DYN_SDIV_SEL: at /32 this was 2^22.
-  logic [24:0] fromdiv32 = 0;
+  logic [23:0] fromdiv32 = 0;
   always_ff @(posedge pllclk_div) fromdiv32 <= fromdiv32 + 1'b1;
 
   // 27 MHz / 2^25 = 0.8 Hz. Both LEDs blink if everything is healthy; which
@@ -78,7 +78,7 @@ module top(input  bit clk,
   // this is more useful than the console's static "both mean healthy" scheme.
   // led_reset carries the CLOCK UNDER TEST, led_lock the control. If the
   // control blinks and the other has stopped, CLKOUTD is the fault.
-  assign led_reset = fromdiv32[24];
+  assign led_reset = fromdiv32[23];
   assign led_lock  = raw[25];
 
   // ~412 Hz square wave: 27e6 / 2^16. Loud, obviously artificial, and nothing
@@ -101,6 +101,6 @@ module top(input  bit clk,
   assign pa_en  = 1'b0;
 
   /* verilator lint_off UNUSED */
-  wire unused = &{key1, key2, pll_locked, raw[21:16], frompll[25:0], fromdiv32[23:0]};
+  wire unused = &{key1, key2, pll_locked, raw[21:16], frompll[25:0], fromdiv32[22:0]};
   /* verilator lint_on UNUSED */
 endmodule

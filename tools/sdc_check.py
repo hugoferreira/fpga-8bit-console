@@ -73,6 +73,28 @@ def main():
         print(f"    {k:<8} {want[k]:10.4f} MHz")
 
     bad = 0
+
+    # THE CPU->PSG CROSSING. rtl/clocks.sv: "the PSG samples CPU-side register
+    # writes directly, and a masterclk-domain signal is stable for at least
+    # floor(32/PSGDIV) complete PSG clocks". The PSG's write capture is a level
+    # edge-detect in the psgclk domain with NO synchroniser, so that window is
+    # the entire safety argument - and DYN_SDIV_SEL is free to shrink it,
+    # because it is chosen for the frame rate at the other end of the design.
+    #
+    # It was shrunk to 1 (DYN_SDIV_SEL=8) and the symptom was not a failed gate:
+    # the console ran, the picture was correct at 60.6 fps, and the music
+    # stopped. Nothing in the build noticed. Two complete PSG clocks is the
+    # floor here because an edge-detect needs the level held across two sampling
+    # edges; below that, writes are missed.
+    hold = want["psgclk"] / want["cpuclk"]
+    print(f"    cpuclk holds a signal for {hold:.2f} PSG clocks "
+          f"({int(hold)} complete)")
+    if int(hold) < 2:
+        print(f"      *** the PSG samples the CPU bus with no synchroniser and "
+              f"needs >= 2 complete psgclk per cpuclk; raise DYN_SDIV_SEL in "
+              f"{PLL} or lower PSG_DIV")
+        bad += 1
+
     for sdc in SDCS:
         if not sdc.exists():
             print(f"    {sdc}: MISSING"); bad += 1; continue
