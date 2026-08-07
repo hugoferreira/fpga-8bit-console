@@ -8,7 +8,12 @@
 `define VERILATOR
 `endif
 
-module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
+// PSGSIMDIV is a PARAMETER, not a localparam, so the Makefile can set it once
+// with -GPSGSIMDIV= and hand the same number to sim/console.cpp as -DPSGSIMDIV=.
+// The two sides must agree - console.cpp issues 3*PSGSIMDIV clock pairs per
+// pixel - and a knob that lives in two files is a knob that drifts.
+module top #(parameter int PSGSIMDIV = 1)
+          (input logic clk_i, input logic rst_i, input logic [7:0] buttons,
            output logic hsync, output logic vsync, output logic [23:0] rgb,
            output logic signed [15:0] audio, output logic [63:0] psg_dbg);
   localparam WIDTH = 320, HEIGHT = 240;
@@ -27,11 +32,23 @@ module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
   // hardware divides the PLL DOWN to the PSG; the simulator selects either
   // the phase-locked input clock or the core clock. PSGSIMDIV is the resulting
   // PSG/core ratio and also scales the declared PSG frequency below.
-  localparam int PSGSIMDIV = 1;
 
-  logic coreclk = 0;                    // clk_i / 2: CPU, PPU, video
-  always_ff @(posedge clk_i) coreclk <= ~coreclk;
-  wire psgclk = (PSGSIMDIV == 1) ? coreclk : clk_i;
+  // AT PSGSIMDIV=1 THE DIVIDER IS PURE SIMULATION COST. Nothing then runs on
+  // clk_i - psgclk is coreclk, and psgfastclk is only read under MULTIPUMP,
+  // which the simulator does not set - so the flop existed solely to halve a
+  // clock the model then had to be evaluated twice to produce. Every other
+  // eval() was a coreclk NEGEDGE that no process is sensitive to, at full
+  // per-eval cost. Driving coreclk from the input directly and halving
+  // CLKS_PER_PIXEL on the C++ side is 1.37x end to end (600 frames of Celeste:
+  // 10.66 s -> 7.77 s, 56 -> 77 fps), with the rendered frame and the emitted
+  // WAV both BYTE-IDENTICAL over 10 s of audio.
+  //
+  // At PSGSIMDIV=2 the divider is real: psgclk is clk_i and coreclk is its
+  // half, so both edges matter and both paths have to exist.
+  logic coreclk_div = 0;
+  always_ff @(posedge clk_i) coreclk_div <= ~coreclk_div;
+  wire coreclk = (PSGSIMDIV == 1) ? clk_i : coreclk_div;
+  wire psgclk  = (PSGSIMDIV == 1) ? coreclk : clk_i;
 
   // Pixel clock: divide the CORE clock by 3. The PPU display pipeline needs 3
   // clocks per pixel (read, capture, stable); the old /4 dated from the

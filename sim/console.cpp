@@ -17,11 +17,24 @@
 #include <sstream>
 
 static const int W = 160, H = 120, SCALE = 4;   // V_DISPLAY is 120
-// Three core clocks per pixel, and rtl/top_simulator.sv divides clk_i by two
-// to get the core clock, so a pixel is six input-clock edges. The PSG now uses
-// that same core clock; emulated video time is unchanged, which is why the
-// 44100 Hz audio Bresenham below still lines up.
-static const int CLKS_PER_PIXEL = 3 * 2;
+
+// MUST MATCH rtl/top_simulator.sv's PSGSIMDIV. The Makefile sets both from one
+// variable (-GPSGSIMDIV= to verilator, -DPSGSIMDIV= here); this default only
+// applies to a hand-built model.
+#ifndef PSGSIMDIV
+#define PSGSIMDIV 1
+#endif
+
+// Three core clocks per pixel. At PSGSIMDIV=1 the model's input clock IS the
+// core clock, so a pixel is three input-clock cycles; at 2 the RTL divides by
+// two for the core and a pixel is six. Emulated video time is identical either
+// way, which is why the 44100 Hz audio Bresenham below still lines up.
+//
+// This number is half what it was, and that is the single largest simulation
+// speed-up available here: every clock pair costs two eval() calls, and at
+// PSGSIMDIV=1 half of them were producing a core-clock negedge that nothing is
+// sensitive to. See the comment on the divider in rtl/top_simulator.sv.
+static const int CLKS_PER_PIXEL = 3 * PSGSIMDIV;
 
 // Scripted input for headless runs: hold `mask` for HOLD frames from `frame`.
 struct KeyEvent { uint32_t frame; uint8_t mask; };
@@ -172,7 +185,13 @@ int main(int argc, char** argv) {
 
     // Reset
     tb->rst_i = 1;
-    for (int i = 0; i < 10; i++) { tb->clk_i = !tb->clk_i; tb->eval(); }
+    // Prime the model out of X with exactly THREE core-clock posedges,
+    // whichever way coreclk is derived - 6 input toggles when the input is the
+    // core clock, 10 when it is divided. Getting this count wrong is not a
+    // crash: it shifts the reset phase, the game diverges a few frames later,
+    // and the rendered frame differs by ~0.2% of pixels. Measured.
+    const int prime = (PSGSIMDIV == 1) ? 6 : 10;
+    for (int i = 0; i < prime; i++) { tb->clk_i = !tb->clk_i; tb->eval(); }
     tb->rst_i = 0;
 
     SDL_Window* win = nullptr;

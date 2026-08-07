@@ -262,13 +262,21 @@ SIM_BIN = build/obj_dir/console
 # the psg_wav and test-psg builds pass. Verilator 5 exits nonzero on the three
 # known WIDTHTRUNC warnings otherwise, so a clean rebuild of the console (run/
 # shot/psg-trace) fails; a stale prebuilt build/obj_dir masked that for months.
+#
+# PSGSIMDIV is ONE knob reaching two languages: the RTL derives coreclk from it
+# and console.cpp derives CLKS_PER_PIXEL from it, and they must agree or the
+# video timing is wrong. Passing it as -G and -D from the same variable is what
+# makes that impossible to get wrong. 1 is the shipping value; 2 gives the PSG
+# its own faster clock and costs ~40% of the frame rate.
+PSGSIMDIV ?= 1
 $(SIM_BIN): sim/console.cpp rtl/*.sv rtl/*.svh rtl/*.bin rtl/*.hex
 	verilator --cc rtl/top_simulator.sv --top-module top -Irtl -O3 \
 		--x-assign fast --x-initial fast -Wno-DEFOVERRIDE \
 		-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+		-GPSGSIMDIV=$(PSGSIMDIV) \
 		--exe $(abspath sim/console.cpp) -o console --build -j 8 \
 		-Mdir build/obj_dir \
-		-CFLAGS "-O2 $$(sdl2-config --cflags)" \
+		-CFLAGS "-O2 -DPSGSIMDIV=$(PSGSIMDIV) $$(sdl2-config --cflags)" \
 		-LDFLAGS "$$(sdl2-config --libs)"
 
 # build/$(GAME).sym only exists for customasm games (see GAME_ASM above); pass
