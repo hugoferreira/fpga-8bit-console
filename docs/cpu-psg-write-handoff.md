@@ -1,5 +1,24 @@
 # Handoff: the CPU→PSG write has no handshake
 
+> **RESOLVED 2026-08-07.** The defect was real and the fix is in chip.sv: a
+> `psg_hold` bus-phase input from the clock generator gates the CPU's RDY for
+> PSG-window accesses, so an access is held until a CPU cycle whose bus window
+> a psgclk posedge samples. The PSG itself is unchanged - the held CPU is the
+> staging register, and no psgclk edge ever samples a window in which RDY has
+> collapsed WE, which is why neither rejected fix below was needed. The
+> instrumented answer to "where to look next": half of all writes dropped,
+> uniformly, including the `$4101` upload-base write - sequence-exact commits
+> after the fix (4613/4613, order preserved, equal to the div=1 sequence).
+> Verilator polarity fact: a flop-derived psgclk rises one delta after the
+> core edge, so its posedge samples the window STARTING at it; the hold covers
+> the psgclk-low windows. Measured with `PSG_CLK_DIV=2` (now the `make run`
+> default): 58.8 → 70.5 fps headless, past the 60.0 threshold; preview gate
+> 25/27 voiced windows at 79 clk/sample, all channels pass; div=1 output
+> byte-identical to pre-fix; test-celeste/test-lcd/test-palette/sdc-check
+> pass; oracle 58/59 with mix-four the pre-existing accepted H165 delta,
+> identical at the unfixed HEAD. Frame 300 differs from div=1 by 0.79% of
+> pixels (snow particles at timing-shifted positions; title screen correct).
+
 Written 2026-08-07, at the end of the session that took the Tang Primer 20K from
 15.2 to 60.6 fps and the simulator from 42 to 58. Both platforms now have the
 same single open defect, and it is the thing standing between the simulator and

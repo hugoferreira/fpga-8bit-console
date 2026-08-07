@@ -85,6 +85,7 @@ module target_harness (
            .RAM_ADDR_BITS(RAM_ADDR_BITS))
       chip0 (
         .clk(clk), .cpuclk(clk), .psgclk(psgclk), .psgfastclk(fastclk),
+        .psg_hold(1'b0), // psgclk is faster than cpuclk: every cycle samples
         .reset(rst),
         .vsync(vsync), .hsync(hsync), .vpos(vpos), .hpos(hpos),
         .buttons(buttons),

@@ -187,6 +187,12 @@ module psg #(
   // loop, and it only steers `aram_cpu_q` into `dout`, which the CPU is not
   // sampling while it is stalled. Switching it to rw_pend is a behaviour change
   // in the audio RAM read path and wants the golden-audio gate, not this fix.
+`ifdef PSG_WRITE_TRACE
+  // Commit-side trace: one line per write pulse that reached the PSG clock
+  // domain. Diagnostic builds only.
+  always_ff @(posedge clk)
+    if (cs_wr) $display("PSGWR %02h=%02h", addr, di);
+`endif
   wire  aram_cpu_rd = cs && !rw && addr == 8'h02;
   wire [7:0] aram_cpu_q;
 

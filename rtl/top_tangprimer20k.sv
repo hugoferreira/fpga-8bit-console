@@ -233,6 +233,7 @@ module top(input  bit clk,                    // 27 MHz crystal, ball H11
   chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE), .CLK_HZ(PSG_CLK_HZ),
          .RAM_ADDR_BITS(16), .PSG_DBG(0), .PSG_MULTIPUMP(0), .REVERB(0))
     chip(.clk(masterclk), .cpuclk(cpuclk), .psgclk(psgclk),
+         .psg_hold(1'b0), // sdc-check enforces >= 2 psgclk per chip clock
          .psgfastclk(pllclk), .reset, .vsync,
          .hsync, .vpos, .hpos,
          .buttons(buttons), .rgb, .audio(audio), .psg_dbg());

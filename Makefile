@@ -269,11 +269,20 @@ SIM_BIN = build/obj_dir/console
 # makes that impossible to get wrong. 1 is the shipping value; 2 gives the PSG
 # its own faster clock and costs ~40% of the frame rate.
 PSGSIMDIV ?= 1
+# PSG_CLK_DIV divides psgclk BELOW the core clock. 2 is the shipping value:
+# the PSG is half the simulator's runtime, the preview schedule renders the
+# same tune at 79.5 clocks/sample, and the halving is what moves `make run`
+# from 58 fps (starving its own audio queue) past the 60.0 fps the live audio
+# path needs. The CPU-side psg_hold handshake in chip.sv is what makes
+# register writes survive the slower clock; PSG_CLK_DIV=2 without it is
+# silence. RTL-only knob - the C++ side keys off the core clock, which this
+# does not touch.
+PSG_CLK_DIV ?= 2
 $(SIM_BIN): sim/console.cpp rtl/*.sv rtl/*.svh rtl/*.bin rtl/*.hex
 	verilator --cc rtl/top_simulator.sv --top-module top -Irtl -O3 \
 		--x-assign fast --x-initial fast -Wno-DEFOVERRIDE \
 		-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
-		-GPSGSIMDIV=$(PSGSIMDIV) \
+		-GPSGSIMDIV=$(PSGSIMDIV) -GPSG_CLK_DIV=$(PSG_CLK_DIV) \
 		--exe $(abspath sim/console.cpp) -o console --build -j 8 \
 		-Mdir build/obj_dir \
 		-CFLAGS "-O2 -DPSGSIMDIV=$(PSGSIMDIV) $$(sdl2-config --cflags)" \

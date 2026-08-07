@@ -9,6 +9,19 @@
 
 module chip(input logic clk, input logic cpuclk, input logic psgclk,
             input logic psgfastclk,
+            // Bus-phase contract from the clock generator: high in any CPU
+            // cycle whose bus window no psgclk posedge samples. A PSG access
+            // in such a cycle is held (RDY low) until a sampled window; the
+            // held CPU keeps cs/addr/di level-stable across the slower
+            // clock's edges, and every window a psgclk posedge does sample
+            // has RDY high, so WE is never collapsed where it is observed.
+            // Which windows are sampled is the producer's fact: for the
+            // simulator's flop-derived psgclk the posedge samples the window
+            // STARTING at it (top_simulator.sv). Tie 0 whenever psgclk is at
+            // least as fast as the CPU clock, or is the same clock.
+            // The DMA engine ignores RDY, so DMA must not write the PSG
+            // window when this is ever high - it never does.
+            input logic psg_hold,
             input logic reset,
             input logic vsync, input logic hsync,
             input logic [6:0] vpos, input logic [7:0] hpos,
@@ -199,8 +212,9 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
     .write(cpu_write),
     .write_pend(cpu_write_pend),
     // The PSG adds wait-states for state-memory-resident register accesses;
-    // both ready sources freeze the core identically.
-    .rdy(cpu_rdy && psg_rdy)
+    // both ready sources freeze the core identically. psg_hold extends any
+    // PSG-window access to end on a psgclk sampling edge (see the port).
+    .rdy(cpu_rdy && psg_rdy && !(psg_cs && psg_hold))
   );
 
   // The PPU's tilemap absorbed the old textbuffer; its $F000 window is the
@@ -304,6 +318,14 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
       assign psg_dbg = '0;
     end
   endgenerate
+
+`ifdef PSG_WRITE_TRACE
+  // Issue-side bus trace: one line per CPU write cycle that decodes to the
+  // PSG window, in the CPU clock domain. Diagnostic builds only.
+  always_ff @(posedge clk)
+    if (psg_cs && mem_write)
+      $display("CPUWR %02h=%02h", mem_addr[7:0], mem_data_out);
+`endif
 
   // Basic Video Signals
   assign rgb = srgb;

@@ -12,7 +12,11 @@
 // with -GPSGSIMDIV= and hand the same number to sim/console.cpp as -DPSGSIMDIV=.
 // The two sides must agree - console.cpp issues 3*PSGSIMDIV clock pairs per
 // pixel - and a knob that lives in two files is a knob that drifts.
-module top #(parameter int PSGSIMDIV = 1)
+// PSG_CLK_DIV divides psgclk BELOW the core clock (the opposite direction from
+// PSGSIMDIV): 2 halves the PSG's clock and its declared CLK_HZ, so the preview
+// walk renders at 79.5 clocks/sample. Requires the CPU->PSG bus handshake to
+// hold accesses across the slower clock's edges.
+module top #(parameter int PSGSIMDIV = 1, parameter int PSG_CLK_DIV = 1)
           (input logic clk_i, input logic rst_i, input logic [7:0] buttons,
            output logic hsync, output logic vsync, output logic [23:0] rgb,
            output logic signed [15:0] audio, output logic [63:0] psg_dbg);
@@ -48,7 +52,20 @@ module top #(parameter int PSGSIMDIV = 1)
   logic coreclk_div = 0;
   always_ff @(posedge clk_i) coreclk_div <= ~coreclk_div;
   wire coreclk = (PSGSIMDIV == 1) ? clk_i : coreclk_div;
-  wire psgclk  = (PSGSIMDIV == 1) ? coreclk : clk_i;
+
+  // The two knobs move psgclk in opposite directions from the same core
+  // clock; combined they would produce clk_i/4 while CLK_HZ declares the
+  // undivided rate, detuning the audio silently.
+  generate
+    if (PSGSIMDIV != 1 && PSG_CLK_DIV != 1) begin : g_div_conflict
+      $error("PSGSIMDIV and PSG_CLK_DIV are mutually exclusive");
+    end
+  endgenerate
+
+  logic psgclk_half = 0;
+  always_ff @(posedge coreclk) psgclk_half <= ~psgclk_half;
+  wire psgclk = (PSG_CLK_DIV == 2) ? psgclk_half
+              : (PSGSIMDIV == 1) ? coreclk : clk_i;
 
   // Pixel clock: divide the CORE clock by 3. The PPU display pipeline needs 3
   // clocks per pixel (read, capture, stable); the old /4 dated from the
@@ -78,10 +95,17 @@ module top #(parameter int PSGSIMDIV = 1)
   // PSG clocks per 22050 Hz sample.
   chip #(.RED(8), .GREEN(8), .BLUE(8), .FILE("./rtl/palette888.bin"),
          .PSG_PREVIEW(1), .PSG_MULTIPUMP(0),
-         .CLK_HZ(32'd3_506_580 * PSGSIMDIV)) chip(
+         .CLK_HZ(32'd3_506_580 * PSGSIMDIV / PSG_CLK_DIV)) chip(
     .clk(coreclk),
     .cpuclk(coreclk), // Use the same clock for CPU
     .psgclk(psgclk),
+    // A derived clock rises one delta after the core edge that toggles its
+    // divider, so the PSG's posedge - at the START of each psgclk_half=1
+    // cycle - samples that cycle's own bus window. Windows with psgclk_half=0
+    // are sampled by no psgclk posedge and must hold. Measured both ways:
+    // hold on psgclk_half=1 commits 0 of 4613 writes, hold on =0 commits all.
+    // At PSG_CLK_DIV=1 the clocks are one and every window samples.
+    .psg_hold((PSG_CLK_DIV == 2) ? ~psgclk_half : 1'b0),
     .psgfastclk(clk_i),
     .reset(rst_i), 
     .vsync, 

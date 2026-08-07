@@ -87,6 +87,7 @@ module top(input  bit clk, output bit yellow_led,
   chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE), .CLK_HZ(PSG_CLK_HZ),
          .RAM_ADDR_BITS(13), .PSG_DBG(0), .PSG_MULTIPUMP(1), .REVERB(0))
     chip(.clk(masterclk), .cpuclk(cpuclk), .psgclk(psgclk),
+         .psg_hold(1'b0), // psgclk is faster than cpuclk: every cycle samples
          .psgfastclk(pllclk), .reset, .vsync,
          .hsync, .vpos, .hpos,
          .buttons(8'h00), .rgb, .audio(audio), .psg_dbg());
