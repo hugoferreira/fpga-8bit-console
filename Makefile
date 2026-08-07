@@ -625,6 +625,19 @@ build/lcd_tb: rtl/lcd_tb.sv rtl/lcd.sv rtl/serialize.sv rtl/setup_st7789_565.hex
 	@mkdir -p build
 	iverilog -g2012 -Irtl -s lcd_tb -o $@ rtl/lcd_tb.sv rtl/lcd.sv
 
+# Colour-depth reduction at the output stage - RGB565 in, RGB444 out for the
+# panel's 12-bit mode, which is 25% fewer bytes per frame on a link that is the
+# binding constraint. Exhaustive over all 65536 inputs; the module is
+# combinational and small enough that sampling would be a choice not to know.
+build/rgb_quant_tb: rtl/rgb_quant_tb.sv rtl/rgb_quant.sv
+	@mkdir -p build
+	iverilog -g2012 -Irtl -s rgb_quant_tb -o $@ rtl/rgb_quant_tb.sv rtl/rgb_quant.sv
+
+test-rgb-quant: build/rgb_quant_tb
+	@vvp $<
+
+.PHONY: test-rgb-quant
+
 test-lcd: build/lcd_tb
 	@cp rtl/setup_st7789_565.hex build/
 	@cd build && vvp lcd_tb
@@ -1441,6 +1454,19 @@ bin/tangprimer20k-lcdtest.fs: rtl/top_tangprimer20k_lcdtest.sv rtl/pll_gowin.v \
 
 tangprimer20k-lcdtest: bin/tangprimer20k-lcdtest.fs
 
+# SPI clock sweep: six solid colours, each at a different bit rate, ~2.4 s each.
+# Finds the panel's actual ceiling, which is what sizes the display
+# architecture. See rtl/top_tangprimer20k_lcdspeed.sv.
+bin/tangprimer20k-lcdspeed.fs: rtl/top_tangprimer20k_lcdspeed.sv rtl/pll_gowin.v \
+                               $(GOWIN_PRIMER_CST)
+	@GOWIN_SDC=none $(GOWIN_BUILD) tangprimer20k-lcdspeed GW2A-18C $(GOWIN_PRIMER_DEVICE) \
+	  rtl/top_tangprimer20k_lcdspeed.sv $(GOWIN_PRIMER_CST) $@
+
+tangprimer20k-lcdspeed: bin/tangprimer20k-lcdspeed.fs
+
+tangprimer20k-lcdspeed-prog: bin/tangprimer20k-lcdspeed.fs
+	$(OFL) -b $(OFL_PRIMER_BOARD) $<
+
 tangprimer20k-lcdtest-prog: bin/tangprimer20k-lcdtest.fs
 	$(OFL) -b $(OFL_PRIMER_BOARD) $<
 
@@ -1448,7 +1474,8 @@ tangprimer20k-blink-prog: bin/tangprimer20k-blink.fs
 	$(OFL) -b $(OFL_PRIMER_BOARD) $<
 
 .PHONY: tangprimer20k-blink tangprimer20k-blink-prog \
-        tangprimer20k-lcdtest tangprimer20k-lcdtest-prog
+        tangprimer20k-lcdtest tangprimer20k-lcdtest-prog \
+        tangprimer20k-lcdspeed tangprimer20k-lcdspeed-prog
 
 # SRAM, not flash: this is the one to use while iterating, and the board comes
 # back up with whatever is in flash after a power cycle.
