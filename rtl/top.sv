@@ -54,7 +54,15 @@ module top(input  bit clk, output bit yellow_led,
   logic [6:0] vpos;
   logic [7:0] hpos;
 
-  lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) lcd0(.clk(videoclk), .reset, .rgb, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
+  // lcd0 runs on pllclk (112.5 MHz), NOT videoclk. It used to shift one bit per
+  // 3.515625 MHz videoclk with a dead cycle between bytes - 2.5 fps - on a board
+  // with a 112.5 MHz PLL sitting idle. SPI_HALF=3 gives SCL = pllclk/6 =
+  // 18.75 MHz and 15.3 fps, pacing a console pixel to every 6 masterclk. 2 was
+  // 4 masterclk against the compositor's 3.02 requirement - too tight, and the
+  // sprite pass was the thing that got starved out and sprite_compositor.sv keeps its 483-clock line
+  // budget. hpos/vpos/vsync therefore change in the pllclk domain; see the
+  // header of rtl/lcd.sv for why that is safe against the 32:1 masterclk ratio.
+  lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT), .SPI_HALF(3)) lcd0(.clk(pllclk), .reset, .rgb, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
   scalescreen #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) scaler0(.clk(videoclk), .reset, .vp, .hp, .vpos, .hpos);
   logic signed [15:0] audio;
   /* verilator lint_off PINCONNECTEMPTY */

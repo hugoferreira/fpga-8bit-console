@@ -48,7 +48,18 @@ RUN=${GOWIN_RUN:-all}
 REPO=$(pwd)
 DIR=build/gowin_vendor/$BOARD
 rm -rf "$DIR"; mkdir -p "$DIR"
-ln -s "$REPO/rtl" "$DIR/rtl"
+# GowinSynthesis resolves $readmemh paths relative to the SOURCE FILE's
+# directory, not the working directory. The RTL says $readmemh("./rtl/ram.hex"),
+# and the sources live in $DIR/rtl, so it looks for $DIR/rtl/rtl/ram.hex. Miss
+# that and it emits only a WARNING - "EX3988 Cannot open file" - and carries on
+# with the memory zeroed, so the build passes every check and the console boots
+# into nothing: black screen, no audio, all timing green. So copy the tree and
+# stage the memory images at BOTH the paths the RTL can ask for. The nested copy
+# is not redundancy for its own sake; it is the path the tool actually opens.
+cp -R "$REPO/rtl" "$DIR/rtl"
+mkdir -p "$DIR/rtl/rtl"
+cp "$REPO"/rtl/*.hex "$REPO"/rtl/*.bin "$DIR/rtl/rtl/" 2>/dev/null || true
+cp "$REPO"/rtl/*.hex "$REPO"/rtl/*.bin "$DIR/" 2>/dev/null || true
 # The SDC is optional: a bring-up top that has none of the console's clock
 # nets would fail every constraint in it ("Can't set timing constraint to
 # object psgclk"). GOWIN_SDC=none builds without one.
@@ -80,6 +91,14 @@ env $GW_ENV "$GW_SH" run.tcl > build.log 2>&1 || {
 }
 
 grep -E "^ERROR|^WARN .*(PR2017|PA2060)" build.log | head -10 || true
+
+# A memory image the tool could not open is a warning, not an error, and it
+# produces a bitstream that boots into nothing. Treat it as fatal.
+if grep -q "EX3988" build.log; then
+  echo "--- FATAL: GowinSynthesis could not open a memory image ---"
+  grep -oE "Cannot open file '[^']*'" build.log | sort -u | head -8
+  exit 1
+fi
 cd "$REPO"
 
 if [ "$RUN" = syn ]; then

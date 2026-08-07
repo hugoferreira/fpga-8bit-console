@@ -1,6 +1,18 @@
-0_21
+// ST7789/ILI9341 setup, RGB565. {rs, byte}: rs=0 command, rs=1 parameter.
+// Values corrected 2026-08-07 against the MuseLab PMOD-TFTLCD on a Tang Primer
+// 20K, by experiment rather than by identifying the controller:
+//   0_20  INVOFF, was 0_21 INVON. With INVON this panel rendered white as
+//         white only once it was removed - the ST7789 needs inversion, this
+//         part does not.
+//   1_28  MADCTL landscape + BGR, MX cleared. 1_60 was RGB and 1_68
+//         still had MX set, which mirrored the image in X on hardware. Sending solid red/green/blue
+//         showed blue/green/red with green, white and black untouched: textbook
+//         BGR, which is bit 3 of MADCTL's parameter.
+// The filename still says st7789 because the register set is shared; the panel
+// on the bench is more likely an ILI9341.
+0_20
 0_2A 1_00 1_00 1_01 1_3F
 0_2B 1_00 1_00 1_00 1_EF
 0_3A 1_05
-0_36 1_60
+0_36 1_E8
 0_29

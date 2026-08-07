@@ -72,6 +72,15 @@ module lcd_tb;
   logic [8:0] stream [0:400000];       // {rs, byte}, in wire order
   int         nbytes = 0;
 
+  // CS MUST STAY LOW. This is the property whose violation produced a white
+  // panel on hardware while every other subsystem worked: the old driver used
+  // `cs` as its state-machine clock, so it deasserted once per byte, and both
+  // candidate controllers reset their serial interface on a high CSX. The
+  // decoder below reads `!cs`, so without this assertion a regression would
+  // simply make the bench see no bytes and time out with a confusing message.
+  int cs_high = 0;
+  always @(posedge scl) if (!reset && cs) cs_high = cs_high + 1;
+
   always @(posedge scl) begin
     if (!reset && !cs) begin
       shreg = {shreg[6:0], sda};
@@ -102,6 +111,12 @@ module lcd_tb;
     #1;
 
     errors = 0;
+
+    // --- 0. CS was asserted for every clock of the whole stream ------------
+    if (cs_high != 0) begin
+      $display("FAIL: CS went high during %0d SCL edges - it must stay low for the whole session", cs_high);
+      errors = errors + 1;
+    end
 
     // --- 1. the reset run: 0x11 (SLPOUT) as a command, RESET_WAIT+1 times ---
     for (i = 0; i <= RESET_WAIT; i = i + 1)
@@ -155,6 +170,36 @@ module lcd_tb;
                               {pix[4:0], 3'b0});
       end
     $fclose(fd);
+
+    // --- 5. THE ASSERTION THAT WAS MISSING -------------------------------
+    // Decode every pixel and compare it against the pattern the DUT was shown.
+    // Without this the bench only checked init bytes and rs, so it passed while
+    // the driver sheared rows, emitted two spurious bytes per line, and served
+    // the two halves of a pixel from different `rgb` samples. Report the first
+    // few mismatches with coordinates: a constant offset, a per-row drift and a
+    // straddled pixel all look different here, which is what makes it a
+    // diagnosis rather than a pass/fail.
+    begin
+      int bad; int firstx; int firsty;
+      bad = 0;
+      for (y = 0; y < H; y = y + 1)
+        for (x = 0; x < W; x = x + 1) begin
+          px  = base + (y * W + x) * 2;
+          pix = {stream[px][7:0], stream[px + 1][7:0]};
+          if (pix !== pattern(x, y)) begin
+            if (bad < 6)
+              $display("  pixel (%0d,%0d) is %04x, pattern says %04x",
+                       x, y, pix, pattern(x, y));
+            if (bad == 0) begin firstx = x; firsty = y; end
+            bad = bad + 1;
+          end
+        end
+      if (bad != 0) begin
+        $display("FAIL: %0d of %0d pixels wrong; first at (%0d,%0d)",
+                 bad, W * H, firstx, firsty);
+        errors = errors + 1;
+      end
+    end
 
     // every pixel byte must be data, not command
     for (i = 0; i < W * H * 2; i = i + 1)

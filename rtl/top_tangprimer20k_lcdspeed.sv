@@ -21,10 +21,12 @@
  *     CYAN    28.13 MHz
  *     WHITE   56.25 MHz     (pllclk/2 - the fastest integer option here)
  *
- * Report the LAST colour that renders cleanly. A step past the panel's limit
- * loses or smears bits, so the fill breaks up into streaks or comes out the
- * wrong colour entirely - a flat fill makes that obvious in a way a detailed
- * pattern would not.
+ * Each step draws its colour as a background with a 16-pixel GRID over it. The
+ * grid is the point: a flat fill cannot reveal a bit slip, because losing a bit
+ * from a run of identical bytes still yields identical bytes. A grid puts a
+ * per-pixel phase in the stream, so any slip shows as drifting, jagged or
+ * banded lines. Report the last step whose grid is straight and evenly spaced -
+ * 20 vertical by 15 horizontal lines, all square.
  *
  * The initialisation sequence is always sent at the slowest rate, so a failure
  * is always the pixel stream and never a missed command. Both LEDs blink
@@ -157,7 +159,15 @@ module top(input  bit clk,
   logic        hi    = 1'b1;
   logic [27:0] dwell = 0;                // ~2.4 s per step at 112.5 MHz
 
-  wire [15:0] pix = stepcolour(int'(step));
+  // A SOLID FILL CANNOT DETECT A BIT SLIP - lose a bit in a run of identical
+  // bytes and you get identical bytes, so the panel looks perfect while the link
+  // is broken. Overlay a 16-pixel grid: the background still identifies the
+  // step, and any lost or smeared bit shifts the line phase, which turns the
+  // grid into visible drift, jags or banding. Lines are the background inverted
+  // so they contrast against every step colour including white.
+  wire        grid = (x[3:0] == 4'd0) || (y[3:0] == 4'd0);
+  wire [15:0] bg   = stepcolour(int'(step));
+  wire [15:0] pix  = grid ? ~bg : bg;
 
   always_ff @(posedge pllclk) begin
     start <= 1'b0;

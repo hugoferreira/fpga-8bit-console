@@ -1235,6 +1235,7 @@ GW_SH         = $(GOWIN_EDA)/IDE/bin/gw_sh
 GW_ENV        = DYLD_FRAMEWORK_PATH=$(GOWIN_EDA)/IDE/lib \
                 DYLD_LIBRARY_PATH=$(GOWIN_EDA)/IDE/lib
 GOWIN_VENDOR_SDC = rtl/gowin_vendor.sdc
+GOWIN_BUILD_DEPS = tools/gowin_build.sh tools/gowin_vendor_report.py
 GOWIN_BUILD   = GW_SH="$(GW_SH)" GW_ENV="$(GW_ENV)" tools/gowin_build.sh
 
 GOWIN_TOP     = rtl/top_tangnano20k.sv
@@ -1345,7 +1346,7 @@ build/gowin/top_pnr.json: build/gowin/top.json ${GOWIN_CST} ${GOWIN_SDC}
 	@python3 tools/gowin_timing.py build/gowin/pnr.log
 
 ifeq ($(PNR),gowin)
-bin/toplevel.fs: ${GOWIN_TOP} ${GOWIN_SRC} ${GOWIN_CST} ${GOWIN_VENDOR_SDC} ${FONT_HEX} $(GAME_STAMP)
+bin/toplevel.fs: ${GOWIN_TOP} ${GOWIN_SRC} ${GOWIN_CST} ${GOWIN_VENDOR_SDC} ${FONT_HEX} $(GAME_STAMP) $(GOWIN_BUILD_DEPS)
 	@$(GOWIN_BUILD) tangnano20k GW2AR-18C ${GOWIN_DEVICE} \
 	  ${GOWIN_TOP} ${GOWIN_CST} $@
 else
@@ -1422,7 +1423,7 @@ $(GOWIN_PRIMER_DIR)/top_pnr.json: $(GOWIN_PRIMER_DIR)/top.json $(GOWIN_PRIMER_CS
 
 ifeq ($(PNR),gowin)
 $(GOWIN_PRIMER_FS): $(GOWIN_PRIMER_TOP) $(GOWIN_SRC) $(GOWIN_PRIMER_CST) \
-                    $(GOWIN_VENDOR_SDC) ${FONT_HEX} $(GAME_STAMP)
+                    $(GOWIN_VENDOR_SDC) ${FONT_HEX} $(GAME_STAMP) $(GOWIN_BUILD_DEPS)
 	@$(GOWIN_BUILD) tangprimer20k GW2A-18C $(GOWIN_PRIMER_DEVICE) \
 	  $(GOWIN_PRIMER_TOP) $(GOWIN_PRIMER_CST) $@
 else
