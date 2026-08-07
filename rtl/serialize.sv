@@ -1,8 +1,11 @@
-module serialize(input bit cin, input bit reset, input bit irdy, input logic [WIDTH-1:0] data, 
+// Parameters ahead of the ports: the ports reference WIDTH, and declaring it
+// afterwards is accepted by yosys and Verilator but not by iverilog, which is
+// what the benches use. See the same note in rtl/lcd.sv.
+module serialize #(parameter SCL_MODE = 1,
+                   parameter WIDTH = 8)
+                (input bit cin, input bit reset, input bit irdy,
+                 input logic [WIDTH-1:0] data,
                  output bit sda, output bit scl, output bit ordy);
-
-  parameter SCL_MODE = 1;
-  parameter WIDTH = 8;
 
   localparam COUNTER_WIDTH = $clog2(WIDTH);
   localparam COUNTER_MAX = { COUNTER_WIDTH{1'b1} };
