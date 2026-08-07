@@ -56,6 +56,50 @@ correct audio at ~80 fps instead of correct audio at 46 fps.
 Prior work: `c8a2007` (the preview gate), `6f9429b` (five preview bugs, hardware
 bit-identical), `64dbc0a` (the clock-split stopgap and the numbers behind it).
 
+> **Re-measured 2026-08-07, and the goal has moved.** The preview's *fidelity*
+> is not the problem any more: `tools/psg_preview_check.py` on Celeste music 0
+> passes at **25/27 voiced windows (93%, needs 85%)**, RMS 88.7%, activity
+> 99.6%. The "today 2%" figure in the gate list below is stale.
+>
+> What makes `make run` sound wrong is **real-time starvation**, and it is
+> arithmetic, not a PSG defect. The console emits `fps x 735` samples/s into a
+> device draining 44100, so the audio is correct only at **>= 60.0 emulated
+> fps** exactly. It ran at ~42 (70%); `85f5fb8` removed a redundant clock
+> divider in the model and took it to **58.4** (97.3%). Close, and `make run`
+> pays SDL cost on top of that headless number.
+>
+> **The lever, and the wall it hits.** The preview renders IDENTICALLY at half
+> the PSG clock - 25/27 voiced windows at both 159 and 79.5 clocks/sample,
+> collapsing to 1/27 at 53 - and the PSG is **51% of simulator runtime** (by
+> ablation: PPU 14%, reverb 0%). Halving `psgclk` measures **71.7 fps**, which
+> clears 60 with room. But the console then renders **silence**: 1 distinct
+> level against 18,727. `psg_wav` cannot see it, because it has no CPU.
+>
+> The cause is that an ordinary PSG register write has **no handshake at all**.
+> `psg.sv` turns a level write into one pulse in its own domain
+> (`cs_wr = cs && rw && !cs_wr_q`), and `cpu_stall` is 0 for anything but a
+> migrated-register access - so `rdy` never drops and the write is a
+> one-CPU-clock level that lands only if a PSG clock edge falls inside it. This
+> is the same mechanism that silenced the **board** when its chip clock outran
+> psgclk (`24dd7b3`), and the mirror of the 2026-07-30 double-write bug.
+>
+> Two fixes were tried and **both failed**; do not repeat them without reading
+> this. (1) CPU wait-states on a PSG access, held in the CPU's own domain: the
+> 65C02 gates WE with RDY, so stalling to make the write land is exactly what
+> stops it landing - `cs && rw` is false for the whole window the stall
+> creates. (2) Forming `cs_wr` from `rw_pend`, the ungated intent the design
+> already routes for `rd_lvl`'s version of this trap: inert at div=1 (audio
+> byte-identical, so it is not a regression) but still silent at div=2. Both
+> were reverted; something further is dropping the access. Instrument the
+> upload path at `$4102` first - a corrupt audio image is silence, and it is
+> the highest-traffic write in the system.
+>
+> So the remaining preview work is **not** the sequencer-shrinking plan below,
+> and not fidelity. It is making the CPU->PSG write survive a psgclk slower
+> than the CPU clock. That one fix buys the simulator ~72 fps AND removes the
+> board's `>= 2 psgclk per chip clock` constraint, which is currently the only
+> thing coupling its frame rate to its audio.
+
 ## The budget, and why the walk is finished as a target
 
 The console supplies **159** PSG clocks per 22050 Hz sample. Celeste's music needs
