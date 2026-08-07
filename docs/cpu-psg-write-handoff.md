@@ -11,13 +11,24 @@
 > after the fix (4613/4613, order preserved, equal to the div=1 sequence).
 > Verilator polarity fact: a flop-derived psgclk rises one delta after the
 > core edge, so its posedge samples the window STARTING at it; the hold covers
-> the psgclk-low windows. Measured with `PSG_CLK_DIV=2` (now the `make run`
-> default): 58.8 → 70.5 fps headless, past the 60.0 threshold; preview gate
-> 25/27 voiced windows at 79 clk/sample, all channels pass; div=1 output
-> byte-identical to pre-fix; test-celeste/test-lcd/test-palette/sdc-check
-> pass; oracle 58/59 with mix-four the pre-existing accepted H165 delta,
-> identical at the unfixed HEAD. Frame 300 differs from div=1 by 0.79% of
-> pixels (snow particles at timing-shifted positions; title screen correct).
+> the psgclk-low windows. Measured with `PSG_CLK_DIV=2`: 58.8 → 70.5 fps
+> headless, past the 60.0 threshold; preview gate 25/27 voiced windows at
+> 79 clk/sample, all channels pass; div=1 output byte-identical to pre-fix;
+> test-celeste/test-lcd/test-palette/sdc-check pass; oracle 58/59 with
+> mix-four the pre-existing accepted H165 delta, identical at the unfixed
+> HEAD.
+>
+> **But `PSG_CLK_DIV=2` does not ship, and this document's "the fidelity is
+> free" claim is wrong.** The 25/27 pitch gate has 85%-window and 50–200%-RMS
+> thresholds; `make test-psg-preview-recovery PSG_RECOVERY_CLK=1753290`
+> fails 13,207 sample deadlines against 0 at 3506580 — the preview walk's
+> worst case (~86 clocks) does not fit the 79.5 supplied, and under gameplay
+> load (music + foreground-SFX takeover) the overruns cascade into audible
+> channel dropout with the per-frame channel trace still byte-identical to
+> div=1: the sequencer commands the right thing and the walk starves
+> rendering it. The default stays `PSG_CLK_DIV=1` (58.8 fps, the starvation
+> problem this document opened with) until the walk's worst case fits 79
+> clocks; the recovery gate at 1753290 is the acceptance test for that work.
 
 Written 2026-08-07, at the end of the session that took the Tang Primer 20K from
 15.2 to 60.6 fps and the simulator from 42 to 58. Both platforms now have the
