@@ -1723,9 +1723,25 @@ test-celeste: test-celeste-inlay-equivalence
 
 # Opt Celeste into the checked-in frontend source while preserving the existing
 # customasm command, output formats, symbol conversion and source dependencies.
+#
+# BOTH of the lines below are needed, and for a while only the `hex` one was.
+# GAME_SRC is a RECURSIVE variable, so $(GAME_STAMP)'s prerequisite list - read
+# hundreds of lines above this - captured `src/celeste/main.inlay.asm`, the
+# frontend's INPUT. Its recipe expands at execution time and so assembles
+# $(CELESTE_INLAY_ASM), the frontend's OUTPUT. The rule therefore watched one
+# file and built another, and nothing anywhere made the output.
+#
+# `hex` covered it by accident. Every board target reaches customasm through the
+# stamp instead, so `make tangprimer20k GAME=celeste` never ran the frontend:
+# after an edit to src/celeste/** the stamp went out of date (it does depend on
+# $(GAME_DEPS)), customasm re-ran, and it re-assembled the PREVIOUS generated
+# asm. A board that silently synthesises the last cart is worse than one that
+# fails, and this cannot be worked around by touching files - the dependency
+# simply was not there.
 ifeq ($(GAME),celeste)
 GAME_SRC := $(CELESTE_INLAY_ASM)
 hex: $(CELESTE_INLAY_ASM)
+$(GAME_STAMP): $(CELESTE_INLAY_ASM)
 endif
 
 .PHONY: test-inlay test-celeste-inlay-equivalence test-layout-asm \
