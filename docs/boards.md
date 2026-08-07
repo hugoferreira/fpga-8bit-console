@@ -6,25 +6,27 @@ between them, what each can and cannot do, and how to build for any of them.
 Opened 2026-07-25, when the Tang Nano 20K target was added. The Tang Primer 20K
 was added 2026-08-06.
 
-> **Status, 2026-08-06.** Both Gowin boards build, and **every timing domain
-> passes on both**. Three separate defects were fixed to get here, and only the
-> first two were blocking the build:
+> **Status, 2026-08-07.** Both Gowin boards build and every timing domain
+> passes. **The Tang boards now default to the vendor Gowin toolchain**
+> (`gw_sh`); `make tangprimer20k PNR=nextpnr` selects yosys + nextpnr. Five
+> defects were fixed to get here, and the last two were found *only* because a
+> second toolchain read the same source:
 >
-> 1. A **combinational loop** through the CPU core — `WE = we_c & RDY`, so a
->    stall predicate reading bus `rw` closed a cycle. Fixed at source in
->    `rtl/psg.sv`; see "The two defects that blocked both Gowin boards".
-> 2. **52 block RAMs against the device's 46.** Every board top now builds with
->    `REVERB(0)`, which is a trade worth reading about before undoing.
-> 3. **Both Gowin tops were clocking the PSG at 112.5 MHz instead of 18.75.**
->    They discarded `clocks.sv`'s divided `psgclk`. This invented the "PSG
->    misses its clock" story this document carried since July, *and* gave the
->    PSG 5102 clocks per sample instead of 850 — so these two bitstreams
->    rendered different audio from the BlackIce and the simulator. See
->    "Retracted: the PSG's domain misses by 2.3x".
+> 1. A **combinational loop** through the CPU core (`WE = we_c & RDY`), fixed
+>    at source in `rtl/psg.sv`.
+> 2. **52 block RAMs against 46** — every board top now builds `REVERB(0)`.
+>    The vendor flow packs the same design into **40**, so the headroom is back.
+> 3. **Both Gowin tops clocked the PSG at 112.5 MHz instead of 18.75**, which
+>    invented the "PSG misses its clock" story this document carried for two
+>    weeks *and* gave the PSG 5102 clocks/sample instead of 850.
+> 4. **Dedicated SSPI pins were never released.** On the Tang Nano 20K that is
+>    all three I2S pins — a silent board; on the Primer, the O button. nextpnr
+>    places them without a word. See "Configuration pins used as GPIO".
+> 5. **`rtl/lcd.sv` never sent its initialisation sequence.** The ST7789 setup
+>    ROM lookup was a declaration initialiser, so `command` was a constant and
+>    the panel got sixteen `0x00` bytes. `make test-lcd` now covers it.
 >
-> One loose end remains: `psgclk` does not land on a global clock network.
-> It is harmless today (0 hold violations on both boards) but harmless by
-> placement luck — details under the retraction.
+> Numbers below were re-measured after all five.
 
 ## Why there is more than one board
 
@@ -776,6 +778,117 @@ understand rather than a free win:
 - **46 of 46 is zero headroom.** Anything that wants one more block has to find
   it first. The proportionate way back to reverb is a cheaper buffer — 16 bits
   per sample for a 33 ms delay line is generous — not a bigger device.
+
+## Configuration pins used as GPIO
+
+**Both Tang boards wire ordinary peripherals to pins that are dedicated
+configuration pins after power-up, and the bitstream has to release them or
+those peripherals are simply dead.**
+
+| Board | Signals | Pins | Group | Symptom if not released |
+| --- | --- | --- | --- | --- |
+| Tang Nano 20K | `i2s_bclk`, `i2s_lrck`, `i2s_din` | 56, 55, 54 | SSPI | **the board makes no sound at all** |
+| Tang Primer 20K | `key1` | T10 | SSPI | the O button never reads |
+
+**nextpnr does not warn about this.** It places those pins happily and
+`gowin_pack` writes a bitstream that leaves them in SSPI mode. The fault is
+invisible until hardware. Gowin's own place-and-route refuses outright:
+
+```
+ERROR (PR2017) : 'i2s_bclk' cannot be placed according to constraint,
+                 for the location is a dedicated pin (SSPI)
+```
+
+Both flows can express the fix, and both now do — `--sspi_as_gpio` for
+`gowin_pack` (`GOWIN_PACK_GPIO` in the Makefile), `-use_sspi_as_gpio 1` for
+`gw_sh`. That it matters was checked rather than assumed: packing the identical
+routed netlist with and without the flag gives bitstreams **differing by 9
+bytes**.
+
+Add flags only for groups a board actually needs. `--jtag_as_gpio` costs you the
+programming interface.
+
+## Two toolchains, one source
+
+The Tang boards default to the **vendor Gowin toolchain**; the open-source path
+is one variable away:
+
+```
+make tangprimer20k                 # gw_sh: GowinSynthesis + Gowin place & route
+make tangprimer20k PNR=nextpnr     # yosys + nextpnr-himbaechel + apicula
+make gowin-check                   # synthesis only, both boards, ~70 s
+```
+
+Measured on the Tang Primer 20K, same RTL, same `.cst`:
+
+| | yosys + nextpnr | vendor Gowin |
+| --- | --- | --- |
+| Wall clock | 570 s (place & route **only**) | **80 s** (synthesis + P&R + bitstream) |
+| Logic | 8,673 LUT4 + 2,746 ALU | 6,842 LUT + 1,389 ALU |
+| Registers | 2,535 | 1,745 |
+| **Block RAM** | **46 / 46** | **40** (32 SP + 5 SDPB + 3 pROM) |
+| Timing | all pass | all pass |
+
+Speed is the least interesting column. **Block RAM at 40 rather than 46 hands
+back the headroom `REVERB(0)` cost**, and the vendor flow rejects things the
+open-source one accepts silently — both of the hardware defects above were found
+by it and by nothing else.
+
+The open-source path is kept rather than deprecated: it needs no vendor install,
+it is what `make tangnano20k-synth` reports area from, and a second independent
+implementation of the same design is worth having.
+
+**What is shared and what is not:**
+
+| | Shared? |
+| --- | --- |
+| RTL | **yes**, verbatim |
+| `.cst` pin constraints | **yes**, verbatim |
+| SDC timing constraints | **no** — `rtl/gowin_boards.sdc` (nextpnr) and `rtl/gowin_vendor.sdc` (Gowin) |
+
+The SDC split is forced, not chosen. Gowin needs the object list braced
+(`[get_nets {pllclk}]`; the bare form is a syntax error) and, more awkwardly,
+**the two synthesisers do not name nets alike** — `cpuclk` exists in the yosys
+netlist and does not exist in Gowin's, which derives and reports it anyway.
+Two copies of the same periods is a real hazard: nothing checks that they agree.
+
+### Getting `gw_sh` to run on macOS
+
+It cannot be run straight from the bundle. Two failures, in order:
+
+```
+Library not loaded: @rpath/libGWTE.dylib   ... tried '$ORIGIN/../lib/...'
+Library not loaded: /Library/Frameworks/Tcl.framework/Versions/8.6/Tcl
+```
+
+`$ORIGIN` is a Linux-ism macOS does not resolve, and the Tcl 8.6 framework lives
+inside the app. `Contents/MacOS/gowinide` shows the answer — point both
+`DYLD_FRAMEWORK_PATH` and `DYLD_LIBRARY_PATH` at `IDE/lib`. `tools/gowin_build.sh`
+does exactly that; override `GOWIN_APP` if yours is installed elsewhere.
+
+The build runs in `build/gowin_vendor/<board>/` with a symlink to `rtl/`, because
+the RTL loads memory images both relative to the working directory
+(`./rtl/attrram.hex`) and by bare name (`setup_st7789_565.hex`) — running
+anywhere else breaks one or the other — and because it keeps Gowin's `impl/`
+tree out of the repository root.
+
+### `make gowin-check`, and why it exists
+
+Synthesis only, both boards, no bitstream. It is the gate that stops the source
+drifting into one toolchain's dialect, and the project has a history of exactly
+that:
+
+- `rtl/lcd.sv` and `rtl/serialize.sv` declared **parameters after the port list
+  that referenced them**. yosys and Verilator accept it; **iverilog cannot
+  elaborate it at all**, which is why the panel driver went its whole life with
+  no bench.
+- `rtl/lcd.sv` initialised a variable from a memory read **at its declaration**
+  (`logic [8:0] command = rom[counter];`). That is a one-shot initialiser, not a
+  continuous assignment. GowinSynthesis rejects it; yosys silently synthesised a
+  constant, and the panel was sent sixteen `0x00` bytes instead of its setup
+  sequence. See `make test-lcd`.
+
+Both are fixed, and both were invisible to every gate the project had.
 
 ## A naming constraint the Gowin targets impose
 

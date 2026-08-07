@@ -553,6 +553,32 @@ build/ppu_golden.vvp: rtl/ppu_golden_tb.sv $(PPU_RTL) rtl/sprite_pattern.bin
 	   > build/ppu_iverilog.log 2>&1; \
 	 status=$$?; grep -v 'sorry:' build/ppu_iverilog.log; exit $$status
 
+# ------------------------------------------------------------------------------
+# LCD panel driver bench
+#
+# rtl/lcd.sv is instantiated by all three board tops and by NOTHING ELSE -
+# rtl/top_simulator.sv does not include it - so until this target existed, no
+# gate in the project ever exercised the panel driver. That blind spot hid a
+# real defect for the whole life of the file: the ST7789 initialisation ROM
+# lookup was a declaration initialiser rather than a continuous assignment, so
+# `command` was a constant and the panel received sixteen 0x00 bytes instead of
+# its setup sequence. It was found by GowinSynthesis rejecting the construct,
+# not by any test here.
+#
+# The bench decodes the sda/scl/cs/rs pins - a protocol check, not a mirror of
+# the implementation - and writes build/lcd_frame.ppm so the geometry can be
+# looked at. Run from build/ because lcd.sv's $readmemh path is bare and
+# iverilog resolves it against cwd.
+build/lcd_tb: rtl/lcd_tb.sv rtl/lcd.sv rtl/serialize.sv rtl/setup_st7789_565.hex
+	@mkdir -p build
+	iverilog -g2012 -Irtl -s lcd_tb -o $@ rtl/lcd_tb.sv rtl/lcd.sv
+
+test-lcd: build/lcd_tb
+	@cp rtl/setup_st7789_565.hex build/
+	@cd build && vvp lcd_tb
+
+.PHONY: test-lcd
+
 ppu-check: ppu-lint build/ppu_golden.vvp
 	@mkdir -p rtl/golden
 	vvp build/ppu_golden.vvp $(PPUARGS)
@@ -1106,6 +1132,46 @@ gates-psg:
 # The easiest way to get a matched set on macOS or Linux is the YosysHQ
 # oss-cad-suite tarball, which ships all four. See docs/boards.md.
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# WHICH PLACE-AND-ROUTE THE TANG BOARDS USE
+#
+#   make tangnano20k                 vendor Gowin toolchain  (default)
+#   make tangnano20k PNR=nextpnr     yosys + nextpnr-himbaechel
+#
+# The vendor flow is the default because it is both faster and stricter.
+# Measured on the Tang Primer 20K: 80 s for synthesis + place-and-route +
+# bitstream against 570 s for nextpnr's place-and-route alone, and it packs the
+# design into 40 block RAMs where yosys + nextpnr needs 46.
+#
+# Stricter matters more. Two hardware bugs were found by running this flow and
+# by nothing else in the project:
+#
+#   * dedicated configuration pins - it refuses to place a signal on one
+#     without the matching -use_*_as_gpio. nextpnr places them silently. On the
+#     Tang Nano 20K that was all three I2S pins, i.e. a board that makes no
+#     sound; on the Primer, the O button.
+#   * rtl/lcd.sv's initialisation ROM lookup, which it rejected outright and
+#     which turned out never to have been synthesised as intended - the panel
+#     was being sent sixteen 0x00 bytes instead of its setup sequence. See
+#     `make test-lcd`, the bench that now covers it.
+#
+# The open-source path is kept, not deprecated: it is the only one that runs
+# without a vendor install, it is what `make tangnano20k-synth` reports area
+# from, and a second implementation of the same design is worth having.
+PNR ?= gowin
+
+# The vendor toolchain. gw_sh cannot be run straight from the bundle - its
+# rpath uses $ORIGIN and it wants a Tcl 8.6 framework - so it needs the same
+# environment Contents/MacOS/gowinide sets. Override GOWIN_APP if yours lives
+# elsewhere.
+GOWIN_APP    ?= /Applications/Gowin_V1.9.11.01_Education_macOS.app
+GOWIN_EDA     = $(GOWIN_APP)/Contents/Resources/Gowin_EDA
+GW_SH         = $(GOWIN_EDA)/IDE/bin/gw_sh
+GW_ENV        = DYLD_FRAMEWORK_PATH=$(GOWIN_EDA)/IDE/lib \
+                DYLD_LIBRARY_PATH=$(GOWIN_EDA)/IDE/lib
+GOWIN_VENDOR_SDC = rtl/gowin_vendor.sdc
+GOWIN_BUILD   = GW_SH="$(GW_SH)" GW_ENV="$(GW_ENV)" tools/gowin_build.sh
+
 GOWIN_TOP     = rtl/top_tangnano20k.sv
 GOWIN_CST     = rtl/tangnano20k.cst
 # Per-clock timing constraints, shared by both Gowin boards. Without it nextpnr
@@ -1113,6 +1179,31 @@ GOWIN_CST     = rtl/tangnano20k.cst
 # under no timing pressure - see the header of the file, which is worth reading
 # before quoting any Fmax number from this flow.
 GOWIN_SDC     = rtl/gowin_boards.sdc
+
+# CONFIGURATION PINS REUSED AS GPIO. Some of the pins these boards wire to
+# ordinary peripherals are *dedicated* configuration pins after power-up, and
+# the bitstream has to release them or they never drive anything. On both boards
+# that is the SSPI group:
+#
+#   Tang Nano 20K    pins 54/55/56 - i2s_din, i2s_lrck, i2s_bclk. ALL THREE.
+#                    Without this the MAX98357A gets no clock and no data, so
+#                    the board is silent.
+#   Tang Primer 20K  ball T10 - key1. Without this the O button never reads.
+#
+# NEXTPNR DOES NOT WARN ABOUT THIS. It places those pins happily and
+# gowin_pack writes a bitstream that leaves them in SSPI mode; the fault only
+# appears on hardware, as a dead peripheral. It was found by running the same
+# design through Gowin's own place-and-route, which refuses outright:
+#
+#   ERROR (PR2017) : 'i2s_bclk' cannot be placed according to constraint,
+#                    for the location is a dedicated pin (SSPI)
+#
+# Proven to matter: packing the identical routed netlist with and without this
+# flag gives bitstreams that differ by 9 bytes.
+#
+# Add flags here only for the groups a board actually needs. --jtag_as_gpio in
+# particular would cost you the programming interface.
+GOWIN_PACK_GPIO = --sspi_as_gpio
 # The part as nextpnr names it, the die as apicula names it. The GW2AR-18C is
 # the GW2A-18C die with 64 Mbit of SDRAM in the package, so the chipdb and the
 # packer both want the plain GW2A-18C.
@@ -1188,9 +1279,15 @@ build/gowin/top_pnr.json: build/gowin/top.json ${GOWIN_CST} ${GOWIN_SDC}
 	  | sed 's/^Info:/ /' || true
 	@python3 tools/gowin_timing.py build/gowin/pnr.log
 
+ifeq ($(PNR),gowin)
+bin/toplevel.fs: ${GOWIN_TOP} ${GOWIN_SRC} ${GOWIN_CST} ${GOWIN_VENDOR_SDC} ${FONT_HEX} hex
+	@$(GOWIN_BUILD) tangnano20k GW2AR-18C ${GOWIN_DEVICE} \
+	  ${GOWIN_TOP} ${GOWIN_CST} $@
+else
 bin/toplevel.fs: build/gowin/top_pnr.json
 	@mkdir -p bin
-	${GOWIN_PACK} -d ${GOWIN_DIE} -o $@ $<
+	${GOWIN_PACK} -d ${GOWIN_DIE} ${GOWIN_PACK_GPIO} -o $@ $<
+endif
 
 tangnano20k: bin/toplevel.fs
 
@@ -1258,9 +1355,16 @@ $(GOWIN_PRIMER_DIR)/top_pnr.json: $(GOWIN_PRIMER_DIR)/top.json $(GOWIN_PRIMER_CS
 	  $(GOWIN_PRIMER_DIR)/pnr.log | sed 's/^Info:/ /' || true
 	@python3 tools/gowin_timing.py $(GOWIN_PRIMER_DIR)/pnr.log
 
+ifeq ($(PNR),gowin)
+$(GOWIN_PRIMER_FS): $(GOWIN_PRIMER_TOP) $(GOWIN_SRC) $(GOWIN_PRIMER_CST) \
+                    $(GOWIN_VENDOR_SDC) ${FONT_HEX} hex
+	@$(GOWIN_BUILD) tangprimer20k GW2A-18C $(GOWIN_PRIMER_DEVICE) \
+	  $(GOWIN_PRIMER_TOP) $(GOWIN_PRIMER_CST) $@
+else
 $(GOWIN_PRIMER_FS): $(GOWIN_PRIMER_DIR)/top_pnr.json
 	@mkdir -p bin
-	$(GOWIN_PACK) -d $(GOWIN_DIE) -o $@ $<
+	$(GOWIN_PACK) -d $(GOWIN_DIE) $(GOWIN_PACK_GPIO) -o $@ $<
+endif
 
 tangprimer20k: $(GOWIN_PRIMER_FS)
 
@@ -1274,6 +1378,31 @@ tangprimer20k-flash: $(GOWIN_PRIMER_FS)
 
 .PHONY: tangprimer20k tangprimer20k-synth tangprimer20k-prog tangprimer20k-flash
 
+# ------------------------------------------------------------------------------
+# Portability gate: does the RTL still synthesise under BOTH toolchains?
+#
+# Synthesis only, no place-and-route, ~35 s per board. This is where dialect
+# problems surface, and the project has a history of them - the SystemVerilog
+# that yosys and Verilator accept is not the SystemVerilog GowinSynthesis or
+# iverilog accept, and nothing used to notice:
+#
+#   * rtl/lcd.sv declared parameters AFTER the port list that referenced them.
+#     yosys and Verilator are fine with it; iverilog cannot elaborate it at
+#     all, which is why the panel driver had no bench for its whole life.
+#   * rtl/lcd.sv initialised a variable from a memory read at its declaration.
+#     GowinSynthesis rejects it; yosys silently synthesised a constant.
+#
+# docs/boards.md records the other two rules this cell library imposes - no
+# module named ALU, no typedef enum at $unit scope. Run this before assuming
+# a change is portable.
+gowin-check: hex ${FONT_HEX}
+	@GOWIN_RUN=syn $(GOWIN_BUILD) tangnano20k-check GW2AR-18C ${GOWIN_DEVICE} \
+	  ${GOWIN_TOP} ${GOWIN_CST}
+	@GOWIN_RUN=syn $(GOWIN_BUILD) tangprimer20k-check GW2A-18C $(GOWIN_PRIMER_DEVICE) \
+	  $(GOWIN_PRIMER_TOP) $(GOWIN_PRIMER_CST)
+
+.PHONY: gowin-check
+
 boards:
 	@echo "Boards this design targets:"
 	@echo
@@ -1285,20 +1414,26 @@ boards:
 	@printf '  %-14s %s\n' ''           '  make tangnano20k / make tangnano20k-prog'
 	@printf '  %-14s %s\n' ''           '  the full 64 KB RAM, in 32 of the 46 block RAMs'
 	@printf '  %-14s %s\n' ''           '  audio: onboard MAX98357A over I2S'
-	@printf '  %-14s %s\n' ''           '  needs TANGNANO_SEED=2 (the default here) - see docs/boards.md'
+	@printf '  %-14s %s\n' ''           '  PNR=nextpnr also needs TANGNANO_SEED=2 (the default)'
 	@echo
 	@printf '  %-14s %s\n' 'tangprimer20k' 'Sipeed Tang Primer 20K + Dock - Gowin GW2A-18C, 27 MHz'
 	@printf '  %-14s %s\n' ''             '  make tangprimer20k / make tangprimer20k-prog'
 	@printf '  %-14s %s\n' ''             '  same die as the Nano 20K, so the same 64 KB RAM fit'
 	@printf '  %-14s %s\n' ''             '  audio: Dock PT8211 DAC -> 3.5mm jack (NOT I2S)'
 	@echo
-	@echo "  make tangnano20k-synth       area report, no place-and-route"
-	@echo "  make tangprimer20k-synth     likewise, for the Primer"
-	@echo "  See docs/boards.md for the toolchain and the pin maps."
+	@echo "  Both Tang boards default to the VENDOR Gowin toolchain (gw_sh):"
+	@echo "    ~80 s end to end, 40 of 46 block RAMs, and it refuses pin and"
+	@echo "    language mistakes that nextpnr accepts silently."
+	@echo "    make tangprimer20k PNR=nextpnr   for yosys + nextpnr instead"
 	@echo
-	@echo "  Both Gowin boards build the whole console and sit at 46/46 block"
-	@echo "  RAMs - zero headroom. That fit needs REVERB(0), which every board"
-	@echo "  top passes; the simulator keeps reverb. Neither has run on hardware."
+	@echo "  make gowin-check             does the RTL still synthesise on both? (~70 s)"
+	@echo "  make test-lcd                panel driver bench + build/lcd_frame.ppm"
+	@echo "  make tangnano20k-synth       yosys area report, no place-and-route"
+	@echo "  make tangprimer20k-synth     likewise, for the Primer"
+	@echo "  See docs/boards.md for the toolchains and the pin maps."
+	@echo
+	@echo "  Hardware audio and buttons need --sspi_as_gpio; both boards wire"
+	@echo "  peripherals to dedicated SSPI pins. Neither has run on hardware."
 
 .PHONY: boards tangnano20k tangnano20k-synth tangnano20k-prog tangnano20k-flash
 
@@ -1337,7 +1472,7 @@ $(GOWIN_PSG_DIR)/top_pnr.json: $(GOWIN_PSG_DIR)/top.json $(GOWIN_PSG_CST)
 
 $(GOWIN_PSG_FS): $(GOWIN_PSG_DIR)/top_pnr.json
 	@mkdir -p bin
-	$(GOWIN_PACK) -d $(GOWIN_DIE) -o $@ $<
+	$(GOWIN_PACK) -d $(GOWIN_DIE) $(GOWIN_PACK_GPIO) -o $@ $<
 
 tangnano20k-psg: $(GOWIN_PSG_FS)
 
