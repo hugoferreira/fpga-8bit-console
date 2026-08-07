@@ -38,9 +38,9 @@ IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
 // That is not a workaround - Sipeed's own LiteX constraints declare them the
 // same way. This design instantiates no DDR3, but the bank VCCIO is a board
 // fact, not a design choice.
-IO_LOC  "key1" T10;  // CARD1:15,  btn_n0 - reads as button O ($4007 bit 4)
+IO_LOC  "key1" T10;  // CARD1:15,  btn_n0 - reads as button X ($4007 bit 5)
 IO_PORT "key1" IO_TYPE=LVCMOS33 PULL_MODE=UP;
-IO_LOC  "key2" T3;   // CARD1:165, btn_n1 - reads as button X ($4007 bit 5)
+IO_LOC  "key2" T3;   // CARD1:165, btn_n1 - reads as button O ($4007 bit 4, PICO-8's C)
 IO_PORT "key2" IO_TYPE=LVCMOS15 PULL_MODE=UP;
 
 // ---------------------------------------------------------------------------

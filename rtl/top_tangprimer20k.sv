@@ -194,6 +194,17 @@ module top(input  bit clk,                    // 27 MHz crystal, ball H11
   // PICO-8's O and 0x20 its X, the two a port actually needs to get past a
   // title screen. Left/right/up/down have no key here and read 0.
   //
+  // key1 (T10, btn_n0) is X and key2 (T3, btn_n1) is O - the O that PICO-8
+  // also binds to the C key, which is Celeste's jump. It was the other way
+  // round until 2026-08-07 and the swap is a deliberate request, not a fix:
+  // with only two keys the pair has to cover starting the game and jumping.
+  //
+  // IF THE TWO COME OUT BACKWARDS ON HARDWARE, swap them here and nowhere
+  // else. Which silkscreen legend sits above which ball is not something this
+  // file can know, and this board is already on record disagreeing with itself
+  // about that: its LEDs are silkscreened LED4/LED5 where litex calls the same
+  // two led0/led1.
+  //
   // Three more keys are wired on the Dock and are deliberately NOT taken: they
   // are in the 1.5 V DDR3 bank, and spending four more balls on directions is
   // a decision for whoever wires a real gamepad, not for board support.
@@ -211,7 +222,9 @@ module top(input  bit clk,                    // 27 MHz crystal, ball H11
   always_ff @(posedge masterclk) begin
     key_sync0 <= {key2, key1};
     key_sync1 <= key_sync0;
-    if (vsync) buttons <= {2'b00, ~key_sync1[1], ~key_sync1[0], 4'b0000};
+    // key_sync1[0] is key1 and drives bit 5 (X); key_sync1[1] is key2 and
+    // drives bit 4 (O).
+    if (vsync) buttons <= {2'b00, ~key_sync1[0], ~key_sync1[1], 4'b0000};
   end
 
   logic signed [15:0] audio;
