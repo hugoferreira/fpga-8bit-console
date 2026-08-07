@@ -1420,6 +1420,36 @@ endif
 
 tangprimer20k: $(GOWIN_PRIMER_FS)
 
+# Bring-up diagnostic, not the console. Same port list and same .cst as the
+# real top, so every pin is driven where the console would drive it - but with
+# nothing but counters behind them, so a dead output means a dead pin/clock and
+# not a bug three subsystems deep. See rtl/top_tangprimer20k_blink.sv.
+bin/tangprimer20k-blink.fs: rtl/top_tangprimer20k_blink.sv rtl/pll_gowin.v \
+                            $(GOWIN_PRIMER_CST)
+	@GOWIN_SDC=none $(GOWIN_BUILD) tangprimer20k-blink GW2A-18C $(GOWIN_PRIMER_DEVICE) \
+	  rtl/top_tangprimer20k_blink.sv $(GOWIN_PRIMER_CST) $@
+
+tangprimer20k-blink: bin/tangprimer20k-blink.fs
+
+# Panel bring-up: CS tied low, a two-controller-safe init, colour bars. Answers
+# whether the PMOD2 balls reach the module and whether lcd.sv's per-byte CS
+# deassertion is what the panel objects to. See rtl/top_tangprimer20k_lcdtest.sv.
+bin/tangprimer20k-lcdtest.fs: rtl/top_tangprimer20k_lcdtest.sv rtl/pll_gowin.v \
+                              $(GOWIN_PRIMER_CST)
+	@GOWIN_SDC=none $(GOWIN_BUILD) tangprimer20k-lcdtest GW2A-18C $(GOWIN_PRIMER_DEVICE) \
+	  rtl/top_tangprimer20k_lcdtest.sv $(GOWIN_PRIMER_CST) $@
+
+tangprimer20k-lcdtest: bin/tangprimer20k-lcdtest.fs
+
+tangprimer20k-lcdtest-prog: bin/tangprimer20k-lcdtest.fs
+	$(OFL) -b $(OFL_PRIMER_BOARD) $<
+
+tangprimer20k-blink-prog: bin/tangprimer20k-blink.fs
+	$(OFL) -b $(OFL_PRIMER_BOARD) $<
+
+.PHONY: tangprimer20k-blink tangprimer20k-blink-prog \
+        tangprimer20k-lcdtest tangprimer20k-lcdtest-prog
+
 # SRAM, not flash: this is the one to use while iterating, and the board comes
 # back up with whatever is in flash after a power cycle.
 tangprimer20k-prog: $(GOWIN_PRIMER_FS)

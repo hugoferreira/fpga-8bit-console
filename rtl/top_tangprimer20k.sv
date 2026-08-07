@@ -59,7 +59,8 @@ module top(input  bit clk,                    // 27 MHz crystal, ball H11
            output bit led_lock,
            output bit sda, output bit scl, output bit cs, output bit rs,
            output bit lcd_rst,
-           output bit audio_pwm,              // 1-bit delta-sigma, header pin
+           output bit audio_pwm,              // delta-sigma -> PMOD0 IL
+           output bit audio_pwm_r,            // ...and IR, same mono signal
            output bit hp_bck, output bit hp_ws, output bit hp_din,
            output bit pa_en);                 // LPA4809 enable
 
@@ -219,6 +220,11 @@ module top(input  bit clk,                    // 27 MHz crystal, ball H11
                               .bck(hp_bck), .ws(hp_ws), .din(hp_din));
   assign pa_en = pll_locked & ~reset;
 
+  // The MuseLab PMOD-AUDIO on PMOD0 is an analogue-input class-D amplifier
+  // (PAM8403) behind a 22K/1uF network, so this delta-sigma stream is exactly
+  // what it wants - it is the reconstruction filter docs/boards.md says this
+  // stage needs off-board. Both of its channels take the same mono signal.
   dsigma dsigma0(.clk(psgclk), .reset(reset), .pcm(audio), .out(audio_pwm));
+  assign audio_pwm_r = audio_pwm;
 
 endmodule

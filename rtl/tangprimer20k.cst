@@ -61,27 +61,63 @@ IO_LOC  "led_lock" L14;   // CARD1:46, led1 - lit once the PLL has locked
 IO_PORT "led_lock" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
 
 // ---------------------------------------------------------------------------
-// SPI LCD (ST7789, 320x240) - the one thing an operator has to wire
+// SPI LCD - MuseLab PMOD-TFTLCD v1.1 on PMOD2 (2.8", 320x240, SPI)
 // ---------------------------------------------------------------------------
-// These are the balls Sipeed's own SPI_lcd example uses to drive a serial panel
-// on a 20K ext-board, which is the closest thing to an authority that exists
-// for this: six signals, the shape of one PMOD connector's eight, and not one
-// of them collides with anything the Dock assigns (HDMI, RGB FPC, Ethernet,
-// microSD, LEDs, keys, headphone DAC - all checked against the CARD1 map).
+// The module carries two connectors: J2 is the display, J3 is an XPT2046 touch
+// controller. J2 sits in PMOD2 and J3 in PMOD3.
 //
-// What is NOT established is which PMOD connector they land on, because the
-// CARD1 positions of these six balls are absent from every map available here.
-// So: reserved and routable, not wired. Read them off the Dock schematic before
-// connecting a panel.
-IO_LOC  "scl" F12;      // SPI clock
+// THE MODULES ARE MOUNTED FACING OUTWARD, WHICH SHIFTS EVERY SIGNAL BY SIX.
+// That is not a mistake, it is the only orientation in which the power pins
+// line up: MuseLab puts GND on connector pins 5 and 8 and 3V3 on 6 and 7,
+// while the Dock follows Digilent (GND on 5 and 11, VCC on 6 and 12). Seated
+// this way, 3V3 meets 3V3 and GND meets GND, and the four signals move from
+// the module's pins 1-4 to the Dock's P7-P10:
+//
+//     module J2 pin 1  CS   -> PMOD2 P7  -> D14
+//     module J2 pin 2  MOSI -> PMOD2 P8  -> B14
+//     module J2 pin 4  CLK  -> PMOD2 P10 -> B12
+//     module J2 pin 10 RS   -> PMOD2 P3  -> A14
+//
+// RS IS ON PIN 10, IN THE OTHER ROW - not pin 3, which is unconnected. The
+// module's connector is numbered serpentine (1..6 down one column, 12..7 down
+// the other), so its four signals are NOT all in one row: CS/MOSI/CLK sit at
+// positions 1,2,4 of the first column and RS at position 3 of the second.
+// After the row swap that puts RS back on the Dock's FIRST row, at P3.
+//
+// This cost a hardware debugging round. Reading the schematic as flattened
+// text put RS on pin 3; only extracting the label COORDINATES and matching
+// them to the connector's pin-number rows showed it on pin 10. The symptom was
+// a completely white panel with everything else working - RS floating means
+// the controller cannot tell a command from a pixel, so the init never lands.
+// The same extraction confirms J3's MISO and CLK on pins 3 and 4, which map to
+// N9 and L9 and are exactly what the board measures.
+//
+// PMOD2's P1, P2, P4 (E15, A15, C12) and every PMOD3 pin are deliberately NOT
+// constrained. Nothing needs them, and leaving them as inputs means an FPGA
+// output can never meet whatever the module presents there - in particular the
+// XPT2046's MISO, which is an output. With the serpentine numbering understood,
+// the module's unconnected pins 9/11/12 land on those three balls and its power
+// pins land on the Dock's power pins, so nothing is being fought over.
+//
+// Ball assignments are from ciniml's Tang Primer 20K Pmod Extender, whose whole
+// purpose is documenting this mapping; none of them collide with anything the
+// Dock assigns. Note PMOD2 and PMOD3 share pins with the RGB LCD FPC connector,
+// so do not populate that at the same time.
+IO_LOC  "scl" B12;      // PMOD2 P10 <- module J2 pin 4, SPI clock
 IO_PORT "scl" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC  "sda" L15;      // SPI data (MOSI)
+IO_LOC  "sda" B14;      // PMOD2 P8  <- module J2 pin 2, SPI data (MOSI)
 IO_PORT "sda" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC  "cs" C16;       // chip select
+IO_LOC  "cs" D14;       // PMOD2 P7  <- module J2 pin 1, chip select
 IO_PORT "cs" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC  "rs" J13;       // data/command
+IO_LOC  "rs" A14;       // PMOD2 P3  <- module J2 pin 10, data/command
 IO_PORT "rs" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC  "lcd_rst" G13;  // panel reset
+
+// Parked, not wired. The module ties the panel's RESET pin to 3V3, so the FPGA
+// cannot reset it and this signal has no destination - but nextpnr and Gowin
+// both require every port to be constrained. PMOD1 is empty, so this drives
+// nothing. If a panel that DOES expose RESET is ever fitted, this is the pin to
+// move onto it.
+IO_LOC  "lcd_rst" P11;  // PMOD1 P1 - empty connector
 IO_PORT "lcd_rst" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
 // ---------------------------------------------------------------------------
@@ -99,14 +135,26 @@ IO_PORT "hp_din" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 IO_LOC  "pa_en" R16;    // CARD1:28 - amplifier enable, high = enabled
 IO_PORT "pa_en" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
-// The delta-sigma alternative, kept because it is the BlackIce's known-good
-// output stage and a second opinion is worth one pin when the DAC path above
-// has never been heard. Needs an RC low-pass (~1k + ~10nF) and an amplifier
-// off-board.
+// ---------------------------------------------------------------------------
+// MuseLab PMOD-AUDIO v1.2 on PMOD0 - the speaker that actually makes noise
+// ---------------------------------------------------------------------------
+// This module is ANALOGUE IN, not I2S: its inputs go through 22K + 1uF into a
+// PAM8403 class-D amplifier driving an onboard speaker and a 3.5mm jack. So it
+// is fed by rtl/dsigma.sv - the 1-bit delta-sigma stage the BlackIce uses -
+// and not by the PT8211 path above. The 22K/1uF is the reconstruction network
+// that docs/boards.md says this output stage needs off-board.
 //
-// This ball is `lcd_bl` in Sipeed's SPI_lcd example - the panel backlight,
-// which rtl/lcd.sv has no concept of and never drives. If your panel needs a
-// switched backlight rather than a tie to 3V3, take this pin for it and move
-// audio_pwm to another free position on the same connector.
-IO_LOC  "audio_pwm" P12;
+// Same outward-facing orientation as the LCD, so the same +6 shift:
+//
+//     module J1 pin 1 IL -> PMOD0 P7 -> T6
+//     module J1 pin 2 IR -> PMOD0 P8 -> T7
+//
+// Both channels are driven from the same mono PSG output, so the speaker and
+// both sides of the headphone jack get the same signal.
+//
+// PMOD0's P1-P4 (P6, R8, P8, T9) are deliberately left unconstrained, for the
+// same reason as PMOD2's.
+IO_LOC  "audio_pwm" T6;    // PMOD0 P7 <- module J1 pin 1, IL
 IO_PORT "audio_pwm" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "audio_pwm_r" T7;  // PMOD0 P8 <- module J1 pin 2, IR
+IO_PORT "audio_pwm_r" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

@@ -49,13 +49,17 @@ REPO=$(pwd)
 DIR=build/gowin_vendor/$BOARD
 rm -rf "$DIR"; mkdir -p "$DIR"
 ln -s "$REPO/rtl" "$DIR/rtl"
-cp "$REPO/rtl/gowin_vendor.sdc" "$DIR/"
+# The SDC is optional: a bring-up top that has none of the console's clock
+# nets would fail every constraint in it ("Can't set timing constraint to
+# object psgclk"). GOWIN_SDC=none builds without one.
+SDC=${GOWIN_SDC:-rtl/gowin_vendor.sdc}
+[ "$SDC" = none ] || cp "$REPO/$SDC" "$DIR/"
 
 cat > "$DIR/run.tcl" <<EOF
 set_device -name $DEVNAME $PARTNO
 add_file rtl/$(basename "$TOP")
 add_file rtl/$(basename "$CST")
-add_file gowin_vendor.sdc
+$([ "$SDC" = none ] || echo "add_file $(basename "$SDC")")
 set_option -top_module top
 set_option -verilog_std sysv2017
 set_option -include_path rtl
