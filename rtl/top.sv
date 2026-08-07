@@ -12,7 +12,7 @@ module top(input  bit clk, output bit yellow_led,
            output bit tx, output bit audio_pwm);
 
   localparam SCALE = 2, WIDTH = 320, HEIGHT = 240;
-  localparam RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
+  localparam RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "./rtl/palette565.bin";
 
   // The clock the PSG actually runs at, fed to it so its 22050 Hz virtual
   // sample rate comes out right. It is the PLL output divided by PSG_DIV - see

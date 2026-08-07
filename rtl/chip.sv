@@ -17,7 +17,17 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
             output logic signed [15:0] audio,
             output logic [63:0] psg_dbg);
 
-  parameter RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
+  // FILE MUST MATCH THE WIDTH. `palette` reads FILE into RGB-bit words with
+  // $readmemb, and $readmemb given a wider word keeps the LOW bits and reports
+  // it as a warning at most. This parameter was ignored here for the whole life
+  // of the file - the palette instance below hardcoded the 24-bit
+  // palette888.bin - so every RGB565 top (both Tang boards and top.sv) loaded
+  // the low 16 bits of a 24-bit colour and re-read them as 5:6:5. It cost a
+  // hardware debugging session: PICO-8 white (255,241,232) arrived as
+  // (240,60,64) and the panel showed red text on a blue background, which reads
+  // as a colour-space or byte-order fault and is neither. See make test-palette.
+  parameter RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE,
+            FILE = "./rtl/palette565.bin";
   // Master-clock frequency, threaded to the PSG so its 22050 Hz virtual
   // sample rate is derived correctly on any board (default: the simulator's
   // 161*121*3*60 Hz pixel clock). REVERB=0 drops the reverb delay BRAM.
@@ -226,7 +236,7 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
         .dma_addr(sp_dma_addr),
         .dma_data(sp_dma_data)
       );
-      palette #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE("./rtl/palette888.bin")) pal_sprite(
+      palette #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE(FILE)) pal_sprite(
         .clk(clk),
         .color(sprite_color),
         .rgb(srgb)

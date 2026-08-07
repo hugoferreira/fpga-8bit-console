@@ -66,7 +66,7 @@ module top(input  bit clk,                    // 27 MHz crystal, pin 4
            output bit pa_en);                 // MAX98357A SD_MODE
 
   localparam SCALE = 2, WIDTH = 320, HEIGHT = 240;
-  localparam RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
+  localparam RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "./rtl/palette565.bin";
 
   // The clock the PSG actually runs at - the PLL output undivided, not the
   // board pin. 27 MHz in, 112.5 MHz out, exactly (rtl/pll_gowin.v), so this is

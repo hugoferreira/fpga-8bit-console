@@ -618,12 +618,21 @@ build/ppu_golden.vvp: rtl/ppu_golden_tb.sv $(PPU_RTL) rtl/sprite_pattern.bin
 # not by any test here.
 #
 # The bench decodes the sda/scl/cs/rs pins - a protocol check, not a mirror of
-# the implementation - and writes build/lcd_frame.ppm so the geometry can be
-# looked at. Run from build/ because lcd.sv's $readmemh path is bare and
-# iverilog resolves it against cwd.
+# the implementation - and writes build/lcd_frame.ppm and lcd_frame2.ppm so the
+# geometry can be looked at. Run from build/ because lcd.sv's $readmemh path is
+# bare and iverilog resolves it against cwd.
 build/lcd_tb: rtl/lcd_tb.sv rtl/lcd.sv rtl/serialize.sv rtl/setup_st7789_565.hex
 	@mkdir -p build
 	iverilog -g2012 -Irtl -s lcd_tb -o $@ rtl/lcd_tb.sv rtl/lcd.sv
+
+# The same bench at the divider the boards actually ship. Blanking is timed in
+# `clk` cycles while bytes are timed in SCL phases, so the two counters
+# interact; running only the module default (2) leaves the built design - which
+# uses 3 - untested. Both take ~40 s together against ~90 s plus a human for one
+# hardware round trip.
+build/lcd_tb3: rtl/lcd_tb.sv rtl/lcd.sv rtl/serialize.sv rtl/setup_st7789_565.hex
+	@mkdir -p build
+	iverilog -g2012 -Irtl -s lcd_tb -Plcd_tb.SPI_HALF=3 -o $@ rtl/lcd_tb.sv rtl/lcd.sv
 
 # Colour-depth reduction at the output stage - RGB565 in, RGB444 out for the
 # panel's 12-bit mode, which is 25% fewer bytes per frame on a link that is the
@@ -638,9 +647,35 @@ test-rgb-quant: build/rgb_quant_tb
 
 .PHONY: test-rgb-quant
 
-test-lcd: build/lcd_tb
+# The colour ROM, checked against the width it is loaded into.
+#
+# This elaborates `chip` at RGB565 - the width both Tang tops build - rather
+# than testing `palette` on its own, because the defect it exists to catch was
+# in the wiring, not in the module or the file: chip.sv hardcoded the 24-bit
+# palette888.bin into the palette instance, $readmemb silently kept the low 16
+# bits of every word, and the panel showed red text on a blue background with
+# every other gate passing. `palette` in isolation passed throughout, and so did
+# `make shot` - top_simulator.sv builds the chip at 8:8:8, the one width at
+# which the hardcoded file was right.
+#
+# Verilator, not iverilog: chip.sv declares its parameters after the port list,
+# which iverilog cannot elaborate (the same limitation rtl/lcd.sv's header
+# records). ~6 s.
+test-palette:
+	@mkdir -p build
+	@verilator --binary --timing -Irtl --top-module palette_tb \
+	  -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-PINMISSING \
+	  -o palette_tb_bin rtl/palette_tb.sv rtl/chip.sv --Mdir build/obj_paltb \
+	  > build/palette_verilator.log 2>&1 \
+	  || { cat build/palette_verilator.log; exit 1; }
+	@build/obj_paltb/palette_tb_bin | grep -v '^RAM:'
+
+.PHONY: test-palette
+
+test-lcd: build/lcd_tb build/lcd_tb3
 	@cp rtl/setup_st7789_565.hex build/
 	@cd build && vvp lcd_tb
+	@cd build && vvp lcd_tb3
 
 .PHONY: test-lcd
 

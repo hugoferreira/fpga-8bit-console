@@ -78,7 +78,7 @@ module target_harness (
     // `-top psg` for this reason, and the failure looks like an area problem
     // when it is a pin-budget one.
     /* verilator lint_off PINCONNECTEMPTY */
-    chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE("palette565.bin"),
+    chip #(.RED(RED), .GREEN(GREEN), .BLUE(BLUE), .FILE("./rtl/palette565.bin"),
            .CLK_HZ(32'd18_750_000), .REVERB(1),
            .HAS_PPU(HAS_PPU), .HAS_PSG(HAS_PSG), .PSG_DBG(0),
            .PSG_MULTIPUMP(1),

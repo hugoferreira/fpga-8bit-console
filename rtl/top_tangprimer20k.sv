@@ -65,7 +65,7 @@ module top(input  bit clk,                    // 27 MHz crystal, ball H11
            output bit pa_en);                 // LPA4809 enable
 
   localparam SCALE = 2, WIDTH = 320, HEIGHT = 240;
-  localparam RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "palette565.bin";
+  localparam RED = 5, GREEN = 6, BLUE = 5, RGB = RED + GREEN + BLUE, FILE = "./rtl/palette565.bin";
 
   // ONE knob for the PSG's rate, exactly as rtl/top.sv has it. PSG_DIV goes to
   // clocks.sv as the divider AND divides the frequency the PSG computes its

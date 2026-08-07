@@ -59,7 +59,7 @@ module top(input logic clk_i, input logic rst_i, input logic [7:0] buttons,
   // actually clocked at, or its sample divider detunes: CLK_HZ is the core
   // rate times PSGSIMDIV, so the current single-domain setting supplies 159
   // PSG clocks per 22050 Hz sample.
-  chip #(.RED(8), .GREEN(8), .BLUE(8), .FILE("palette888.bin"),
+  chip #(.RED(8), .GREEN(8), .BLUE(8), .FILE("./rtl/palette888.bin"),
          .PSG_PREVIEW(1), .PSG_MULTIPUMP(0),
          .CLK_HZ(32'd3_506_580 * PSGSIMDIV)) chip(
     .clk(coreclk),
