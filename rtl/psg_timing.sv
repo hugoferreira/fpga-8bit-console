@@ -4,7 +4,8 @@
 `define PSG_TIMING_SV
 
 module psg_timing #(
-    parameter CLK_HZ = 32'd3_506_580
+    parameter CLK_HZ = 32'd3_506_580,
+    parameter REALTIME_PREVIEW = 0
 ) (
     input  bit         clk,
     input  bit         reset,
@@ -76,7 +77,14 @@ module psg_timing #(
           scnt <= scnt + 1;
 
           // Start the tick program six sample intervals before tick_en.
-          if (scnt == 8'd176)
+          // Preview starts twelve intervals early: at 79.5 clocks/sample
+          // (PSG_CLK_DIV=2) the six-interval window leaves the sequencer
+          // ~230 clocks after the compact walk, and a Celeste-shaped tick
+          // program measures up to 130 clocks past the boundary. The
+          // program reads only tick-domain state, so the earlier start
+          // changes when the bank is ready, not what it holds; the flip
+          // still lands on the boundary.
+          if (scnt == (REALTIME_PREVIEW ? 8'd170 : 8'd176))
             pre_tick <= 1;
         end
       end

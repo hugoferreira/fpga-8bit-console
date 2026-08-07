@@ -74,7 +74,8 @@ module psg #(
   logic        tick_en, tick_en_d;
   logic        pre_tick;
 
-  psg_timing #(.CLK_HZ(CLK_HZ)) u_timing(
+  psg_timing #(.CLK_HZ(CLK_HZ),
+               .REALTIME_PREVIEW(REALTIME_PREVIEW)) u_timing(
     .clk(clk), .reset(reset),
     .sample_en(sample_en), .tick_en(tick_en), .tick_en_d(tick_en_d),
     .pre_tick(pre_tick), .scnt_is3(scnt_is3));

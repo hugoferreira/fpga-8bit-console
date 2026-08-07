@@ -272,16 +272,15 @@ PSGSIMDIV ?= 1
 # PSG_CLK_DIV divides psgclk BELOW the core clock. The chip.sv psg_hold
 # handshake makes register accesses survive the slower clock (without it,
 # PSG_CLK_DIV=2 drops half of all writes and the console is silent), and 2
-# measures 70.5 fps against div=1's 58.8 - past the 60.0 fps floor the live
-# audio queue needs. But 2 CANNOT SHIP TODAY: the preview walk's worst case
-# is ~86 clocks/sample against the 79.5 supplied, and
+# measures ~72 fps against div=1's ~59 - past the 60.0 fps floor the live
+# audio queue needs. 2 is shippable since the preview walk moved its
+# oscillator words into a per-slot register file: the worst case is
+# 1 + 8x9 + 3 = 76 clocks/sample against the 79.5 supplied, and
 #   make test-psg-preview-recovery PSG_RECOVERY_CLK=1753290
-# fails 13,207 sample deadlines (0 at 3506580). Under gameplay load the
-# overruns cascade and music channels audibly drop out, which the pitch
-# gate's thresholds do not catch. 2 becomes shippable when the walk's worst
-# case fits 79 clocks. RTL-only knob - the C++ side keys off the core clock,
-# which this does not touch.
-PSG_CLK_DIV ?= 1
+# passes (it failed 13,207 sample deadlines at the old 24-phase visit).
+# RTL-only knob - the C++ side keys off the core clock, which this does
+# not touch.
+PSG_CLK_DIV ?= 2
 $(SIM_BIN): sim/console.cpp rtl/*.sv rtl/*.svh rtl/*.bin rtl/*.hex
 	verilator --cc rtl/top_simulator.sv --top-module top -Irtl -O3 \
 		--x-assign fast --x-initial fast -Wno-DEFOVERRIDE \

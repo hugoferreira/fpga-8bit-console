@@ -58,6 +58,10 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
   bit tick_window_active = 0;
   bit tick_busy_at_pretick = 0;
   int late_flips = 0;
+  // Diagnostic for a missed pre-run boundary: clocks from tick_en until the
+  // job's bank_ready actually lands.
+  bit overshoot_active = 0;
+  int overshoot = 0;
 
   // Demand counters are clock-rate independent; deadline margins compare them
   // with the selected clock's cycles per sample and pre_tick window.
@@ -238,6 +242,14 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
           tick_window_active = 0;
         end
       end
+      if (overshoot_active) begin
+        overshoot++;
+        if (dut.bank_ready) begin
+          $display("        (job completed %0d clocks after tick_en; window was %0d)",
+                   overshoot, tick_job_clocks);
+          overshoot_active = 0;
+        end
+      end
       if (tick_job_active && !dut.pre_tick) begin
         tick_job_clocks++;
         if (dut.bank_ready) begin
@@ -252,6 +264,8 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
           else begin
             $display("  FAIL: tick pre-run missed its boundary from an idle walk");
             errors++;
+            overshoot_active = 1;
+            overshoot = 0;
           end
           tick_job_active = 0;
         end
@@ -438,7 +452,7 @@ module psg_budget_tb #(parameter int CLKHZ_P = 32'd28_125_000,
     while (!done && guard < visits * 4000) begin
       @(negedge clk);
       guard++;
-      if (dut.u_walk.prun && dut.u_walk.pph == 7'd23
+      if (dut.u_walk.prun && dut.u_walk.pph == dut.u_walk.PLAST
           && dut.u_walk.pc_ch >= 3'd4) begin
         sl = int'(dut.u_walk.pc_ch) - 4;
         if (recovery_seen[sl] < visits) begin
