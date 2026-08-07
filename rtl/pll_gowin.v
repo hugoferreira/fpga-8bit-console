@@ -58,14 +58,39 @@
  *
  * The rPLL divides internally and puts the result on the clock network, where
  * a clock belongs. CLKOUTD is CLKOUT/DYN_SDIV_SEL, from the same VCO, so the
- * 32:1 ratio and the phase lock that rtl/clocks.sv depends on - a chip-clock
- * signal stable for 32 PSG clocks, no synchroniser anywhere - are exactly what
- * they were. Only the skew is gone.
+ * ratio and the phase lock that rtl/clocks.sv depends on - a chip-clock signal
+ * stable for a whole number of PSG clocks, no synchroniser anywhere - are
+ * exactly what they were. Only the skew is gone.
+ */
+
+/*
+ * DYN_SDIV_SEL IS A FRAME-RATE PARAMETER, not just a clock speed.
+ *
+ * It was 32 (3.515625 MHz) and the console could not exceed 30.3 fps at that
+ * value for a reason that has nothing to do with how fast the logic runs:
+ *
+ *   - rtl/ppu_display.sv needs >= 3 chip clocks per CONSOLE pixel (read issued,
+ *     data registered, colour registered), and a console pixel is 2 * PIXCLK
+ *     pllclk where PIXCLK = bits_per_pixel * 2 * SPI_HALF. At 32:1 that forces
+ *     PIXCLK >= 48, which is RGB444 at SPI_HALF=2 at best: 30.3 fps.
+ *   - rtl/lcd.sv drives hpos/vpos from the pllclk domain into this one with no
+ *     synchroniser, and the only thing making that safe is that PIXCLK is an
+ *     integer multiple of DYN_SDIV_SEL, so the update lands at a fixed phase.
+ *
+ * At 8 (14.0625 MHz) both hold for PIXCLK = 24, which is RGB444 at SPI_HALF=1:
+ * 60.6 fps, a console pixel every 6 chip clocks, and 966 chip clocks per LCD
+ * line against the compositor's measured 313-clock worst case
+ * (rtl/golden/ppu_cycles.txt). The engine was never the constraint.
+ *
+ * The engine, the CPU and the memory arbiter all run here and all get 4x
+ * faster. The game loop is vsync-locked, so that is headroom, not a speed-up.
+ * tools/sdc_check.py derives cpuclk's constrained period from this parameter,
+ * so changing it without changing rtl/gowin_boards.sdc fails `make sdc-check`.
  */
 module pll_gowin(
 	input  clock_in,
 	output clock_out,	// 112.5 MHz
-	output clock_div,	// 112.5 / 32 = 3.515625 MHz, on the clock network
+	output clock_div,	// 112.5 / 8 = 14.0625 MHz, on the clock network
 	output locked
 	);
 
@@ -82,7 +107,7 @@ module pll_gowin(
 		.DYN_ODIV_SEL("false"),
 		.CLKOUTD_SRC("CLKOUT"),
 		.CLKOUTD_BYPASS("false"),
-		.DYN_SDIV_SEL(32),	// CLKOUTD = CLKOUT / 32 = 3.515625 MHz
+		.DYN_SDIV_SEL(8),	// CLKOUTD = CLKOUT / 8 = 14.0625 MHz
 		.PSDA_SEL("0000"),
 		.DUTYDA_SEL("1000"),
 		.DYN_DA_EN("false")

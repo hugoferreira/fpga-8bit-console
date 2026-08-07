@@ -73,7 +73,7 @@ def main(dirname):
         seen = dict(re.findall(r"\|\s*([A-Za-z_][\w./]*)\s*\|\s*\|\s*"
                                r"(PRIMARY|GCLK|HCLK|LW)\s*\|", table))
         print("  clock networks:")
-        for name in ("pllclk", "pllclk_div32", "psgclk"):
+        for name in ("pllclk", "pllclk_div", "psgclk"):
             res = seen.get(name)
             if res in ("PRIMARY", "GCLK", "HCLK"):
                 print(f"    {name:<14} {res}")

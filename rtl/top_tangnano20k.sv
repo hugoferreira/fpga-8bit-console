@@ -89,8 +89,8 @@ module top(input  bit clk,                    // 27 MHz crystal, pin 4
   logic videoclk;
   logic cpuclk;
   logic psgclk;
-  logic pllclk, pllclk_div32, pll_locked;
-  pll_gowin pll0(.clock_in(clk), .clock_out(pllclk), .clock_div(pllclk_div32),
+  logic pllclk, pllclk_div, pll_locked;
+  pll_gowin pll0(.clock_in(clk), .clock_out(pllclk), .clock_div(pllclk_div),
                  .locked(pll_locked));
 
   // clocks.sv is instantiated for its RESET COUNTER only; its /32 divider is
@@ -120,9 +120,9 @@ module top(input  bit clk,                    // 27 MHz crystal, pin 4
                  .masterclk(), .videoclk(), .cpuclk(), .psgclk(psgclk));
   /* verilator lint_on PINCONNECTEMPTY */
 
-  assign masterclk = pllclk_div32;
-  assign videoclk  = pllclk_div32;
-  assign cpuclk    = pllclk_div32;
+  assign masterclk = pllclk_div;
+  assign videoclk  = pllclk_div;
+  assign cpuclk    = pllclk_div;
 
   assign lcd_rst  = ~reset;
   // Both LEDs are active low and both mean "healthy", so a working board shows

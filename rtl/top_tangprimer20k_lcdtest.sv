@@ -57,7 +57,7 @@ module top(input  bit clk,
 
   localparam int W = 320, H = 240;
 
-  wire pllclk, sysclk, pll_locked;      // sysclk = CLKOUTD = 3.515625 MHz
+  wire pllclk, sysclk, pll_locked;      // sysclk = CLKOUTD = 14.0625 MHz
   pll_gowin pll0(.clock_in(clk), .clock_out(pllclk), .clock_div(sysclk),
                  .locked(pll_locked));
 
@@ -131,10 +131,13 @@ module top(input  bit clk,
   end
 
   // ---- sequencer ---------------------------------------------------------
-  // 3.515625 MHz: 120 ms is ~421,875 cycles, so 2^19 is comfortably over.
+  // The wait ends on `&delay`, so the WIDTH is the delay: 22 bits is 2^22
+  // counts, 298 ms at 14.0625 MHz. The panel needs 120 ms (~1,687,500 cycles).
+  // The width tracks DYN_SDIV_SEL in rtl/pll_gowin.v - it was 20 bits at /32,
+  // the same 298 ms, and leaving it there would have cut the wait to 75 ms.
   localparam int S_POR = 0, S_INIT = 1, S_WAIT = 2, S_PIX = 3;
   logic [1:0]  state = S_POR;
-  logic [19:0] delay = 0;
+  logic [21:0] delay = 0;
   logic [4:0]  idx   = 0;
   logic [8:0]  x     = 0;
   logic [7:0]  y     = 0;

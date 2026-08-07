@@ -1,6 +1,21 @@
-0_21
+// ST7789/ILI9341 setup, RGB444. {rs, byte}: rs=0 command, rs=1 parameter.
+// Identical to setup_st7789_565.hex except for COLMOD, and it exists as a
+// second file rather than a parameter because the init sequence is a ROM the
+// synthesis tools load with $readmemh - there is nowhere to put a conditional.
+//
+//   0_3A 1_03  COLMOD 12 bits/pixel. 1_05 is the 16-bit mode; the difference on
+//              the wire is THREE BYTES PER TWO PIXELS instead of two per one,
+//              so sending this file while rtl/lcd.sv is built for RGBSIZE=16
+//              (or the reverse) does not discolour the image, it shears it -
+//              the panel unpacks a 480-byte line as 320 pixels or a 640-byte
+//              line as 426. rtl/lcd.sv's INIT_FILE parameter is what keeps the
+//              two in step.
+//
+// Everything else is as measured on the MuseLab PMOD-TFTLCD; see the 565 file
+// for why INVOFF and MADCTL 0xE8 are what they are.
+0_20
 0_2A 1_00 1_00 1_01 1_3F
 0_2B 1_00 1_00 1_00 1_EF
 0_3A 1_03
-0_36 1_60
+0_36 1_E8
 0_29

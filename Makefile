@@ -627,9 +627,22 @@ build/lcd_tb: rtl/lcd_tb.sv rtl/lcd.sv rtl/serialize.sv rtl/setup_st7789_565.hex
 
 # The same bench at the divider the boards actually ship. Blanking is timed in
 # `clk` cycles while bytes are timed in SCL phases, so the two counters
-# interact; running only the module default (2) leaves the built design - which
-# uses 3 - untested. Both take ~40 s together against ~90 s plus a human for one
-# hardware round trip.
+# interact; running only the module default (2) leaves the built design
+# untested. SPI_HALF=1 is what rtl/top_tangprimer20k.sv builds (56.25 MHz SCL)
+# and is also the degenerate case - DIVW collapses to one bit and the divider
+# never counts - so it is the one most likely to break differently.
+build/lcd_tb1: rtl/lcd_tb.sv rtl/lcd.sv rtl/serialize.sv rtl/setup_st7789_565.hex
+	@mkdir -p build
+	iverilog -g2012 -Irtl -s lcd_tb -Plcd_tb.SPI_HALF=1 -o $@ rtl/lcd_tb.sv rtl/lcd.sv
+
+# RGB444: three bytes per TWO pixels, which is what the boards ship. The packing
+# is the only place in the driver where a byte spans two pixels, so a bench that
+# only ever ran RGB565 would not exercise the modulo-3 phase at all.
+build/lcd_tb444: rtl/lcd_tb.sv rtl/lcd.sv rtl/setup_st7789_444.hex
+	@mkdir -p build
+	iverilog -g2012 -Irtl -s lcd_tb -Plcd_tb.SPI_HALF=1 -Plcd_tb.RGBSIZE=12 \
+	   -o $@ rtl/lcd_tb.sv rtl/lcd.sv
+
 build/lcd_tb3: rtl/lcd_tb.sv rtl/lcd.sv rtl/serialize.sv rtl/setup_st7789_565.hex
 	@mkdir -p build
 	iverilog -g2012 -Irtl -s lcd_tb -Plcd_tb.SPI_HALF=3 -o $@ rtl/lcd_tb.sv rtl/lcd.sv
@@ -672,8 +685,10 @@ test-palette:
 
 .PHONY: test-palette
 
-test-lcd: build/lcd_tb build/lcd_tb3
-	@cp rtl/setup_st7789_565.hex build/
+test-lcd: build/lcd_tb444 build/lcd_tb1 build/lcd_tb build/lcd_tb3
+	@cp rtl/setup_st7789_565.hex rtl/setup_st7789_444.hex build/
+	@cd build && vvp lcd_tb444
+	@cd build && vvp lcd_tb1
 	@cd build && vvp lcd_tb
 	@cd build && vvp lcd_tb3
 

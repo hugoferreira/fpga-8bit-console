@@ -40,16 +40,22 @@
 // cycles and byte transmission in SCL phases, so the two interact and a bench
 // that only ever exercises one divider is not testing the built design.
 //   iverilog -Plcd_tb.SPI_HALF=3 ...
-module lcd_tb #(parameter int SPI_HALF = 2);
+module lcd_tb #(parameter int SPI_HALF = 2, parameter int RGBSIZE = 16);
   localparam int W = 320, H = 240;
-  localparam int INIT_N = 16;          // entries in setup_st7789_565.hex
+  localparam int INIT_N = 16;          // entries in the setup ROM
   localparam int RESET_WAIT = 3;       // byte-times; the panel wants 65535
-  localparam int LINEBYTES  = 2 * W;             // bytes the panel gets per row
-  localparam int FRAMEBYTES = 2 * W * H;         // ... and per frame, after RAMWR
-  // pllclk:masterclk. vsync crosses into the masterclk domain, so a pulse
-  // narrower than this can be missed entirely - which is how a rendered but
-  // completely static picture happened.
-  localparam int MASTER_DIV = 32;
+  // The pixel group, as rtl/lcd.sv defines it: RGB565 is one pixel in two
+  // bytes, RGB444 two pixels in three. Everything downstream - line length,
+  // frame length, the pixel decode - is derived from it, so the bench cannot
+  // silently keep checking the old geometry.
+  localparam int GRP_BYTES = (RGBSIZE == 12) ? 3 : 2;
+  localparam int GRP_PIX   = (RGBSIZE == 12) ? 2 : 1;
+  localparam int LINEBYTES  = (W / GRP_PIX) * GRP_BYTES;
+  localparam int FRAMEBYTES = LINEBYTES * H;
+  // pllclk:masterclk, rtl/pll_gowin.v DYN_SDIV_SEL. vsync crosses into the
+  // masterclk domain, so a pulse narrower than this can be missed entirely -
+  // which is how a rendered but completely static picture happened.
+  localparam int MASTER_DIV = 8;
   // `dataout` is registered, so the serialiser shifts out its reset value once
   // before the first real byte: the panel sees a leading rs=0 0x00. That is a
   // NOP to an ST7789 and harmless, but it is on the wire and the bench has to
@@ -57,12 +63,14 @@ module lcd_tb #(parameter int SPI_HALF = 2);
   localparam int LEAD = 1;
 
   logic clk = 0, reset = 1;
-  logic [15:0] rgb;
+  logic [RGBSIZE-1:0] rgb;
   wire sda, scl, cs, rs, vsync, hsync;
   wire [$clog2(H)-1:0] vpos;
   wire [$clog2(W)-1:0] hpos;
 
-  lcd #(.WIDTH(W), .HEIGHT(H), .RGBSIZE(16), .RESET_WAIT(RESET_WAIT),
+  lcd #(.WIDTH(W), .HEIGHT(H), .RGBSIZE(RGBSIZE), .RESET_WAIT(RESET_WAIT),
+        .INIT_FILE((RGBSIZE == 12) ? "setup_st7789_444.hex"
+                                   : "setup_st7789_565.hex"),
         .SPI_HALF(SPI_HALF)) dut(
     .clk, .reset, .rgb, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos, .hpos);
 
@@ -71,13 +79,21 @@ module lcd_tb #(parameter int SPI_HALF = 2);
   // The test pattern the panel should receive: a horizontal red ramp, a
   // vertical green ramp, and a blue square in one corner, so a wrong stride, a
   // swapped byte order or a transposed axis all look obviously wrong.
-  function automatic logic [15:0] pattern(input int x, input int y);
-    logic [4:0] r; logic [5:0] g; logic [4:0] b;
+  function automatic logic [RGBSIZE-1:0] pattern(input int x, input int y);
+    logic [4:0] r5; logic [5:0] g6; logic [4:0] b5;
+    logic [3:0] r4, g4, b4;
     begin
-      r = 5'((x * 31) / (W - 1));
-      g = 6'((y * 63) / (H - 1));
-      b = (x < W/4 && y < H/4) ? 5'd31 : 5'd0;
-      pattern = {r, g, b};
+      if (RGBSIZE == 12) begin
+        r4 = 4'((x * 15) / (W - 1));
+        g4 = 4'((y * 15) / (H - 1));
+        b4 = (x < W/4 && y < H/4) ? 4'd15 : 4'd0;
+        pattern = {r4, g4, b4};
+      end else begin
+        r5 = 5'((x * 31) / (W - 1));
+        g6 = 6'((y * 63) / (H - 1));
+        b5 = (x < W/4 && y < H/4) ? 5'd31 : 5'd0;
+        pattern = {r5, g6, b5};
+      end
     end
   endfunction
 
@@ -97,6 +113,39 @@ module lcd_tb #(parameter int SPI_HALF = 2);
   // way to measure bytes-per-line from the pins is to time the gaps.
   int cycles = 0;
   always @(posedge clk) cycles <= cycles + 1;
+
+  // Pull pixel (x,y) back out of the packed byte stream. RGB444 puts two
+  // pixels in three bytes as [R1G1][B1R2][G2B2], so which nibbles a pixel
+  // occupies depends on whether its index is even or odd - the reason the
+  // driver needed a modulo-3 phase and the reason this cannot be a shift.
+  function automatic logic [RGBSIZE-1:0] unpack(input int fbase, input int x,
+                                                input int y);
+    int idx, grp, b0;
+    begin
+      idx = y * W + x;
+      if (RGBSIZE == 12) begin
+        grp = idx / 2;
+        b0  = fbase + grp * 3;
+        if (idx % 2 == 0)
+          unpack = {stream[b0][7:0], stream[b0+1][7:4]};
+        else
+          unpack = {stream[b0+1][3:0], stream[b0+2][7:0]};
+      end else begin
+        b0 = fbase + idx * 2;
+        unpack = {stream[b0][7:0], stream[b0+1][7:0]};
+      end
+    end
+  endfunction
+
+  // Expand a decoded pixel to 8:8:8 for the PPM.
+  function automatic logic [23:0] to888(input logic [RGBSIZE-1:0] p);
+    begin
+      if (RGBSIZE == 12)
+        to888 = {p[11:8], p[11:8], p[7:4], p[7:4], p[3:0], p[3:0]};
+      else
+        to888 = {p[15:11], p[15:13], p[10:5], p[10:9], p[4:0], p[4:2]};
+    end
+  endfunction
 
   // CS MUST STAY LOW. This is the property whose violation produced a white
   // panel on hardware while every other subsystem worked: the old driver used
@@ -147,11 +196,13 @@ module lcd_tb #(parameter int SPI_HALF = 2);
 
   // ---- expected initialisation ----------------------------------------
   logic [8:0] rom [0:INIT_N-1];
-  initial $readmemh("setup_st7789_565.hex", rom);
+  initial
+    if (RGBSIZE == 12) $readmemh("setup_st7789_444.hex", rom);
+    else               $readmemh("setup_st7789_565.hex", rom);
 
   int i, k, base, px, x, y, fd, errors;
   int fr [0:2];                        // stream index of each frame's RAMWR
-  logic [15:0] pix;
+  logic [RGBSIZE-1:0] pix;
   logic [8:0] distinct [0:INIT_N-1];
   int ndistinct;
 
@@ -160,18 +211,18 @@ module lcd_tb #(parameter int SPI_HALF = 2);
   // different in the reported coordinates, which is what makes this a diagnosis
   // rather than a pass/fail.
   task automatic verify_frame(input int fbase, input int fnum, input string ppm);
-    int bad, firstx, firsty, ffd, xx, yy, ppx;
-    logic [15:0] ppix;
+    int bad, firstx, firsty, ffd, xx, yy;
+    logic [RGBSIZE-1:0] ppix;
+    logic [23:0] rgb888;
     begin
       bad = 0; firstx = -1; firsty = -1;
       ffd = $fopen(ppm, "wb");
       $fwrite(ffd, "P6\n%0d %0d\n255\n", W, H);
       for (yy = 0; yy < H; yy = yy + 1)
         for (xx = 0; xx < W; xx = xx + 1) begin
-          ppx  = fbase + (yy * W + xx) * 2;
-          ppix = {stream[ppx][7:0], stream[ppx + 1][7:0]};   // MSB first on the wire
-          $fwrite(ffd, "%c%c%c", {ppix[15:11], 3'b0}, {ppix[10:5], 2'b0},
-                                 {ppix[4:0], 3'b0});
+          ppix   = unpack(fbase, xx, yy);
+          rgb888 = to888(ppix);
+          $fwrite(ffd, "%c%c%c", rgb888[23:16], rgb888[15:8], rgb888[7:0]);
           if (ppix !== pattern(xx, yy)) begin
             if (bad < 6)
               $display("  frame %0d pixel (%0d,%0d) is %04x, pattern says %04x",
@@ -370,8 +421,9 @@ module lcd_tb #(parameter int SPI_HALF = 2);
       $display("FAIL: %0d error(s)", errors);
       $fatal;
     end
-    $display("PASS: SPI_HALF=%0d, %0d distinct init bytes in ROM order, RAMWR, 2 x %0dx%0d frames of exactly %0d bytes, %0d lines of %0d, %0d vsync pulses %0d clk wide -> build/lcd_frame{,2}.ppm",
-             SPI_HALF, ndistinct, W, H, FRAMEBYTES, H, LINEBYTES, nvs, vs_width[0]);
+    $display("PASS: RGB%0d SPI_HALF=%0d, %0d distinct init bytes in ROM order, RAMWR, 2 x %0dx%0d frames of exactly %0d bytes, %0d lines of %0d, %0d vsync pulses %0d clk wide -> build/lcd_frame{,2}.ppm",
+             RGBSIZE, SPI_HALF, ndistinct, W, H, FRAMEBYTES, H, LINEBYTES, nvs,
+             vs_width[0]);
     $finish;
   end
 

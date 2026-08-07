@@ -47,8 +47,8 @@ module top(input  bit clk,
 
   localparam int W = 320, H = 240;
 
-  wire pllclk, pllclk_div32, pll_locked;      // 112.5 MHz, 3.515625 MHz
-  pll_gowin pll0(.clock_in(clk), .clock_out(pllclk), .clock_div(pllclk_div32),
+  wire pllclk, pllclk_div, pll_locked;      // 112.5 MHz, 14.0625 MHz
+  pll_gowin pll0(.clock_in(clk), .clock_out(pllclk), .clock_div(pllclk_div),
                  .locked(pll_locked));
 
   assign cs      = 1'b0;                      // never deselected
@@ -226,6 +226,6 @@ module top(input  bit clk,
   assign pa_en  = 1'b0;
 
   /* verilator lint_off UNUSED */
-  wire unused = &{key1, key2, pll_locked, pllclk_div32, y, raw[24], raw[22:0]};
+  wire unused = &{key1, key2, pll_locked, pllclk_div, y, raw[24], raw[22:0]};
   /* verilator lint_on UNUSED */
 endmodule

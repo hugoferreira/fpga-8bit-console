@@ -1,5 +1,6 @@
 `include "chip.sv"
 `include "lcd.sv"
+`include "rgb_quant.sv"
 `include "scalescreen.v"
 `include "pll_gowin.v"
 `include "clocks.sv"
@@ -95,8 +96,8 @@ module top(input  bit clk,                    // 27 MHz crystal, ball H11
   logic videoclk;
   logic cpuclk;
   logic psgclk;
-  logic pllclk, pllclk_div32, pll_locked;
-  pll_gowin pll0(.clock_in(clk), .clock_out(pllclk), .clock_div(pllclk_div32),
+  logic pllclk, pllclk_div, pll_locked;
+  pll_gowin pll0(.clock_in(clk), .clock_out(pllclk), .clock_div(pllclk_div),
                  .locked(pll_locked));
 
   // clocks.sv is instantiated for its RESET COUNTER only; its /32 divider is
@@ -126,9 +127,9 @@ module top(input  bit clk,                    // 27 MHz crystal, ball H11
                  .masterclk(), .videoclk(), .cpuclk(), .psgclk(psgclk));
   /* verilator lint_on PINCONNECTEMPTY */
 
-  assign masterclk = pllclk_div32;
-  assign videoclk  = pllclk_div32;
-  assign cpuclk    = pllclk_div32;
+  assign masterclk = pllclk_div;
+  assign videoclk  = pllclk_div;
+  assign cpuclk    = pllclk_div;
 
   assign lcd_rst  = ~reset;
   // Both LEDs are assumed active low and both mean "healthy", so a working
@@ -152,13 +153,36 @@ module top(input  bit clk,                    // 27 MHz crystal, ball H11
 
   // lcd0 runs on pllclk (112.5 MHz), NOT videoclk. It used to shift one bit per
   // 3.515625 MHz videoclk with a dead cycle between bytes - 2.5 fps - on a board
-  // with a 112.5 MHz PLL sitting idle. SPI_HALF=3 gives SCL = pllclk/6 =
-  // 18.75 MHz and 15.3 fps, pacing a console pixel to every 6 masterclk. 2 was
-  // 4 masterclk against the compositor's 3.02 requirement - too tight, and the
-  // sprite pass was the thing that got starved out and sprite_compositor.sv keeps its 483-clock line
-  // budget. hpos/vpos/vsync therefore change in the pllclk domain; see the
-  // header of rtl/lcd.sv for why that is safe against the 32:1 masterclk ratio.
-  lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT), .SPI_HALF(3)) lcd0(.clk(pllclk), .reset, .rgb, .sda, .scl, .cs, .rs, .vsync, .hsync, .vpos(vp), .hpos(hp));
+  // with a 112.5 MHz PLL sitting idle.
+  //
+  // SPI_HALF=1 is SCL = pllclk/2 = 56.25 MHz, the rate the panel was qualified
+  // at on hardware under a per-pixel grid pattern. At RGB565 that is 45.5 fps;
+  // the remaining step to 60.6 is colour depth, not clock rate.
+  //
+  // It was 3 (18.75 MHz, 15.2 fps) because the divider was 32:1, which forced
+  // a console pixel to be at least 3 * 32 = 96 pllclk and so PIXCLK >= 48.
+  // At 8:1 the floor is PIXCLK >= 12, and 32 clears it with a console pixel
+  // every 8 masterclk. The compositor was never the binding constraint - see
+  // the header of rtl/lcd.sv, which used to claim it was.
+  //
+  // hpos/vpos/vsync change in the pllclk domain; the same header explains why
+  // that is safe, and that the argument depends on PIXCLK staying an integer
+  // multiple of the 8:1 ratio. RGB444 makes PIXCLK 24, and 24/8 = 3.
+  //
+  // THE PANEL SEES RGB444, THE CONSOLE STAYS RGB565. rgb_quant is the whole
+  // difference between 45.5 and 60.6 fps - 25% fewer bytes a frame on a link
+  // that is the constraint - and it is a rounding, not a truncation, so the
+  // error is +-1 output step rather than always downward. The compositor, the
+  // line buffer and the palette are untouched at 16 bits, which is what a
+  // future parallel or TMDS output wants.
+  wire [11:0] rgb444;
+  rgb_quant #(.IN_R(RED), .IN_G(GREEN), .IN_B(BLUE),
+              .OUT_R(4), .OUT_G(4), .OUT_B(4)) quant0(.din(rgb), .dout(rgb444));
+
+  lcd #(.WIDTH(WIDTH), .HEIGHT(HEIGHT), .RGBSIZE(12),
+        .INIT_FILE("setup_st7789_444.hex"), .SPI_HALF(1))
+    lcd0(.clk(pllclk), .reset, .rgb(rgb444), .sda, .scl, .cs, .rs,
+         .vsync, .hsync, .vpos(vp), .hpos(hp));
   scalescreen #(.WIDTH(WIDTH), .HEIGHT(HEIGHT)) scaler0(.clk(videoclk), .reset, .vp, .hp, .vpos, .hpos);
 
   // Two of the Dock's five user keys, as the buttons a bare board has. The bit
