@@ -5188,6 +5188,221 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
     return 1;
 }
 
+static int la_count_operation(LaContext *ctx, la_u16 line);
+
+/* decz [pointer + Type.field], label - branch to label when the byte field
+   is zero, otherwise decrement it and fall through with A holding the
+   post-decrement value. tstw [pointer + Type.field] / tstw WORD - Z from
+   low|high of a two-unit field or declared word location; N is meaningless.
+   Fixed overlays are deliberately excluded from both. */
+static int la_parse_observation_operation(LaContext *ctx,
+                                          const char *start, const char *end,
+                                          la_u16 line, LaEvent *event)
+{
+    const char *cursor;
+    const char *bracket;
+    const char *close;
+    const char *base_start;
+    const char *base_end;
+    const char *root_start;
+    const char *path_start;
+    const char *label_start;
+    la_u16 pointer_location;
+    la_u16 root_length;
+    la_u16 field_index;
+    la_u16 field_offset;
+    la_u16 field_size;
+    la_u16 procedure;
+    la_u16 required_size;
+    int is_decz;
+    cursor = la_trim_left(start, end);
+    if ((la_u16)(end - cursor) >= 5 && memcmp(cursor, "decz ", 5) == 0) {
+        is_decz = 1;
+        cursor += 4;
+    } else if ((la_u16)(end - cursor) >= 5 &&
+               memcmp(cursor, "tstw ", 5) == 0) {
+        is_decz = 0;
+        cursor += 4;
+    } else {
+        return 0;
+    }
+    if (!ctx->target->pointer_byte_rmw_operations) {
+        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
+                (la_u16)(end - start),
+                la_slice(start, (la_u16)(end - start)),
+                la_slice("typed observation operation", 27), 0, 0);
+        return -1;
+    }
+    procedure = la_procedure_at_line(ctx, line);
+    bracket = la_trim_left(cursor, end);
+    if (!is_decz && (bracket >= end || *bracket != '[')) {
+        /* tstw WORD: a declared two-unit physical word location. */
+        const char *word_start;
+        const char *word_end;
+        la_u16 word_location;
+        la_u16 word_size;
+        word_start = bracket;
+        word_end = word_start;
+        while (word_end < end && la_is_ident(*word_end)) ++word_end;
+        la_extend_qualified_base(ctx, word_start, &word_end, end, procedure);
+        if (word_end == word_start ||
+            la_trim_left(word_end, end) != end) {
+            la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                    la_slice("tstw WORD", 9), la_slice("", 0), 0, 0);
+            return -1;
+        }
+        word_location = la_find_location_text_at(
+            ctx, word_start, (la_u16)(word_end - word_start), procedure);
+        if (word_location == LA_INVALID_HANDLE ||
+            ctx->locations[word_location].is_pointer ||
+            !la_scalar_size(ctx, ctx->locations[word_location].type_name,
+                            &word_size) ||
+            word_size != 2) {
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
+                    (la_u16)(word_end - word_start),
+                    la_slice(word_start, (la_u16)(word_end - word_start)),
+                    la_slice("physical two-unit word", 22), 0, 0);
+            return -1;
+        }
+        if (!la_count_operation(ctx, line)) return -1;
+        la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
+                      (la_u16)(end - start));
+        event->operation = LA_TARGET_OP_TSTW_LOCATION;
+        event->base =
+            la_name_slice(ctx, ctx->locations[word_location].physical);
+        event->owner = la_name_slice(ctx, ctx->locations[word_location].name);
+        event->scratch = la_slice("a", 1);
+        event->clobbers = la_slice("a,flags", 7);
+        event->access_width = 2;
+        event->volatility = LA_ACCESS_NONVOLATILE;
+        return 1;
+    }
+    if (bracket >= end || *bracket != '[') {
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                la_slice("[pointer + Type.field]", 22),
+                la_slice("", 0), 0, 0);
+        return -1;
+    }
+    close = bracket + 1;
+    while (close < end && *close != ']') ++close;
+    if (close == end) {
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                la_slice("]", 1), la_slice("", 0), 0, 0);
+        return -1;
+    }
+    base_start = la_trim_left(bracket + 1, close);
+    base_end = base_start;
+    while (base_end < close && la_is_ident(*base_end)) ++base_end;
+    la_extend_qualified_base(ctx, base_start, &base_end, close, procedure);
+    cursor = la_trim_left(base_end, close);
+    if (base_end == base_start || cursor >= close ||
+        (*cursor != '.' && *cursor != '+')) {
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                la_slice("[pointer.field]", 15),
+                la_slice("", 0), 0, 0);
+        return -1;
+    }
+    pointer_location = la_find_location_text_at(
+        ctx, base_start, (la_u16)(base_end - base_start), procedure);
+    if (pointer_location == LA_INVALID_HANDLE ||
+        !ctx->locations[pointer_location].is_pointer) {
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
+                (la_u16)(base_end - base_start),
+                la_slice(base_start, (la_u16)(base_end - base_start)),
+                la_slice("typed pointer", 13), 0, 0);
+        return -1;
+    }
+    {
+        int tail;
+        tail = la_resolve_field_tail(
+            ctx, start, cursor, close, line,
+            la_name_slice(ctx, ctx->locations[pointer_location].type_name),
+            &root_start, &root_length, &path_start);
+        if (tail == 0) return 0;
+        if (tail < 0) return -1;
+    }
+    cursor = la_trim_left(close + 1, end);
+    label_start = 0;
+    if (is_decz) {
+        if (cursor >= end || *cursor++ != ',') {
+            la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                    la_slice("decz [pointer + Type.field], label", 34),
+                    la_slice("", 0), 0, 0);
+            return -1;
+        }
+        cursor = la_trim_left(cursor, end);
+        label_start = cursor;
+        while (cursor < end &&
+               (la_is_ident(*cursor) || *cursor == '.')) ++cursor;
+        if (cursor == label_start || la_trim_left(cursor, end) != end) {
+            la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                    la_slice("branch label", 12), la_slice("", 0), 0, 0);
+            return -1;
+        }
+    } else if (cursor != end) {
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1,
+                (la_u16)(end - cursor),
+                la_slice("end of word test", 16),
+                la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
+        return -1;
+    }
+    if (la_resolve_path(ctx, root_start, root_length, path_start,
+                        (la_u16)(close - path_start), line,
+                        &field_index, &field_offset) != LA_OK) return -1;
+    field_size = ctx->fields[field_index].count == 1 ?
+        ctx->fields[field_index].size :
+        (la_u16)(ctx->fields[field_index].size /
+                 ctx->fields[field_index].count);
+    required_size = is_decz ? 1 : 2;
+    if (ctx->fields[field_index].count != 1 ||
+        field_size != required_size) {
+        LaSlice width_name;
+        if (is_decz) {
+            width_name = la_slice("byte", 4);
+        } else {
+            width_name = la_slice("two-unit word", 13);
+        }
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
+                (la_u16)(close - path_start),
+                la_name_slice(ctx, ctx->fields[field_index].name),
+                width_name, field_size, required_size);
+        return -1;
+    }
+    if ((la_u32)field_offset + (required_size - 1) >
+        ctx->target->max_displacement) {
+        la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1,
+                (la_u16)(close - path_start),
+                la_slice(path_start, (la_u16)(close - path_start)),
+                la_slice("", 0),
+                (la_i32)((la_u32)field_offset + (required_size - 1)),
+                ctx->target->max_displacement);
+        return -1;
+    }
+    if (!la_count_operation(ctx, line)) return -1;
+    la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
+                  (la_u16)(end - start));
+    event->operation = is_decz ? LA_TARGET_OP_DECZ8_PTR_DISP :
+                                 LA_TARGET_OP_TSTW_PTR_DISP;
+    event->owner = la_slice(root_start, root_length);
+    event->path = la_slice(path_start, (la_u16)(close - path_start));
+    event->base =
+        la_name_slice(ctx, ctx->locations[pointer_location].physical);
+    if (is_decz) {
+        event->aux = la_slice(label_start,
+                              (la_u16)(cursor - label_start));
+        event->scratch = la_slice("a", 1);
+        event->clobbers = la_slice("a,flags", 7);
+    } else {
+        /* The pointer word test reads the high unit through (base),y. */
+        event->scratch = la_slice("a,y", 3);
+        event->clobbers = la_slice("a,y,flags", 9);
+    }
+    event->value = field_offset;
+    event->access_width = (la_u16)required_size;
+    event->volatility = LA_ACCESS_NONVOLATILE;
+    return 1;
+}
+
 static int la_has_explicit_typed_operand(const char *start, const char *end)
 {
     const char *open;
@@ -7274,6 +7489,10 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
             }
             if (typed == 0) {
                 typed = la_parse_typed_byte_rmw(
+                    ctx, cursor, content_end, line, &event);
+            }
+            if (typed == 0) {
+                typed = la_parse_observation_operation(
                     ctx, cursor, content_end, line, &event);
             }
             if (typed == 0) {

@@ -30,14 +30,14 @@ CELESTE_REFERENCE_DIR = (
     ROOT / "tests/inlay/reference/celeste-customasm"
 )
 CELESTE_MEMMAP = CELESTE_REFERENCE_DIR / "memmap.asm"
-EXPECTED_CELESTE_TYPED_OPERATIONS = 263
+EXPECTED_CELESTE_TYPED_OPERATIONS = 270
 EXPECTED_CELESTE_OVERLAY_OPERATIONS = 250
 EXPECTED_CELESTE_OFFSET_SETUPS = 0
-EXPECTED_CELESTE_SEMANTIC_OFFSETS = 124
-EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 163
+EXPECTED_CELESTE_SEMANTIC_OFFSETS = 115
+EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 147
 EXPECTED_CELESTE_COUNTED_SHIFTS = 20
 EXPECTED_CELESTE_ROM_SHA256 = (
-    "6d193a85439575c3393d27035100bd6a50d607bbed780a3fd435ad07d14f88b7"
+    "9cffd06963911e31a794ca33111c63b0fe279f0fb00e6257a98abe757c278bb4"
 )
 READABLE_CELESTE_MODULES = {
     "audio.inlay.asm",
@@ -1183,7 +1183,6 @@ def check_remaining_subsystem_design() -> None:
         )
 
     expected_exceptions = {
-        "branch observes pre-decrement value": 3,
         "following flags feed control flow": 2,
         "variable update operand t0": 4,
         "variable update operand t1": 2,

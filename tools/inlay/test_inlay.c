@@ -1009,6 +1009,72 @@ static void test_bitwise_expressions(void)
         limits, LA_ERR_ACCESS_WIDTH, "non-bitwise immediate range kept");
 }
 
+static void test_observation_operations(void)
+{
+    LaLimits limits;
+    limits = la_default_limits();
+    expect_ok(
+        "struct O packed\nvalue : u16\ntimer : u8\nend\n"
+        "location p : ptr O\n"
+        "location w : u16\n"
+        "proc t naked\n"
+        "    self : ptr O in p\n"
+        "    word : u16 in w\n"
+        "begin\n"
+        "    decz [self + O.timer], .idle\n"
+        ".idle:\n"
+        "    tstw [self + O.value]\n"
+        "    tstw word\n"
+        "    ret\n"
+        "end\n",
+        limits, "decz and tstw forms accepted");
+    expect_error(
+        "struct O packed\nvalue : u16\nend\n"
+        "location p : ptr O\n"
+        "proc t naked\n"
+        "    self : ptr O in p\n"
+        "begin\n"
+        "    decz [self + O.value], .x\n"
+        ".x:\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_ACCESS_WIDTH, "decz on word field rejected");
+    expect_error(
+        "struct O packed\ntimer : u8\nend\n"
+        "location p : ptr O\n"
+        "proc t naked\n"
+        "    self : ptr O in p\n"
+        "begin\n"
+        "    decz [self + O.timer]\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_SYNTAX, "decz without label rejected");
+    expect_error(
+        "struct O packed\ntimer : u8\nend\n"
+        "location p : ptr O\n"
+        "proc t naked\n"
+        "    self : ptr O in p\n"
+        "begin\n"
+        "    tstw [self + O.timer]\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_ACCESS_WIDTH, "tstw on byte field rejected");
+    expect_error(
+        "struct O packed\ntimer : u8\nend\n"
+        "location b : u8\n"
+        "proc t naked\n"
+        "begin\n"
+        "    tstw b\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_LOCATION_TYPE, "tstw on byte location rejected");
+    expect_error(
+        "struct R packed\ntimer : u8\nend\n"
+        "overlay regs : R at REGS\n"
+        "decz [regs + R.timer], .x\n",
+        limits, LA_ERR_LOCATION_TYPE, "decz on fixed overlay rejected");
+}
+
 static void test_semantic_errors(void)
 {
     LaLimits limits;
@@ -2187,6 +2253,7 @@ int main(void)
 {
     test_valid_layout();
     test_bitwise_expressions();
+    test_observation_operations();
     test_semantic_errors();
     test_comments_and_pointer_fields();
     test_indexed_pools_and_procedures();

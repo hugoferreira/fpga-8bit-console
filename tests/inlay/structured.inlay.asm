@@ -34,7 +34,7 @@ static_assert objects.size == 96
 #include "../../src/isa/nmos6502.asm"
 #include "../../src/isa/ext_core.asm"
 
-#bankdef conformance { #addr 0x0300, #size 0x0100, #outp 0 }
+#bankdef conformance { #addr 0x0300, #size 0x0200, #outp 0 }
 #bank conformance
 
 pObj = 0x10
@@ -172,6 +172,17 @@ proc invoke_mixed naked
     source : ptr TestObject in pOther
 begin
     invoke mixed_callee, target=source, value=a
+    ret
+end
+
+proc observation_operations naked
+    self : ptr WordObject in pWord
+    word : u16 in w0
+begin
+    decz [self + WordObject.timer], .idle
+.idle:
+    tstw [self + WordObject.value]
+    tstw word
     ret
 end
 

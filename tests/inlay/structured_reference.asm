@@ -1,7 +1,7 @@
 #include "../../src/isa/nmos6502.asm"
 #include "../../src/isa/ext_core.asm"
 
-#bankdef conformance { #addr 0x0300, #size 0x0100, #outp 0 }
+#bankdef conformance { #addr 0x0300, #size 0x0200, #outp 0 }
 #bank conformance
 
 pObj = 0x10
@@ -167,6 +167,20 @@ invoke_mixed:
     sta pObj+1
     ldx t2
     jsr mixed_callee
+    rts
+
+observation_operations:
+    lda (pWord), #2
+    beq .idle
+    sub #1
+    sta (pWord), #2
+.idle:
+    ldy #0
+    lda (pWord), y
+    iny
+    ora (pWord), y
+    lda w0
+    ora w0+1
     rts
 
 obj_lo:

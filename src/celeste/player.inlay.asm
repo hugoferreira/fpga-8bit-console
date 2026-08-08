@@ -141,11 +141,7 @@ begin
     mov jump_edge, #0
     and [Machine.object.payload.player.player_bits], #~bit_jump
 .jbufdec:
-    mov y, offset CelesteObject.payload.player.jump_buffer ; inlay-exception: branch observes pre-decrement value
-    lda (Machine.object), y
-    beq .dashedge
-    sub #1
-    sta (Machine.object), y
+    decz [Machine.object.payload.player.jump_buffer], .dashedge
     jmp .dashedge
 .jbuf:
     lda #4
@@ -178,11 +174,7 @@ begin
     sta [Machine.object.payload.player.dash_jumps]
     jmp .gracedone
 .airborne:
-    mov y, offset CelesteObject.payload.player.grace ; inlay-exception: branch observes pre-decrement value
-    lda (Machine.object), y
-    beq .gracedone
-    sub #1
-    sta (Machine.object), y
+    decz [Machine.object.payload.player.grace], .gracedone
 .gracedone:
     jmp active_dash
 end
@@ -320,10 +312,7 @@ begin
     mov y, offset CelesteObject.core.speed_x
     jsr Fixed.store_object
 .facing:
-    mov y, offset CelesteObject.core.speed_x.fraction
-    lda (Machine.object), y                 ; if spd.x != 0 then flip.x = spd.x < 0
-    iny
-    ora (Machine.object), y
+    tstw [Machine.object.core.speed_x]      ; if spd.x != 0 then flip.x = spd.x < 0
     beq .done
     lda [Machine.object.core.speed_x.integer]
     bmi .faceleft
@@ -615,10 +604,7 @@ begin
     jsr signed_word
     mov y, offset CelesteObject.payload.player.dash_target_y
     jsr Fixed.store_object
-    mov y, offset CelesteObject.core.speed_y.fraction
-    lda (Machine.object), y                 ; if spd.y < 0 then dash_target.y *= 0.75
-    iny
-    ora (Machine.object), y
+    tstw [Machine.object.core.speed_y]      ; if spd.y < 0 then dash_target.y *= 0.75
     beq .yzero
     lda [Machine.object.core.speed_y.integer]
     bpl .ynonzero
@@ -641,10 +627,7 @@ begin
     txa
     iny
     sta (Machine.object), y
-    mov y, offset CelesteObject.core.speed_x.fraction
-    lda (Machine.object), y                 ; spd.x != 0: dash_accel.y *= sqrt(2)/2
-    iny
-    ora (Machine.object), y
+    tstw [Machine.object.core.speed_x]      ; spd.x != 0: dash_accel.y *= sqrt(2)/2
     beq .xzero
     lda #<dash_accel_diag
     ldx #>dash_accel_diag
@@ -690,10 +673,7 @@ begin
     lda #7
     jmp .setspr
 .notup:
-    mov y, offset CelesteObject.core.speed_x.fraction
-    lda (Machine.object), y                 ; standing still, or no key held: frame 1
-    iny
-    ora (Machine.object), y
+    tstw [Machine.object.core.speed_x]      ; standing still, or no key held: frame 1
     beq .still
     tbz [game.buttons], #Platform.Input.left|Platform.Input.right, .still
     lda [Machine.object.payload.player.sprite_offset]
@@ -899,14 +879,9 @@ begin
     jsr Fixed.store_object
     lda Fixed.word0+1                    ; the hover: while delay lasts, spd.y is held
     bmi .done2                  ; at zero each time it goes positive
-    lda Fixed.word0
-    ora Fixed.word0+1
+    tstw Fixed.word0
     beq .done2
-    mov y, offset CelesteObject.payload.player.delay ; inlay-exception: branch observes pre-decrement value
-    lda (Machine.object), y
-    beq .land
-    sub #1
-    sta (Machine.object), y
+    decz [Machine.object.payload.player.delay], .land
     lda #0
     mov y, offset CelesteObject.core.speed_y.fraction
     sta (Machine.object), y

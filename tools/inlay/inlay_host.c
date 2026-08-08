@@ -776,6 +776,54 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
                 (int)event->owner.length, event->owner.data,
                 (int)event->path.length, event->path.data);
         return 1;
+    case LA_TARGET_OP_DECZ8_PTR_DISP:
+        /* Zero: branch untouched. Nonzero: decrement, fall through with
+           A = post value. */
+        if (!begin_line(output, event->span, "byte-field-decz")) return 0;
+        fprintf(output->assembly, "    lda (%.*s), #%u\n",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value);
+        if (!begin_line(output, event->span, "byte-field-decz")) return 0;
+        fprintf(output->assembly, "    beq %.*s\n",
+                (int)event->aux.length, event->aux.data);
+        if (!begin_line(output, event->span, "byte-field-decz")) return 0;
+        fputs("    sub #1\n", output->assembly);
+        if (!begin_line(output, event->span, "byte-field-decz")) return 0;
+        fprintf(output->assembly, "    sta (%.*s), #%u",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value);
+        fprintf(output->assembly, " ; inlay decz %.*s.%.*s\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
+        return 1;
+    case LA_TARGET_OP_TSTW_PTR_DISP:
+        /* No ora (zp), #disp extended form exists; the standard indexed
+           form costs the same bytes as the raw idiom and clobbers Y. */
+        if (!begin_line(output, event->span, "word-field-test")) return 0;
+        fprintf(output->assembly, "    ldy #%u\n",
+                (unsigned)event->value);
+        if (!begin_line(output, event->span, "word-field-test")) return 0;
+        fprintf(output->assembly, "    lda (%.*s), y\n",
+                (int)event->base.length, event->base.data);
+        if (!begin_line(output, event->span, "word-field-test")) return 0;
+        fputs("    iny\n", output->assembly);
+        if (!begin_line(output, event->span, "word-field-test")) return 0;
+        fprintf(output->assembly, "    ora (%.*s), y",
+                (int)event->base.length, event->base.data);
+        fprintf(output->assembly, " ; inlay tstw %.*s.%.*s\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
+        return 1;
+    case LA_TARGET_OP_TSTW_LOCATION:
+        if (!begin_line(output, event->span, "word-location-test")) return 0;
+        fprintf(output->assembly, "    lda %.*s\n",
+                (int)event->base.length, event->base.data);
+        if (!begin_line(output, event->span, "word-location-test")) return 0;
+        fprintf(output->assembly, "    ora %.*s+1",
+                (int)event->base.length, event->base.data);
+        fprintf(output->assembly, " ; inlay tstw %.*s\n",
+                (int)event->owner.length, event->owner.data);
+        return 1;
     case LA_TARGET_OP_LOAD8_PTR_INDEXED:
     case LA_TARGET_OP_STORE8_PTR_INDEXED:
         return emit_indexed_operation(output, event);

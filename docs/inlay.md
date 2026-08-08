@@ -361,7 +361,31 @@ ora [self + CelesteObject.core.flags], #$02
 
 The console6502 backend emits a direct pointer-displacement load, the selected
 update, and a direct pointer-displacement store. These operations are
-non-atomic and clobber `A` and flags. The frontend rejects arrays, non-byte
+non-atomic and clobber `A` and flags. Their register contract is pinned:
+**A holds the post-operation value, with N and Z derived from it** — the
+Title banner sequencing depends on exactly this.
+
+Two observation forms join the same family:
+
+```asm
+decz [self + CelesteObject.payload.player.grace], .done
+tstw [self + CelesteObject.core.speed_x]
+tstw Fixed.word0
+```
+
+`decz` is a branch operation: when the byte field is zero it branches to the
+label with the field untouched; otherwise it decrements the field and falls
+through with A holding the post-decrement value (other flags unspecified).
+This is the cart's timer idiom — jump buffer, grace, spawn delay — with one
+contract instead of a hand-written pre-decrement observation. It clobbers
+`A` and flags and rejects fixed overlays, arrays and non-byte fields.
+
+`tstw` sets Z iff the two-unit field or declared word location is zero; **N
+is meaningless** — re-test if a following branch needs the sign. The pointer
+form lowers through `(base),y` (no `ora (zp), #disp` extended form exists)
+and therefore clobbers `A`, `Y` and flags, at the same byte cost as the raw
+idiom it replaces; the location form lowers to `lda`/`ora` absolute and
+preserves `X` and `Y`. The frontend rejects arrays, non-byte
 fields, out-of-range masks and targets without a registered byte-update
 lowering. Fixed overlays are deliberately excluded from this operation: they
 may describe volatile MMIO, and the current backend does not register a
@@ -949,11 +973,11 @@ categories:
 
 - 129 dynamic `(pObj|pOth),y` accesses whose runtime-selected displacement
   cannot be represented by a compile-time typed field path;
-- 12 offset materialisations with an inline `inlay-exception`: three
-  pre-decrement flag observations, two following-flag dependencies, six
-  variable update operands and one wrapping add/mask update (the nine mask
-  exceptions were retired by bitwise compile-time operators and typed
-  `and`/`ora` mask operands);
+- 9 offset materialisations with an inline `inlay-exception`: two
+  following-flag dependencies, six variable update operands and one
+  wrapping add/mask update (the nine mask exceptions were retired by
+  bitwise compile-time operators and typed `and`/`ora` mask operands; the
+  three pre-decrement observations by `decz`);
 - four raw high-byte slices for the fixed numeric object-pool base and eight
   low/high slices in the opaque generated room pointer table;
 - target-bound physical aliases for non-accumulator MMIO transfers,

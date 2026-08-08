@@ -385,9 +385,7 @@ begin
     mov y, offset CelesteObject.core.speed_y.integer
     lda (Machine.object), y
     bmi .maybe
-    lda [Machine.object.core.speed_y.fraction]  ; high byte: +0.004 is still moving down
-    mov y, offset CelesteObject.core.speed_y.integer
-    ora (Machine.object), y
+    tstw [Machine.object.core.speed_y]  ; +0.004 is still moving down
     bne .no
 .maybe:
     lda Collision.y
@@ -407,9 +405,7 @@ begin
     mov y, offset CelesteObject.core.speed_x.integer
     lda (Machine.object), y
     bmi .maybe
-    lda [Machine.object.core.speed_x.fraction]
-    mov y, offset CelesteObject.core.speed_x.integer
-    ora (Machine.object), y
+    tstw [Machine.object.core.speed_x]
     bne .no
 .maybe:
     lda Collision.x
