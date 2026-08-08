@@ -807,6 +807,15 @@ begin
     jsr Audio.sfx
     inc [game.deaths]
     mov [game.shake], #10
+    lda [Machine.object.core.x]  ; the cart's dead_particles radiate from
+    add #4                      ; the player's centre
+    pha
+    mov y, offset CelesteObject.core.y
+    lda (Machine.object), y
+    add #4
+    tax
+    pla
+    jsr Fx.burst
     jsr Objects.destroy
     mov [game.will_restart], #1
     lda #15
@@ -838,7 +847,7 @@ begin
     lda [Machine.object.payload.player.dash_jumps]
     jsr set_hair_color
     jsr draw_hair
-    jmp Draw.object
+    jmp Draw.player_object
 ; player_spawn - the cart's three-state entry animation.
 end
 end
@@ -1081,13 +1090,15 @@ end
 proc draw using console6502
     self : ptr CelesteObject in Machine.object
 begin
+    ; The cart shows the banner for delay -1..-30 and destroys past -30.
+    ; The sign test must read A (the decrement's result), BEFORE any cmp:
+    ; cmp rewrites N with the subtraction's sign, so a bpl after it asks
+    ; "delay >= -30", which is true for the whole banner window - the
+    ; sequencing that kept this banner from ever rendering.
     dec [Machine.object.payload.player.delay]
-    cmp #<(-30)
-    beq .gone
     bpl .done
     cmp #<(-30)
     bcc .gone
-.show:
     jsr Draw.room_title
 .done:
     rts

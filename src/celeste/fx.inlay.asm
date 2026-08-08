@@ -36,6 +36,8 @@ namespace Fx
     export update
     export draw_clouds
     export draw_particles
+    export burst
+    export draw_burst
     location cloud_x_low : u8 at $5600
     location cloud_x_high : u8 at $5620
     location cloud_y : u8 at $5640
@@ -53,6 +55,7 @@ namespace Fx
 
     cloud_count = 17
     particle_count = 25
+    burst_count = 8
 
 ; ------------------------------------------------------------------------------
 ; init: seed both from the hardware LFSR. Clobbers A, X.
@@ -84,8 +87,11 @@ begin
 
     ldx #particle_count-1
 .part:
-    lda [video.random]
-    and #$7F
+    lda [video.random]                 ; x = rnd over the full 160 columns:
+    cmp #160                    ; the title shows all of them, gameplay
+    bcc .xok                    ; clips at 128 like the cart's screen
+    sub #160
+.xok:
     sta [effects.particle_x_high[x]]
     lda [video.random]
     sta [effects.particle_x_low[x]]
@@ -108,13 +114,63 @@ begin
 .grey:
     lda #Gfx.palette_6
 .setcol:
+    ; attribute bit 0 rides along as the size: the cart's s = flr(rnd(5)/4)
+    ; makes one flake in five the 2x2 dot, the rest single pixels. The
+    ; stager masks the bit back out of the hardware attribute.
+    pha
+    lda [video.random]
+    and #15
+    cmp #3
+    pla
+    bcs .speck
+    ora #1
+.speck:
     sta [effects.particle_attribute[x]]
     lda [video.random]
     sta [effects.particle_offset[x]]
     dex
     bpl .part
+    lda #0
+    sta [dead_burst.timer]
     ret
 end
+
+; ------------------------------------------------------------------------------
+; burst: start the cart's dead_particles - eight fragments radiating from the
+; kill point at 3 px/frame for ten frames. All eight share one timer; the
+; per-direction 8.8 speeds are the constants below. Clobbers A, X, t3, t4.
+; ------------------------------------------------------------------------------
+proc burst using console6502 naked
+    center_x : u8 in a
+    center_y : u8 in x
+begin
+    sta Machine.t3
+    stx Machine.t4
+    ldx #burst_count-1
+.seed:
+    lda Machine.t3
+    sta [dead_burst.x_high[x]]
+    lda Machine.t4
+    sta [dead_burst.y_high[x]]
+    lda #0
+    sta [dead_burst.x_low[x]]
+    sta [dead_burst.y_low[x]]
+    dex
+    bpl .seed
+    lda #10
+    sta [dead_burst.timer]
+    ret
+end
+
+; sin/cos of dir/8 turns, times 3, in 8.8: the cart's fragment velocities.
+burst_sx_low:
+    #d8 $00, $E1, $00, $E1, $00, $1F, $00, $1F
+burst_sx_high:
+    #d8 $00, $FD, $FD, $FD, $00, $02, $03, $02
+burst_sy_low:
+    #d8 $00, $1F, $00, $E1, $00, $E1, $00, $1F
+burst_sy_high:
+    #d8 $03, $02, $00, $FD, $FD, $FD, $00, $02
 
 ; ------------------------------------------------------------------------------
 ; update: the cart moves both inside _draw; the port moves them here, which
@@ -122,6 +178,11 @@ end
 ; ------------------------------------------------------------------------------
 proc update using console6502 naked
 begin
+    mov Machine.t0, #133        ; particle respawn bound: past the playfield
+    jsr Room.title              ; in play, past the full 160 on the title
+    bne .bounded
+    mov Machine.t0, #165
+.bounded:
     ldx #cloud_count-1
 .cloud:
     lda [effects.cloud_x_low[x]]                 ; x += spd
@@ -181,8 +242,8 @@ begin
     adc sin_high, y
     sta [effects.particle_y_high[x]]
 
-    lda [effects.particle_x_high[x]]                 ; if x > 132 then x = -4, y = rnd(128); same
-    cmp #133                    ; two-sided test as the clouds above
+    lda [effects.particle_x_high[x]]                 ; if x > bound then x = -4, y = rnd(128);
+    cmp Machine.t0              ; same two-sided test as the clouds above
     bcc .nextpart
     cmp #192
     bcs .nextpart
@@ -194,6 +255,30 @@ begin
 .nextpart:
     dex
     bpl .part
+
+    lda [dead_burst.timer]      ; age the death burst and fly its fragments
+    beq .noburst
+    sub #1
+    sta [dead_burst.timer]
+    ldx #burst_count-1
+.frag:
+    lda [dead_burst.x_low[x]]
+    clc
+    adc burst_sx_low, x
+    sta [dead_burst.x_low[x]]
+    lda [dead_burst.x_high[x]]
+    adc burst_sx_high, x
+    sta [dead_burst.x_high[x]]
+    lda [dead_burst.y_low[x]]
+    clc
+    adc burst_sy_low, x
+    sta [dead_burst.y_low[x]]
+    lda [dead_burst.y_high[x]]
+    adc burst_sy_high, x
+    sta [dead_burst.y_high[x]]
+    dex
+    bpl .frag
+.noburst:
     ret
 end
 
@@ -240,17 +325,77 @@ begin
     ldx #0
 .part:
     stx Machine.t6
-    mov Machine.t3, particle_attribute + x
+    lda [effects.particle_attribute[x]]
+    and #$F0                    ; strip the size bit before the hardware sees it
+    sta Machine.t3
     mov Machine.t4, particle_x_high + x
     lda [effects.particle_y_high[x]]
     sub [game.camera_y]
     sta Machine.t5
+    lda [effects.particle_attribute[x]]
+    lsr a
+    lda #Gfx.speck
+    bcc .sized
     lda #Gfx.dot
+.sized:
     jsr Draw.sprite
     ldx Machine.t6
     inx
     cpx #particle_count
     bne .part
+    ret
+end
+
+; ------------------------------------------------------------------------------
+; draw_burst: stage the death burst last, in front of everything, where the
+; cart draws its dead particles. The cart's square has a t/5 radius in colour
+; 14+t%2: the 4x4 blob carries the big half of the life, the dot the tail,
+; alternating the two pinks by remaining time. Clobbers A, X, Y, t3..t6.
+; ------------------------------------------------------------------------------
+proc draw_burst using console6502 naked
+begin
+    lda [dead_burst.timer]
+    bne .live
+    ret
+.live:
+    mov [video.repeat], #1
+    ldx #0
+.frag:
+    stx Machine.t6
+    lda [dead_burst.timer]
+    and #1
+    beq .pink
+    lda #Gfx.palette_15
+    bne .colour
+.pink:
+    lda #Gfx.palette_14
+.colour:
+    sta Machine.t3
+    lda [dead_burst.timer]
+    cmp #5
+    bcc .small
+    lda [dead_burst.x_high[x]]
+    sub #2
+    sta Machine.t4
+    lda [dead_burst.y_high[x]]
+    sub #2
+    sub [game.camera_y]
+    sta Machine.t5
+    lda #Gfx.blob
+    bne .stage
+.small:
+    lda [dead_burst.x_high[x]]
+    sta Machine.t4
+    lda [dead_burst.y_high[x]]
+    sub [game.camera_y]
+    sta Machine.t5
+    lda #Gfx.dot
+.stage:
+    jsr Draw.sprite
+    ldx Machine.t6
+    inx
+    cpx #burst_count
+    bne .frag
     ret
 end
 end

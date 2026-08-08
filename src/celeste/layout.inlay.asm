@@ -212,6 +212,17 @@ struct ObjectIndex packed
     counts : u8[16]
 end
 
+; The cart's dead_particles: eight fragments radiating from the killed player.
+; All eight spawn together and age together, so one timer serves the set; the
+; per-direction speeds are constants indexed by particle number.
+struct DeadBurst packed
+    x_low : u8[8]
+    x_high : u8[8]
+    y_low : u8[8]
+    y_high : u8[8]
+    timer : u8
+end
+
 struct OverlayRowPointers
     low : u8[120] at 0
     high : u8[120] at 128
@@ -320,6 +331,7 @@ overlay overlay_shadow : OverlayFramebuffer at $6000
 overlay overlay_shadow_pages : OverlayFramebufferPages at $6000
 overlay effects : FxStorage at $5600
 overlay object_index : ObjectIndex at $57c0
+overlay dead_burst : DeadBurst at $57e0
 
 static_assert CelesteObject.size == 64
 static_assert ObjectCore.size == 18
@@ -471,6 +483,9 @@ static_assert $5600 + FxStorage.size == $57c0
 static_assert ObjectIndex.kinds.count == 16
 static_assert ObjectIndex.counts.offset == 16
 static_assert $57c0 + ObjectIndex.size == $57e0
+static_assert DeadBurst.timer.offset == 32
+static_assert $57e0 + DeadBurst.size == $5801
+static_assert $5801 <= $6000
 
 ; Effects structure-of-arrays component boundaries (effects overlay at $5600).
 static_assert $5600 + FxStorage.cloud_x_high.offset == $5620

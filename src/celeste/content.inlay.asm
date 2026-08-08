@@ -109,40 +109,109 @@ begin
     ret
 end
 
+; The cart's spring: hide_for in extra.timer, the post-bounce delay in
+; extra.value, and break_spring's hide_in fuse in extra.state - lit by a
+; breaking fall floor underneath (Floor.break writes it).
 proc update using console6502
 begin
-    lda [Machine.object.payload.extra.timer]
-    beq .visible
+    lda [Machine.object.payload.extra.timer]    ; hidden: count hide_for down
+    beq .shown
     dec [Machine.object.payload.extra.timer]
-    bne .done
+    beq .reappear
+    jmp .fuse
+.reappear:
     lda #18
     sta [Machine.object.core.sprite]
-    ret
-.visible:
-    lda [Machine.object.payload.extra.value]
+    lda #0
+    sta [Machine.object.payload.extra.value]
+    jmp .fuse
+.shown:
+    lda [Machine.object.core.sprite]
+    cmp #18
     beq .contact
+    lda [Machine.object.payload.extra.value]    ; compressed: count the delay
+    beq .tofuse
     dec [Machine.object.payload.extra.value]
-    bne .done
+    bne .tofuse
     lda #18
     sta [Machine.object.core.sprite]
+.tofuse:
+    jmp .fuse
 .contact:
     mov Collision.type, #ObjectKind.player
     mov Collision.offset_x, #0
     mov Collision.offset_y, #0
     jsr Collision.object
-    beq .done
+    bne .hit
+    jmp .fuse
+.hit:
     mov y, offset CelesteObject.core.speed_y.integer
     lda (Machine.other), y
-    bmi .done
+    bpl .bounce
+    jmp .fuse
+.bounce:
     lda [Machine.object.core.y]
     sub #4
     mov y, offset CelesteObject.core.y
     sta (Machine.other), y
-    lda #0
+
+    ; spd.x *= 0.2 - the cart keeps a fifth of the entry speed. Approximated
+    ; as (v>>3)+(v>>4)+(v>>6) = 0.2031, on the magnitude, then re-signed.
     mov y, offset CelesteObject.core.speed_x.fraction
+    lda (Machine.other), y
+    sta Machine.t3
+    iny
+    lda (Machine.other), y
+    sta Machine.t4
+    sta Machine.t7              ; bit 7 remembers the sign
+    bpl .abs_done
+    lda #0
+    sub Machine.t3
+    sta Machine.t3
+    lda #0
+    sbc Machine.t4
+    sta Machine.t4
+.abs_done:
+    lsr Machine.t4
+    ror Machine.t3
+    lsr Machine.t4
+    ror Machine.t3
+    lsr Machine.t4
+    ror Machine.t3
+    lda Machine.t3              ; acc = v>>3
+    sta Fixed.word0
+    lda Machine.t4
+    sta Fixed.word0+1
+    lsr Machine.t4
+    ror Machine.t3
+    lda Fixed.word0             ; acc += v>>4
+    add Machine.t3
+    sta Fixed.word0
+    lda Fixed.word0+1
+    adc Machine.t4
+    sta Fixed.word0+1
+    lsr Machine.t4
+    ror Machine.t3
+    lsr Machine.t4
+    ror Machine.t3
+    lda Fixed.word0             ; acc += v>>6
+    add Machine.t3
+    sta Fixed.word0
+    lda Fixed.word0+1
+    adc Machine.t4
+    sta Fixed.word0+1
+    lda Machine.t7
+    bpl .resigned
+    jsr Fixed.negate
+.resigned:
+    mov y, offset CelesteObject.core.speed_x.fraction
+    lda Fixed.word0
     sta (Machine.other), y
+    lda Fixed.word0+1
     iny
     sta (Machine.other), y
+
+    lda #0
     mov y, offset CelesteObject.core.speed_y.fraction
     sta (Machine.other), y
     lda #$FD                    ; -3.0 px/frame
@@ -161,8 +230,38 @@ begin
     tax
     pla
     jsr Objects.spawn_smoke
+
+    ; breakable below us: bouncing breaks a fall floor under the spring
+    mov Collision.type, #ObjectKind.fall_floor
+    mov Collision.offset_x, #0
+    mov Collision.offset_y, #1
+    jsr Collision.object
+    beq .nofloor
+    lda Machine.object          ; Floor.break acts on the receiver
+    pha
+    lda Machine.object+1
+    pha
+    lda Machine.other
+    sta Machine.object
+    lda Machine.other+1
+    sta Machine.object+1
+    jsr Floor.break
+    pla
+    sta Machine.object+1
+    pla
+    sta Machine.object
+.nofloor:
     lda #8
-    jmp Audio.guarded_sfx
+    jsr Audio.guarded_sfx
+.fuse:
+    lda [Machine.object.payload.extra.state]    ; break_spring: hide_in burns
+    beq .done                                   ; down, then hide for 60
+    dec [Machine.object.payload.extra.state]
+    bne .done
+    lda #60
+    sta [Machine.object.payload.extra.timer]
+    lda #0
+    sta [Machine.object.core.sprite]
 .done:
     ret
 end
@@ -282,6 +381,7 @@ end
 
 namespace Floor
     export init
+    export break
     export update
     export draw
 
@@ -309,6 +409,15 @@ begin
     tax
     pla
     jsr Objects.spawn_smoke
+    ; a spring sitting on this floor starts hiding: the cart's break_spring
+    mov Collision.type, #ObjectKind.spring
+    mov Collision.offset_x, #0
+    mov Collision.offset_y, #$FF
+    jsr Collision.object
+    beq .done
+    lda #15
+    mov y, offset CelesteObject.payload.extra.state
+    sta (Machine.other), y
 .done:
     ret
 end
@@ -539,7 +648,10 @@ end
 proc draw using console6502
 begin
     lda [Machine.object.payload.extra.state]
-    bne .body
+    beq .hovering
+    lda #0                      ; flying away: the cart shows the first wing
+    jmp .wing                   ; frame on both sides
+.hovering:
     lda [Machine.object.payload.extra.phase]
     lsr a, 5
     and #3
@@ -584,8 +696,7 @@ begin
     sta [Machine.object.payload.extra.timer]
     lda #0
     sta [Machine.object.payload.extra.phase]
-    lda #26
-    sta [Machine.object.core.sprite]
+    sta [Machine.object.core.sprite]    ; drawn as overlay text, not a sprite
     lda [Machine.object.core.x]
     sub #2
     sta [Machine.object.core.x]
@@ -614,7 +725,8 @@ end
 
 proc draw using console6502
 begin
-    jmp Draw.object
+    jsr Draw.overlay_dirty      ; the drifting score is overlay text; keep
+    jmp Draw.lifeup             ; the rebuild cycling while it lives
 end
 end
 
@@ -766,17 +878,26 @@ namespace Key
     export update
     export draw
 
+; flr(9 + sin(frames/30) + 0.5) for frames 0..29, PICO-8's inverted sine.
+spin:
+    #d8 9, 9, 9, 8, 8, 8, 8, 8, 8, 8
+    #d8 8, 8, 8, 9, 9, 9, 9, 9, 10, 10
+    #d8 10, 10, 10, 10, 10, 10, 10, 10, 9, 9
+
 proc update using console6502
 begin
-    lda [game.frames]
-    cmp #15
-    bcc .nine
-    lda #10
-    bne .sprite
-.nine:
-    lda #9
-.sprite:
+    ; The cart's spr = 9 + (sin(frames/30) + 0.5): three frames, 8 and 10 at
+    ; the sine's crests, 9 between - the table below is that expression per
+    ; frame. The flip toggles at the first 10 of each cycle (frames == 18).
+    ldx [game.frames]
+    lda spin, x
     sta [Machine.object.core.sprite]
+    cpx #18
+    bne .noflip
+    lda [Machine.object.core.flip]
+    eor #$01
+    sta [Machine.object.core.flip]
+.noflip:
     mov Collision.type, #ObjectKind.player
     mov Collision.offset_x, #0
     mov Collision.offset_y, #0
@@ -833,6 +954,10 @@ begin
 .shake:
     lda [video.random]
     and #3
+    cmp #3                      ; the cart's -1+rnd(3) never reaches +2
+    bne .offset
+    lda #1
+.offset:
     sub #1
     mov y, offset CelesteObject.payload.extra.start_x
     clc

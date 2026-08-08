@@ -81,6 +81,12 @@ FX_COLOURS = [1, 6, 7, 14, 15]
 FX_PATTERNS = [
     ("SPR_SOLID", [0xFF] * 8),
     ("SPR_DOT",   [0b00000011, 0b00000011, 0, 0, 0, 0, 0, 0]),
+    # The death burst's larger square: the cart rectfills up to 5x5 shrinking
+    # to 1x1; a 4x4 covers the big phases, the dot covers the tail.
+    ("SPR_BLOB",  [0b00001111] * 4 + [0, 0, 0, 0]),
+    # Single-pixel snow: the cart's s=flr(rnd(5)/4) makes 80% of the flakes
+    # one pixel; only the rest are the 2x2 dot.
+    ("SPR_SPECK", [0b00000001, 0, 0, 0, 0, 0, 0, 0]),
 ]
 
 SLOT_BYTES = 8
@@ -341,6 +347,10 @@ def main():
     player_cols = frozenset().union(*(colours_of(sprite_rows(rom, n))
                                       for n in PLAYER_SPRITES))
     wanted[player_cols] += len(PLAYER_SPRITES)
+    # The blue-hair variants (the cart's pal(8,12) reaches Madeline's own hair
+    # pixels, not just the trailing blobs) need their colour set reachable too.
+    player_blue_cols = frozenset(12 if c == 8 else c for c in player_cols)
+    wanted[player_blue_cols] += len(PLAYER_SPRITES)
     for n in SMOKE_SPRITES:
         wanted[colours_of(sprite_rows(rom, n))] += 1
     for n in content_sprites:
@@ -367,6 +377,16 @@ def main():
     if len({a for _, a in player}) != 1:
         sys.exit("player frames disagree on encoding; the draw code assumes one")
 
+    # Blue-hair player frames, uploaded as their own slots: the draw palette
+    # is global, so the cart's pal(8,12) has no per-sprite equivalent here.
+    def blue_rows(rows):
+        return [[12 if c == 8 else c for c in row] for row in rows]
+    player_blue = [encode(sheet, dpal, f"player{n}blue",
+                          blue_rows(sprite_rows(rom, n)))
+                   for n in PLAYER_SPRITES]
+    if len({a for _, a in player_blue}) != 1:
+        sys.exit("blue player frames disagree on encoding; the draw code assumes one")
+
     smoke = [encode(sheet, dpal, f"smoke{n}", sprite_rows(rom, n))
              for n in SMOKE_SPRITES]
     smoke_base = [b for b, _ in smoke]
@@ -378,8 +398,12 @@ def main():
                for n in content_sprites}
     sprite_base = [0] * 128
     sprite_attr = [0] * 128
+    sprite_base_blue = [0] * 128
+    sprite_attr_blue = [0] * 128
     for n, (base, attr) in zip(PLAYER_SPRITES, player):
         sprite_base[n], sprite_attr[n] = base, attr
+    for n, (base, attr) in zip(PLAYER_SPRITES, player_blue):
+        sprite_base_blue[n], sprite_attr_blue[n] = base, attr
     for n, (base, attr) in zip(SMOKE_SPRITES, smoke):
         sprite_base[n], sprite_attr[n] = base, attr
     for n, (base, attr) in content.items():
@@ -432,6 +456,8 @@ namespace Gfx
     export hair_small
     export solid
     export dot
+    export blob
+    export speck
     export palette_1
     export palette_6
     export palette_7
@@ -443,6 +469,8 @@ namespace Gfx
     export draw_palette
     export sprite_base
     export sprite_attr
+    export sprite_base_blue
+    export sprite_attr_blue
     export sheet
     export tile_base
     export tile_attr
@@ -467,6 +495,11 @@ namespace Gfx
         asm_bytes(f, sprite_base)
         f.write("\n; Cart sprite id -> map/sprite attribute byte.\nsprite_attr:\n")
         asm_bytes(f, sprite_attr)
+        f.write("\n; Blue-hair player variants (pal(8,12)); zero for every other id.\n"
+                "sprite_base_blue:\n")
+        asm_bytes(f, sprite_base_blue)
+        f.write("\nsprite_attr_blue:\n")
+        asm_bytes(f, sprite_attr_blue)
         f.write("\n; The sheet image, in slot order.\nsheet:\n")
         asm_bytes(f, upload)
         f.write("\n; tile id -> pattern slot base (0 = not drawn as terrain)\n"

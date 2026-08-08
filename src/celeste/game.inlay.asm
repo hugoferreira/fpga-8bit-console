@@ -158,12 +158,20 @@ begin
     dec [game.shake]
     lda [game.shake]
     beq .noshake
-    lda [video.random]
-    and #3
+    lda [video.random]          ; the cart's camera(-2+rnd(5)): five offsets
+    and #7                      ; per axis, folded from eight random states
+    cmp #5
+    bcc .xr
+    sub #5
+.xr:
     sub #2
     sta [game.shake_x]
     lda [video.random]
-    and #3
+    and #7
+    cmp #5
+    bcc .yr
+    sub #5
+.yr:
     sub #2
     sta [game.shake_y]
     jmp .restart

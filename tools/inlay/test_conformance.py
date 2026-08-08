@@ -30,14 +30,14 @@ CELESTE_REFERENCE_DIR = (
     ROOT / "tests/inlay/reference/celeste-customasm"
 )
 CELESTE_MEMMAP = CELESTE_REFERENCE_DIR / "memmap.asm"
-EXPECTED_CELESTE_TYPED_OPERATIONS = 244
-EXPECTED_CELESTE_OVERLAY_OPERATIONS = 231
+EXPECTED_CELESTE_TYPED_OPERATIONS = 255
+EXPECTED_CELESTE_OVERLAY_OPERATIONS = 239
 EXPECTED_CELESTE_OFFSET_SETUPS = 0
-EXPECTED_CELESTE_SEMANTIC_OFFSETS = 127
-EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 171
+EXPECTED_CELESTE_SEMANTIC_OFFSETS = 132
+EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 177
 EXPECTED_CELESTE_COUNTED_SHIFTS = 20
 EXPECTED_CELESTE_ROM_SHA256 = (
-    "eda7bc7ffc27470692d3b0fe7585a8255489a00ae1d1dabc30e1e339ee4d351c"
+    "6c61f60062b61e9b8a8147115f961017b5b67bd179cf14eda410b50aec3ebcf6"
 )
 READABLE_CELESTE_MODULES = {
     "audio.inlay.asm",
@@ -638,10 +638,12 @@ def check_generated_gfx_payload() -> None:
         )
 
     required = {
-        "upload_bytes", "hair_big", "hair_small", "solid", "dot",
+        "upload_bytes", "hair_big", "hair_small", "solid", "dot", "blob",
+        "speck",
         "palette_1", "palette_6", "palette_7", "palette_8", "palette_11",
         "palette_12", "palette_14", "palette_15", "draw_palette",
-        "sprite_base", "sprite_attr", "sheet", "tile_base", "tile_attr",
+        "sprite_base", "sprite_attr", "sprite_base_blue", "sprite_attr_blue",
+        "sheet", "tile_base", "tile_attr",
     }
     exports = set(re.findall(r"^\s*export ([a-z0-9_]+)$", text, re.MULTILINE))
     if exports != required:
@@ -663,7 +665,9 @@ def check_generated_gfx_payload() -> None:
     for label, following, expected in (
         ("draw_palette", "; Cart sprite id", 16),
         ("sprite_base", "; Cart sprite id -> map", 128),
-        ("sprite_attr", "; The sheet image", 128),
+        ("sprite_attr", "; Blue-hair player variants", 128),
+        ("sprite_base_blue", "sprite_attr_blue", 128),
+        ("sprite_attr_blue", "; The sheet image", 128),
         ("tile_base", "; tile id -> map attribute", 128),
         ("tile_attr", "end", 128),
     ):
@@ -1076,17 +1080,19 @@ def check_remaining_subsystem_design() -> None:
         "draw.inlay.asm": (
             "Draw",
             {
-                "frame", "sprite", "object", "hair_create", "hair_color",
-                "cart_sprite", "hair_draw", "overlay_init", "overlay_dirty",
-                "overlay_phase", "room_title",
+                "frame", "sprite", "object", "player_object", "hair_create",
+                "hair_color", "cart_sprite", "hair_draw", "overlay_init",
+                "overlay_dirty", "overlay_phase", "lifeup", "room_title",
             },
             {
                 "frame", "palette", "palette_slots", "sprite", "object",
+                "player_object",
                 "cart_sprite", "position", "hair_create", "hair_color", "hair_palette",
                 "hair_draw", "hair_chase", "asr_w1", "asr_w2",
                 "overlay_init", "overlay_dirty", "overlay_clear",
                 "overlay_begin", "overlay_phase", "char", "text", "string",
-                "byte", "hud", "title_credits", "room_title", "str_time",
+                "byte", "hud", "title_credits", "room_title", "lifeup",
+                "str_time",
                 "str_dead", "str_oldsite", "str_summit", "str_xc",
                 "str_thorson", "str_berry", "font",
             },

@@ -77,13 +77,13 @@ FAIL = []
 
 VISUAL_CHECKPOINTS = {
     "title":
-        "51f7da4afcf39dbabb0f4f1c3bb674d633f493e7ebee22b9dee23749e1ef1672",
+        "1d2720d1aff786addfba8c2ddbfb0b5c251865e7d85e53e36732f903d26b164e",
     "first-room-play":
-        "d547458346f395d341875a78d06f6b1b33867affc282c00b06ddf557151b0964",
+        "44ea26129c5c27ab034b6ba51ad5988e4b6121b2e09fd335adbcacb72385e83b",
     "hud":
-        "a1c880c4265a86060708388ff9747ec22ff36c0c7ece0e1a6c23017dcd810b7b",
+        "761c717fcb236b223fe6dcdc71076585327a902ab8b2dcd55376c160d9d557c7",
     "room-transition":
-        "112b0a4ee6184addd77966da936b79cbdca3f77b5be20419324da4084786c356",
+        "a2aa5a484ee0ce8797f9dc78a9f5a699aa42ddff4433d7a922ac2a8cd206cf85",
 }
 AUDIO_TRACE_SHA256 = (
     "04eac74d856835b74b8044524b85bbd39f17319a62d5b5d68d21eed1b5cb5a97"

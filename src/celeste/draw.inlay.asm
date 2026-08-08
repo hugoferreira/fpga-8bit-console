@@ -17,12 +17,14 @@ namespace Draw
     export sprite
     export cart_sprite
     export object
+    export player_object
     export hair_create
     export hair_color
     export hair_draw
     export overlay_init
     export overlay_dirty
     export overlay_phase
+    export lifeup
     export room_title
     location overlay_pointer : u16 at $16
     location pen_x : u8 at $60
@@ -34,6 +36,7 @@ namespace Draw
     location index : u8 at $66
     location hair_index : u8 at $67
     location hair_color_value : u8 at $68
+    location hair_blue : u8 at $69
     location hair_last_x : u16 at $6a
     location hair_last_y : u16 at $6c
     location hair_head_x : u16 at $6e
@@ -61,6 +64,7 @@ frame:
     jsr Objects.draw_all
 
     jsr Fx.draw_particles       ; in front of everything, title screen included
+    jsr Fx.draw_burst           ; the death burst, in front of the snow
     lda [game.sprite_count]
     sta [video.sprite_count]
     rts
@@ -190,6 +194,31 @@ object:
 .done:
     rts
 
+; player_object: Draw.object for the player, honouring the hair colour. The
+; cart's set_hair_color() is pal(8, c), which recolours Madeline's own hair
+; pixels along with the trailing blobs; the draw palette here is global, so
+; the swap selects the uploaded pal(8,12) sprite variants instead. Only blue
+; exists: red is the art itself, and two-dash flash needs the orb's rooms.
+player_object:
+    lda hair_blue
+    beq object
+    mov y, offset CelesteObject.core.sprite
+    lda (Machine.object), y
+    beq .done
+    tax
+    lda Gfx.sprite_base_blue, x
+    beq object                  ; no variant for this frame: draw the red one
+    pha
+    lda Gfx.sprite_attr_blue, x
+    mov y, offset CelesteObject.core.flip
+    ora (Machine.object), y
+    sta Machine.t3
+    jsr position
+    pla
+    jmp sprite
+.done:
+    rts
+
 ; ------------------------------------------------------------------------------
 ; cart_sprite: draw cart sprite A at world t4/t5 with flip bits t6. This is the
 ; multi-cell/content counterpart to object(), used by platforms, fake walls,
@@ -273,10 +302,12 @@ hair_create:
 ; draw palette, not of arithmetic. The generator emits the four the cart can
 ; ask for.
 hair_color:
-    cmp #1
-    beq .red
+    ldx #0                      ; hair_blue also steers the player's OWN hair
+    cmp #1                      ; pixels: player_object swaps the whole
+    beq .red                    ; sprite for its pal(8,12) variant
     cmp #2
     beq .flash
+    inx
     lda #Gfx.palette_12        ; no dash left: blue
     jmp .done
 .red:
@@ -285,8 +316,10 @@ hair_color:
 .flash:
     ldx [game.frames]                  ; 7 + flr((frames/3)%2)*4, without a divide
     lda hair_palette, x
+    ldx #0
 .done:
     sta hair_color_value
+    stx hair_blue
     rts
 
 ; frames is 0..29 and the cart wants (frames/3) & 1. Thirty bytes is cheaper
@@ -708,19 +741,19 @@ hud:
 ; 3x5 uppercase, so the names are capitalised.
 ; ------------------------------------------------------------------------------
 title_credits:
-    mov pen_x, #58
-    mov pen_y, #80
+    mov pen_x, #74              ; the cart's x plus 16: centred on this
+    mov pen_y, #80              ; display's 160 columns, like the logo
     lda #<str_xc
     ldx #>str_xc
     jsr string
 
-    mov pen_x, #42
+    mov pen_x, #58
     mov pen_y, #96
     lda #<str_thorson
     ldx #>str_thorson
     jsr string
 
-    mov pen_x, #46
+    mov pen_x, #62
     mov pen_y, #102
     lda #<str_berry
     ldx #>str_berry
@@ -735,15 +768,47 @@ title_credits:
 ; one colour and cannot, so the text sits directly over the room.
 ; ------------------------------------------------------------------------------
 room_title:
+    ; the cart's draw_time(4,4): the h:mm:ss clock rides the banner
+    mov pen_x, #5
+    mov pen_y, #5
+    lda [game.minutes]
+    ldx #0
+.hours:
+    cmp #60
+    bcc .clock
+    sub #60
+    inx
+    jmp .hours
+.clock:
+    pha
+    txa
+    jsr byte
+    lda #glyph_colon
+    jsr char
+    pla
+    jsr byte
+    lda #glyph_colon
+    jsr char
+    lda [game.seconds]
+    jsr byte
+
     cbeq [game.level], #11, .oldsite
     cmp #30
-    beq .summit
-
-    mov pen_x, #52
+    bne .metres
+    jmp .summit
+.metres:
     mov pen_y, #62
     lda [game.level]
     add #1
+    cmp #10                     ; the cart prints "N00 m" at 54 and only
+    bcs .wide                   ; "1000 m" at 52, with no leading zero
+    mov pen_x, #54
+    jsr char
+    jmp .zeros
+.wide:
+    mov pen_x, #52
     jsr byte
+.zeros:
     lda #0
     jsr char
     lda #0
@@ -766,6 +831,25 @@ room_title:
     lda #<str_summit
     ldx #>str_summit
     jmp string
+
+; ------------------------------------------------------------------------------
+; lifeup: the cart's print("1000", x-2, y, 7+flash%2) for the collected-berry
+; score. The overlay is single-colour, so the flash is white throughout.
+; ------------------------------------------------------------------------------
+lifeup:
+    lda [Machine.object.core.x]
+    sub #2
+    sta pen_x
+    lda [Machine.object.core.y]
+    sta pen_y
+    lda #1
+    jsr char
+    lda #0
+    jsr char
+    lda #0
+    jsr char
+    lda #0
+    jmp char
 
 str_time:
     #d8 29, 18, 22, 14, glyph_end            ; TIME

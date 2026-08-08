@@ -141,15 +141,17 @@ load:
     lda #playfield_width
 .cam0:
     sta Machine.t3
-    jsr title              ; the cart draws the title room at x = -4:
-    bne .notitle                ;   map(room.x*16, room.y*16, off, 0, 16, 16, 2)
-    lda Machine.t3                      ; with off = -4. Scrolling the camera 4 to the
-    add #4
-    sta Machine.t3
-    mov [video.clip_x1], #playfield_width-5  ; does not appear in the gap that opens up
+    jsr title              ; the cart draws the title room at x = -4 on its
+    bne .notitle                ; 128 columns; this display has 160, so the
+    lda Machine.t3                      ; title scrolls a further 16 right to centre
+    sub #12                     ; the logo and opens the clip to the full
+    sta Machine.t3              ; width. The 32 uncovered columns read the
+    mov [video.clip_x1], #159   ; other, still-empty tile bank: blank.
+    mov [video.overlay_color], #5  ; the cart prints the credits in colour 5
     jmp .cam
 .notitle:
     mov [video.clip_x1], #playfield_width-1
+    mov [video.overlay_color], #7  ; HUD, banner and lifeup are white
 .cam:
     lda Machine.t3
     sta [video.camera_x]
