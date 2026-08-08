@@ -153,6 +153,13 @@ load:
     mov [video.clip_x1], #playfield_width-1
     mov [video.overlay_color], #7  ; HUD, banner and lifeup are white
 .cam:
+    lda #0                      ; drop any per-row colour override a lifeup
+    sta [video.row_color_index] ; left behind in the departed room
+    ldx #120
+.rowclear:
+    sta [video.row_color_data]
+    dex
+    bne .rowclear
     lda Machine.t3
     sta [video.camera_x]
     lda #0

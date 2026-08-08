@@ -720,13 +720,54 @@ begin
     inc [Machine.object.payload.extra.phase]
     ret
 .gone:
+    jsr rows_off                ; leave no stale row colour behind
     jmp Objects.destroy
+end
+
+; rows_off: clear the row-colour overrides this lifeup last claimed.
+proc rows_off using console6502
+begin
+    mov y, offset CelesteObject.payload.extra.start_y
+    lda (Machine.object), y
+    beq .none
+    sta [video.row_color_index]
+    ldx #6
+    lda #0
+.row:
+    sta [video.row_color_data]
+    dex
+    bne .row
+.none:
+    ret
 end
 
 proc draw using console6502
 begin
     jsr Draw.overlay_dirty      ; the drifting score is overlay text; keep
-    jmp Draw.lifeup             ; the rebuild cycling while it lives
+    jsr rows_off                ; the rebuild cycling while it lives
+    lda [Machine.object.core.y] ; the cart's 7+flash%2 colour flash, through
+    beq .done                   ; the row-colour overrides: white and red
+    bmi .done                   ; alternating every other tick
+    cmp #115
+    bcs .done
+    sta [Machine.object.payload.extra.start_y]
+    sta [video.row_color_index]
+    lda [Machine.object.payload.extra.phase]
+    lsr a
+    and #1
+    bne .red
+    lda #$87                    ; override | colour 7
+    bne .have
+.red:
+    lda #$88                    ; override | colour 8
+.have:
+    ldx #5
+.row:
+    sta [video.row_color_data]
+    dex
+    bne .row
+.done:
+    jmp Draw.lifeup
 end
 end
 
@@ -1071,6 +1112,8 @@ end
 
 proc draw using console6502
 begin
+    lda #1                      ; the cart draws platforms before the main
+    sta [video.sprite_control]  ; terrain layer: composite behind the tiles
     lda [Machine.object.core.x]
     sta Machine.t4
     lda [Machine.object.core.y]
@@ -1086,6 +1129,9 @@ begin
     sub #1
     sta Machine.t5
     lda #12
-    jmp Draw.cart_sprite
+    jsr Draw.cart_sprite
+    lda #0
+    sta [video.sprite_control]
+    ret
 end
 end

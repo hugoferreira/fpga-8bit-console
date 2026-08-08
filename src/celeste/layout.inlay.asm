@@ -154,6 +154,9 @@ struct VideoRegisters
     clip_y1 : u8 at 51
     split : u8 at 54
     repeat : u8 at 55
+    row_color_index : u8 at 56
+    row_color_data : u8 at 57
+    sprite_control : u8 at 58
 end
 
 ; The PSG is sparse: the upload/status registers, channel command bank and
@@ -352,7 +355,10 @@ static_assert CelesteObject.payload.extra.start_y.offset == 21
 static_assert CelesteObject.payload.extra.value.offset == 23
 static_assert VideoRegisters.random.offset == 15
 static_assert VideoRegisters.split.offset == 54
-static_assert VideoRegisters.size == 56
+static_assert VideoRegisters.size == 59
+static_assert $4000 + VideoRegisters.row_color_index.offset == $4038
+static_assert $4000 + VideoRegisters.row_color_data.offset == $4039
+static_assert $4000 + VideoRegisters.sprite_control.offset == $403A
 static_assert PsgRegisters.channels.offset == 16
 static_assert PsgRegisters.channel_rows.offset == 20
 static_assert PsgRegisters.channel_lengths.offset == 24

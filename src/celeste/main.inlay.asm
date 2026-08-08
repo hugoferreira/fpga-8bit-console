@@ -29,8 +29,21 @@ include "room.inlay.asm"
 include "draw.inlay.asm"
 include "fx.inlay.asm"
 include "sound.inlay.asm"
+
+; The code region below the MMIO window ends HERE. Overflowing $4000 lays
+; code over the video registers and the CPU executes register bytes - which
+; is exactly what happened before this guard existed: title_tick landed at
+; $3fef-$4014 and the game broke at the first title keypress.
+low_code_end:
+#assert low_code_end <= 0x4000
+
+; Platform and Game continue in the free RAM between the MMIO window and the
+; object pool at $5000.
+#addr 0x4200
 include "platform.inlay.asm"
 include "game.inlay.asm"
+high_code_end:
+#assert high_code_end <= 0x5000
 
 ; Room payloads are cold data and the ten-room campaign no longer fits beside
 ; executable code below the $4000 MMIO window. Keep them in the free RAM image

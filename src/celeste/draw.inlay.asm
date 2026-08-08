@@ -768,6 +768,28 @@ title_credits:
 ; one colour and cannot, so the text sits directly over the room.
 ; ------------------------------------------------------------------------------
 room_title:
+    ; The cart's black rectfill panels, as colour-0 solid sprites staged
+    ; below the overlay text: the banner box (24,58)-(104,70) as an 8-row
+    ; solid over a 5-row one, and the clock box (4,4)-(36,10) as a 7-row.
+    mov Machine.t3, #Gfx.palette_0
+    mov [video.repeat], #5
+    mov Machine.t4, #4
+    mov Machine.t5, #4
+    lda #Gfx.panel7
+    jsr sprite
+    mov Machine.t3, #Gfx.palette_0
+    mov [video.repeat], #10
+    mov Machine.t4, #24
+    mov Machine.t5, #58
+    lda #Gfx.solid
+    jsr sprite
+    mov Machine.t3, #Gfx.palette_0
+    mov Machine.t4, #24
+    mov Machine.t5, #66
+    lda #Gfx.panel5
+    jsr sprite
+    mov [video.repeat], #1
+
     ; the cart's draw_time(4,4): the h:mm:ss clock rides the banner
     mov pen_x, #5
     mov pen_y, #5

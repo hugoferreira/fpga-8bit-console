@@ -71,10 +71,11 @@ HAIR_BLOBS = [
 # and green alternating at two, blue at none.
 HAIR_COLOURS = [8, 7, 11, 12]
 
-# Colours the background effects need as flat 1bpp fills: cloud navy, the two
-# particle greys, and the death burst's pinks. Listed so the palette search
-# guarantees they are reachable from some base even if no tile uses them.
-FX_COLOURS = [1, 6, 7, 14, 15]
+# Colours the background effects need as flat 1bpp fills: black for the
+# banner panels, cloud navy, the two particle greys, and the death burst's
+# pinks. Listed so the palette search guarantees they are reachable from some
+# base even if no tile uses them.
+FX_COLOURS = [0, 1, 6, 7, 14, 15]
 
 # Flat patterns for the effects the cart draws with rectfill(). A cloud is a
 # run of solid cells; a particle is a 2x2 dot.
@@ -87,6 +88,10 @@ FX_PATTERNS = [
     # Single-pixel snow: the cart's s=flr(rnd(5)/4) makes 80% of the flakes
     # one pixel; only the rest are the 2x2 dot.
     ("SPR_SPECK", [0b00000001, 0, 0, 0, 0, 0, 0, 0]),
+    # Partial-height solids: with SPR_SOLID these compose the cart's rectfill
+    # panels to the pixel - 8+5 for the 13-row banner box, 7 for the clock's.
+    ("SPR_PANEL5", [0xFF] * 5 + [0, 0, 0]),
+    ("SPR_PANEL7", [0xFF] * 7 + [0]),
 ]
 
 SLOT_BYTES = 8
@@ -458,6 +463,9 @@ namespace Gfx
     export dot
     export blob
     export speck
+    export panel5
+    export panel7
+    export palette_0
     export palette_1
     export palette_6
     export palette_7

@@ -30,14 +30,14 @@ CELESTE_REFERENCE_DIR = (
     ROOT / "tests/inlay/reference/celeste-customasm"
 )
 CELESTE_MEMMAP = CELESTE_REFERENCE_DIR / "memmap.asm"
-EXPECTED_CELESTE_TYPED_OPERATIONS = 255
-EXPECTED_CELESTE_OVERLAY_OPERATIONS = 239
+EXPECTED_CELESTE_TYPED_OPERATIONS = 258
+EXPECTED_CELESTE_OVERLAY_OPERATIONS = 250
 EXPECTED_CELESTE_OFFSET_SETUPS = 0
-EXPECTED_CELESTE_SEMANTIC_OFFSETS = 132
-EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 177
+EXPECTED_CELESTE_SEMANTIC_OFFSETS = 133
+EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 178
 EXPECTED_CELESTE_COUNTED_SHIFTS = 20
 EXPECTED_CELESTE_ROM_SHA256 = (
-    "6c61f60062b61e9b8a8147115f961017b5b67bd179cf14eda410b50aec3ebcf6"
+    "c8ee390a36f94a015835af561306144a59347cd9a203af1bcb4fd208838082f0"
 )
 READABLE_CELESTE_MODULES = {
     "audio.inlay.asm",
@@ -639,8 +639,8 @@ def check_generated_gfx_payload() -> None:
 
     required = {
         "upload_bytes", "hair_big", "hair_small", "solid", "dot", "blob",
-        "speck",
-        "palette_1", "palette_6", "palette_7", "palette_8", "palette_11",
+        "speck", "panel5", "panel7",
+        "palette_0", "palette_1", "palette_6", "palette_7", "palette_8", "palette_11",
         "palette_12", "palette_14", "palette_15", "draw_palette",
         "sprite_base", "sprite_attr", "sprite_base_blue", "sprite_attr_blue",
         "sheet", "tile_base", "tile_attr",
@@ -869,7 +869,11 @@ def check_platform_game_design() -> None:
         raise AssertionError("main debug frame binding must name Game.frame")
     permitted = re.compile(
         r"^(?:#include |include |#bank |#addr |#d8 |data codeptr |"
-        r"reset = |main_loop = )"
+        r"reset = |main_loop = |"
+        # Region-bound guards: the composition root owns the memory layout,
+        # and these are what stop a code region silently overlapping the
+        # MMIO window or the object pool.
+        r"(?:low|high)_code_end:$|#assert )"
     )
     if main.count("data codeptr Platform.reset") != 3:
         raise AssertionError(
