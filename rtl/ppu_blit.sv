@@ -13,9 +13,15 @@
 // pipeline that spent the line budget it was meant to protect would be a
 // worse design, not a better one.
 //
-// The three stages carry no valid bit and no enable. They do not need one:
-// the values they hold are stable for as long as the entry is, and the FSM
-// cannot reach `E_WR0` in fewer than two clocks from the end of the fetch.
+// The three stages carry no valid bit, and their one enable (`run`, high
+// whenever the engine is anywhere in fetch..write) exists for the
+// SIMULATOR, not for correctness: the values are stable for as long as the
+// entry is, and the FSM cannot reach `E_WR0` in fewer than two clocks from
+// the end of the fetch - so free-running and enabled registers agree at
+// every clock a consumer looks. What the enable buys is that Verilator
+// skips the eight palette lookups and the shift network on the majority of
+// clocks, where no blit is in flight; profiling named this module's stage
+// registers as the simulator's hottest single function.
 //
 // The path, in order:
 //
@@ -44,6 +50,8 @@
 // ppu_display. Only the register file's readback port leaves the module.
 module ppu_blit #(parameter LANES = 20)
                  (input bit clk, input bit reset,
+                  // High while the engine is anywhere in fetch..write
+                  input  logic       run,
                   // Draw palette: written from the register file, read here
                   input  logic       dpal_we,
                   input  logic [3:0] dpal_waddr,
@@ -100,10 +108,11 @@ module ppu_blit #(parameter LANES = 20)
 
   logic [31:0] packed32_q;
   logic [7:0]  opq8_q;
-  always_ff @(posedge clk) begin
-    packed32_q <= packed32;
-    opq8_q <= opq8;
-  end
+  always_ff @(posedge clk)
+    if (run) begin
+      packed32_q <= packed32;
+      opq8_q <= opq8;
+    end
 
   // ---- stage 2: align into the 64-bit window, and clip ----
   //
@@ -134,11 +143,12 @@ module ppu_blit #(parameter LANES = 20)
 
   logic [63:0] data64_q;
   logic [15:0] mask16_q, clipm_q;
-  always_ff @(posedge clk) begin
-    data64_q <= data64;
-    mask16_q <= mask16;
-    clipm_q  <= clipm;
-  end
+  always_ff @(posedge clk)
+    if (run) begin
+      data64_q <= data64;
+      mask16_q <= mask16;
+      clipm_q  <= clipm;
+    end
 
   // ---- stage 3: merge, into the line-buffer write data ----
   function automatic [31:0] merge(input [31:0] old, input [31:0] nw, input [7:0] m);

@@ -285,8 +285,13 @@ module sprite_compositor(input bit clk, input bit reset,
     .done(fetch_done), .more(fetch_more), .reused(fetch_reused), .cell_x,
     .prow0, .prow1, .prow2, .prow3);
 
+  // The blit pipeline advances only while an entry is in flight; see the
+  // enable's rationale in ppu_blit.sv.
+  wire blit_run = (est == E_FETCH) || (est == E_RD0) || (est == E_RD1)
+               || (est == E_WR0) || (est == E_WR1);
+
   ppu_blit #(.LANES(LANES)) blit(
-    .clk, .reset,
+    .clk, .reset, .run(blit_run),
     .dpal_we(pal_we && !pal_sel), .dpal_waddr(pal_addr), .dpal_wdata(pal_wdata),
     .dpal_raddr(pal_raddr), .dpal_rdata,
     .prow0, .prow1, .prow2, .prow3,
