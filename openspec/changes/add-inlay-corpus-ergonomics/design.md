@@ -426,6 +426,39 @@ per-stage expected movements of the conformance inventory:
 Estimates marked `~` are sized during each stage's migration and frozen at
 its commit; the direction is contractual, the magnitude is measured.
 
+### Measured close-out (all stages landed)
+
+Scripted against final production source. The conformance inventory moved
+21 → 9 exceptions, 129 → 111 raw indirects (the pre-change baseline had
+drifted to 178 before stage A; the stage-A→F trajectory was
+178 → 163 → 147 → 115 → 111), 133 → 95 semantic offsets and
+258 → 293 typed operations, with the "complemented target constant",
+"mask constant remains target-owned", "branch observes pre-decrement
+value" exception categories and the four-raw-high-byte-slice audit
+category all retired. Remaining exceptions: two following-flag
+dependencies, six variable-update operands, one wrapping add/mask update.
+
+| Observation | Before | After |
+| --- | ---: | ---: |
+| `invoke` statements | 0 | 10 |
+| `inlay-exception` sites | 21 | 9 |
+| `jsr Fixed.*` sites | 57 | 41 |
+| non-complement `lda #<` sites | 31 | 11 |
+| `#<!` complement sites | 9 | 1 (accumulator-logic latch) |
+| per-proc `using console6502` clauses | 109 | 0 (25 namespace defaults) |
+| hand-synchronized `ObjectKind` tables | 5 | 0 (one `method_table`) |
+| handwritten pool address tables | 2 | 0 (`pool tables`) |
+| new `movw` / imm `stw` / `decz` / `tstw` sites | — | 24 / 19 / 3 / 7 |
+
+Stage D's inline procs shipped with unit tests and byte-compared
+expansion references but no Celeste conversions: the six jmp-forwarders
+measured as byte-negative to inline (the shared bodies exist to share
+bytes), which is the per-site measurement discipline the stage
+committed to. F0 was digest-identical; F1's pool tables were
+digest-identical, and the method_table's only byte movement was
+`type_hide` relocating next to its siblings, accepted by the behavioral
+gates.
+
 ## Risks / Trade-offs
 
 - [Byte growth from inline adoption] → explicit qualifier, per-site
