@@ -612,25 +612,32 @@ Enum-value-keyed dispatch data generates from one declaration:
 
 ```asm
 method_table lifecycle : ObjectKind[player .. platform]
-    column type_tile : u8
-    column type_init : code
-    row player = 0, Player.init
-    row spawn = Room.tile_spawn, Spawn.init
+    tile : u8
+    init : code
+    update : code
+    draw : code
+    hide : u8
+    player = 0, Player.init, Player.update, Player.draw, 0
+    spawn = Room.tile_spawn, Spawn.init, Spawn.update, Spawn.draw, 0
     ...
 end
 static_assert lifecycle.bias == ObjectKind.player
 ```
 
-Rows are keyed by enum member value over the declared inclusive domain,
-never by declaration order; the domain's low value publishes as the
-queryable `NAME.bias`. Coverage is total — a domain value with no row is a
-diagnostic, so adding an enum member inside the domain without updating
-the table fails to assemble. Members with duplicate values inside the
-domain are rejected. A `code` column emits split `NAME_lo`/`NAME_hi`
-tables through the same procedure-address events as `data u8 low(...)`
-(inline procedures are rejected); a `u8` column emits one byte table, and
-`absent` (a zero entry for a dispatch guard) is legal only in `code`
-columns. Tables emit at the declaration's source position.
+The body uses the language's own declaration shapes: `name : u8` declares
+a per-kind attribute slot, `name : code` a method slot, and a bare
+`member = value, ...` line assigns one enum member's slots in declaration
+order. Members are keyed by enum member value over the declared inclusive
+domain, never by declaration order; the domain's low value publishes as
+the queryable `NAME.bias`. Coverage is total — a domain value with no
+member line is a diagnostic, so adding an enum member inside the domain
+without updating the table fails to assemble. Members with duplicate
+values inside the domain are rejected. A `code` slot emits split
+`TABLE_slot_lo`/`TABLE_slot_hi` tables through the same
+procedure-address events as `data u8 low(...)` (inline procedures are
+rejected); a `u8` slot emits one `TABLE_slot` byte table, and `absent`
+(a zero entry for a dispatch guard) is legal only in `code` slots.
+Tables emit at the declaration's source position.
 
 A pool's low/high address tables generate from its own geometry:
 

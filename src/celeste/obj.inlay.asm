@@ -68,30 +68,31 @@ end
 ; Per-type method tables, indexed by type id - 1. A zero entry means the type
 ; does not define that method, which is the cart's `if type.update ~= nil`.
 ; ------------------------------------------------------------------------------
-; One declaration owns the per-kind columns: rows are keyed by ObjectKind
+; One declaration owns the per-kind slots: members are keyed by ObjectKind
 ; value over [player .. platform], coverage is total, and the split lo/hi
-; code tables generate from qualified procedure identities. type_hide moves
-; adjacent to its siblings; the -1,x consumers derive from lifecycle.bias.
+; method tables generate from qualified procedure identities under
+; lifecycle_-prefixed labels. hide moves adjacent to its siblings; the
+; -1,x consumers derive from lifecycle.bias.
 method_table lifecycle : ObjectKind[player .. platform]
-    column type_tile : u8
-    column type_init : code
-    column type_update : code
-    column type_draw : code
-    column type_hide : u8
-    row player = 0, Player.init, Player.update, Player.draw, 0
-    row spawn = Room.tile_spawn, Spawn.init, Spawn.update, Spawn.draw, 0
-    row smoke = 0, Smoke.init, Smoke.update, Smoke.draw, 0
-    row title = 0, Title.init, Title.update, Title.draw, 0
-    row spring = 18, Spring.init, Spring.update, Spring.draw, 0
-    row balloon = 22, Ball.init, Ball.update, Ball.draw, 0
-    row fall_floor = 23, Floor.init, Floor.update, Floor.draw, 0
-    row fruit = 26, Fruit.init, Fruit.update, Fruit.draw, 1
-    row fly_fruit = 28, Fly.init, Fly.update, Fly.draw, 1
-    row lifeup = 0, Life.init, Life.update, Life.draw, 0
-    row fake_wall = 64, Objects.noop, Wall.update, Wall.draw, 1
-    row key = 8, Objects.noop, Key.update, Key.draw, 1
-    row chest = 20, Chest.init, Chest.update, Chest.draw, 1
-    row platform = 0, Mover.init, Mover.update, Mover.draw, 0
+    tile : u8
+    init : code
+    update : code
+    draw : code
+    hide : u8
+    player = 0, Player.init, Player.update, Player.draw, 0
+    spawn = Room.tile_spawn, Spawn.init, Spawn.update, Spawn.draw, 0
+    smoke = 0, Smoke.init, Smoke.update, Smoke.draw, 0
+    title = 0, Title.init, Title.update, Title.draw, 0
+    spring = 18, Spring.init, Spring.update, Spring.draw, 0
+    balloon = 22, Ball.init, Ball.update, Ball.draw, 0
+    fall_floor = 23, Floor.init, Floor.update, Floor.draw, 0
+    fruit = 26, Fruit.init, Fruit.update, Fruit.draw, 1
+    fly_fruit = 28, Fly.init, Fly.update, Fly.draw, 1
+    lifeup = 0, Life.init, Life.update, Life.draw, 0
+    fake_wall = 64, Objects.noop, Wall.update, Wall.draw, 1
+    key = 8, Objects.noop, Key.update, Key.draw, 1
+    chest = 20, Chest.init, Chest.update, Chest.draw, 1
+    platform = 0, Mover.init, Mover.update, Mover.draw, 0
 end
 static_assert lifecycle.bias == ObjectKind.player
 
@@ -129,7 +130,7 @@ begin
     lda marker_kind, x
     sta spawn_type
     tax
-    lda type_hide-1, x
+    lda lifecycle_hide-1, x
     beq .allocate
     jsr Berries.collected
     bne .done
@@ -224,7 +225,7 @@ begin
     lda spawn_type
     sta [object_index.kinds[x]]
     tax
-    lda type_tile-1, x   ; obj.spr = type.tile
+    lda lifecycle_tile-1, x   ; obj.spr = type.tile
     sta [Machine.object.core.sprite]
     lda spawn_x
     sta [Machine.object.core.x]
@@ -240,9 +241,9 @@ begin
 
     lda spawn_type              ; type.init(this)
     tax
-    lda type_init_lo-1, x
+    lda lifecycle_init_lo-1, x
     sta Machine.function
-    lda type_init_hi-1, x
+    lda lifecycle_init_hi-1, x
     sta Machine.function+1
     ora Machine.function
     beq .noinit
@@ -337,9 +338,9 @@ begin
     lda [Machine.object.core.kind] ; cheaper than proving it cannot)
     beq .next
     tax
-    lda type_update_lo-1, x
+    lda lifecycle_update_lo-1, x
     sta Machine.function
-    lda type_update_hi-1, x
+    lda lifecycle_update_hi-1, x
     sta Machine.function+1
     ora Machine.function
     beq .next
@@ -365,9 +366,9 @@ begin
     jsr pointer
     lda [Machine.object.core.kind]
     tax
-    lda type_draw_lo-1, x
+    lda lifecycle_draw_lo-1, x
     sta Machine.function
-    lda type_draw_hi-1, x
+    lda lifecycle_draw_hi-1, x
     sta Machine.function+1
     ora Machine.function
     beq .next

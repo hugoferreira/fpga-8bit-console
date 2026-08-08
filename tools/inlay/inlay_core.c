@@ -951,20 +951,19 @@ static LaDiagnosticCode la_parse_method_column(LaContext *ctx,
     record = &ctx->method_tables[ctx->method_table_count - 1];
     if (record->row_count != 0) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 6,
-                       la_slice("column before rows", 18),
+                       la_slice("slots before members", 20),
                        la_slice("", 0), 0, 0);
     }
     if (ctx->method_column_count >= ctx->limits->max_method_columns) {
         return la_fail(ctx, LA_ERR_STRUCT_CAPACITY, line, 1, 1,
-                       la_slice("method columns", 14), la_slice("", 0),
+                       la_slice("method table slots", 18), la_slice("", 0),
                        ctx->method_column_count + 1,
                        ctx->limits->max_method_columns);
     }
-    cursor = la_trim_left(start, end) + 6;
-    cursor = la_trim_left(cursor, end);
+    cursor = la_trim_left(start, end);
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("column label", 12), la_slice("", 0), 0, 0);
+                       la_slice("slot name", 9), la_slice("", 0), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != ':') {
@@ -1003,7 +1002,7 @@ static LaDiagnosticCode la_parse_method_row(LaContext *ctx,
     record = &ctx->method_tables[ctx->method_table_count - 1];
     if (record->column_count == 0) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 3,
-                       la_slice("columns before rows", 19),
+                       la_slice("slots before members", 20),
                        la_slice("", 0), 0, 0);
     }
     if (ctx->method_row_count >= ctx->limits->max_method_rows) {
@@ -1012,11 +1011,10 @@ static LaDiagnosticCode la_parse_method_row(LaContext *ctx,
                        ctx->method_row_count + 1,
                        ctx->limits->max_method_rows);
     }
-    cursor = la_trim_left(start, end) + 3;
-    cursor = la_trim_left(cursor, end);
+    cursor = la_trim_left(start, end);
     if (!la_read_identifier(&cursor, end, &member_start, &member_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("row member", 10), la_slice("", 0), 0, 0);
+                       la_slice("member name", 11), la_slice("", 0), 0, 0);
     }
     member = la_find_enum_member_text(ctx, record->enum_handle,
                                       member_start, member_length);
@@ -1076,7 +1074,7 @@ static LaDiagnosticCode la_parse_method_row(LaContext *ctx,
     }
     if (la_trim_left(cursor, end) != end) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("one value per column", 20),
+                       la_slice("one value per slot", 18),
                        la_slice("", 0), 0, 0);
     }
     ++ctx->method_row_count;
@@ -1137,10 +1135,15 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
         halves = col->is_code ? 2 : 1;
         for (half = 0; half < halves; ++half) {
             LaSlice label;
+            LaSlice table_name;
             la_u16 length;
+            table_name = la_name_slice(ctx, record->name);
             label = la_name_slice(ctx, col->label);
-            memcpy(ctx->path_buffer, label.data, label.length);
-            length = label.length;
+            memcpy(ctx->path_buffer, table_name.data, table_name.length);
+            length = table_name.length;
+            ctx->path_buffer[length++] = '_';
+            memcpy(ctx->path_buffer + length, label.data, label.length);
+            length = (la_u16)(length + label.length);
             if (col->is_code) {
                 memcpy(ctx->path_buffer + length,
                        half == 0 ? "_lo" : "_hi", 3);
@@ -1177,7 +1180,7 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
                 if (la_equal_text(text.data, text.length, "absent")) {
                     if (!col->is_code) {
                         la_fail(ctx, LA_ERR_SYNTAX, record->line, 1, 1,
-                                la_slice("absent in value column", 22),
+                                la_slice("absent in value slot", 20),
                                 la_slice("", 0), 0, 0);
                         return 0;
                     }
@@ -3115,17 +3118,20 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
         trimmed = la_trim_left(cursor, content_end);
         if (trimmed < content_end && *trimmed != ';') {
             if (in_method_table) {
+                const char *shape;
+                shape = trimmed;
+                while (shape < content_end && la_is_ident(*shape)) ++shape;
+                shape = la_trim_left(shape, content_end);
                 if (la_line_keyword(trimmed, content_end, "end")) {
                     ctx->method_tables[
                         ctx->method_table_count - 1].end_line = line;
                     in_method_table = 0;
-                } else if (la_line_keyword(trimmed, content_end,
-                                           "column")) {
+                } else if (shape < content_end && *shape == ':') {
                     if (la_parse_method_column(
                             ctx, trimmed, content_end, line) != LA_OK) {
                         return ctx->error;
                     }
-                } else if (la_line_keyword(trimmed, content_end, "row")) {
+                } else if (shape < content_end && *shape == '=') {
                     if (la_parse_method_row(
                             ctx, trimmed, content_end, line) != LA_OK) {
                         return ctx->error;
@@ -3133,7 +3139,8 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
                 } else {
                     return la_fail(ctx, LA_ERR_SYNTAX, line, 1,
                                    (la_u16)(content_end - trimmed),
-                                   la_slice("column, row or end", 18),
+                                   la_slice("NAME : u8|code, "
+                                            "MEMBER = ... or end", 34),
                                    la_slice(trimmed,
                                             (la_u16)(content_end -
                                                      trimmed)), 0, 0);

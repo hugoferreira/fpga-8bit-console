@@ -944,7 +944,7 @@ def check_objects_design() -> None:
         "mov [saved_self], self",
         "mov self, [saved_self]",
         "method_table lifecycle : ObjectKind[player .. platform]",
-        "row player = 0, Player.init, Player.update, Player.draw, 0",
+        "player = 0, Player.init, Player.update, Player.draw, 0",
         "jsr Berries.collected",
         "ldw value, [self.core.remainder_x]",
         "ldw operand, [self.core.speed_x]",

@@ -1355,10 +1355,10 @@ static void test_method_tables(void)
         "proc a_init naked\nbegin\nret\nend\n"
         "proc b_init naked\nbegin\nret\nend\n"
         "method_table kinds : Kind[player .. spawn]\n"
-        "    column k_tile : u8\n"
-        "    column k_init : code\n"
-        "    row spawn = 2, absent\n"
-        "    row player = 1, a_init\n"
+        "    k_tile : u8\n"
+        "    k_init : code\n"
+        "    spawn = 2, absent\n"
+        "    player = 1, a_init\n"
         "end\n"
         "static_assert kinds.bias == Kind.player\n",
         limits, "method table with domain, absence and bias");
@@ -1367,8 +1367,8 @@ static void test_method_tables(void)
         strcpy(source, prologue);
         strcat(source,
                "method_table kinds : Kind[player .. spawn]\n"
-               "    column k_init : code\n"
-               "    row player = a_init\n"
+               "    k_init : code\n"
+               "    player = a_init\n"
                "end\n");
         expect_error(source, limits, LA_ERR_ENUM_VALUE,
                      "uncovered domain value rejected");
@@ -1378,9 +1378,9 @@ static void test_method_tables(void)
         strcpy(source, prologue);
         strcat(source,
                "method_table kinds : Kind[player .. spawn]\n"
-               "    column k_tile : u8\n"
-               "    row player = absent\n"
-               "    row spawn = 0\n"
+               "    k_tile : u8\n"
+               "    player = absent\n"
+               "    spawn = 0\n"
                "end\n");
         expect_error(source, limits, LA_ERR_SYNTAX,
                      "absent in value column rejected");
@@ -1390,10 +1390,10 @@ static void test_method_tables(void)
         strcpy(source, prologue);
         strcat(source,
                "method_table kinds : Kind[player .. spawn]\n"
-               "    column k_init : code\n"
-               "    row player = a_init\n"
-               "    row player = b_init\n"
-               "    row spawn = b_init\n"
+               "    k_init : code\n"
+               "    player = a_init\n"
+               "    player = b_init\n"
+               "    spawn = b_init\n"
                "end\n");
         expect_error(source, limits, LA_ERR_DUPLICATE_FIELD,
                      "duplicate row member rejected");
@@ -1405,8 +1405,8 @@ static void test_method_tables(void)
         "end\n"
         "proc a_init naked\nbegin\nret\nend\n"
         "method_table t : Alias[one .. also_one]\n"
-        "    column k : code\n"
-        "    row one = a_init\n"
+        "    k : code\n"
+        "    one = a_init\n"
         "end\n",
         limits, LA_ERR_DUPLICATE_ENUM_MEMBER,
         "aliased member inside domain rejected");

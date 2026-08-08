@@ -9,8 +9,9 @@ as a queryable bias property. Enum members with duplicate values inside
 the domain SHALL be rejected.
 
 #### Scenario: Domain excludes a zero sentinel
-- **WHEN** `method_table lifecycle : ObjectKind[player .. mover] -> init`
-  is declared and `ObjectKind.free = 0` lies outside `[player .. mover]`
+- **WHEN** `method_table lifecycle : ObjectKind[player .. mover]` declares
+  an `init : code` slot and `ObjectKind.free = 0` lies outside
+  `[player .. mover]`
 - **THEN** the emitted tables contain no row for `free` and
   `lifecycle.bias` equals the value of `ObjectKind.player`
 
@@ -48,6 +49,6 @@ with the published bias.
 - **THEN** the generated tables are byte-identical to the handwritten ones
 
 #### Scenario: Bias-relative indexed consumption
-- **WHEN** raw source reads `lda Objects.lifecycle.init_lo - lifecycle.bias, x`
+- **WHEN** raw source reads `lda lifecycle_init_lo - lifecycle.bias, x`
 - **THEN** the operand resolves and assembles to the same bytes as the
   handwritten `-1, x` spelling for a bias of one
