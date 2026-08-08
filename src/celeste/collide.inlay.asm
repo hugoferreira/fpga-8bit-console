@@ -20,7 +20,7 @@ namespace Collision
     location offset_x : i8 at $27
     location offset_y : i8 at $28
     location type : u8 at $29
-    location hit : u8 at $2a
+    location remaining : u8 at $2a
     location column : u8 at $2b
     location row : u8 at $2c
     location last_column : u8 at $2d
@@ -102,9 +102,22 @@ box:
 ; by offset_x/offset_y. Returns A/Z and leaves Machine.other pointing at the hit.
 ; Coordinates are biased by 32 before unsigned comparisons so the room's small
 ; negative edge positions retain signed ordering without 16-bit boxes.
-; Clobbers A, X, Y, t3..t7 and Machine.other.
+; Clobbers A, X, Y, t3..t7, remaining and Machine.other.
+;
+; The scan reads object_index rather than the records: an absent kind returns
+; before the box is even built (solid() probes platform, fall_floor and
+; fake_wall on every call, and most rooms hold none of them), a non-matching
+; slot costs one flat table load instead of a pointer setup plus an indirect
+; kind load, and the loop stops after the last live instance of the kind -
+; the fall floors' per-tick player probes stop at the player's slot.
 ; ------------------------------------------------------------------------------
 object:
+    ldx type
+    lda [object_index.counts[x]]
+    bne .some
+    rts                         ; A = 0, Z set: no object of this kind is live
+.some:
+    sta remaining
     jsr box
     lda Collision.x
     add #32
@@ -119,27 +132,23 @@ object:
 
     ldx #0
 .candidate:
+    lda [object_index.kinds[x]]
+    cmp type
+    bne .next
     lda obj_lo, x
     sta Machine.other
-    cmp Machine.object
-    bne .kind
     lda obj_hi, x
     sta Machine.other+1
     cmp Machine.object+1
-    beq .next
-    jmp .kind_ready
-.kind:
-    lda obj_hi, x
-    sta Machine.other+1
+    bne .kind_ready
+    lda Machine.other
+    cmp Machine.object
+    beq .consume                ; the receiver itself: spend its count
 .kind_ready:
-    mov y, offset CelesteObject.core.kind
-    lda (Machine.other), y
-    cmp type
-    bne .next
     mov y, offset CelesteObject.core.flags
     lda (Machine.other), y
     and #Objects.flag_collideable
-    beq .next
+    beq .consume
 
     mov y, offset CelesteObject.core.x
     lda (Machine.other), y
@@ -148,14 +157,14 @@ object:
     adc (Machine.other), y
     add #32
     cmp Machine.t5
-    bcs .next
+    bcs .consume
     sta Machine.t7              ; other left
     mov y, offset CelesteObject.core.hitbox.w
     clc
     adc (Machine.other), y
     cmp Machine.t3
-    bcc .next
-    beq .next
+    bcc .consume
+    beq .consume
 
     mov y, offset CelesteObject.core.y
     lda (Machine.other), y
@@ -164,20 +173,24 @@ object:
     adc (Machine.other), y
     add #32
     cmp Machine.t6
-    bcs .next
+    bcs .consume
     sta Machine.t7              ; other top
     mov y, offset CelesteObject.core.hitbox.h
     clc
     adc (Machine.other), y
     cmp Machine.t4
-    bcc .next
-    beq .next
+    bcc .consume
+    beq .consume
     lda #1
     rts
+.consume:
+    dec remaining
+    beq .none                   ; every live instance of the kind is behind us
 .next:
     inx
     cpx #Objects.slot_count
     bne .candidate
+.none:
     lda #0
     rts
 ; ------------------------------------------------------------------------------

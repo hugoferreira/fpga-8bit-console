@@ -30,14 +30,14 @@ CELESTE_REFERENCE_DIR = (
     ROOT / "tests/inlay/reference/celeste-customasm"
 )
 CELESTE_MEMMAP = CELESTE_REFERENCE_DIR / "memmap.asm"
-EXPECTED_CELESTE_TYPED_OPERATIONS = 246
-EXPECTED_CELESTE_OVERLAY_OPERATIONS = 229
+EXPECTED_CELESTE_TYPED_OPERATIONS = 244
+EXPECTED_CELESTE_OVERLAY_OPERATIONS = 231
 EXPECTED_CELESTE_OFFSET_SETUPS = 0
 EXPECTED_CELESTE_SEMANTIC_OFFSETS = 127
 EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 171
-EXPECTED_CELESTE_COUNTED_SHIFTS = 18
+EXPECTED_CELESTE_COUNTED_SHIFTS = 20
 EXPECTED_CELESTE_ROM_SHA256 = (
-    "cc4776862ccaa444289cff9cda746996f04c3b3baa1aa4535f93a172a6a03af6"
+    "eda7bc7ffc27470692d3b0fe7585a8255489a00ae1d1dabc30e1e339ee4d351c"
 )
 READABLE_CELESTE_MODULES = {
     "audio.inlay.asm",
@@ -1078,14 +1078,14 @@ def check_remaining_subsystem_design() -> None:
             {
                 "frame", "sprite", "object", "hair_create", "hair_color",
                 "cart_sprite", "hair_draw", "overlay_init", "overlay_dirty",
-                "room_title",
+                "overlay_phase", "room_title",
             },
             {
                 "frame", "palette", "palette_slots", "sprite", "object",
                 "cart_sprite", "position", "hair_create", "hair_color", "hair_palette",
                 "hair_draw", "hair_chase", "asr_w1", "asr_w2",
                 "overlay_init", "overlay_dirty", "overlay_clear",
-                "overlay_begin", "overlay_end", "char", "text", "string",
+                "overlay_begin", "overlay_phase", "char", "text", "string",
                 "byte", "hud", "title_credits", "room_title", "str_time",
                 "str_dead", "str_oldsite", "str_summit", "str_xc",
                 "str_thorson", "str_berry", "font",

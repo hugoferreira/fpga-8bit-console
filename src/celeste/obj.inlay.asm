@@ -182,8 +182,16 @@ begin
     sta [Machine.object.core.kind]
     pla
     tax
+    lda #0
+    sta [object_index.kinds[x]]
     dex
     bpl .slot
+    ldx #15
+    lda #0
+.counts:
+    sta [object_index.counts[x]]
+    dex
+    bpl .counts
     ret
 end
 
@@ -222,6 +230,13 @@ begin
 
     lda spawn_type
     sta [Machine.object.core.kind]
+    tax
+    lda [object_index.counts[x]]
+    add #1
+    sta [object_index.counts[x]]
+    ldx spawn_slot
+    lda spawn_type
+    sta [object_index.kinds[x]]
     tax
     lda type_tile-1, x   ; obj.spr = type.tile
     sta [Machine.object.core.sprite]
@@ -280,13 +295,34 @@ begin
 end
 
 ; ------------------------------------------------------------------------------
-; destroy: free the record pObj points at. Clobbers A, Y.
+; destroy: free the record pObj points at and unindex it. The slot is derived
+; from the pointer (four page-aligned records per page), so callers that hold
+; only the receiver need not know its slot. A second destroy of the same
+; record is a no-op rather than a count underflow. Clobbers A, X, Y, t3 -
+; the chest and player-death sites carry x/y across this call in t6/t7.
 ; ------------------------------------------------------------------------------
 proc destroy using console6502
     self : ptr CelesteObject in Machine.object
 begin
+    mov y, offset CelesteObject.core.kind
+    lda (Machine.object), y
+    beq .freed
+    tax
+    lda [object_index.counts[x]]
+    sub #1
+    sta [object_index.counts[x]]
+    lda Machine.object+1        ; slot = (page - pool base page) * 4
+    sub #(OBJPOOL >> 8)
+    asl a, 2
+    sta Machine.t3
+    lda Machine.object          ;      + (low byte >> 6)
+    lsr a, 6
+    add Machine.t3
+    tax
     lda #0
+    sta [object_index.kinds[x]]
     sta [Machine.object.core.kind]
+.freed:
     ret
 end
 
@@ -302,10 +338,11 @@ proc update_all using console6502
 begin
     mov slot, #0
 .loop:
+    ldx slot                ; dead slots skip without touching the record
+    lda [object_index.kinds[x]]
+    beq .next
     lda slot
     jsr pointer
-    lda [Machine.object.core.kind]
-    beq .next
 
     jsr move            ; obj.move(obj.spd.x, obj.spd.y)
 
@@ -335,10 +372,12 @@ proc draw_all using console6502
 begin
     mov slot, #0
 .loop:
+    ldx slot                ; dead slots skip without touching the record
+    lda [object_index.kinds[x]]
+    beq .next
     lda slot
     jsr pointer
     lda [Machine.object.core.kind]
-    beq .next
     tax
     lda type_draw_lo-1, x
     sta Machine.function

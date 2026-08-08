@@ -77,13 +77,13 @@ FAIL = []
 
 VISUAL_CHECKPOINTS = {
     "title":
-        "8294bad8970e094a949edac7bc51f81b39633be9e96505003f6ef6c0d17ea395",
+        "51f7da4afcf39dbabb0f4f1c3bb674d633f493e7ebee22b9dee23749e1ef1672",
     "first-room-play":
-        "69c239ce4776015c1e6d30fcdb1bf9c17a0a09179532d43daf65feb4e4439137",
+        "d547458346f395d341875a78d06f6b1b33867affc282c00b06ddf557151b0964",
     "hud":
-        "a4b15bdcb63a6582b963d6eb4890e2d3d2f53d25de1fa224b57b8d2ebeb753dd",
+        "a1c880c4265a86060708388ff9747ec22ff36c0c7ece0e1a6c23017dcd810b7b",
     "room-transition":
-        "244a4f4833e42880e961c739f05f3cc892ee6dc5c6600a7c06da6eb9c35b1a39",
+        "112b0a4ee6184addd77966da936b79cbdca3f77b5be20419324da4084786c356",
 }
 AUDIO_TRACE_SHA256 = (
     "04eac74d856835b74b8044524b85bbd39f17319a62d5b5d68d21eed1b5cb5a97"
@@ -451,7 +451,9 @@ def main():
     m = r.cpu.m
 
     print("== boot: the title screen ==")
-    r.frames(2)
+    # The overlay rebuild is staged one phase per game tick (clear, glyphs,
+    # blit), so the credits reach the framebuffer on the third tick.
+    r.frames(6)
     chk(m[LEVEL] == 31, f"boots into the title room, level {m[LEVEL]} (cart: 31)")
     chk(r.objects() == [], f"no objects on the title screen ({len(r.objects())} found)")
     chk(r.music == [(40, 0)],

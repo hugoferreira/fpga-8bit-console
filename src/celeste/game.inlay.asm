@@ -81,10 +81,11 @@ end
 proc frame using console6502
 begin
     jsr Platform.wait_frame     ; PICO-8 _update is 30 Hz; the display is 60,
-    jsr Platform.wait_frame     ; so one game frame spans two display frames
-    jsr Platform.sample_input
-    jsr update
-    jsr Draw.frame
+    jsr Draw.overlay_phase      ; so one game frame spans two display frames.
+    jsr Platform.wait_frame     ; The first of them is otherwise idle, so it
+    jsr Platform.sample_input   ; absorbs one overlay rebuild phase; a tick
+    jsr update                  ; misses its boundary only when update+draw
+    jsr Draw.frame              ; alone overrun a display frame.
     ret
 end
 

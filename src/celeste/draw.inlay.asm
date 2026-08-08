@@ -22,6 +22,7 @@ namespace Draw
     export hair_draw
     export overlay_init
     export overlay_dirty
+    export overlay_phase
     export room_title
     location overlay_pointer : u16 at $16
     location pen_x : u8 at $60
@@ -62,7 +63,7 @@ frame:
     jsr Fx.draw_particles       ; in front of everything, title screen included
     lda [game.sprite_count]
     sta [video.sprite_count]
-    jmp overlay_end
+    rts
 
 ; ------------------------------------------------------------------------------
 ; palette: the cart's start-game flash.
@@ -453,9 +454,14 @@ overlay_init:
     jsr overlay_clear
     jmp overlay_dirty
 
+; overlay_dirty: request an overlay rebuild. The rebuild is a three-phase
+; machine (1 = clear, 2 = glyphs, 3 = blit) advanced one phase per game tick
+; by overlay_phase; a request while one is in flight keeps its phase.
 overlay_dirty:
-    lda #1
-    sta [game.overlay_dirty]
+    lda [game.overlay_dirty]
+    bne .busy
+    mov [game.overlay_dirty], #1
+.busy:
     rts
 
 overlay_clear:
@@ -480,21 +486,19 @@ overlay_clear:
     bne .tail
     rts
 
-; overlay_begin: decide whether this frame has to rebuild the overlay, and if so
-; clear it and lay down the parts that are not an object's business.
+; overlay_begin: decide whether the overlay needs a rebuild. The rebuild
+; itself runs elsewhere: one phase per game tick, inside the display frame
+; the 30 Hz game otherwise idles through (Game.frame calls overlay_phase
+; between its two vsync waits).
+;
+; The whole rebuild used to run inline here: the clear and the blit alone
+; move 4,800 bytes (~37k cycles), the glyphs another chunk, all stacked on
+; an ordinary update - which pushed the tick past its frame budget once a
+; second (the HUD clock) and every frame while a room-title banner lived.
 overlay_begin:
-    ldx #0                      ; a live room title redraws every frame
-.find:
-    txa
-    jsr Objects.pointer
-    lda [Machine.object.core.kind]
-    cmp #ObjectKind.title
-    beq .yes
-    inx
-    cpx #Objects.slot_count
-    bne .find
-    jmp .check
-.yes:
+    mov x, #ObjectKind.title    ; a live room title requests a rebuild
+    lda [object_index.counts[x]]
+    beq .check
     jsr overlay_dirty
 .check:
     lda [game.seconds]                 ; and so does the clock, once a second
@@ -503,20 +507,34 @@ overlay_begin:
     sta [game.hud_seconds]
     jsr overlay_dirty
 .nochange:
-    lda [game.overlay_dirty]
-    beq .done
-    jsr overlay_clear
-    jsr Room.title              ; the title screen carries credits, not a HUD
-    bne .hud
-    jmp title_credits
-.hud:
-    jsr hud
-.done:
     rts
 
-overlay_end:
+; overlay_phase: run at most one rebuild phase - clear, then glyphs, then
+; blit. The HUD lands two ticks after its request, imperceptible for a
+; once-a-second clock. Object draws write the shadow every frame regardless
+; of phase, so a live banner is already in place again when the blit runs.
+overlay_phase:
     lda [game.overlay_dirty]
-    bne .blit
+    cmp #1
+    beq .clear
+    cmp #2
+    beq .glyphs
+    cmp #3
+    beq .blit
+    rts
+.clear:
+    jsr overlay_clear
+    mov [game.overlay_dirty], #2
+    rts
+.glyphs:
+    jsr Room.title              ; the title screen carries credits, not a HUD
+    bne .hud
+    jsr title_credits
+    jmp .drawn
+.hud:
+    jsr hud
+.drawn:
+    mov [game.overlay_dirty], #3
     rts
 .blit:
     mov [game.overlay_dirty], #0

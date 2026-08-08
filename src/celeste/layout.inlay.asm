@@ -202,6 +202,16 @@ struct RoomTileBuffer packed
     cells : u8[256]
 end
 
+; Live-object index. kinds mirrors each pool slot's core.kind so a type scan
+; reads a flat table instead of dereferencing every record; counts holds the
+; number of live objects per kind (indexed by ObjectKind, entry 0 unused) so a
+; scan for an absent kind is one load. Maintained at the pool's three
+; kind-write sites only: Objects.clear, Objects.allocate, Objects.destroy.
+struct ObjectIndex packed
+    kinds : u8[16]
+    counts : u8[16]
+end
+
 struct OverlayRowPointers
     low : u8[120] at 0
     high : u8[120] at 128
@@ -309,6 +319,7 @@ overlay berries : BerryBits at $55f8
 overlay overlay_shadow : OverlayFramebuffer at $6000
 overlay overlay_shadow_pages : OverlayFramebufferPages at $6000
 overlay effects : FxStorage at $5600
+overlay object_index : ObjectIndex at $57c0
 
 static_assert CelesteObject.size == 64
 static_assert ObjectCore.size == 18
@@ -457,6 +468,9 @@ static_assert $5500 + OverlayRowPointers.high.offset == $5580
 static_assert $5500 + OverlayRowPointers.size == $55f8
 static_assert $55f8 + BerryBits.size == $55fc
 static_assert $5600 + FxStorage.size == $57c0
+static_assert ObjectIndex.kinds.count == 16
+static_assert ObjectIndex.counts.offset == 16
+static_assert $57c0 + ObjectIndex.size == $57e0
 
 ; Effects structure-of-arrays component boundaries (effects overlay at $5600).
 static_assert $5600 + FxStorage.cloud_x_high.offset == $5620
