@@ -10146,6 +10146,40 @@ LaDiagnosticCode la_compile(const LaInput *input,
     return LA_OK;
 }
 
+/* The semantic operation vocabulary, in enum order. Descriptions fill
+   these in; they cannot add to the list. */
+const char *la_operation_name(la_u8 operation)
+{
+    static const char *names[] = {
+        "load8-ptr-disp", "store8-ptr-disp", "load8-ptr-indexed",
+        "store8-ptr-indexed", "address-pool-table", "proc-frame",
+        "proc-naked", "proc-return", "load8-frame-local",
+        "store8-frame-local", "store-ptr-frame", "load-ptr-frame",
+        "invoke-save", "invoke-assign", "invoke-call",
+        "load8-overlay-disp", "store8-overlay-disp", "dispatch-entry",
+        "table-row", "table-hole", "table-label", "data-codeptr",
+        "materialize-field-offset", "value-mov", "value-cmp",
+        "load16-ptr-disp", "store16-ptr-disp", "add16-physical",
+        "sub16-physical", "cmp16-physical", "inc8-ptr-disp",
+        "dec8-ptr-disp", "and8-ptr-disp", "or8-ptr-disp",
+        "load8-overlay-indexed", "store8-overlay-indexed",
+        "address-overlay-field", "inc8-overlay-abs", "dec8-overlay-abs",
+        "and8-overlay-abs", "or8-overlay-abs", "cmp8-overlay-disp",
+        "store-imm-overlay-abs", "storex-overlay-disp",
+        "storey-overlay-disp", "and8a-overlay-disp", "ora8a-overlay-disp",
+        "loadx-overlay-disp", "loady-overlay-disp", "add8a-overlay-disp",
+        "sub8a-overlay-disp", "branch-overlay-disp",
+        "adc8-overlay-indexed", "sbc8-overlay-indexed", "decz8-ptr-disp",
+        "tstw-ptr-disp", "tstw-location", "movw-imm", "movw-location",
+        "store16-imm-ptr-disp", "invoke-tail", "invoke-field"
+    };
+    if (operation == 0 ||
+        (la_u16)operation > (la_u16)(sizeof(names) / sizeof(names[0]))) {
+        return "unknown-operation";
+    }
+    return names[operation - 1];
+}
+
 const char *la_diagnostic_name(LaDiagnosticCode code)
 {
     static const char *names[] = {

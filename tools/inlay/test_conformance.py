@@ -36,6 +36,14 @@ EXPECTED_CELESTE_OFFSET_SETUPS = 0
 EXPECTED_CELESTE_SEMANTIC_OFFSETS = 95
 EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 111
 EXPECTED_CELESTE_COUNTED_SHIFTS = 20
+# console6502 declares word-per-entry dispatch so `data u16 addr(P)` can
+# select its lane, but no table defaults to that strategy, so nothing
+# emits its label or its absent-entry row. The core test exercises both
+# through a second description; neither is byte-compared here.
+UNREFERENCED_TEMPLATES = {
+    "word-per-entry.label",
+    "word-per-entry#0.hole",
+}
 EXPECTED_CELESTE_ROM_SHA256 = (
     "fd31d0a670ebb0909cafdf3c34a13f4cc7a685cd4c6fab3599ff1053dd2671fd"
 )
@@ -232,6 +240,14 @@ def check_cli(tmp: Path) -> None:
         == "inlay 0.2 language-format=1 target-format=2 map-format=2"
     )
     assert "usage: inlay" in run(INLAY, expect=2).stderr
+    assert "--describe" in help_text
+    described = json.loads(run(INLAY, "--describe").stdout)
+    assert described["target"] == "console6502"
+    assert described["targetFormat"] == 2
+    entry = described["templates"]["load8-ptr-disp"]
+    assert entry["reason"] == "target-operation"
+    assert entry["lines"] == ["    lda (%b), #%m ; inlay %o.%p"]
+    assert run(INLAY, "--describe").stdout == run(INLAY, "--describe").stdout
 
     compat_help = run(LAASM_COMPAT, "--help")
     assert compat_help.stdout == help_text
@@ -460,6 +476,44 @@ def check_fixture(first: Path, second: Path) -> dict[str, int]:
     if fixture_bin.read_bytes() != reference_bin.read_bytes():
         raise AssertionError("typed field operations differ from reference bytes")
     return json.loads(stats_result.stdout)
+
+
+def check_template_coverage(tmp: Path) -> int:
+    """Every template the description declares must be exercised by a
+    fixture whose bytes are compared against a handwritten reference.
+    An entry no reference reaches is a template nothing checks."""
+    described = json.loads(run(INLAY, "--describe").stdout)["templates"]
+    used: dict[str, int] = {}
+    for fixture in (
+        FIXTURE, STRUCTURED_FIXTURE, VARIANT_FIXTURE, OVERLAY_ADDRESS_FIXTURE
+    ):
+        result = translate(
+            fixture, tmp / f"{fixture.stem}.cov.asm",
+            tmp / f"{fixture.stem}.cov.json", stats=True,
+        )
+        for key, count in json.loads(result.stdout)["templates"].items():
+            used[key] = used.get(key, 0) + count
+    unknown = sorted(set(used) - set(described))
+    if unknown:
+        raise AssertionError(f"usage reported undeclared templates: {unknown}")
+    missing = sorted(
+        key for key in described
+        if used.get(key, 0) == 0 and key not in UNREFERENCED_TEMPLATES
+    )
+    if missing:
+        raise AssertionError(
+            "description templates no byte-compared reference exercises: "
+            f"{missing}"
+        )
+    stale = sorted(
+        key for key in UNREFERENCED_TEMPLATES
+        if key in described and used.get(key, 0) != 0
+    )
+    if stale:
+        raise AssertionError(
+            f"templates listed as unreferenced are now exercised: {stale}"
+        )
+    return len(described)
 
 
 def check_structured_fixture(first: Path, second: Path) -> None:
@@ -1437,6 +1491,7 @@ def main() -> int:
         tmp_a = Path(raw_a)
         tmp_b = Path(raw_b)
         check_cli(tmp_a)
+        templates = check_template_coverage(tmp_a)
         stats = check_fixture(tmp_a, tmp_b)
         check_structured_fixture(tmp_a, tmp_b)
         check_variant_fixture(tmp_a, tmp_b)
@@ -1452,6 +1507,7 @@ def main() -> int:
         ) = check_full_rom(tmp_a)
     print(
         "Inlay conformance: passed; "
+        f"description templates={templates} all referenced; "
         f"fixture operations={stats['operations']}, "
         f"workspace={stats['workspaceBytes']} bytes; "
         f"Celeste overlay operations={overlay_operations}, "

@@ -15,6 +15,10 @@
 #endif
 
 #define HOST_MAX_MODULES 64
+/* Headroom over what any description declares; the walk checks. */
+#define HOST_MAX_LOWERINGS 128
+#define HOST_MAX_STRATEGIES 16
+#define HOST_MAX_LANES 8
 
 typedef struct {
     char *path;
@@ -44,6 +48,12 @@ typedef struct {
     HostSourceLocation *source_locations;
     unsigned source_capacity;
     int failed;
+    /* Which description template produced output, so a build reports
+       the entries its source exercised. */
+    unsigned lowering_used[HOST_MAX_LOWERINGS];
+    unsigned label_used[HOST_MAX_STRATEGIES];
+    unsigned row_used[HOST_MAX_STRATEGIES][HOST_MAX_LANES];
+    unsigned hole_used[HOST_MAX_STRATEGIES][HOST_MAX_LANES];
 } HostOutput;
 
 typedef struct {
@@ -756,15 +766,15 @@ static int emit_lowering_template(HostOutput *output, const LaEvent *event,
     return 1;
 }
 
-static const LaLoweringDesc *find_lowering(la_u8 operation)
+static int find_lowering(la_u8 operation)
 {
     la_u16 index;
     for (index = 0; index < la_target_console6502.lowering_count; ++index) {
         if (la_target_console6502.lowerings[index].operation == operation) {
-            return &la_target_console6502.lowerings[index];
+            return (int)index;
         }
     }
-    return 0;
+    return -1;
 }
 
 /* Strategy rows carry their strategy and lane, so the template comes
@@ -783,12 +793,23 @@ static int emit_strategy_template(HostOutput *output, const LaEvent *event)
     switch (event->operation) {
     case LA_TARGET_OP_TABLE_LABEL:
         lowering.lines = strategy->label;
+        if (event->strategy < HOST_MAX_STRATEGIES) {
+            ++output->label_used[event->strategy];
+        }
         break;
     case LA_TARGET_OP_TABLE_HOLE:
         lowering.lines = lane->hole;
+        if (event->strategy < HOST_MAX_STRATEGIES &&
+            event->lane < HOST_MAX_LANES) {
+            ++output->hole_used[event->strategy][event->lane];
+        }
         break;
     default:
         lowering.lines = lane->row;
+        if (event->strategy < HOST_MAX_STRATEGIES &&
+            event->lane < HOST_MAX_LANES) {
+            ++output->row_used[event->strategy][event->lane];
+        }
         break;
     }
     if (lowering.lines == 0) return 0;
@@ -807,10 +828,12 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
         break;
     }
     {
-        const LaLoweringDesc *lowering;
-        lowering = find_lowering((la_u8)event->operation);
-        if (lowering != 0) {
-            return emit_lowering_template(output, event, lowering);
+        int entry;
+        entry = find_lowering((la_u8)event->operation);
+        if (entry >= 0) {
+            if (entry < HOST_MAX_LOWERINGS) ++output->lowering_used[entry];
+            return emit_lowering_template(
+                output, event, &la_target_console6502.lowerings[entry]);
         }
     }
     switch (event->operation) {
@@ -885,6 +908,91 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
     default:
         return 0;
     }
+}
+
+/* One entry of the template report. `counts` reports how often a build
+   used the template; without it the template itself is dumped. */
+static void write_template_entry(FILE *file, int *first, const char *key,
+                                 const char *reason,
+                                 const char *const *lines,
+                                 const unsigned *count)
+{
+    if (lines == 0) return;
+    if (!*first) fputs(",", file);
+    *first = 0;
+    fputs("\n    ", file);
+    json_string(file, key);
+    fputc(':', file);
+    if (count != 0) {
+        fprintf(file, "%u", *count);
+        return;
+    }
+    fputs("{\"reason\":", file);
+    json_string(file, reason);
+    fputs(",\"lines\":[", file);
+    {
+        la_u16 index;
+        for (index = 0; lines[index] != 0; ++index) {
+            if (index != 0) fputc(',', file);
+            json_string(file, lines[index]);
+        }
+    }
+    fputs("]}", file);
+}
+
+/* Walk every template key the description declares, in one order, so a
+   coverage report and a description dump name the same keys. */
+static void write_template_report(FILE *file, const HostOutput *usage)
+{
+    const LaTarget *target;
+    la_u16 index;
+    la_u8 strategy;
+    char key[128];
+    int first;
+    target = &la_target_console6502;
+    first = 1;
+    fputs("{", file);
+    for (index = 0; index < target->lowering_count &&
+                    index < HOST_MAX_LOWERINGS; ++index) {
+        const LaLoweringDesc *entry;
+        entry = &target->lowerings[index];
+        write_template_entry(
+            file, &first, la_operation_name(entry->operation),
+            entry->reason, entry->lines,
+            usage != 0 ? &usage->lowering_used[index] : 0);
+    }
+    for (strategy = 0; strategy < target->strategy_count &&
+                       strategy < HOST_MAX_STRATEGIES; ++strategy) {
+        const LaStrategyDesc *desc;
+        la_u8 lane;
+        desc = &target->strategies[strategy];
+        sprintf(key, "%.100s.label", desc->name);
+        write_template_entry(
+            file, &first, key, desc->reason, desc->label,
+            usage != 0 ? &usage->label_used[strategy] : 0);
+        for (lane = 0; lane < desc->lane_count && lane < HOST_MAX_LANES;
+             ++lane) {
+            sprintf(key, "%.100s#%u.row", desc->name, (unsigned)lane);
+            write_template_entry(
+                file, &first, key, desc->reason, desc->lanes[lane].row,
+                usage != 0 ? &usage->row_used[strategy][lane] : 0);
+            sprintf(key, "%.100s#%u.hole", desc->name, (unsigned)lane);
+            write_template_entry(
+                file, &first, key, desc->reason, desc->lanes[lane].hole,
+                usage != 0 ? &usage->hole_used[strategy][lane] : 0);
+        }
+    }
+    fputs("\n  }", file);
+}
+
+static void describe(FILE *file)
+{
+    fprintf(file, "{\n  \"format\":1,\n  \"target\":");
+    json_string(file, la_target_console6502.name);
+    fprintf(file, ",\n  \"targetFormat\":%u,\n  \"templates\":",
+            LA_TARGET_VERSION);
+    write_template_report(file, 0);
+    fputs("\n}\n", file);
 }
 
 static int host_event(void *context, const LaEvent *event)
@@ -1054,6 +1162,7 @@ static void usage(FILE *file)
         "Options:\n"
         "  -h, --help           show this help\n"
         "  --version            show frontend and format versions\n"
+        "  --describe           print the target description as JSON\n"
         "  --target TARGET      target backend (required; console6502)\n"
         "  -o, --output FILE    generated customasm destination (required)\n"
         "  --map FILE           generated JSON source map (required)\n"
@@ -1306,6 +1415,10 @@ static int parse_options(int argc, char **argv, HostOptions *options,
             version(stdout);
             return 0;
         } else if (!positional_only &&
+                   strcmp(argv[index], "--describe") == 0) {
+            describe(stdout);
+            return 0;
+        } else if (!positional_only &&
                    strcmp(argv[index], "--target") == 0) {
             if (!option_value(argc, argv, &index, "--target",
                               &options->target_name)) return 2;
@@ -1514,7 +1627,8 @@ int main(int argc, char **argv)
                "\"operations\":%u,\"inlineExpansions\":%u,"
                "\"workspaceBytes\":%lu,"
                "\"moduleSourceBytes\":%lu,\"moduleSourceLines\":%lu,"
-               "\"moduleDepth\":%u,\"moduleWorkspaceBytes\":%lu}\n",
+               "\"moduleDepth\":%u,\"moduleWorkspaceBytes\":%lu,\n"
+               "  \"templates\":",
                stats.source_bytes, stats.name_bytes, stats.tokens,
                stats.structures, stats.unions, stats.fields,
                stats.enums, stats.enum_members, stats.overlays,
@@ -1530,6 +1644,8 @@ int main(int argc, char **argv)
                (unsigned long)expanded.total_source_lines,
                expanded.max_depth,
                (unsigned long)module_workspace.size);
+        write_template_report(stdout, &host_output);
+        fputs("}\n", stdout);
     }
     if (options.check_customasm &&
         !run_customasm(artifacts.assembly_path, &host_output)) {

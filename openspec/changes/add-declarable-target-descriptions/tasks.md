@@ -39,7 +39,7 @@
       parameter arithmetic, fresh labels, per-line conditionals) and
       move every typed-operation emitter case into console6502
       templates with declared clobber/flag contracts
-- [ ] 4.2 Port the structured lowering references to key off
+- [x] 4.2 Port the structured lowering references to key off
       description entries; digest gate
 
 ## 5. Frame model

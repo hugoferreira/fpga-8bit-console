@@ -249,10 +249,34 @@ begin
     invoke tail field_callee, self=self, amount=#0, tweak=#3
 end
 
-obj_lo:
-    #d8 $00, $18, $30, $48
-obj_hi:
-    #d8 (OBJPOOL)[15:8], (OBJPOOL)[15:8], (OBJPOOL)[15:8], (OBJPOOL)[15:8]
+; Every table the description declares a strategy for: pool address
+; rows, split low/high dispatch tables with an absent entry, byte value
+; rows, and the three declaration-selected dispatch lanes.
+pool tables objects
+
+enum Slot : u8
+    first = 0
+    second = 1
+end
+
+method_table slots : Slot[first .. second]
+    tile : u8
+    action : code
+    first = 7, indexed_load
+    second = 9, absent
+end
+
+data u8 low(indexed_store), high(indexed_store)
+data u16 addr(indexed_store)
+data codeptr indexed_store
+
+proc table_consumers naked
+    self : ptr TestObject in pObj
+begin
+    mov y, offset TestObject.hair
+    cmp #Slot.second
+    ret
+end
 
 OBJPOOL = $8000
 pOther = $12

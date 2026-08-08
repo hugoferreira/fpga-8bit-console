@@ -245,6 +245,23 @@ obj_lo:
 obj_hi:
     #d8 (OBJPOOL)[15:8], (OBJPOOL)[15:8], (OBJPOOL)[15:8], (OBJPOOL)[15:8]
 
+slots_tile:
+    #d8 7, 9
+slots_action_lo:
+    #d8 (indexed_load)[7:0], 0
+slots_action_hi:
+    #d8 (indexed_load)[15:8], 0
+
+    #d8 (indexed_store)[7:0]
+    #d8 (indexed_store)[15:8]
+    #d16 indexed_store
+    #d8 (indexed_store)[7:0], (indexed_store)[15:8]
+
+table_consumers:
+    ldy #4
+    cmp #1
+    rts
+
 OBJPOOL = $8000
 pOther = $12
 pWord = $14

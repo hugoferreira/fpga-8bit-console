@@ -150,6 +150,12 @@ references byte-compared in conformance. The console6502 migration
 SHALL be accepted only with digest-identical forced Celeste builds at
 every phase.
 
+#### Scenario: Every template carries a reference
+- **WHEN** conformance compares the templates the description declares
+  against the templates the byte-compared fixtures exercise
+- **THEN** a template no reference reaches fails the run, naming it,
+  unless it is listed as unreachable with its reason
+
 #### Scenario: Undefined mnemonic fails the build
 - **WHEN** a description template emits a mnemonic absent from the
   canonical ISA description

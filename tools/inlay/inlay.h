@@ -591,6 +591,7 @@ LaDiagnosticCode la_compile(const LaInput *input,
                             LaWorkspace workspace,
                             LaStats *stats);
 const char *la_diagnostic_name(LaDiagnosticCode code);
+const char *la_operation_name(la_u8 operation);
 LaModuleLimits la_default_module_limits(void);
 la_u32 la_module_workspace_required(const LaModuleLimits *limits);
 LaDiagnosticCode la_expand_modules(const LaSourceView *root,
