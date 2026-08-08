@@ -453,11 +453,32 @@ static const char *property_suffix(LaPropertyKind property)
     }
 }
 
+static int register_lookup(LaSlice slice)
+{
+    la_u8 index;
+    for (index = 0; index < la_target_console6502.register_count; ++index) {
+        const char *name;
+        name = la_target_console6502.registers[index].name;
+        if (slice.length == (la_u16)strlen(name) &&
+            memcmp(slice.data, name, slice.length) == 0) {
+            return (int)index;
+        }
+    }
+    return -1;
+}
+
 static int slice_is_register(LaSlice slice)
 {
-    return slice.length == 1 &&
-           (slice.data[0] == 'a' || slice.data[0] == 'x' ||
-            slice.data[0] == 'y');
+    return register_lookup(slice) >= 0;
+}
+
+static int slice_is_accumulator(LaSlice slice)
+{
+    int index;
+    index = register_lookup(slice);
+    return index >= 0 &&
+           la_target_console6502.registers[index].role ==
+               LA_REGISTER_ACCUMULATOR;
 }
 
 static int emit_pointer_displacement(HostOutput *output,
@@ -937,7 +958,8 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
                 fprintf(output->assembly, "    add #%u\n",
                         (unsigned)((la_u32)event->signed_value & 0xff));
             }
-            if (event->aux.length == 1 && event->aux.data[0] != 'a') {
+            if (slice_is_register(event->aux) &&
+                !slice_is_accumulator(event->aux)) {
                 if (!begin_line(output, event->span, "invoke-field")) {
                     return 0;
                 }
@@ -1032,10 +1054,7 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
         return 1;
     case LA_TARGET_OP_VALUE_MOV:
         if (!begin_line(output, event->span, "qualified-immediate")) return 0;
-        if (event->base.length == 1 &&
-            (event->base.data[0] == 'a' ||
-             event->base.data[0] == 'x' ||
-             event->base.data[0] == 'y')) {
+        if (slice_is_register(event->base)) {
             fprintf(output->assembly, "    ld%.*s #%ld\n",
                     (int)event->base.length, event->base.data,
                     (long)event->signed_value);

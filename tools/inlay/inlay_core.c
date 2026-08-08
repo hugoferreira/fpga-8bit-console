@@ -310,11 +310,18 @@ static const LaConvention la_console6502_conventions[] = {
     {"console6502", {"a", "x", "y", 0}, 3, "a"}
 };
 
+static const LaRegisterDesc la_console6502_registers[] = {
+    {"a", LA_REGISTER_ACCUMULATOR},
+    {"x", LA_REGISTER_INDEX},
+    {"y", LA_REGISTER_INDEX}
+};
+
 const LaTarget la_target_console6502 = {
     "console6502", 8, 2, 255, LA_TARGET_VERSION,
     la_console6502_conventions, 1,
     "t", 8, 0, 0, 16, 1, 1, 1, LA_BYTE_ORDER_LITTLE, "ab", 1, 1, 1,
-    2, LA_BYTE_ORDER_LITTLE
+    2, LA_BYTE_ORDER_LITTLE,
+    la_console6502_registers, 3
 };
 
 static la_u32 la_align_size(la_u32 value)
@@ -6945,11 +6952,33 @@ static int la_emit_invoke_operation(LaContext *ctx, la_u16 line,
     return la_write_event(ctx, &event);
 }
 
-static int la_slice_is_register(LaSlice slice)
+/* Register names and roles come from the target description; the core
+   names no register itself. */
+static int la_register_lookup(const LaContext *ctx, LaSlice slice)
 {
-    return slice.length == 1 &&
-           (slice.data[0] == 'a' || slice.data[0] == 'x' ||
-            slice.data[0] == 'y');
+    la_u8 index;
+    for (index = 0; index < ctx->target->register_count; ++index) {
+        const char *name;
+        name = ctx->target->registers[index].name;
+        if (slice.length == (la_u16)strlen(name) &&
+            memcmp(slice.data, name, slice.length) == 0) {
+            return (int)index;
+        }
+    }
+    return -1;
+}
+
+static int la_slice_is_register(const LaContext *ctx, LaSlice slice)
+{
+    return la_register_lookup(ctx, slice) >= 0;
+}
+
+static int la_slice_is_accumulator(const LaContext *ctx, LaSlice slice)
+{
+    int index;
+    index = la_register_lookup(ctx, slice);
+    return index >= 0 &&
+           ctx->target->registers[index].role == LA_REGISTER_ACCUMULATOR;
 }
 
 static la_u16 la_find_invoke_member(LaContext *ctx,
@@ -7215,9 +7244,9 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
         if (ctx->locations[member_index].is_pointer ||
             la_is_code_pointer_type(
                 ctx, ctx->locations[member_index].type_name) ||
-            !la_slice_is_register(source)) {
+            !la_slice_is_register(ctx, source)) {
             la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, source_length,
-                    source, la_slice("typed source or a/x/y", 21), 0, 0);
+                    source, la_slice("typed source or register", 24), 0, 0);
             return 0;
         }
         binding->source =
@@ -7347,7 +7376,7 @@ static int la_reserve_invoke_scratch(LaContext *ctx, la_u16 binding_count,
             binding->source_kind != LA_SOURCE_PHYSICAL) continue;
         if (binding->is_field) continue;
         source = la_name_slice(ctx, binding->source);
-        if (la_slice_is_register(source)) {
+        if (la_slice_is_register(ctx, source)) {
             binding->needs_scratch = 1;
             continue;
         }
@@ -7377,7 +7406,7 @@ static int la_reserve_invoke_scratch(LaContext *ctx, la_u16 binding_count,
         if (!binding->is_field || binding->elided) continue;
         binding->field_direct_register = 0;
         dest = la_name_slice(ctx, ctx->locations[binding->name].physical);
-        to_scratch = la_slice_is_register(dest);
+        to_scratch = la_slice_is_register(ctx, dest);
         if (to_scratch) {
             /* Register destinations read after all assignments (Y, X,
                then A), through A - direct unless another binding assigns
@@ -7391,7 +7420,7 @@ static int la_reserve_invoke_scratch(LaContext *ctx, la_u16 binding_count,
                 if (peer->elided || peer->is_field) continue;
                 peer_dest = la_name_slice(
                     ctx, ctx->locations[peer->name].physical);
-                if (peer_dest.length == 1 && peer_dest.data[0] == 'a') {
+                if (la_slice_is_accumulator(ctx, peer_dest)) {
                     a_assigned = 1;
                     break;
                 }
@@ -7470,7 +7499,7 @@ static int la_emit_invoke_saves(LaContext *ctx,
             binding->elided || binding->is_field ||
             !binding->needs_scratch) continue;
         source = la_name_slice(ctx, binding->source);
-        if (la_slice_is_register(source) != registers) continue;
+        if (la_slice_is_register(ctx, source) != registers) continue;
         width = la_location_storage_units(ctx, binding->name);
         if (!la_emit_invoke_operation(
                 ctx, line, LA_TARGET_OP_INVOKE_SAVE, owner,
@@ -7530,22 +7559,40 @@ static int la_emit_invoke_register_fields(LaContext *ctx,
                                           const LaProcedureRec *procedure,
                                           la_u16 binding_count, la_u16 line)
 {
-    static const char order[3] = { 'y', 'x', 'a' };
     la_u16 pass;
     la_u16 bind;
     LaSlice owner;
+    la_u8 pass_count;
     owner = la_name_slice(ctx, procedure->name);
-    for (pass = 0; pass < 3; ++pass) {
+    /* Index-role destinations first (reverse declaration order), the
+       accumulator last: every read passes through the accumulator role. */
+    pass_count = ctx->target->register_count;
+    for (pass = 0; pass <= pass_count; ++pass) {
+        int want;
+        want = pass < pass_count ?
+            (int)(pass_count - 1 - pass) : -1;
+        if (want >= 0 &&
+            ctx->target->registers[want].role == LA_REGISTER_ACCUMULATOR) {
+            continue;
+        }
         for (bind = 0; bind < binding_count; ++bind) {
             LaInvokeBindingRec *binding;
             LaSlice dest;
             LaEvent event;
+            int dest_register;
             binding = &ctx->bindings[bind];
             if (!binding->is_field || binding->elided ||
                 !binding->field_direct_register) continue;
             dest = la_name_slice(ctx,
                                  ctx->locations[binding->name].physical);
-            if (dest.data[0] != order[pass]) continue;
+            dest_register = la_register_lookup(ctx, dest);
+            if (want >= 0) {
+                if (dest_register != want) continue;
+            } else if (dest_register < 0 ||
+                       ctx->target->registers[dest_register].role !=
+                           LA_REGISTER_ACCUMULATOR) {
+                continue;
+            }
             if (!la_count_operation(ctx, line)) return 0;
             la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
             event.operation = LA_TARGET_OP_INVOKE_FIELD;

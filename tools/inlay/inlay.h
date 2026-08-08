@@ -427,6 +427,16 @@ typedef struct {
     const char *scalar_return;
 } LaConvention;
 
+typedef enum {
+    LA_REGISTER_ACCUMULATOR = 1,
+    LA_REGISTER_INDEX
+} LaRegisterRole;
+
+typedef struct {
+    const char *name;
+    la_u8 role;
+} LaRegisterDesc;
+
 typedef struct {
     const char *name;
     la_u8 storage_unit_bits;
@@ -450,6 +460,8 @@ typedef struct {
     la_u8 indexed_overlay_byte_operations;
     la_u8 code_pointer_units;
     LaByteOrder code_pointer_byte_order;
+    const LaRegisterDesc *registers;
+    la_u8 register_count;
 } LaTarget;
 
 typedef struct {
