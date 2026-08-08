@@ -23,7 +23,11 @@ the event-stream boundary was supposed to prevent.
 - Typed-operation parsing dispatches on target-declared spellings; a
   spelling the target does not declare falls through to raw exactly as
   unknown mnemonics do today. Collisions with real target mnemonics
-  become a per-target decision made in the description.
+  become a per-target decision made in the description. The operation
+  position expects an opcode, so spellings may contain dots
+  (`move.w`): the first token lexes greedily and is never
+  qualified-name rewritten, while operand dots remain member
+  separators.
 - Lowerings become templates: substitution slots, bounded parameter
   arithmetic, declared clobber/flag contracts. Validation (width,
   range, volatility, stride) stays frontend-side as template

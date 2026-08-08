@@ -25,6 +25,10 @@
 - [ ] 3.1 Replace the parser's hardcoded mnemonic dispatch with a
       spelling table from the description; unclaimed spellings fall
       through to raw
+- [ ] 3.1a Make operation-position tokenization greedy through dots
+      and exempt the first token from scoped-raw qualification, with
+      tests covering a dotted spelling, a dotted spelling beside a
+      qualified operand, and `.local:` definitions staying labels
 - [ ] 3.2 Express each operation's operand constraints (width, range,
       stride set, volatility) as declared predicates from the bounded
       vocabulary; identical diagnostics; digest gate

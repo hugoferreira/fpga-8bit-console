@@ -97,7 +97,8 @@ A target description declares, as data:
 - **Scratch**: the marshalling scratch pool as a naming scheme plus
   unit count and location class.
 - **Operations**: for each semantic operation kind the target
-  supports — one entry with: the source spelling(s) it claims;
+  supports — one entry with: the source spelling(s) it claims, which
+  MAY contain dots (`move.w`) under the tokenization rule of D2a;
   operand-shape constraints (width, range, stride set, volatility
   rules) drawn from a bounded predicate vocabulary; a lowering
   template with substitution slots and bounded parameter arithmetic
@@ -109,6 +110,34 @@ A target description declares, as data:
 - **Frame model**: prologue, epilogue, member-access and pointer-copy
   templates parameterized by frame size and member offset.
 - **Strategies** (D5): dispatch-entry and pool-table emission forms.
+
+### D2a. Statement-position tokenization: dotted mnemonics are legal
+
+The operation position expects an opcode, so the first token of an
+operation-position line lexes greedily through dots and is never a
+candidate for qualified-name rewriting. This is structural, not a
+mnemonic whitelist: no qualified name is ever valid at that position —
+the alternatives are a keyword, a `.local:` definition (dot-initial and
+colon-terminated, disjoint from ident-initial mnemonics), or a
+mnemonic. Dots in operand position remain member separators, so
+`move.w Fixed.word1` lexes as the opcode `move.w` and the qualified
+operand `Fixed.word1`, each dot resolved by its position.
+
+This supersedes the earlier account of the `asr.w` failure: that
+failure was an artifact of the position-blind scoped-raw qualifier
+rewriting the mnemonic token, and its documented justification
+conflated two hazards. The `asl 3` hazard is silent *encoding
+selection* by operand value inside one position; position-aware
+*tokenization* is deterministic and explicit, and is how the target
+assemblers whose dialects use dotted suffixes lex them. Consequences:
+the scoped-raw qualifier skips the first token of operation-position
+lines (raw passthrough for a dotted-mnemonic target then works
+unmodified), and declared spellings match against the greedy token,
+dots included. One disambiguator is required: a first token followed
+by `=` is an equate, not an opcode — the raw grammar permits
+`NAME = value` lines, and a dotted equate must classify as an
+assignment before spelling dispatch. The corpus contains no dotted
+equates today; the rule pins the precedence rather than trusting that.
 
 ### D3. Templates, not code
 
@@ -189,10 +218,11 @@ discipline generalizes:
 
 Stated as boundaries, not defects:
 
-- The **lexical frame** — brackets, `#`, `.` as member separator — is
-  language-level. Dotted width suffixes (`move.w`) are permanently
-  unspellable; target dialects choose spellings inside Inlay's lexical
-  rules (the documented `asr.w` collision generalizes).
+- The **lexical frame** — brackets, `#`, and `.` as the member
+  separator in operand position — is language-level. Dotted mnemonics
+  are spellable under D2a; what a target cannot change is operand
+  syntax itself (bracketed typed operands, `#` immediates, dotted
+  member paths).
 - **Contracts are data but not portable**: declaring them per target
   does not make programs port, and is not meant to.
 - The **bounded model** is unchanged: descriptions load into the same

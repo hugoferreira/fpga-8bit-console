@@ -25,9 +25,20 @@ sequence.
 
 ### Requirement: Declared Spellings Drive Typed Parsing
 Typed-operation parsing SHALL dispatch on the spellings the active
-description claims. A spelling the description does not claim SHALL
-fall through to raw passthrough unchanged. Register names in
-placements and invoke sources SHALL be the description's register set.
+description claims. The first token of an operation-position line
+SHALL lex greedily through dots and SHALL never be rewritten by the
+scoped-raw qualifier, so declared spellings MAY contain dots; dots in
+operand position remain member separators. A spelling the description
+does not claim SHALL fall through to raw passthrough unchanged.
+Register names in placements and invoke sources SHALL be the
+description's register set.
+
+#### Scenario: Dotted mnemonic lexes as one opcode
+- **WHEN** a description claims the spelling `move.w` and source
+  contains `move.w Fixed.word1, d0`
+- **THEN** the line dispatches to that entry with `Fixed.word1`
+  resolved as a qualified operand, and the mnemonic token is not
+  qualified-name rewritten
 
 #### Scenario: Unclaimed mnemonic passes through
 - **WHEN** a line begins with a mnemonic the description does not
