@@ -805,6 +805,18 @@ test_ram: rtl/ram_test_tb.v rtl/ram_async.sv rtl/ram.hex
 test:
 	iverilog -DSIMULATION -g2012 -I rtl -y ./rtl -s cpu6502_tb rtl/cpu6502_core.sv rtl/ram_async.sv rtl/cpu6502_tb.sv && ./a.out
 
+# Directed interrupt tests (gate T3). 65x02 runs every case with IRQ and NMI
+# low, so it is not evidence about this path and this is: entry, priority,
+# I-flag masking, the two vectors, the BRK-versus-hardware B bit, RTI, entry
+# across an RDY stall, and both WAI idioms. Verified to be able to fail -
+# setting B in the hardware push trips six checks and exits nonzero.
+test-irq:
+	@mkdir -p build
+	iverilog -DSIMULATION -g2012 -I rtl -y ./rtl -s cpu6502_irq_tb \
+	    -o build/cpu6502_irq.vvp rtl/cpu6502_core.sv rtl/cpu6502_irq_tb.sv
+	@./build/cpu6502_irq.vvp
+.PHONY: test-irq
+
 # NEMO's own suites: routine-level checks and a full main-loop drive, both
 # against the assembled binary under tools/sim6502.py.
 test-nemo:

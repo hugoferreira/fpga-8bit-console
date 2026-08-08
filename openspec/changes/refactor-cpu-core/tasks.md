@@ -225,14 +225,34 @@ would have been unlikely to reach — see task 4.1.
 > The core accepts `IRQ` and `NMI` today and ignores them
 > (`rtl/cpu6502_core.sv`, the `_unused` wire). Nothing is half-done.
 
-- [ ] 5.1 Write `rtl/cpu6502_irq_tb.sv` covering `IRQ`/`NMI` entry, relative
+- [x] 5.1 Write `rtl/cpu6502_irq_tb.sv` covering `IRQ`/`NMI` entry, relative
       priority, `I`-flag masking, vector fetch, the `BRK`-vs-hardware `B`-flag
-      distinction, and `RTI` (**gate T3**)
-- [ ] 5.2 Note in `docs/cpu-core.md` that 65x02 does not cover interrupts, so T3 is
-      the only evidence for this path
-- [ ] 5.3 Decide whether to wire a real interrupt source now (the PPU frame signal)
+      distinction, and `RTI` (**gate T3**). `make test-irq`, ten cases, all
+      passing. Two beyond the list: entry across an `RDY` stall, which is the
+      case the note above says `add-memory-subsystem` makes matter, and both
+      `WAI` idioms. Verified to be able to fail — setting `B` in the hardware
+      push trips six checks and exits nonzero
+- [x] 5.2 Note in `docs/cpu-core.md` that 65x02 does not cover interrupts, so T3 is
+      the only evidence for this path. Under "Interrupts", with the three
+      deliberate departures from NMOS and the `B`-register gap
+- [x] 5.3 Decide whether to wire a real interrupt source now (the PPU frame signal)
       or leave `IRQ`/`NMI` tied low as `cpu6502_wrapper.sv:37-38` does today;
-      `add-isa-frame-pointer` will need them
+      `add-isa-frame-pointer` will need them. **`IRQ` is wired** to the vsync
+      rising edge (`chip.sv`), which `add-isa-wait` already needed for `WAI`.
+      **`NMI` is not**: the wrapper takes the port, `chip.sv` ties it low, and
+      synthesis trims that half. No source on this chip wants a non-maskable
+      request, and inventing one to have it wired would be untested logic
+
+- [ ] 5.4 **Not done, and it bounds what 5.1 proves.** The note above proposes
+      driving `IRQ`/`NMI` pseudo-randomly across the whole 65x02 sweep and
+      requiring the only difference to be a well-formed entry. That is a much
+      stronger T3 than ten directed cases, and `rtl/cpu6502_sst.sv` already
+      carries the `irq`/`nmi` ports for it — only `tools/65x02/harness.cpp`
+      needs the driver
+- [ ] 5.5 An interrupt does not save `B`, the low half of the 16-bit
+      accumulator, and no `PHB`/`PLB` exists for a handler to save it with. So a
+      handler must not use the word ops, and nothing enforces that. Either add
+      the push/pull pair or make the restriction checkable
 
 ## 6. Integration
 

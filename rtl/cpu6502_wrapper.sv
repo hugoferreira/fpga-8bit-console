@@ -38,13 +38,18 @@ module cpu6502(
   output bit         write_pend,
   // New signal - exposes RDY pin for memory arbiter
   input  bit         rdy,
-  // The interrupt request line. Its one consumer today is the WAI wake; the
-  // vector path remains refactor-cpu-core section 5.
-  input  bit         irq
+  // The interrupt request line. It both wakes WAI and, when I is clear,
+  // vectors through $FFFE. Pulse-latched inside the core, not level-
+  // sensitive - see the pending latches in rtl/cpu6502_core.sv.
+  input  bit         irq,
+  // The non-maskable request, rising-edge triggered, vectoring through
+  // $FFFA. No source drives it on this chip yet; chip.sv ties it low, so
+  // synthesis trims the path there. rtl/cpu6502_irq_tb.sv exercises it.
+  input  bit         nmi
 );
 
   wire IRQ = irq;
-  wire NMI = 1'b0;
+  wire NMI = nmi;
 
   cpu6502_core core(
     .clk(clk),

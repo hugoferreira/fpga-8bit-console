@@ -328,6 +328,10 @@ module cpu6502_core (
     // one clock wide, and if it lands while the core is stalled the S_WAI
     // arm never samples it. The latch remembers it until the state machine
     // actually leaves S_WAI.
+    //
+    // This is separate from `irq_pend` below and stays that way: it arms only
+    // while the core is in S_WAI, so a request that arrived before the sleep
+    // does not satisfy the sleep. `wai; wai` waits for two frames.
     logic wai_irq;
     always_ff @(posedge clk) begin
         if (reset)
@@ -337,6 +341,54 @@ module cpu6502_core (
         else if (IRQ)
             wai_irq <= 1'b1;
     end
+
+    // ---- interrupt pending latches -------------------------------------
+    //
+    // Both latches sit OUTSIDE the RDY gate, for the reason the WAI latch
+    // does: this console's only interrupt source is the one-clock vsync
+    // pulse in rtl/chip.sv, and a pulse that lands during a stall - vblank
+    // DMA overlapping the vsync edge - would otherwise never be seen.
+    //
+    // The consequence is that IRQ here is PULSE-LATCHED, not level-sensitive
+    // as on NMOS. The pin means "an interrupt happened", not "a device is
+    // still asserting". A level source still works: a held line re-arms the
+    // latch every cycle, so it behaves as a level input that latches. What
+    // does NOT carry over is the NMOS habit of releasing the line inside the
+    // handler to withdraw a request - once latched, the request is taken.
+    //
+    // NMI is edge-triggered, as on NMOS: a rising edge here, the pin being
+    // active high. A line left asserted raises one interrupt, not a stream.
+    //
+    // The clears ARE gated by RDY, and they are the one place order matters:
+    // set beats clear, so a request arriving in the same cycle its
+    // predecessor is taken survives instead of being swallowed.
+    logic nmi_pend, irq_pend, nmi_prev;
+    logic int_go;        // an entry sequence starts this cycle (from S_DECODE)
+    logic int_nmi;       // ... and it is the NMI, not the IRQ
+    logic int_wai_ack;   // S_WAI leaves with the request serviced by the sleep
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            nmi_pend <= 1'b0;
+            irq_pend <= 1'b0;
+            nmi_prev <= 1'b0;
+        end else begin
+            nmi_prev <= NMI;
+
+            if (NMI && !nmi_prev)                    nmi_pend <= 1'b1;
+            else if (RDY && int_go && int_nmi)       nmi_pend <= 1'b0;
+
+            if (IRQ)                                 irq_pend <= 1'b1;
+            else if (RDY && int_go && !int_nmi)      irq_pend <= 1'b0;
+            else if (RDY && int_wai_ack)             irq_pend <= 1'b0;
+        end
+    end
+
+    // NMI outranks IRQ, and IRQ alone is masked by I. Evaluated at S_DECODE
+    // only, so an interrupt is taken at an instruction boundary and never
+    // inside an addressing-mode sequence.
+    assign int_nmi = nmi_pend;
+    wire int_take = nmi_pend || (irq_pend && !fi);
 
     // ---- branch condition ---------------------------------------------
     logic cond;
@@ -387,6 +439,23 @@ module cpu6502_core (
     wire [7:0]  push_val = (dec_c.ra == R_P) ? p_byte : a;
     wire [15:0] brk_pc = pc + 16'd1;   // BRK pushes the byte after its signature
 
+    // Hardware entry reuses S_BRK0..S_BRK4 rather than duplicating them. Two
+    // flops carry what differs: whether this is a hardware entry (B clear in
+    // the pushed P, return address from `adr`) and which vector to fetch.
+    // Both are cleared by S_BRK4, so BRK's own path sees them low.
+    logic int_hw, int_hw_n;         // hardware entry, not BRK
+    logic int_vnmi, int_vnmi_n;     // ... through $FFFA rather than $FFFE
+
+    // The interrupted instruction is re-executed on RTI, so the return
+    // address is the opcode S_DECODE is about to discard - PC trails it by
+    // one, exactly as dbg_pc does.
+    wire [15:0] int_ret  = pc - 16'd1;
+    wire [15:0] int_vec  = int_vnmi ? 16'hFFFA : 16'hFFFE;
+    // A hardware push clears B (bit 4); BRK sets it. That bit is the only
+    // thing an RTI-side handler can use to tell the two apart, and it is why
+    // p_byte - which hardwires bits 5:4 to 11 - cannot be used here.
+    wire [7:0]  int_p    = {fn, fv, 2'b10, fd, fi, fz, fc};
+
     always_comb begin
         st_n       = st;
         pc_upd     = 1'b0;
@@ -403,6 +472,10 @@ module cpu6502_core (
         trap_pc_n = trap_pc;
         trapped_n = trapped;
         dec_r_n   = dec_r;
+        int_hw_n    = int_hw;
+        int_vnmi_n  = int_vnmi;
+        int_go      = 1'b0;
+        int_wai_ack = 1'b0;
 
         ab_c   = pc;
         do_c   = 8'h00;
@@ -422,7 +495,29 @@ module cpu6502_core (
         end
 
         // ---- decode: di_eff is the opcode, PC already points past it ----
-        S_DECODE: begin
+        //
+        // Or, if an interrupt is pending and unmasked, the interrupt entry
+        // instead. This is the ONLY point either is tested, which is what
+        // makes the entry safe: every addressing-mode sequence either has
+        // not started or has already retired.
+        S_DECODE: if (int_take) begin
+            // The fetched opcode is discarded rather than executed - RTI
+            // returns to it and fetches it again. IR and the decode register
+            // therefore keep the retired instruction's values, and nothing
+            // commits: the interrupted program cannot tell the difference
+            // between "interrupted before this instruction" and "interrupted
+            // after the one before it", which is the whole point.
+            //
+            // From here the sequence is BRK's - push PCL, push P, read the
+            // vector - with int_hw selecting the two places they differ.
+            int_go     = 1'b1;
+            int_hw_n   = 1'b1;
+            int_vnmi_n = int_nmi;
+            adr_n      = int_ret;
+            ab_c = {8'h01, s}; we_c = 1'b1; do_c = int_ret[15:8];
+            s_n  = s - 8'd1;
+            st_n = S_BRK0;
+        end else begin
             ir_n = di_eff;
             dec_r_n = dec_c;
             // The next state comes straight out of the table. The case below
@@ -661,6 +756,16 @@ module cpu6502_core (
             if (IRQ || wai_irq) begin
                 pc_upd = 1'b1;
                 st_n = S_DECODE;
+                // With I set, the sleep IS the service: SEI+WAI uses the
+                // interrupt as a frame tick and wants no vector. Retiring the
+                // pending bit here is what keeps that idiom from leaving a
+                // backlog of one behind - a later CLI would otherwise vector
+                // immediately on a frame that was already waited for.
+                //
+                // With I clear, the pending bit stands and S_DECODE takes the
+                // vector on the very next cycle, which is the 65C02's
+                // interrupts-enabled WAI.
+                int_wai_ack = fi;
             end
         end
 
@@ -721,18 +826,25 @@ module cpu6502_core (
             ab_c = {di_eff, adl}; pc_upd = 1'b1; st_n = S_DECODE;
         end
 
+        // Shared by BRK and by hardware interrupt entry. The three places they
+        // differ - the pushed PCL, the B bit of the pushed P, and the vector -
+        // are the three int_hw/int_vnmi muxes below. Everything else, including
+        // the I flag being set before the handler's first cycle, is common.
         S_BRK0: begin
-            ab_c = {8'h01, s}; we_c = 1'b1; do_c = pc[7:0];
+            ab_c = {8'h01, s}; we_c = 1'b1;
+            do_c = int_hw ? adr[7:0] : pc[7:0];
             s_n = s - 8'd1; st_n = S_BRK1;
         end
         S_BRK1: begin
-            ab_c = {8'h01, s}; we_c = 1'b1; do_c = p_byte;  // B set, as BRK does
+            ab_c = {8'h01, s}; we_c = 1'b1;
+            do_c = int_hw ? int_p : p_byte;   // B clear for hardware, set for BRK
             s_n = s - 8'd1; fi_n = 1'b1; st_n = S_BRK2;
         end
-        S_BRK2: begin ab_c = 16'hFFFE; st_n = S_BRK3; end
-        S_BRK3: begin adl_n = di_eff; ab_c = 16'hFFFF; st_n = S_BRK4; end
+        S_BRK2: begin ab_c = int_vec;          st_n = S_BRK3; end
+        S_BRK3: begin adl_n = di_eff; ab_c = int_vec + 16'd1; st_n = S_BRK4; end
         S_BRK4: begin
             ab_c = {di_eff, adl}; pc_upd = 1'b1; st_n = S_DECODE;
+            int_hw_n = 1'b0; int_vnmi_n = 1'b0;
         end
 
         default: begin ab_c = pc; st_n = S_DECODE; end
@@ -790,6 +902,7 @@ module cpu6502_core (
             adl <= 8'h00; zpa <= 8'h00; cy <= 1'b0; adr <= 16'h0000;
             trap_ir <= 8'h00; trap_pc <= 16'h0000; trapped <= 1'b0;
             dec_r <= '0;
+            int_hw <= 1'b0; int_vnmi <= 1'b0;
         end else if (RDY) begin
             st  <= st_n;
             pc  <= pc_n;
@@ -800,6 +913,7 @@ module cpu6502_core (
             adl <= adl_n; zpa <= zpa_n; cy <= cy_n; adr <= adr_n;
             trap_ir <= trap_ir_n; trap_pc <= trap_pc_n;
             trapped <= trapped_n; dec_r <= dec_r_n;
+            int_hw <= int_hw_n; int_vnmi <= int_vnmi_n;
         end
     end
 
@@ -815,15 +929,24 @@ module cpu6502_core (
     assign dbg_s       = s;
     assign dbg_p       = p_byte;
     assign dbg_b       = b;
-    assign dbg_sync    = (st == S_DECODE);
+    // "This cycle decodes a fetched opcode" - which an interrupt entry does
+    // not: it discards the byte S_DECODE fetched and starts the sequence
+    // instead. Without the qualifier an entry would look to the conformance
+    // harness (and to any trace) like an instruction that retired, and
+    // dbg_pc would name an instruction that never ran.
+    assign dbg_sync    = (st == S_DECODE) && !int_take;
     assign dbg_trap    = trapped;
     assign dbg_trap_ir = trap_ir;
     assign dbg_trap_pc = trap_pc;
 
-    // IRQ's first consumer is WAI's wake, above. The interrupt VECTOR path -
-    // pushing state and jumping through $FFFE - remains refactor-cpu-core
-    // task 5.x, and 65x02 does not cover it at all. NMI stays unconsumed.
-    wire _unused = &{1'b0, NMI, 1'b0};
+    // Both interrupt inputs are now consumed: the pending latches above, the
+    // priority and masking in `int_take`, and the shared entry sequence in
+    // S_BRK0..S_BRK4. 65x02 covers none of this - rtl/cpu6502_irq_tb.sv is
+    // the only evidence for the path (gate T3), and docs/cpu-core.md says so.
+    //
+    // What an interrupt still does NOT save is B, the low half of the 16-bit
+    // accumulator: there is no PHB/PLB, so a handler cannot preserve it and
+    // must not use the word ops. See docs/cpu-core.md.
 
 endmodule
 

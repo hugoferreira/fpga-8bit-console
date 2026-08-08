@@ -363,7 +363,7 @@ commit `ae37bbc` if ever wanted.
 | --- | --- |
 | T1 documented-subset conformance | **met** — 1,510,000 / 1,510,000 |
 | T2 the console still works | **met** — Dormann to `$3469`, Breakout renders |
-| T3 interrupts proven | not started |
+| T3 interrupts proven | **met** — `make test-irq`, 10 directed cases |
 | T4 critical path relocated | blocked — the design does not place |
 | T5 Fmax | blocked — same |
 | T6 wall-clock non-regression | **met** — +10.1% at the board clock |
@@ -443,14 +443,54 @@ might.
 
 ### What is not done yet
 
-- **Interrupts.** `IRQ` and `NMI` are accepted and ignored — the only gate still
-  unstarted. 65x02 does not test interrupts at all. Two notes for whoever picks this up: `add-memory-subsystem`
-  should probably land first, because an interrupt can then arrive while the
-  core is stalled and the entry sequence has to be correct across that; and the
-  `--stall` result suggests the harness, not a directed testbench, is the right
-  vehicle — assert `IRQ`/`NMI` pseudo-randomly across the sweep and require the
-  only difference to be a well-formed entry.
+- **Interrupts.** Done — see below.
 - **Stalling.** Done and proven — see above.
+
+### Interrupts
+
+`IRQ` and `NMI` both vector. The entry is tested at an instruction boundary
+only: `S_DECODE` is the single place `int_take` is read, so every
+addressing-mode sequence has either not started or already retired. The entry
+discards the opcode `S_DECODE` fetched and returns to it, and reuses
+`S_BRK0..S_BRK4` — the three places a hardware entry differs from `BRK` are the
+pushed `PCL`, the `B` bit of the pushed `P`, and the vector.
+
+**65x02 is not evidence here.** It runs every case with both lines low.
+`make test-irq` (`rtl/cpu6502_irq_tb.sv`) is the only evidence for this path,
+and it is verified to be able to fail: setting `B` in the hardware push trips
+six of its checks and exits nonzero. Ten cases: entry with `I` clear, deferral
+while `I` is set, `NMI` through `$FFFA` with `I` set, `NMI` edge-triggering,
+`NMI`-over-`IRQ` priority, the `BRK`-versus-hardware `B` distinction, register
+preservation, entry across an `RDY` stall, and both `WAI` idioms.
+
+Three things depart from NMOS, all deliberate:
+
+- **`IRQ` is pulse-latched, not level-sensitive.** The console's only source is
+  the one-clock vsync pulse in `rtl/chip.sv`, and the latch sits outside the
+  `RDY` gate so a pulse that lands during a DMA stall is not lost. A level
+  source still works — a held line re-arms the latch every cycle. What does not
+  carry over is the NMOS habit of dropping the line inside the handler to
+  withdraw a request: once latched, the request is taken.
+- **`WAI` with `I` set retires the pending `IRQ`.** The `SEI`+`WAI` idiom uses
+  the interrupt as a frame tick and wants no vector, so the sleep is the
+  service. Without this a later `CLI` would vector immediately, on a frame that
+  had already been waited for. With `I` clear, `WAI` wakes and the vector is
+  taken at the very next cycle, which is the 65C02's behaviour.
+- **`dbg_sync` excludes an entry cycle.** An entry occupies an `S_DECODE` cycle
+  but does not decode the byte it fetched, so counting it as a retire would
+  make `dbg_pc` name an instruction that never ran.
+
+**What an interrupt does not save is `B`**, the low half of the 16-bit
+accumulator. There is no `PHB`/`PLB`, so a handler cannot preserve it: a handler
+must not use the word ops. Nothing enforces this, and nothing in the repo needs
+it yet — both corpora keep `I` set from reset and use `wai` as a frame tick, so
+neither takes a vector at all. Their `$FFFA`/`$FFFE` entries point at their
+reset paths, which is only harmless for as long as that stays true.
+
+Cost, on `make synth-cpu` over 5 nextpnr seeds: **1786 → 1862 logic cells**,
+Fmax median 41.21 → 41.60 MHz against a 4 MHz seed spread, with the critical
+path inside the RAM in both trees. `NMI` has no source on this chip —
+`chip.sv` ties it low, so synthesis trims that half in the console build.
 
 ## Phase 2: what the FPGA flow actually says
 

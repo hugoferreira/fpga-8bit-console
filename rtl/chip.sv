@@ -219,7 +219,11 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
     // both ready sources freeze the core identically. psg_hold extends any
     // PSG-window access to end on a psgclk sampling edge (see the port).
     .rdy(cpu_rdy && psg_rdy && !(psg_cs && psg_hold)),
-    .irq(vsync_rise)
+    .irq(vsync_rise),
+    // No non-maskable source exists on this chip. Both corpora keep I set
+    // from reset and use `wai` as a frame tick, so the vsync line above is
+    // the only request either takes.
+    .nmi(1'b0)
   );
 
   // The PPU's tilemap absorbed the old textbuffer; its $F000 window is the
