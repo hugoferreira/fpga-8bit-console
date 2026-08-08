@@ -1127,6 +1127,78 @@ static void test_word_moves(void)
         limits, LA_ERR_ACCESS_WIDTH, "immediate stw to byte field rejected");
 }
 
+static void test_inline_procedures(void)
+{
+    LaLimits limits;
+    limits = la_default_limits();
+    /* An inline body expands at the invoke site with freshened labels. */
+    expect_ok(
+        "struct O packed\ntimer : u8\nend\n"
+        "location p : ptr O\n"
+        "proc helper inline using console6502\n"
+        "    self : ptr O in p\n"
+        "begin\n"
+        "    decz [self + O.timer], .done\n"
+        ".done:\n"
+        "end\n"
+        "proc caller using console6502 naked\n"
+        "    self : ptr O in p\n"
+        "begin\n"
+        "    invoke helper, self=self\n"
+        "    invoke helper, self=self\n"
+        "    ret\n"
+        "end\n",
+        limits, "inline proc expands at invoke sites");
+    expect_error(
+        "proc helper inline\n"
+        "begin\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_INLINE_BODY, "ret in inline body rejected");
+    expect_error(
+        "proc helper inline\n"
+        "    saved : u8 in frame\n"
+        "begin\n"
+        "end\n",
+        limits, LA_ERR_INLINE_BODY, "frame member in inline rejected");
+    expect_error(
+        "proc helper inline\n"
+        "begin\n"
+        "mylabel:\n"
+        "end\n",
+        limits, LA_ERR_INLINE_BODY, "non-local label in inline rejected");
+    expect_error(
+        "proc helper inline naked\n"
+        "begin\n"
+        "end\n",
+        limits, LA_ERR_INLINE_BODY, "frame mode on inline rejected");
+    expect_error(
+        "proc helper inline\n"
+        "begin\n"
+        "    nop\n"
+        "end\n"
+        "data codeptr helper\n",
+        limits, LA_ERR_INLINE_BODY, "address of inline rejected");
+    /* Tail jmp expands only into zero-frame callers. */
+    expect_error(
+        "proc target using console6502 naked\n"
+        "begin\n"
+        "    ret\n"
+        "end\n"
+        "proc helper inline\n"
+        "begin\n"
+        "    jmp target\n"
+        "end\n"
+        "proc caller using console6502\n"
+        "    saved : u8 in frame\n"
+        "begin\n"
+        "    invoke helper\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_INLINE_BODY,
+        "inline tail jmp into live frame rejected");
+}
+
 static void test_semantic_errors(void)
 {
     LaLimits limits;
@@ -2307,6 +2379,7 @@ int main(void)
     test_bitwise_expressions();
     test_observation_operations();
     test_word_moves();
+    test_inline_procedures();
     test_semantic_errors();
     test_comments_and_pointer_fields();
     test_indexed_pools_and_procedures();

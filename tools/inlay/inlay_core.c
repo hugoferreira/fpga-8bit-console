@@ -106,7 +106,11 @@ typedef struct {
     la_u16 convention;
     la_u16 first_parameter;
     la_u16 parameter_count;
+    la_u16 body_first_lineidx;
+    la_u16 body_line_count;
     la_u8 naked;
+    la_u8 is_inline;
+    la_u8 has_nonlocal_jmp;
 } LaProcedureRec;
 
 typedef struct {
@@ -171,6 +175,13 @@ typedef struct {
 } LaValueRec;
 
 typedef struct {
+    la_u32 offset;
+    la_u16 length;
+    la_u16 source_id;
+    la_u16 line;
+} LaInlineLineRec;
+
+typedef struct {
     la_u8 op;
 } LaOperatorRec;
 
@@ -211,6 +222,13 @@ typedef struct {
     LaValueRec *values;
     LaOperatorRec *operators;
     LaPropertyFrame *frames;
+    char *inline_bodies;
+    LaInlineLineRec *inline_lines;
+    char *inline_line_buffers;
+    la_u16 inline_body_used;
+    la_u16 inline_line_count;
+    la_u16 inline_depth;
+    la_u16 inline_serial;
     la_u16 source_length;
     la_u16 active_source_id;
     la_u16 active_line;
@@ -290,6 +308,9 @@ LaLimits la_default_limits(void)
     limits.max_nesting = 32;
     limits.max_operations = 2048;
     limits.max_line_bytes = 512;
+    limits.max_inline_body_bytes = 8192;
+    limits.max_inline_body_lines = 256;
+    limits.max_inline_expansions = 256;
     return limits;
 }
 
@@ -329,6 +350,10 @@ la_u32 la_workspace_required(const LaLimits *limits)
                            sizeof(LaInvokeBindingRec));
     total += la_align_size((la_u32)limits->max_expression_nodes * sizeof(LaValueRec));
     total += la_align_size((la_u32)limits->max_expression_nodes * sizeof(LaOperatorRec));
+    total += la_align_size((la_u32)limits->max_inline_body_bytes + 1);
+    total += la_align_size((la_u32)limits->max_inline_body_lines *
+                           sizeof(LaInlineLineRec));
+    total += la_align_size(8u * ((la_u32)limits->max_line_bytes + 1));
     total += la_align_size((la_u32)limits->max_nesting * sizeof(LaPropertyFrame));
     return total;
 }
@@ -2157,6 +2182,10 @@ static LaDiagnosticCode la_parse_procedure(LaContext *ctx,
     if (procedure->name == LA_INVALID_HANDLE) return ctx->error;
     procedure->convention = LA_INVALID_HANDLE;
     cursor = la_trim_left(cursor, end);
+    if (la_take_word(&cursor, end, "inline")) {
+        procedure->is_inline = 1;
+        cursor = la_trim_left(cursor, end);
+    }
     if (la_take_word(&cursor, end, "using")) {
         const char *convention_start;
         la_u16 convention_length;
@@ -2187,6 +2216,12 @@ static LaDiagnosticCode la_parse_procedure(LaContext *ctx,
         procedure->convention = convention_index;
     }
     cursor = la_trim_left(cursor, end);
+    if (procedure->is_inline && cursor != end) {
+        return la_fail(ctx, LA_ERR_INLINE_BODY, line, 1,
+                       (la_u16)(end - cursor),
+                       la_slice("inline takes no frame mode", 26),
+                       la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
+    }
     if (cursor != end) {
         if (la_equal_text(cursor, (la_u16)(end - cursor), "naked")) {
             procedure->naked = 1;
@@ -2292,6 +2327,11 @@ static LaDiagnosticCode la_parse_member(LaContext *ctx,
     }
     if (is_local) {
         LaLocalRec *local;
+        if (procedure->is_inline) {
+            return la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, name_length,
+                           la_slice(name_start, name_length),
+                           la_slice("inline has no frame", 19), 0, 0);
+        }
         if (procedure->naked) {
             return la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, name_length,
                            la_slice(name_start, name_length),
@@ -5224,6 +5264,14 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
 }
 
 static int la_count_operation(LaContext *ctx, la_u16 line);
+static int la_process_operation_line(LaContext *ctx, const char *cursor,
+                                     const char *content_end,
+                                     const char *line_end, la_u16 line);
+static int la_capture_inline_line(LaContext *ctx, la_u16 procedure,
+                                  const char *start, const char *end,
+                                  la_u16 line);
+static int la_expand_inline_body(LaContext *ctx, la_u16 callee,
+                                 la_u16 caller, la_u16 line);
 
 /* decz [pointer + Type.field], label - branch to label when the byte field
    is zero, otherwise decrement it and fall through with A holding the
@@ -6520,6 +6568,10 @@ static int la_parse_invoke(LaContext *ctx,
         return -1;
     }
     owner = la_name_slice(ctx, procedure->name);
+    if (procedure->is_inline) {
+        if (la_expand_inline_body(ctx, callee, caller, line) < 0) return -1;
+        return 1;
+    }
     if (!la_emit_invoke_operation(
             ctx, line, LA_TARGET_OP_INVOKE_CALL, owner, la_slice("", 0),
             la_slice("", 0), la_slice("", 0),
@@ -6635,6 +6687,13 @@ static int la_parse_procedure_data(LaContext *ctx,
             la_fail(ctx, LA_ERR_PRIVATE_NAME, line, 1, name_length,
                     la_name_slice(ctx, ctx->procedures[procedure].name),
                     la_slice("export", 6), 0, 0);
+            return -1;
+        }
+        if (ctx->procedures[procedure].is_inline) {
+            /* An inline procedure has no emitted body and no address. */
+            la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, name_length,
+                    la_name_slice(ctx, ctx->procedures[procedure].name),
+                    la_slice("inline has no address", 21), 0, 0);
             return -1;
         }
         if (emit) {
@@ -7434,10 +7493,8 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
         const char *content_end;
         const char *trimmed;
         int typed;
-        int data_emitted;
         int semantic_constant;
         la_u16 semantic_label;
-        data_emitted = 0;
         if (la_next_line(ctx, &cursor, &line_end, &line) <= 0) break;
         content_end = la_code_end(cursor, line_end);
         trimmed = la_trim_left(cursor, content_end);
@@ -7457,7 +7514,15 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
                 break;
             }
         }
-        if (semantic_constant) {
+        if (active_procedure != LA_INVALID_HANDLE &&
+            ctx->procedures[active_procedure].is_inline &&
+            line > ctx->procedures[active_procedure].begin_line &&
+            line < ctx->procedures[active_procedure].end_line) {
+            if (la_capture_inline_line(ctx, active_procedure, trimmed,
+                                       content_end, line) < 0) {
+                return ctx->error;
+            }
+        } else if (semantic_constant) {
             /* Compile-time constants were emitted semantically above. */
         } else if (semantic_label != LA_INVALID_HANDLE) {
             la_init_event(ctx, &event, LA_EVENT_LABEL, line, 1);
@@ -7497,12 +7562,18 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
             }
             if (procedure == LA_INVALID_HANDLE) return LA_ERR_PROCEDURE_SCOPE;
             active_procedure = procedure;
-            if (!la_emit_member_events(ctx, procedure)) return ctx->error;
-            if (!la_emit_procedure_event(
-                    ctx, procedure, line,
-                    ctx->procedures[procedure].naked ?
-                        LA_TARGET_OP_PROC_NAKED :
-                        LA_TARGET_OP_PROC_FRAME)) return ctx->error;
+            if (ctx->procedures[procedure].is_inline) {
+                ctx->procedures[procedure].body_first_lineidx =
+                    ctx->inline_line_count;
+                ctx->procedures[procedure].body_line_count = 0;
+            } else {
+                if (!la_emit_member_events(ctx, procedure)) return ctx->error;
+                if (!la_emit_procedure_event(
+                        ctx, procedure, line,
+                        ctx->procedures[procedure].naked ?
+                            LA_TARGET_OP_PROC_NAKED :
+                            LA_TARGET_OP_PROC_FRAME)) return ctx->error;
+            }
         } else if (la_line_keyword(trimmed, content_end, "pool") ||
                    la_line_keyword(trimmed, content_end, "overlay")) {
             /* Storage declarations are semantic-only. */
@@ -7577,141 +7648,356 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
                 line, active_procedure);
             if (typed < 0) return ctx->error;
         } else {
-            const char *save_cursor;
-            const char *save_content;
-            la_u16 resolved_length;
-            int resolved;
-            /* Resolve bare enclosing-namespace names once, up front, so every
-               typed parser (placements, mov/word operands, brackets) sees the
-               same qualified spelling the scoped-raw path already resolves. */
-            save_cursor = cursor;
-            save_content = content_end;
-            resolved_length = 0;
-            resolved = la_qualify_scoped_line(
-                ctx, cursor, content_end, line, &resolved_length);
-            if (resolved < 0) {
-                return la_fail(ctx, LA_ERR_NAME_CAPACITY, line, 1,
-                               (la_u16)(content_end - cursor),
-                               la_slice("resolved line", 13),
-                               la_slice("", 0),
-                               (la_i32)(content_end - cursor),
-                               ctx->limits->max_line_bytes);
-            }
-            if (resolved > 0) {
-                cursor = ctx->resolve_buffer;
-                content_end = ctx->resolve_buffer + resolved_length;
-            }
-            typed = la_parse_procedure_data(
-                ctx, cursor, content_end, line, 1);
-            if (typed > 0) data_emitted = 1;
-            if (typed == 0) {
-                typed = la_parse_offset_materialization(
-                    ctx, cursor, content_end, line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_qualified_immediate(
-                    ctx, cursor, content_end, line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_overlay_store_immediate(
-                    ctx, cursor, content_end, line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_overlay_branch(
-                    ctx, cursor, content_end, line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_frame_pointer_move(
-                    ctx, cursor, content_end, line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_local_operation(ctx, cursor, content_end,
-                                                 line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_pool_address(ctx, cursor, content_end,
-                                              line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_typed_word_operation(
-                    ctx, cursor, content_end, line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_physical_word_arithmetic(
-                    ctx, cursor, content_end, line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_typed_byte_rmw(
-                    ctx, cursor, content_end, line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_observation_operation(
-                    ctx, cursor, content_end, line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_word_move(
-                    ctx, cursor, content_end, line, &event);
-            }
-            if (typed == 0) {
-                typed = la_parse_typed_operation(ctx, cursor, content_end,
-                                                 line, &event);
-            }
-            if (typed < 0) return ctx->error;
-            if (typed == 0) {
-                /* No typed parser matched; the raw path re-resolves from the
-                   original slice so the trailing comment is preserved. */
-                cursor = save_cursor;
-                content_end = save_content;
-            }
-            if (typed > 0) {
-                if (!data_emitted &&
-                    !la_write_event(ctx, &event)) return ctx->error;
-            } else if (la_has_explicit_typed_operand(cursor, content_end)) {
-                return la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                               (la_u16)(content_end - cursor),
-                               la_slice(cursor,
-                                        (la_u16)(content_end - cursor)),
-                               la_slice("raw assembly escape hatch", 24),
-                               0, 0);
-            } else {
-                int scoped_raw;
-                int qualified;
-                la_u16 qualified_length;
-                scoped_raw = la_validate_scoped_raw(
-                    ctx, cursor, content_end, line);
-                if (scoped_raw < 0) return ctx->error;
-                qualified_length = 0;
-                qualified = la_qualify_scoped_line(
-                    ctx, cursor, line_end, line, &qualified_length);
-                if (qualified < 0) {
-                    return la_fail(ctx, LA_ERR_NAME_CAPACITY, line, 1,
-                                   (la_u16)(line_end - cursor),
-                                   la_slice("resolved line", 13),
-                                   la_slice("", 0),
-                                   (la_i32)(line_end - cursor),
-                                   ctx->limits->max_line_bytes);
-                }
-                if (qualified > 0) {
-                    /* Enclosing-namespace names were qualified in place; the
-                       result must go through the scoped-raw mangler. */
-                    la_init_event(ctx, &event, LA_EVENT_SCOPED_RAW, line,
-                                  qualified_length);
-                    event.text = la_slice(ctx->resolve_buffer,
-                                          qualified_length);
-                } else {
-                    la_init_event(ctx, &event,
-                                  scoped_raw ? LA_EVENT_SCOPED_RAW :
-                                               LA_EVENT_RAW,
-                                  line,
-                                  (la_u16)(line_end - cursor));
-                    event.text = la_slice(cursor,
-                                          (la_u16)(line_end - cursor));
-                }
-                if (!la_write_event(ctx, &event)) return ctx->error;
+            if (la_process_operation_line(ctx, cursor, content_end,
+                                          line_end, line) < 0) {
+                return ctx->error;
             }
         }
     }
     return LA_OK;
+}
+
+/* One operation-position line: the typed parser chain, then the raw escape
+   hatch. Shared by the main pass and inline expansion replay. Returns 0 on
+   success and -1 with ctx->error set on failure. */
+static int la_process_operation_line(LaContext *ctx, const char *cursor,
+                                     const char *content_end,
+                                     const char *line_end, la_u16 line)
+{
+    LaEvent event;
+    int typed;
+    int data_emitted;
+    const char *save_cursor;
+    const char *save_content;
+    la_u16 resolved_length;
+    int resolved;
+    data_emitted = 0;
+    /* Parsers fill only the fields they own; start from a zeroed event so
+       unset fields are deterministic. */
+    memset(&event, 0, sizeof(event));
+    /* Resolve bare enclosing-namespace names once, up front, so every
+       typed parser (placements, mov/word operands, brackets) sees the
+       same qualified spelling the scoped-raw path already resolves. */
+    save_cursor = cursor;
+    save_content = content_end;
+    resolved_length = 0;
+    resolved = la_qualify_scoped_line(
+        ctx, cursor, content_end, line, &resolved_length);
+    if (resolved < 0) {
+        la_fail(ctx, LA_ERR_NAME_CAPACITY, line, 1,
+                (la_u16)(content_end - cursor),
+                la_slice("resolved line", 13),
+                la_slice("", 0),
+                (la_i32)(content_end - cursor),
+                ctx->limits->max_line_bytes);
+        return -1;
+    }
+    if (resolved > 0) {
+        cursor = ctx->resolve_buffer;
+        content_end = ctx->resolve_buffer + resolved_length;
+    }
+    typed = la_parse_procedure_data(
+        ctx, cursor, content_end, line, 1);
+    if (typed > 0) data_emitted = 1;
+    if (typed == 0) {
+        typed = la_parse_offset_materialization(
+            ctx, cursor, content_end, line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_qualified_immediate(
+            ctx, cursor, content_end, line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_overlay_store_immediate(
+            ctx, cursor, content_end, line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_overlay_branch(
+            ctx, cursor, content_end, line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_frame_pointer_move(
+            ctx, cursor, content_end, line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_local_operation(ctx, cursor, content_end,
+                                         line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_pool_address(ctx, cursor, content_end,
+                                      line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_typed_word_operation(
+            ctx, cursor, content_end, line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_physical_word_arithmetic(
+            ctx, cursor, content_end, line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_typed_byte_rmw(
+            ctx, cursor, content_end, line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_observation_operation(
+            ctx, cursor, content_end, line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_word_move(
+            ctx, cursor, content_end, line, &event);
+    }
+    if (typed == 0) {
+        typed = la_parse_typed_operation(ctx, cursor, content_end,
+                                         line, &event);
+    }
+    if (typed < 0) return -1;
+    if (typed == 0) {
+        /* No typed parser matched; the raw path re-resolves from the
+           original slice so the trailing comment is preserved. */
+        cursor = save_cursor;
+        content_end = save_content;
+    }
+    if (typed > 0) {
+        if (!data_emitted &&
+            !la_write_event(ctx, &event)) return -1;
+    } else if (la_has_explicit_typed_operand(cursor, content_end)) {
+        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
+                (la_u16)(content_end - cursor),
+                la_slice(cursor,
+                         (la_u16)(content_end - cursor)),
+                la_slice("raw assembly escape hatch", 24),
+                0, 0);
+        return -1;
+    } else {
+        int scoped_raw;
+        int qualified;
+        la_u16 qualified_length;
+        scoped_raw = la_validate_scoped_raw(
+            ctx, cursor, content_end, line);
+        if (scoped_raw < 0) return -1;
+        qualified_length = 0;
+        qualified = la_qualify_scoped_line(
+            ctx, cursor, line_end, line, &qualified_length);
+        if (qualified < 0) {
+            la_fail(ctx, LA_ERR_NAME_CAPACITY, line, 1,
+                    (la_u16)(line_end - cursor),
+                    la_slice("resolved line", 13),
+                    la_slice("", 0),
+                    (la_i32)(line_end - cursor),
+                    ctx->limits->max_line_bytes);
+            return -1;
+        }
+        if (qualified > 0) {
+            /* Enclosing-namespace names were qualified in place; the
+               result must go through the scoped-raw mangler. */
+            la_init_event(ctx, &event, LA_EVENT_SCOPED_RAW, line,
+                          qualified_length);
+            event.text = la_slice(ctx->resolve_buffer,
+                                  qualified_length);
+        } else {
+            la_init_event(ctx, &event,
+                          scoped_raw ? LA_EVENT_SCOPED_RAW :
+                                       LA_EVENT_RAW,
+                          line,
+                          (la_u16)(line_end - cursor));
+            event.text = la_slice(cursor,
+                                  (la_u16)(line_end - cursor));
+        }
+        if (!la_write_event(ctx, &event)) return -1;
+    }
+    return 0;
+}
+
+/* Capture one inline-procedure body line. The module expander has already
+   removed comments and blank lines. Rejected here: ret, non-local labels,
+   nested declarations, and invoke continuation commas. */
+static int la_capture_inline_line(LaContext *ctx, la_u16 procedure,
+                                  const char *start, const char *end,
+                                  la_u16 line)
+{
+    LaProcedureRec *record;
+    LaInlineLineRec *entry;
+    la_u16 length;
+    const char *scan;
+    record = &ctx->procedures[procedure];
+    length = (la_u16)(end - start);
+    if (length == 0) return 0;
+    if (la_equal_text(start, length, "ret") ||
+        la_line_keyword(start, end, "proc") ||
+        la_line_keyword(start, end, "namespace") ||
+        la_line_keyword(start, end, "struct") ||
+        la_line_keyword(start, end, "union") ||
+        la_line_keyword(start, end, "enum") ||
+        la_line_keyword(start, end, "include")) {
+        la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, length,
+                la_slice(start, length),
+                la_slice("no ret or declarations in inline body", 37),
+                0, 0);
+        return -1;
+    }
+    if (la_line_keyword(start, end, "invoke") && end[-1] == ',') {
+        la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, length,
+                la_slice(start, length),
+                la_slice("single-line invoke only", 23), 0, 0);
+        return -1;
+    }
+    if (la_is_ident_start(*start)) {
+        scan = start;
+        while (scan < end && la_is_ident(*scan)) ++scan;
+        if (scan < end && *scan == ':') {
+            la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, length,
+                    la_slice(start, length),
+                    la_slice("only .local labels in inline body", 33),
+                    0, 0);
+            return -1;
+        }
+    }
+    if (la_line_keyword(start, end, "jmp")) {
+        scan = la_trim_left(start + 3, end);
+        if (scan < end && *scan != '.') record->has_nonlocal_jmp = 1;
+    }
+    if (ctx->inline_line_count >= ctx->limits->max_inline_body_lines) {
+        la_fail(ctx, LA_ERR_INLINE_CAPACITY, line, 1, 1,
+                la_slice("inline body lines", 17), la_slice("", 0),
+                ctx->inline_line_count + 1,
+                ctx->limits->max_inline_body_lines);
+        return -1;
+    }
+    if ((la_u32)ctx->inline_body_used + length + 1 >
+        (la_u32)ctx->limits->max_inline_body_bytes) {
+        la_fail(ctx, LA_ERR_INLINE_CAPACITY, line, 1, 1,
+                la_slice("inline body bytes", 17), la_slice("", 0),
+                (la_i32)ctx->inline_body_used + length + 1,
+                ctx->limits->max_inline_body_bytes);
+        return -1;
+    }
+    memcpy(ctx->inline_bodies + ctx->inline_body_used, start, length);
+    ctx->inline_bodies[ctx->inline_body_used + length] = 0;
+    entry = &ctx->inline_lines[ctx->inline_line_count];
+    entry->offset = ctx->inline_body_used;
+    entry->length = length;
+    entry->source_id = la_source_id_at_line(ctx, line);
+    entry->line = line;
+    ctx->inline_body_used = (la_u16)(ctx->inline_body_used + length + 1);
+    ++ctx->inline_line_count;
+    ++record->body_line_count;
+    return 0;
+}
+
+/* Expand a previously captured inline body at an invoke site. Local labels
+   are freshened per expansion as dot-local names, so no new target label
+   scope opens at the call site. */
+static int la_expand_inline_body(LaContext *ctx, la_u16 callee,
+                                 la_u16 caller, la_u16 line)
+{
+    LaProcedureRec *record;
+    char *buffer;
+    la_u16 index;
+    la_u16 serial;
+    la_u16 saved_source_id;
+    record = &ctx->procedures[callee];
+    if (ctx->inline_depth >= 8) {
+        la_fail(ctx, LA_ERR_INLINE_DEPTH, line, 1, 1,
+                la_name_slice(ctx, record->name), la_slice("", 0),
+                ctx->inline_depth + 1, 8);
+        return -1;
+    }
+    if (record->has_nonlocal_jmp &&
+        ctx->procedures[caller].frame_size != 0) {
+        la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, 1,
+                la_name_slice(ctx, record->name),
+                la_slice("tail jmp with live caller frame", 31), 0, 0);
+        return -1;
+    }
+    if (ctx->inline_serial >= ctx->limits->max_inline_expansions) {
+        la_fail(ctx, LA_ERR_INLINE_CAPACITY, line, 1, 1,
+                la_slice("inline expansions", 17), la_slice("", 0),
+                ctx->inline_serial + 1,
+                ctx->limits->max_inline_expansions);
+        return -1;
+    }
+    serial = ++ctx->inline_serial;
+    ctx->stats->inline_expansions = ctx->inline_serial;
+    buffer = ctx->inline_line_buffers +
+             (size_t)ctx->inline_depth *
+             ((size_t)ctx->limits->max_line_bytes + 1);
+    ++ctx->inline_depth;
+    saved_source_id = ctx->active_source_id;
+    for (index = 0; index < record->body_line_count; ++index) {
+        LaInlineLineRec *entry;
+        const char *src;
+        const char *scan;
+        char *out;
+        char *out_end;
+        int in_quotes;
+        int result;
+        entry = &ctx->inline_lines[record->body_first_lineidx + index];
+        src = ctx->inline_bodies + entry->offset;
+        out = buffer;
+        out_end = buffer + ctx->limits->max_line_bytes;
+        in_quotes = 0;
+        for (scan = src; scan < src + entry->length; ++scan) {
+            if (*scan == '"') in_quotes = !in_quotes;
+            if (!in_quotes && *scan == '.' &&
+                (scan == src || !la_is_ident(scan[-1])) &&
+                scan + 1 < src + entry->length &&
+                la_is_ident_start(scan[1])) {
+                char prefix[24];
+                char digits[8];
+                int written;
+                int digit_count;
+                unsigned value;
+                memcpy(prefix, ".__la_i", 7);
+                written = 7;
+                value = (unsigned)serial;
+                digit_count = 0;
+                do {
+                    digits[digit_count++] = (char)('0' + value % 10);
+                    value /= 10;
+                } while (value != 0);
+                while (digit_count > 0) {
+                    prefix[written++] = digits[--digit_count];
+                }
+                prefix[written++] = '_';
+                if (out + written >= out_end) {
+                    --ctx->inline_depth;
+                    la_fail(ctx, LA_ERR_INLINE_CAPACITY, entry->line, 1, 1,
+                            la_slice("freshened line", 14),
+                            la_slice("", 0), 0,
+                            ctx->limits->max_line_bytes);
+                    return -1;
+                }
+                memcpy(out, prefix, (size_t)written);
+                out += written;
+                continue;
+            }
+            if (out >= out_end) {
+                --ctx->inline_depth;
+                la_fail(ctx, LA_ERR_INLINE_CAPACITY, entry->line, 1, 1,
+                        la_slice("freshened line", 14),
+                        la_slice("", 0), 0, ctx->limits->max_line_bytes);
+                return -1;
+            }
+            *out++ = *scan;
+        }
+        *out = 0;
+        ctx->active_source_id = entry->source_id;
+        if (la_line_keyword(buffer, out, "invoke")) {
+            result = la_parse_invoke(ctx, buffer, out, entry->line, callee);
+            if (result <= 0) {
+                --ctx->inline_depth;
+                return -1;
+            }
+        } else if (la_process_operation_line(ctx, buffer, out, out,
+                                             entry->line) < 0) {
+            --ctx->inline_depth;
+            return -1;
+        }
+    }
+    --ctx->inline_depth;
+    ctx->active_source_id = saved_source_id;
+    return 0;
 }
 
 static LaDiagnosticCode la_load_source(LaContext *ctx)
@@ -7848,6 +8134,15 @@ LaDiagnosticCode la_compile(const LaInput *input,
     ctx.bindings = (LaInvokeBindingRec *)la_take(
         &cursor, &remaining,
         (la_u32)limits->max_invoke_bindings * sizeof(LaInvokeBindingRec));
+    ctx.inline_bodies = (char *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_inline_body_bytes + 1);
+    ctx.inline_lines = (LaInlineLineRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_inline_body_lines * sizeof(LaInlineLineRec));
+    ctx.inline_line_buffers = (char *)la_take(
+        &cursor, &remaining,
+        8u * ((la_u32)limits->max_line_bytes + 1));
     ctx.values = (LaValueRec *)la_take(
         &cursor, &remaining,
         (la_u32)limits->max_expression_nodes * sizeof(LaValueRec));
@@ -7917,7 +8212,8 @@ const char *la_diagnostic_name(LaDiagnosticCode code)
         "duplicate-namespace", "duplicate-export", "private-name",
         "unknown-export", "constant-capacity", "duplicate-constant",
         "unknown-constant", "label-capacity", "duplicate-label",
-        "unknown-symbol"
+        "unknown-symbol", "inline-body", "inline-depth",
+        "inline-capacity"
     };
     if ((la_u16)code >= (la_u16)(sizeof(names) / sizeof(names[0]))) {
         return "unknown-diagnostic";

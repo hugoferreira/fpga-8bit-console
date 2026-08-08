@@ -117,7 +117,10 @@ typedef enum {
     LA_ERR_UNKNOWN_CONSTANT,
     LA_ERR_LABEL_CAPACITY,
     LA_ERR_DUPLICATE_LABEL,
-    LA_ERR_UNKNOWN_SYMBOL
+    LA_ERR_UNKNOWN_SYMBOL,
+    LA_ERR_INLINE_BODY,
+    LA_ERR_INLINE_DEPTH,
+    LA_ERR_INLINE_CAPACITY
 } LaDiagnosticCode;
 
 typedef struct {
@@ -374,6 +377,9 @@ typedef struct {
     la_u16 max_nesting;
     la_u16 max_operations;
     la_u16 max_line_bytes;
+    la_u16 max_inline_body_bytes;
+    la_u16 max_inline_body_lines;
+    la_u16 max_inline_expansions;
 } LaLimits;
 
 typedef struct {
@@ -404,6 +410,7 @@ typedef struct {
     la_u16 expression_nodes;
     la_u16 nesting;
     la_u16 operations;
+    la_u16 inline_expansions;
     la_u32 workspace_used;
 } LaStats;
 

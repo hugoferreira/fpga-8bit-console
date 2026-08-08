@@ -1712,7 +1712,8 @@ int main(int argc, char **argv)
                "\"pools\":%u,\"procedures\":%u,\"parameters\":%u,"
                "\"locals\":%u,\"invokeBindings\":%u,"
                "\"expressionNodes\":%u,\"nesting\":%u,"
-               "\"operations\":%u,\"workspaceBytes\":%lu,"
+               "\"operations\":%u,\"inlineExpansions\":%u,"
+               "\"workspaceBytes\":%lu,"
                "\"moduleSourceBytes\":%lu,\"moduleSourceLines\":%lu,"
                "\"moduleDepth\":%u,\"moduleWorkspaceBytes\":%lu}\n",
                stats.source_bytes, stats.name_bytes, stats.tokens,
@@ -1724,6 +1725,7 @@ int main(int argc, char **argv)
                stats.pools, stats.procedures, stats.parameters, stats.locals,
                stats.invoke_bindings,
                stats.expression_nodes, stats.nesting, stats.operations,
+               stats.inline_expansions,
                (unsigned long)stats.workspace_used,
                (unsigned long)expanded.total_source_bytes,
                (unsigned long)expanded.total_source_lines,

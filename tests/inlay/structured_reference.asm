@@ -202,6 +202,35 @@ word_moves:
     sta (pWord), #1
     rts
 
+inline_caller:
+    lda pWord
+    sta t0
+    lda pWord+1
+    sta t1
+    lda t0
+    sta pWord
+    lda t1
+    sta pWord+1
+    lda (pWord), #2
+    beq .ic1
+    sub #1
+    sta (pWord), #2
+.ic1:
+    lda pWord
+    sta t0
+    lda pWord+1
+    sta t1
+    lda t0
+    sta pWord
+    lda t1
+    sta pWord+1
+    lda (pWord), #2
+    beq .ic2
+    sub #1
+    sta (pWord), #2
+.ic2:
+    rts
+
 obj_lo:
     #d8 $00, $18, $30, $48
 obj_hi:

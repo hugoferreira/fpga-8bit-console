@@ -198,6 +198,21 @@ begin
     ret
 end
 
+proc bump_timer inline
+    self : ptr WordObject in pWord
+begin
+    decz [self + WordObject.timer], .out
+.out:
+end
+
+proc inline_caller naked
+    self : ptr WordObject in pWord
+begin
+    invoke bump_timer, self=self
+    invoke bump_timer, self=self
+    ret
+end
+
 obj_lo:
     #d8 $00, $18, $30, $48
 obj_hi:

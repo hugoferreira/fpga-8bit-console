@@ -525,6 +525,35 @@ rejected. The current console6502 frame backend guarantees alignment one, so
 an `aligned(N)` aggregate with `N > 1` is rejected as a frame member rather
 than silently weakened to packed layout.
 
+A procedure may be declared `inline`:
+
+```asm
+proc bump_timer inline using console6502
+    self : ptr CelesteObject in Machine.object
+begin
+    decz [self + CelesteObject.payload.player.grace], .done
+.done:
+end
+```
+
+An inline procedure emits no standalone body and no label; `low(...)`,
+`high(...)` and `data codeptr` references to it are rejected. Its body is
+captured at declaration and spliced at each `invoke` site after the normal
+binding marshalling, in place of the `jsr`. Local labels are freshened per
+expansion as dot-local names in the reserved `__la` family, so no new
+target label scope opens mid-procedure; a non-local label in an inline
+body is rejected, as are `ret` (the body falls through), `frame` members,
+`frame`/`naked` modes, nested declarations, and multi-line `invoke`
+continuations. A tail `jmp` to a non-inline procedure is allowed and is
+checked per expansion site: splicing a tail `jmp` into a procedure whose
+frame size is nonzero is rejected, naming both procedures.
+Inline-in-inline expansion is bounded at depth 8; recursion is an error.
+Inline procedures, body lines, body bytes and expansions are bounded
+resources with stable diagnostic codes (`inline-body`, `inline-depth`,
+`inline-capacity`), and each expansion charges its operations and lines
+against the existing structured-operation and source budgets. The
+expansion count is reported in `--stats`.
+
 `invoke` marshals the declared inputs of an earlier procedure:
 
 ```asm
