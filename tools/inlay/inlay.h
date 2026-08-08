@@ -459,6 +459,17 @@ typedef struct {
     la_u16 families;
 } LaSpellingDesc;
 
+/* A declarable lowering: template lines emitted for one semantic
+   operation. Slots: %b base, %a aux (source name or branch label),
+   %d displacement, %D displacement+1, %l immediate low byte,
+   %h immediate high byte, %i byte-update immediate, %o owner, %p path,
+   %% literal percent. */
+typedef struct {
+    la_u8 operation;
+    const char *reason;
+    const char *const *lines;
+} LaLoweringDesc;
+
 typedef struct {
     const char *name;
     la_u8 storage_unit_bits;
@@ -486,6 +497,8 @@ typedef struct {
     la_u8 register_count;
     const LaSpellingDesc *spellings;
     la_u16 spelling_count;
+    const LaLoweringDesc *lowerings;
+    la_u16 lowering_count;
 } LaTarget;
 
 typedef struct {

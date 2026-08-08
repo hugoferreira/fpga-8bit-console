@@ -797,8 +797,89 @@ static int emit_invoke_assign(HostOutput *output, const LaEvent *event)
     return 1;
 }
 
+/* Interpret a description lowering template: one output line per template
+   line, slots resolved from the event. */
+static int emit_lowering_template(HostOutput *output, const LaEvent *event,
+                                  const LaLoweringDesc *lowering)
+{
+    la_u16 index;
+    for (index = 0; lowering->lines[index] != 0; ++index) {
+        const char *cursor;
+        if (!begin_line(output, event->span, lowering->reason)) return 0;
+        for (cursor = lowering->lines[index]; *cursor != 0; ++cursor) {
+            if (*cursor != '%') {
+                fputc(*cursor, output->assembly);
+                continue;
+            }
+            ++cursor;
+            switch (*cursor) {
+            case 'b':
+                fprintf(output->assembly, "%.*s",
+                        (int)event->base.length, event->base.data);
+                break;
+            case 'a':
+                fprintf(output->assembly, "%.*s",
+                        (int)event->aux.length, event->aux.data);
+                break;
+            case 'd':
+                fprintf(output->assembly, "%u", (unsigned)event->value);
+                break;
+            case 'D':
+                fprintf(output->assembly, "%u",
+                        (unsigned)event->value + 1);
+                break;
+            case 'l':
+                fprintf(output->assembly, "%u",
+                        (unsigned)((la_u32)event->signed_value & 0xff));
+                break;
+            case 'h':
+                fprintf(output->assembly, "%u",
+                        (unsigned)(((la_u32)event->signed_value >> 8) &
+                                   0xff));
+                break;
+            case 'i':
+                fprintf(output->assembly, "%u", (unsigned)event->offset);
+                break;
+            case 'o':
+                fprintf(output->assembly, "%.*s",
+                        (int)event->owner.length, event->owner.data);
+                break;
+            case 'p':
+                fprintf(output->assembly, "%.*s",
+                        (int)event->path.length, event->path.data);
+                break;
+            case '%':
+                fputc('%', output->assembly);
+                break;
+            default:
+                return 0;
+            }
+        }
+        fputc('\n', output->assembly);
+    }
+    return 1;
+}
+
+static const LaLoweringDesc *find_lowering(la_u8 operation)
+{
+    la_u16 index;
+    for (index = 0; index < la_target_console6502.lowering_count; ++index) {
+        if (la_target_console6502.lowerings[index].operation == operation) {
+            return &la_target_console6502.lowerings[index];
+        }
+    }
+    return 0;
+}
+
 static int emit_target_operation(HostOutput *output, const LaEvent *event)
 {
+    {
+        const LaLoweringDesc *lowering;
+        lowering = find_lowering((la_u8)event->operation);
+        if (lowering != 0) {
+            return emit_lowering_template(output, event, lowering);
+        }
+    }
     switch (event->operation) {
     case LA_TARGET_OP_LOAD8_PTR_DISP:
     case LA_TARGET_OP_STORE8_PTR_DISP:
@@ -817,132 +898,6 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
                 event->operation == LA_TARGET_OP_SUB16_PHYSICAL ? "subw" :
                                                                   "cmpw",
                 (int)event->aux.length, event->aux.data);
-        return 1;
-    case LA_TARGET_OP_INC8_PTR_DISP:
-    case LA_TARGET_OP_DEC8_PTR_DISP:
-    case LA_TARGET_OP_AND8_PTR_DISP:
-    case LA_TARGET_OP_OR8_PTR_DISP:
-        if (!begin_line(output, event->span, "byte-field-update")) return 0;
-        fprintf(output->assembly, "    lda (%.*s), #%u\n",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        if (!begin_line(output, event->span, "byte-field-update")) return 0;
-        if (event->operation == LA_TARGET_OP_INC8_PTR_DISP) {
-            fputs("    add #1\n", output->assembly);
-        } else if (event->operation == LA_TARGET_OP_DEC8_PTR_DISP) {
-            fputs("    sub #1\n", output->assembly);
-        } else {
-            fprintf(output->assembly, "    %s #%u\n",
-                    event->operation == LA_TARGET_OP_AND8_PTR_DISP ?
-                        "and" : "ora",
-                    (unsigned)event->offset);
-        }
-        if (!begin_line(output, event->span, "byte-field-update")) return 0;
-        fprintf(output->assembly, "    sta (%.*s), #%u",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        fprintf(output->assembly, " ; inlay update %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
-    case LA_TARGET_OP_DECZ8_PTR_DISP:
-        /* Zero: branch untouched. Nonzero: decrement, fall through with
-           A = post value. */
-        if (!begin_line(output, event->span, "byte-field-decz")) return 0;
-        fprintf(output->assembly, "    lda (%.*s), #%u\n",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        if (!begin_line(output, event->span, "byte-field-decz")) return 0;
-        fprintf(output->assembly, "    beq %.*s\n",
-                (int)event->aux.length, event->aux.data);
-        if (!begin_line(output, event->span, "byte-field-decz")) return 0;
-        fputs("    sub #1\n", output->assembly);
-        if (!begin_line(output, event->span, "byte-field-decz")) return 0;
-        fprintf(output->assembly, "    sta (%.*s), #%u",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        fprintf(output->assembly, " ; inlay decz %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
-    case LA_TARGET_OP_TSTW_PTR_DISP:
-        /* No ora (zp), #disp extended form exists; the standard indexed
-           form costs the same bytes as the raw idiom and clobbers Y. */
-        if (!begin_line(output, event->span, "word-field-test")) return 0;
-        fprintf(output->assembly, "    ldy #%u\n",
-                (unsigned)event->value);
-        if (!begin_line(output, event->span, "word-field-test")) return 0;
-        fprintf(output->assembly, "    lda (%.*s), y\n",
-                (int)event->base.length, event->base.data);
-        if (!begin_line(output, event->span, "word-field-test")) return 0;
-        fputs("    iny\n", output->assembly);
-        if (!begin_line(output, event->span, "word-field-test")) return 0;
-        fprintf(output->assembly, "    ora (%.*s), y",
-                (int)event->base.length, event->base.data);
-        fprintf(output->assembly, " ; inlay tstw %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
-    case LA_TARGET_OP_MOVW_IMM:
-        if (!begin_line(output, event->span, "word-move")) return 0;
-        fprintf(output->assembly, "    lda #%u\n",
-                (unsigned)((la_u32)event->signed_value & 0xff));
-        if (!begin_line(output, event->span, "word-move")) return 0;
-        fprintf(output->assembly, "    sta %.*s\n",
-                (int)event->base.length, event->base.data);
-        if (!begin_line(output, event->span, "word-move")) return 0;
-        fprintf(output->assembly, "    lda #%u\n",
-                (unsigned)(((la_u32)event->signed_value >> 8) & 0xff));
-        if (!begin_line(output, event->span, "word-move")) return 0;
-        fprintf(output->assembly, "    sta %.*s+1",
-                (int)event->base.length, event->base.data);
-        fprintf(output->assembly, " ; inlay movw %.*s\n",
-                (int)event->owner.length, event->owner.data);
-        return 1;
-    case LA_TARGET_OP_MOVW_LOCATION:
-        if (!begin_line(output, event->span, "word-move")) return 0;
-        fprintf(output->assembly, "    lda %.*s\n",
-                (int)event->aux.length, event->aux.data);
-        if (!begin_line(output, event->span, "word-move")) return 0;
-        fprintf(output->assembly, "    sta %.*s\n",
-                (int)event->base.length, event->base.data);
-        if (!begin_line(output, event->span, "word-move")) return 0;
-        fprintf(output->assembly, "    lda %.*s+1\n",
-                (int)event->aux.length, event->aux.data);
-        if (!begin_line(output, event->span, "word-move")) return 0;
-        fprintf(output->assembly, "    sta %.*s+1",
-                (int)event->base.length, event->base.data);
-        fprintf(output->assembly, " ; inlay movw %.*s\n",
-                (int)event->owner.length, event->owner.data);
-        return 1;
-    case LA_TARGET_OP_STORE16_IMM_PTR_DISP:
-        if (!begin_line(output, event->span, "word-field-immediate")) return 0;
-        fprintf(output->assembly, "    lda #%u\n",
-                (unsigned)((la_u32)event->signed_value & 0xff));
-        if (!begin_line(output, event->span, "word-field-immediate")) return 0;
-        fprintf(output->assembly, "    sta (%.*s), #%u\n",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        if (!begin_line(output, event->span, "word-field-immediate")) return 0;
-        fprintf(output->assembly, "    lda #%u\n",
-                (unsigned)(((la_u32)event->signed_value >> 8) & 0xff));
-        if (!begin_line(output, event->span, "word-field-immediate")) return 0;
-        fprintf(output->assembly, "    sta (%.*s), #%u",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value + 1);
-        fprintf(output->assembly, " ; inlay stw %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
-    case LA_TARGET_OP_TSTW_LOCATION:
-        if (!begin_line(output, event->span, "word-location-test")) return 0;
-        fprintf(output->assembly, "    lda %.*s\n",
-                (int)event->base.length, event->base.data);
-        if (!begin_line(output, event->span, "word-location-test")) return 0;
-        fprintf(output->assembly, "    ora %.*s+1",
-                (int)event->base.length, event->base.data);
-        fprintf(output->assembly, " ; inlay tstw %.*s\n",
-                (int)event->owner.length, event->owner.data);
         return 1;
     case LA_TARGET_OP_LOAD8_PTR_INDEXED:
     case LA_TARGET_OP_STORE8_PTR_INDEXED:

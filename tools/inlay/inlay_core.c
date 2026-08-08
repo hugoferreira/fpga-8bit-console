@@ -353,6 +353,85 @@ static const LaSpellingDesc la_console6502_spellings[] = {
     {"tbnz", LA_SPELL_OVERLAY_BRANCH}
 };
 
+static const char *const la_c6502_decz[] = {
+    "    lda (%b), #%d",
+    "    beq %a",
+    "    sub #1",
+    "    sta (%b), #%d ; inlay decz %o.%p",
+    0
+};
+static const char *const la_c6502_tstw_ptr[] = {
+    "    ldy #%d",
+    "    lda (%b), y",
+    "    iny",
+    "    ora (%b), y ; inlay tstw %o.%p",
+    0
+};
+static const char *const la_c6502_tstw_loc[] = {
+    "    lda %b",
+    "    ora %b+1 ; inlay tstw %o",
+    0
+};
+static const char *const la_c6502_movw_imm[] = {
+    "    lda #%l",
+    "    sta %b",
+    "    lda #%h",
+    "    sta %b+1 ; inlay movw %o",
+    0
+};
+static const char *const la_c6502_movw_loc[] = {
+    "    lda %a",
+    "    sta %b",
+    "    lda %a+1",
+    "    sta %b+1 ; inlay movw %o",
+    0
+};
+static const char *const la_c6502_stw_imm[] = {
+    "    lda #%l",
+    "    sta (%b), #%d",
+    "    lda #%h",
+    "    sta (%b), #%D ; inlay stw %o.%p",
+    0
+};
+static const char *const la_c6502_inc8[] = {
+    "    lda (%b), #%d",
+    "    add #1",
+    "    sta (%b), #%d ; inlay update %o.%p",
+    0
+};
+static const char *const la_c6502_dec8[] = {
+    "    lda (%b), #%d",
+    "    sub #1",
+    "    sta (%b), #%d ; inlay update %o.%p",
+    0
+};
+static const char *const la_c6502_and8[] = {
+    "    lda (%b), #%d",
+    "    and #%i",
+    "    sta (%b), #%d ; inlay update %o.%p",
+    0
+};
+static const char *const la_c6502_or8[] = {
+    "    lda (%b), #%d",
+    "    ora #%i",
+    "    sta (%b), #%d ; inlay update %o.%p",
+    0
+};
+
+static const LaLoweringDesc la_console6502_lowerings[] = {
+    {LA_TARGET_OP_DECZ8_PTR_DISP, "byte-field-decz", la_c6502_decz},
+    {LA_TARGET_OP_TSTW_PTR_DISP, "word-field-test", la_c6502_tstw_ptr},
+    {LA_TARGET_OP_TSTW_LOCATION, "word-location-test", la_c6502_tstw_loc},
+    {LA_TARGET_OP_MOVW_IMM, "word-move", la_c6502_movw_imm},
+    {LA_TARGET_OP_MOVW_LOCATION, "word-move", la_c6502_movw_loc},
+    {LA_TARGET_OP_STORE16_IMM_PTR_DISP, "word-field-immediate",
+     la_c6502_stw_imm},
+    {LA_TARGET_OP_INC8_PTR_DISP, "byte-field-update", la_c6502_inc8},
+    {LA_TARGET_OP_DEC8_PTR_DISP, "byte-field-update", la_c6502_dec8},
+    {LA_TARGET_OP_AND8_PTR_DISP, "byte-field-update", la_c6502_and8},
+    {LA_TARGET_OP_OR8_PTR_DISP, "byte-field-update", la_c6502_or8}
+};
+
 const LaTarget la_target_console6502 = {
     "console6502", 8, 2, 255, LA_TARGET_VERSION,
     la_console6502_conventions, 1,
@@ -361,7 +440,10 @@ const LaTarget la_target_console6502 = {
     la_console6502_registers, 3,
     la_console6502_spellings,
     (la_u16)(sizeof(la_console6502_spellings) /
-             sizeof(la_console6502_spellings[0]))
+             sizeof(la_console6502_spellings[0])),
+    la_console6502_lowerings,
+    (la_u16)(sizeof(la_console6502_lowerings) /
+             sizeof(la_console6502_lowerings[0]))
 };
 
 static la_u32 la_align_size(la_u32 value)
