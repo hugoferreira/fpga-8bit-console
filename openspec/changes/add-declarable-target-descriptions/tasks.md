@@ -50,7 +50,7 @@
 
 ## 6. Planner generalization
 
-- [ ] 6.1 Derive marshalling order from dependency scheduling over
+- [x] 6.1 Derive marshalling order from dependency scheduling over
       declared defs and clobbers (memory reads clobber the accumulator
       role); verify the scheduler reproduces the current console6502
       order over the full corpus before enabling; digest gate

@@ -156,6 +156,22 @@ typedef struct {
     la_u8 is_pointer;
 } LaLocalRec;
 
+/* One scheduled marshalling emission. Reads, writes and accumulator
+   clobbers are declared per item; the scheduler orders items by their
+   dependencies, breaking ties with the legacy class rank. */
+typedef struct {
+    la_u8 kind;        /* 0 save, 1 field read, 2 assignment, 3 reg field */
+    la_u8 emitted;
+    la_u8 via_accumulator;
+    la_u8 rank;
+    la_u8 subrank;
+    la_u16 binding;
+    la_u16 read_name;  /* interned handle or LA_INVALID_HANDLE */
+    int read_register; /* register table index or -1 */
+    la_u16 write_name;
+    int write_register;
+} LaInvokeItemRec;
+
 typedef struct {
     la_u16 name;
     la_u16 source;
@@ -254,6 +270,7 @@ typedef struct {
     la_u16 *namespace_stack;
     LaLocalRec *locals;
     LaInvokeBindingRec *bindings;
+    LaInvokeItemRec *invoke_items;
     LaValueRec *values;
     LaOperatorRec *operators;
     LaPropertyFrame *frames;
@@ -756,6 +773,8 @@ la_u32 la_workspace_required(const LaLimits *limits)
     total += la_align_size((la_u32)limits->max_locals * sizeof(LaLocalRec));
     total += la_align_size((la_u32)limits->max_invoke_bindings *
                            sizeof(LaInvokeBindingRec));
+    total += la_align_size((la_u32)limits->max_invoke_bindings * 2u *
+                           sizeof(LaInvokeItemRec));
     total += la_align_size((la_u32)limits->max_expression_nodes * sizeof(LaValueRec));
     total += la_align_size((la_u32)limits->max_expression_nodes * sizeof(LaOperatorRec));
     total += la_align_size((la_u32)limits->max_inline_body_bytes + 1);
@@ -7836,207 +7855,347 @@ static int la_reserve_invoke_scratch(LaContext *ctx, la_u16 binding_count,
     return 1;
 }
 
-static int la_emit_invoke_saves(LaContext *ctx,
-                                const LaProcedureRec *procedure,
-                                la_u16 binding_count, la_u16 line,
-                                LaSlice scratch_name, int registers)
+static int la_emit_invoke_save_item(LaContext *ctx,
+                                    const LaProcedureRec *procedure,
+                                    la_u16 bind, la_u16 line,
+                                    LaSlice scratch_name)
 {
-    la_u16 bind;
-    LaSlice owner;
-    owner = la_name_slice(ctx, procedure->name);
-    for (bind = 0; bind < binding_count; ++bind) {
-        LaInvokeBindingRec *binding;
-        LaSlice source;
-        la_u16 width;
-        binding = &ctx->bindings[bind];
-        if (binding->source_kind != LA_SOURCE_PHYSICAL ||
-            binding->elided || binding->is_field ||
-            !binding->needs_scratch) continue;
-        source = la_name_slice(ctx, binding->source);
-        if (la_slice_is_register(ctx, source) != registers) continue;
-        width = la_location_storage_units(ctx, binding->name);
-        if (!la_emit_invoke_operation(
-                ctx, line, LA_TARGET_OP_INVOKE_SAVE, owner,
-                la_name_slice(ctx, ctx->locations[binding->name].name),
-                la_slice("", 0), source, scratch_name,
-                binding->scratch, width, LA_SOURCE_PHYSICAL)) {
-            return 0;
-        }
-    }
-    return 1;
+    LaInvokeBindingRec *binding;
+    la_u16 width;
+    binding = &ctx->bindings[bind];
+    width = la_location_storage_units(ctx, binding->name);
+    return la_emit_invoke_operation(
+        ctx, line, LA_TARGET_OP_INVOKE_SAVE,
+        la_name_slice(ctx, procedure->name),
+        la_name_slice(ctx, ctx->locations[binding->name].name),
+        la_slice("", 0), la_name_slice(ctx, binding->source), scratch_name,
+        binding->scratch, width, LA_SOURCE_PHYSICAL);
 }
 
-/* Field reads happen after register saves and before destination writes,
-   so every base pointer is still intact when it is dereferenced. */
-static int la_emit_invoke_field_reads(LaContext *ctx,
+static int la_emit_invoke_field_item(LaContext *ctx,
+                                     const LaProcedureRec *procedure,
+                                     la_u16 bind, la_u16 line,
+                                     LaSlice scratch_name)
+{
+    LaInvokeBindingRec *binding;
+    LaEvent event;
+    binding = &ctx->bindings[bind];
+    if (!la_count_operation(ctx, line)) return 0;
+    la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
+    event.operation = LA_TARGET_OP_INVOKE_FIELD;
+    event.owner = la_name_slice(ctx, procedure->name);
+    event.path = la_name_slice(ctx, ctx->locations[binding->name].name);
+    event.base = la_name_slice(
+        ctx, ctx->locations[binding->field_base].physical);
+    event.value = binding->field_disp;
+    event.signed_value = binding->field_add;
+    event.stride = binding->field_width;
+    if (binding->field_to_scratch) {
+        event.aux2 = scratch_name;
+        event.offset = binding->scratch;
+        event.count = 1;
+    } else {
+        event.aux = la_name_slice(
+            ctx, ctx->locations[binding->name].physical);
+        event.count = 0;
+    }
+    return la_write_event(ctx, &event);
+}
+
+static int la_emit_invoke_regfield_item(LaContext *ctx,
+                                        const LaProcedureRec *procedure,
+                                        la_u16 bind, la_u16 line)
+{
+    LaInvokeBindingRec *binding;
+    LaEvent event;
+    binding = &ctx->bindings[bind];
+    if (!la_count_operation(ctx, line)) return 0;
+    la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
+    event.operation = LA_TARGET_OP_INVOKE_FIELD;
+    event.owner = la_name_slice(ctx, procedure->name);
+    event.path = la_name_slice(ctx, ctx->locations[binding->name].name);
+    event.base = la_name_slice(
+        ctx, ctx->locations[binding->field_base].physical);
+    event.value = binding->field_disp;
+    event.signed_value = binding->field_add;
+    event.stride = binding->field_width;
+    event.aux = la_name_slice(ctx, ctx->locations[binding->name].physical);
+    event.count = 2;
+    return la_write_event(ctx, &event);
+}
+
+static int la_emit_invoke_assign_item(LaContext *ctx,
                                       const LaProcedureRec *procedure,
-                                      la_u16 binding_count, la_u16 line,
+                                      la_u16 bind, la_u16 line,
                                       LaSlice scratch_name)
 {
-    la_u16 bind;
+    LaInvokeBindingRec *binding;
+    la_u16 width;
     LaSlice owner;
+    LaSlice source;
     owner = la_name_slice(ctx, procedure->name);
-    for (bind = 0; bind < binding_count; ++bind) {
-        LaInvokeBindingRec *binding;
+    binding = &ctx->bindings[bind];
+    width = la_location_storage_units(ctx, binding->name);
+    if (binding->is_word_immediate) {
         LaEvent event;
-        binding = &ctx->bindings[bind];
-        if (!binding->is_field || binding->elided ||
-            binding->field_direct_register) continue;
         if (!la_count_operation(ctx, line)) return 0;
         la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
-        event.operation = LA_TARGET_OP_INVOKE_FIELD;
-        event.owner = owner;
-        event.path = la_name_slice(ctx, ctx->locations[binding->name].name);
+        event.operation = LA_TARGET_OP_MOVW_IMM;
+        event.owner = la_name_slice(ctx,
+                                    ctx->locations[binding->name].name);
         event.base = la_name_slice(
-            ctx, ctx->locations[binding->field_base].physical);
-        event.value = binding->field_disp;
-        event.signed_value = binding->field_add;
-        event.stride = binding->field_width;
-        if (binding->field_to_scratch) {
-            event.aux2 = scratch_name;
-            event.offset = binding->scratch;
-            event.count = 1;
-        } else {
-            event.aux = la_name_slice(
-                ctx, ctx->locations[binding->name].physical);
-            event.count = 0;
-        }
-        if (!la_write_event(ctx, &event)) return 0;
+            ctx, ctx->locations[binding->name].physical);
+        event.signed_value = binding->immediate;
+        event.access_width = 2;
+        return la_write_event(ctx, &event);
     }
-    return 1;
+    if (binding->is_field) {
+        /* Copy the snapshotted field value out of scratch. */
+        return la_emit_invoke_operation(
+            ctx, line, LA_TARGET_OP_INVOKE_ASSIGN, owner,
+            la_name_slice(ctx, ctx->locations[binding->name].name),
+            la_name_slice(ctx, ctx->locations[binding->name].physical),
+            la_slice("", 0), scratch_name,
+            binding->scratch, binding->field_width, LA_SOURCE_PHYSICAL);
+    }
+    if (binding->source_kind == LA_SOURCE_PHYSICAL) {
+        source = la_name_slice(ctx, binding->source);
+    } else {
+        source = la_slice("", 0);
+    }
+    if (binding->source_kind == LA_SOURCE_PHYSICAL &&
+        !binding->needs_scratch) {
+        /* Unconflicted location source: read it directly. */
+        return la_emit_invoke_operation(
+            ctx, line, LA_TARGET_OP_INVOKE_ASSIGN, owner,
+            la_name_slice(ctx, ctx->locations[binding->name].name),
+            la_name_slice(ctx, ctx->locations[binding->name].physical),
+            source, scratch_name, 0, width, 3);
+    }
+    return la_emit_invoke_operation(
+        ctx, line, LA_TARGET_OP_INVOKE_ASSIGN, owner,
+        la_name_slice(ctx, ctx->locations[binding->name].name),
+        la_name_slice(ctx, ctx->locations[binding->name].physical),
+        source, scratch_name,
+        binding->source_kind == LA_SOURCE_PHYSICAL ?
+            binding->scratch : (la_u16)binding->immediate,
+        width, binding->source_kind);
 }
 
-/* Register-destination field reads run after every assignment: each read
-   passes through A, so A-destination reads go last and nothing may write
-   A afterwards. */
-static int la_emit_invoke_register_fields(LaContext *ctx,
-                                          const LaProcedureRec *procedure,
-                                          la_u16 binding_count, la_u16 line)
+/* Marshalling order derives from the items' declared reads, writes and
+   accumulator clobbers: an item that still needs a resource runs before
+   the item that overwrites it, everything that reads the accumulator
+   role runs before anything that passes through it, and the item whose
+   destination is the accumulator runs after every clobber. The legacy
+   class rank only breaks ties between independent items. */
+static int la_invoke_item_must_precede(LaContext *ctx, int accumulator,
+                                       const LaInvokeItemRec *first,
+                                       const LaInvokeItemRec *second)
 {
-    la_u16 pass;
+    if (first->binding == second->binding &&
+        first->kind < second->kind &&
+        second->kind == 2) {
+        return 1;
+    }
+    if (second->write_name != LA_INVALID_HANDLE &&
+        first->read_name != LA_INVALID_HANDLE &&
+        la_slices_equal(la_name_slice(ctx, first->read_name),
+                        la_name_slice(ctx, second->write_name))) {
+        return 1;
+    }
+    if (second->write_register >= 0 &&
+        first->read_register == second->write_register) {
+        return 1;
+    }
+    if (second->via_accumulator && first->read_register == accumulator) {
+        return 1;
+    }
+    if (second->write_register == accumulator &&
+        first->via_accumulator && first != second) {
+        return 1;
+    }
+    return 0;
+}
+
+static int la_emit_invoke_scheduled(LaContext *ctx,
+                                    const LaProcedureRec *procedure,
+                                    la_u16 binding_count, la_u16 line,
+                                    LaSlice scratch_name)
+{
+    LaInvokeItemRec *items;
+    la_u16 item_count;
     la_u16 bind;
-    LaSlice owner;
-    la_u8 pass_count;
-    owner = la_name_slice(ctx, procedure->name);
-    /* Index-role destinations first (reverse declaration order), the
-       accumulator last: every read passes through the accumulator role. */
-    pass_count = ctx->target->register_count;
-    for (pass = 0; pass <= pass_count; ++pass) {
-        int want;
-        want = pass < pass_count ?
-            (int)(pass_count - 1 - pass) : -1;
-        if (want >= 0 &&
-            ctx->target->registers[want].role == LA_REGISTER_ACCUMULATOR) {
-            continue;
-        }
-        for (bind = 0; bind < binding_count; ++bind) {
-            LaInvokeBindingRec *binding;
-            LaSlice dest;
-            LaEvent event;
-            int dest_register;
-            binding = &ctx->bindings[bind];
-            if (!binding->is_field || binding->elided ||
-                !binding->field_direct_register) continue;
-            dest = la_name_slice(ctx,
-                                 ctx->locations[binding->name].physical);
-            dest_register = la_register_lookup(ctx, dest);
-            if (want >= 0) {
-                if (dest_register != want) continue;
-            } else if (dest_register < 0 ||
-                       ctx->target->registers[dest_register].role !=
-                           LA_REGISTER_ACCUMULATOR) {
-                continue;
+    la_u16 emitted;
+    int accumulator;
+    la_u8 index_role_count;
+    items = ctx->invoke_items;
+    item_count = 0;
+    accumulator = -1;
+    index_role_count = 0;
+    {
+        la_u8 scan;
+        for (scan = 0; scan < ctx->target->register_count; ++scan) {
+            if (ctx->target->registers[scan].role ==
+                LA_REGISTER_ACCUMULATOR) {
+                accumulator = (int)scan;
+            } else {
+                ++index_role_count;
             }
-            if (!la_count_operation(ctx, line)) return 0;
-            la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
-            event.operation = LA_TARGET_OP_INVOKE_FIELD;
-            event.owner = owner;
-            event.path = la_name_slice(ctx,
-                                       ctx->locations[binding->name].name);
-            event.base = la_name_slice(
-                ctx, ctx->locations[binding->field_base].physical);
-            event.value = binding->field_disp;
-            event.signed_value = binding->field_add;
-            event.stride = binding->field_width;
-            event.aux = dest;
-            event.count = 2;
-            if (!la_write_event(ctx, &event)) return 0;
         }
     }
-    return 1;
-}
-
-static int la_emit_invoke_assignments(LaContext *ctx,
-                                      const LaProcedureRec *procedure,
-                                      la_u16 binding_count, la_u16 line,
-                                      LaSlice scratch_name)
-{
-    la_u16 bind;
-    LaSlice owner;
-    owner = la_name_slice(ctx, procedure->name);
+    (void)index_role_count;
     for (bind = 0; bind < binding_count; ++bind) {
         LaInvokeBindingRec *binding;
-        la_u16 width;
-        LaSlice source;
+        LaSlice dest;
+        int dest_register;
+        LaInvokeItemRec *item;
         binding = &ctx->bindings[bind];
         if (binding->elided) continue;
-        if (binding->is_field && !binding->field_to_scratch) continue;
-        width = la_location_storage_units(ctx, binding->name);
-        if (binding->is_word_immediate) {
-            LaEvent event;
-            if (!la_count_operation(ctx, line)) return 0;
-            la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
-            event.operation = LA_TARGET_OP_MOVW_IMM;
-            event.owner = la_name_slice(ctx,
-                                        ctx->locations[binding->name].name);
-            event.base = la_name_slice(
-                ctx, ctx->locations[binding->name].physical);
-            event.signed_value = binding->immediate;
-            event.access_width = 2;
-            if (!la_write_event(ctx, &event)) return 0;
+        dest = la_name_slice(ctx, ctx->locations[binding->name].physical);
+        dest_register = la_register_lookup(ctx, dest);
+        if (binding->is_field && binding->field_direct_register) {
+            item = &items[item_count++];
+            memset(item, 0, sizeof(*item));
+            item->kind = 3;
+            item->binding = bind;
+            item->rank = 4;
+            item->subrank = dest_register == accumulator ? 255 :
+                (la_u8)(ctx->target->register_count - 1 - dest_register);
+            item->read_name =
+                ctx->locations[binding->field_base].physical;
+            item->read_register = -1;
+            item->write_name = LA_INVALID_HANDLE;
+            item->write_register = dest_register;
+            item->via_accumulator = 1;
             continue;
         }
         if (binding->is_field) {
-            /* Copy the snapshotted field value out of scratch. */
-            if (!la_emit_invoke_operation(
-                    ctx, line, LA_TARGET_OP_INVOKE_ASSIGN, owner,
-                    la_name_slice(ctx, ctx->locations[binding->name].name),
-                    la_name_slice(ctx,
-                                  ctx->locations[binding->name].physical),
-                    la_slice("", 0), scratch_name,
-                    binding->scratch, binding->field_width,
-                    LA_SOURCE_PHYSICAL)) {
-                return 0;
+            item = &items[item_count++];
+            memset(item, 0, sizeof(*item));
+            item->kind = 1;
+            item->binding = bind;
+            item->rank = 2;
+            item->read_name =
+                ctx->locations[binding->field_base].physical;
+            item->read_register = -1;
+            item->via_accumulator = 1;
+            if (binding->field_to_scratch) {
+                item->write_name = LA_INVALID_HANDLE;
+                item->write_register = -1;
+            } else {
+                item->write_name =
+                    ctx->locations[binding->name].physical;
+                item->write_register = -1;
+                continue; /* Direct field reads need no assignment. */
             }
-            continue;
-        }
-        if (binding->source_kind == LA_SOURCE_PHYSICAL) {
-            source = la_name_slice(ctx, binding->source);
-        } else {
-            source = la_slice("", 0);
         }
         if (binding->source_kind == LA_SOURCE_PHYSICAL &&
-            !binding->needs_scratch) {
-            /* Unconflicted location source: read it directly. */
-            if (!la_emit_invoke_operation(
-                    ctx, line, LA_TARGET_OP_INVOKE_ASSIGN, owner,
-                    la_name_slice(ctx, ctx->locations[binding->name].name),
-                    la_name_slice(ctx,
-                                  ctx->locations[binding->name].physical),
-                    source, scratch_name, 0, width, 3)) {
-                return 0;
+            !binding->is_field && binding->needs_scratch) {
+            LaSlice source;
+            source = la_name_slice(ctx, binding->source);
+            item = &items[item_count++];
+            memset(item, 0, sizeof(*item));
+            item->kind = 0;
+            item->binding = bind;
+            item->read_register = la_register_lookup(ctx, source);
+            if (item->read_register >= 0) {
+                item->rank = 0;
+                item->read_name = LA_INVALID_HANDLE;
+                item->via_accumulator = 0;
+            } else {
+                item->rank = 1;
+                item->read_name = binding->source;
+                item->via_accumulator = 1;
             }
-            continue;
+            item->write_name = LA_INVALID_HANDLE;
+            item->write_register = -1;
         }
-        if (!la_emit_invoke_operation(
-                ctx, line, LA_TARGET_OP_INVOKE_ASSIGN, owner,
-                la_name_slice(ctx, ctx->locations[binding->name].name),
-                la_name_slice(ctx, ctx->locations[binding->name].physical),
-                source, scratch_name,
-                binding->source_kind == LA_SOURCE_PHYSICAL ?
-                    binding->scratch : (la_u16)binding->immediate,
-                width, binding->source_kind)) {
+        item = &items[item_count++];
+        memset(item, 0, sizeof(*item));
+        item->kind = 2;
+        item->binding = bind;
+        item->rank = 3;
+        item->read_register = -1;
+        item->read_name = LA_INVALID_HANDLE;
+        item->write_name = LA_INVALID_HANDLE;
+        item->write_register = dest_register;
+        if (dest_register < 0) {
+            item->write_name = ctx->locations[binding->name].physical;
+        }
+        if (binding->is_word_immediate) {
+            item->via_accumulator = 1;
+        } else if (binding->is_field) {
+            /* Scratch copy through the accumulator unless the
+               destination is a register load. */
+            item->via_accumulator = dest_register < 0;
+        } else if (binding->source_kind == LA_SOURCE_PHYSICAL) {
+            if (!binding->needs_scratch) {
+                item->read_name = binding->source;
+                item->via_accumulator = dest_register < 0;
+            } else {
+                item->via_accumulator = dest_register < 0;
+            }
+        } else {
+            /* Byte immediates: register loads and the custom mov both
+               leave the accumulator alone. */
+            item->via_accumulator = 0;
+        }
+    }
+    for (emitted = 0; emitted < item_count; ++emitted) {
+        int best;
+        la_u16 scan;
+        best = -1;
+        for (scan = 0; scan < item_count; ++scan) {
+            la_u16 other;
+            int ready;
+            if (items[scan].emitted) continue;
+            ready = 1;
+            for (other = 0; other < item_count; ++other) {
+                if (other == scan || items[other].emitted) continue;
+                if (la_invoke_item_must_precede(
+                        ctx, accumulator, &items[other], &items[scan])) {
+                    ready = 0;
+                    break;
+                }
+            }
+            if (!ready) continue;
+            if (best < 0 ||
+                items[scan].rank < items[best].rank ||
+                (items[scan].rank == items[best].rank &&
+                 items[scan].subrank < items[best].subrank) ||
+                (items[scan].rank == items[best].rank &&
+                 items[scan].subrank == items[best].subrank &&
+                 items[scan].binding < items[best].binding)) {
+                best = (int)scan;
+            }
+        }
+        if (best < 0) {
+            la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                    la_slice("no safe marshalling order", 25),
+                    la_slice("", 0), 0, 0);
             return 0;
+        }
+        items[best].emitted = 1;
+        switch (items[best].kind) {
+        case 0:
+            if (!la_emit_invoke_save_item(
+                    ctx, procedure, items[best].binding, line,
+                    scratch_name)) return 0;
+            break;
+        case 1:
+            if (!la_emit_invoke_field_item(
+                    ctx, procedure, items[best].binding, line,
+                    scratch_name)) return 0;
+            break;
+        case 2:
+            if (!la_emit_invoke_assign_item(
+                    ctx, procedure, items[best].binding, line,
+                    scratch_name)) return 0;
+            break;
+        default:
+            if (!la_emit_invoke_regfield_item(
+                    ctx, procedure, items[best].binding, line)) return 0;
+            break;
         }
     }
     return 1;
@@ -8111,16 +8270,8 @@ static int la_parse_invoke(LaContext *ctx,
      * Save registers first. Other snapshots may use A as their load register
      * and must not destroy an unsaved A value.
      */
-    if (!la_emit_invoke_saves(
-            ctx, procedure, binding_count, line, scratch_name, 1) ||
-        !la_emit_invoke_saves(
-            ctx, procedure, binding_count, line, scratch_name, 0) ||
-        !la_emit_invoke_field_reads(
-            ctx, procedure, binding_count, line, scratch_name) ||
-        !la_emit_invoke_assignments(
-            ctx, procedure, binding_count, line, scratch_name) ||
-        !la_emit_invoke_register_fields(
-            ctx, procedure, binding_count, line)) {
+    if (!la_emit_invoke_scheduled(
+            ctx, procedure, binding_count, line, scratch_name)) {
         return -1;
     }
     owner = la_name_slice(ctx, procedure->name);
@@ -9765,6 +9916,10 @@ LaDiagnosticCode la_compile(const LaInput *input,
     ctx.locals = (LaLocalRec *)la_take(
         &cursor, &remaining,
         (la_u32)limits->max_locals * sizeof(LaLocalRec));
+    ctx.invoke_items = (LaInvokeItemRec *)la_take(
+        &cursor, &remaining,
+        (la_u32)limits->max_invoke_bindings * 2u *
+        sizeof(LaInvokeItemRec));
     ctx.bindings = (LaInvokeBindingRec *)la_take(
         &cursor, &remaining,
         (la_u32)limits->max_invoke_bindings * sizeof(LaInvokeBindingRec));
