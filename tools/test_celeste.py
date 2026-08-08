@@ -145,6 +145,7 @@ class Rig:
         self.fade = 0
         c = self.cpu
         c.readers[0x400D] = self._tick
+        c.wai = self._tick            # WAI advances the faked frame clock
         c.readers[0x4007] = lambda: self.buttons
         c.readers[0x400F] = self._rnd
         c.readers[0x4103] = lambda: 0

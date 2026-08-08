@@ -78,6 +78,26 @@
     sta ({zaddr: u8}), #{disp: u8} => 0x9B @ zaddr @ disp
 }
 
+; add-isa-wait: WAI, at the WDC 65C02's own $CB with its meaning adopted.
+;
+; The core halts until the interrupt line rises and resumes at the following
+; instruction - the 65C02's SEI+WAI idiom, and the I flag is set from reset.
+; The chip wires one line: a one-clock pulse on each vsync rising edge, the
+; same edge the PPU's frame counter counts. So `wai` IS wait-for-frame: it
+; replaces a three-instruction poll of $400D, holds the bus quiet for the
+; cycles a paced game spends waiting, and wakes with zero-cycle jitter
+; instead of poll-phase slop. Cycle count is 2 + the wait.
+;
+; The waiting share is most of the frame: celeste profiled headless with
+; --profile-from puts 86.8% of PC samples at the stalled `wai` in room 0
+; and 94.0% on the title screen. The simulator cannot price the quiet bus,
+; though - it advances every clock whether the core stalls or spins, so
+; poll and WAI measure the same frame rate there.
+#ruledef ext_wait
+{
+    wai => 0xCB
+}
+
 ; add-isa-word-ops: AB, a 16-bit accumulator.
 ;
 ; A is the high byte and B the low. A is the high byte because the corpus reads

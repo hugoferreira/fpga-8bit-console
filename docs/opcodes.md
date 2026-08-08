@@ -13,10 +13,10 @@ row.
 
 | | slots |
 | --- | --- |
-| Implemented | 169 |
+| Implemented | 170 |
 | Reserved for 65C02 compatibility | 58 |
-| Extension space, claimed | 18 |
-| Extension space, assigned but unclaimed | 15 |
+| Extension space, claimed | 19 |
+| Extension space, assigned but unclaimed | 14 |
 | Unallocated | 14 |
 | **Total** | **256** |
 
@@ -168,6 +168,7 @@ scored against this column.
 | `$C8` | INY | imp | 1 | 2.00 | 2.00 |
 | `$C9` | CMP | imm | 2 | 2.00 | 2.00 |
 | `$CA` | DEX | imp | 1 | 2.00 | 2.00 |
+| `$CB` | WAI | | | | *add-isa-wait* |
 | `$CC` | CPY | abs | 3 | 4.00 | 4.00 |
 | `$CD` | CMP | abs | 3 | 4.00 | 4.00 |
 | `$CE` | DEC | abs | 3 | 5.00 ◀ | 6.00 |
@@ -285,7 +286,6 @@ option of adopting its 65C02 meaning later.
 | `$7B` | add-isa-test-and-branch |
 | `$AB` | add-isa-pointer-ops |
 | `$BB` | add-isa-pointer-ops |
-| `$CB` | add-isa-pointer-ops |
 | `$DB` | add-isa-pointer-ops |
 | `$EB` | add-isa-pointer-ops |
 | `$FB` | add-isa-pointer-ops |

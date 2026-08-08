@@ -20,6 +20,7 @@ class Sim6502:
         self.b = 0        # low half of the 16-bit accumulator AB
         self.s = 0xFD
         self.trap = None   # last TRAP #imm tag, if any
+        self.wai = None    # WAI wake hook: called once per executed WAI
         self.c = self.z = self.v = self.n = self.d = 0
         self.i = 1
         self.cycles = 0
@@ -195,7 +196,8 @@ class Sim6502:
     # clc/sec, and are binary-only. See docs/opcodes.md.
     EXT = {0x03, 0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73,
            0x8B, 0x9B,                      # add-isa-pointer-ops
-           0x83, 0x93, 0xA3, 0xB3, 0xC3, 0xD3, 0xE3, 0xF3}   # add-isa-word-ops
+           0x83, 0x93, 0xA3, 0xB3, 0xC3, 0xD3, 0xE3, 0xF3,   # add-isa-word-ops
+           0xCB}                            # add-isa-wait: WAI
 
     # add-isa-word-ops, column $x3 high half. AB is the 16-bit accumulator with
     # A the high byte and B the low, and a zero-page operand is little-endian,
@@ -272,6 +274,12 @@ class Sim6502:
                 self.a = self.setnz(self.rd(a))
             else:
                 self.wr(a, self.a)
+        elif op == 0xCB:                     # WAI - sleep until the wake line.
+            # The harness owns time: with no hook the instruction completes
+            # immediately, which is what a rig that fakes the frame clock
+            # wants. A hook models the wake source (the console's vsync).
+            if self.wai is not None:
+                self.wai()
         return True
 
     def _add(self, v, cin):

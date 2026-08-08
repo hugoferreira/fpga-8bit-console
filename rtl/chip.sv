@@ -114,10 +114,14 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
   logic vblank;
   logic vsync_prev;
   
+  // The rising edge is the frame boundary the PPU's frame counter counts,
+  // and now also the WAI wake: one pulse per frame into the CPU's IRQ line.
+  logic vsync_rise;
   always_ff @(posedge clk) begin
     vsync_prev <= vsync;
     // Detect falling edge of vsync (start of VBLANK)
     vblank_start <= vsync_prev && !vsync;
+    vsync_rise <= !vsync_prev && vsync;
   end
   
   // Memory arbiter
@@ -214,7 +218,8 @@ module chip(input logic clk, input logic cpuclk, input logic psgclk,
     // The PSG adds wait-states for state-memory-resident register accesses;
     // both ready sources freeze the core identically. psg_hold extends any
     // PSG-window access to end on a psgclk sampling edge (see the port).
-    .rdy(cpu_rdy && psg_rdy && !(psg_cs && psg_hold))
+    .rdy(cpu_rdy && psg_rdy && !(psg_cs && psg_hold)),
+    .irq(vsync_rise)
   );
 
   // The PPU's tilemap absorbed the old textbuffer; its $F000 window is the

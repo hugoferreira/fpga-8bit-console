@@ -324,6 +324,20 @@ module cpu6502_core (
         endcase
     end
 
+    // The WAI wake latch. Deliberately NOT gated by RDY: the vsync pulse is
+    // one clock wide, and if it lands while the core is stalled the S_WAI
+    // arm never samples it. The latch remembers it until the state machine
+    // actually leaves S_WAI.
+    logic wai_irq;
+    always_ff @(posedge clk) begin
+        if (reset)
+            wai_irq <= 1'b0;
+        else if (st != S_WAI)
+            wai_irq <= 1'b0;
+        else if (IRQ)
+            wai_irq <= 1'b1;
+    end
+
     // ---- branch condition ---------------------------------------------
     logic cond;
     always_comb begin
@@ -421,7 +435,8 @@ module cpu6502_core (
                 // from a flop. The opcode fetch is issued here and re-issued
                 // there: the same address twice, which costs nothing but a
                 // cycle and keeps the access footprint unchanged.
-                AM_IMP, AM_ACC: begin
+                AM_IMP, AM_ACC,
+                AM_WAI: begin
                     ab_c = pc;
                 end
                 AM_IMM:  begin ab_c = pc; pc_upd = 1'b1;  end
@@ -632,6 +647,23 @@ module cpu6502_core (
             ab_c = pc; pc_upd = 1'b1; st_n = S_DECODE;
         end
 
+        // ---- WAI: sleep until the interrupt line rises --------------------
+        // The 65C02's SEI+WAI idiom is the contract: the core halts here and
+        // resumes at the FOLLOWING instruction when IRQ rises - no vector is
+        // taken, because the interrupt path itself remains task 5.x. The wake
+        // is latched below outside the RDY gate, so a pulse that lands while
+        // the core is stalled (vblank DMA overlaps the vsync edge) is held
+        // until the stall lifts rather than lost. While asleep the bus
+        // re-reads the next opcode's address, which is side-effect free: PC
+        // points into code.
+        S_WAI: begin
+            ab_c = pc;
+            if (IRQ || wai_irq) begin
+                pc_upd = 1'b1;
+                st_n = S_DECODE;
+            end
+        end
+
         S_PULL: begin
             if (dec_r.dst == D_P) begin
                 {fn_n, fv_n, fd_n, fi_n, fz_n, fc_n} =
@@ -788,9 +820,10 @@ module cpu6502_core (
     assign dbg_trap_ir = trap_ir;
     assign dbg_trap_pc = trap_pc;
 
-    // IRQ and NMI are accepted but not yet acted on: refactor-cpu-core task 5.x
-    // adds the interrupt path, and 65x02 does not cover it at all.
-    wire _unused = &{1'b0, IRQ, NMI, 1'b0};
+    // IRQ's first consumer is WAI's wake, above. The interrupt VECTOR path -
+    // pushing state and jumping through $FFFE - remains refactor-cpu-core
+    // task 5.x, and 65x02 does not cover it at all. NMI stays unconsumed.
+    wire _unused = &{1'b0, NMI, 1'b0};
 
 endmodule
 

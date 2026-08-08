@@ -53,6 +53,8 @@ typedef enum logic [4:0] {
     // --- add-isa-word-ops: the 16-bit accumulator AB (A high, B low) ---
     AM_WZP,      // 16-bit operand at a zero-page pair, little-endian
     AM_WIMM,     // 16-bit immediate
+    // --- add-isa-wait ---
+    AM_WAI,      // halt until the interrupt line rises
     AM_TRAP      // no row: undefined opcode
 } amode_t;
 
@@ -116,7 +118,8 @@ typedef enum logic [5:0] {
     S_MVX0, S_MVX1, S_MVX2, S_MVX3,
     S_IDD0, S_IDD1, S_IDD2, S_IDD3,
     S_W0, S_W1, S_W2, S_WS1,
-    S_WI0, S_WI1
+    S_WI0, S_WI1,
+    S_WAI
 } state_t;
 
 typedef struct packed {
@@ -187,6 +190,7 @@ module cpu6502_decode (
             AM_INDD:                   st_of = S_IDD0;
             AM_WZP:                    st_of = S_W0;
             AM_WIMM:                   st_of = S_WI0;
+            AM_WAI:                    st_of = S_WAI;
             default:                   st_of = S_DECODE;   // AM_TRAP: inert
         endcase
     endfunction
@@ -398,6 +402,14 @@ module cpu6502_decode (
         // 33 distinct 16-bit variables - the integer part of an 8.8 value - and
         // every existing 8-bit instruction already operates on A.
         // Memory operands are little-endian pairs, as the corpus stores them.
+        // ---- add-isa-wait ----
+        // $CB is the WDC 65C02's own WAI encoding, adopted with its meaning:
+        // the SEI+WAI idiom. The core halts until IRQ rises, then resumes at
+        // the following instruction; the interrupt VECTOR path remains
+        // refactor-cpu-core task 5.x, so with I set (which reset leaves set)
+        // this is a pure sleep-until-wake.
+        8'hCB: d = row(AM_WAI,  OP_NOP,  R_NONE, D_NONE);   // WAI
+
         8'h83: d = row(AM_WZP,  OP_LDW,  R_NONE, D_NONE);   // LDAB zp
         8'h93: d = row(AM_WZP,  OP_STW,  R_NONE, D_NONE);   // STAB zp
         8'hA3: d = row(AM_WIMM, OP_LDW,  R_NONE, D_NONE);   // LDAB #imm16

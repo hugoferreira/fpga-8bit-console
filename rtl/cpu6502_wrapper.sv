@@ -37,12 +37,13 @@ module cpu6502(
   // rtl/cpu6502_core.sv.
   output bit         write_pend,
   // New signal - exposes RDY pin for memory arbiter
-  input  bit         rdy
+  input  bit         rdy,
+  // The interrupt request line. Its one consumer today is the WAI wake; the
+  // vector path remains refactor-cpu-core section 5.
+  input  bit         irq
 );
 
-  // Interrupts are accepted by the core and not yet acted on; the vectors are
-  // unused by every game in this repo. refactor-cpu-core section 5 wires them.
-  wire IRQ = 1'b0;
+  wire IRQ = irq;
   wire NMI = 1'b0;
 
   cpu6502_core core(

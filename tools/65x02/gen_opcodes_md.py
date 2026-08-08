@@ -48,6 +48,10 @@ for _op in range(0x03, 0x80, 0x10): EXTENSION[_op] = "add-isa-core-ergonomics"
 for _op in range(0x83, 0x100, 0x10): EXTENSION[_op] = "add-isa-word-ops"
 for _op in range(0x0B, 0x80, 0x10): EXTENSION[_op] = "add-isa-test-and-branch"
 for _op in range(0x8B, 0x100, 0x10): EXTENSION[_op] = "add-isa-pointer-ops"
+# $CB is the WDC 65C02's WAI; claimed with its meaning adopted, which is the
+# one claim of a WDC encoding that PRESERVES compatibility rather than
+# burning it.
+EXTENSION[0xCB] = "add-isa-wait"
 EXTENSION[0x02] = "add-isa-frame-pointer (prefix, opens a second 256-slot page)"
 
 
