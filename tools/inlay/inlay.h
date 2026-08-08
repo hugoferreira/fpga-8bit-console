@@ -437,6 +437,28 @@ typedef struct {
     la_u8 role;
 } LaRegisterDesc;
 
+/* Families of typed-operation parsing a spelling can participate in.
+   The description claims spellings; the core orders the families. */
+enum {
+    LA_SPELL_OFFSET_MATERIALIZE  = 0x0001,
+    LA_SPELL_QUALIFIED_IMMEDIATE = 0x0002,
+    LA_SPELL_OVERLAY_STORE_IMM   = 0x0004,
+    LA_SPELL_OVERLAY_BRANCH      = 0x0008,
+    LA_SPELL_FRAME_POINTER_MOVE  = 0x0010,
+    LA_SPELL_LOCAL_OPERATION     = 0x0020,
+    LA_SPELL_WORD_TRANSFER       = 0x0040,
+    LA_SPELL_WORD_ARITHMETIC     = 0x0080,
+    LA_SPELL_BYTE_RMW            = 0x0100,
+    LA_SPELL_OBSERVATION         = 0x0200,
+    LA_SPELL_WORD_MOVE           = 0x0400,
+    LA_SPELL_TYPED_OPERATION     = 0x0800
+};
+
+typedef struct {
+    const char *spelling;
+    la_u16 families;
+} LaSpellingDesc;
+
 typedef struct {
     const char *name;
     la_u8 storage_unit_bits;
@@ -462,6 +484,8 @@ typedef struct {
     LaByteOrder code_pointer_byte_order;
     const LaRegisterDesc *registers;
     la_u8 register_count;
+    const LaSpellingDesc *spellings;
+    la_u16 spelling_count;
 } LaTarget;
 
 typedef struct {

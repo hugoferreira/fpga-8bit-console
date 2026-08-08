@@ -367,6 +367,35 @@ static void emit_scoped_raw(FILE *file, LaSlice text)
     end = text.data + text.length;
     quote = 0;
     escaped = 0;
+    /* The operation position expects an opcode: the first token is
+       emitted verbatim, dots included, and is never a candidate for
+       qualified-name rewriting. */
+    {
+        const char *token;
+        token = cursor;
+        while (token < end && (*token == ' ' || *token == '\t')) ++token;
+        if (token < end &&
+            ((*token >= 'A' && *token <= 'Z') ||
+             (*token >= 'a' && *token <= 'z') || *token == '_')) {
+            const char *token_end;
+            const char *after;
+            token_end = token;
+            while (token_end < end &&
+                   ((*token_end >= 'A' && *token_end <= 'Z') ||
+                    (*token_end >= 'a' && *token_end <= 'z') ||
+                    (*token_end >= '0' && *token_end <= '9') ||
+                    *token_end == '_' || *token_end == '.')) {
+                ++token_end;
+            }
+            after = token_end;
+            while (after < end && (*after == ' ' || *after == '\t')) ++after;
+            /* An equate's first token stays eligible for rewriting. */
+            if (!(after < end && *after == '=')) {
+                fwrite(cursor, 1, (size_t)(token_end - cursor), file);
+                cursor = token_end;
+            }
+        }
+    }
     while (cursor < end) {
         const char *start;
         const char *scan;

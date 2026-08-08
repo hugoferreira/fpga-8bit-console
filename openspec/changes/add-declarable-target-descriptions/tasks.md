@@ -1,31 +1,31 @@
 ## 1. Description structure and digest harness
 
-- [ ] 1.1 Define the description structure (machine facts, registers
+- [x] 1.1 Define the description structure (machine facts, registers
       and roles, conventions, scratch, operation entries, frame model,
       strategies) and its bounded loading into the existing workspace
       model, with limits and stable diagnostic codes
-- [ ] 1.2 Build the digest-identity harness: a forced Celeste build
+- [x] 1.2 Build the digest-identity harness: a forced Celeste build
       compared against the recorded pre-migration digest, wired into
       conformance so every later phase is gated on byte neutrality
-- [ ] 1.3 Author the console6502 description skeleton carrying the
+- [x] 1.3 Author the console6502 description skeleton carrying the
       facts `LaTarget` already declares (byte order, pointer units,
       displacement window, conventions, scratch prefix and units,
       capability set)
 
 ## 2. Registers, roles, conventions, scratch
 
-- [ ] 2.1 Move register names and roles into the description; replace
+- [x] 2.1 Move register names and roles into the description; replace
       `la_slice_is_register` and every core register-name comparison
       with description lookups
-- [ ] 2.2 Move the omitted-placement convention walk and scratch
+- [x] 2.2 Move the omitted-placement convention walk and scratch
       naming into description data; digest gate
 
 ## 3. Operation spellings and constraints
 
-- [ ] 3.1 Replace the parser's hardcoded mnemonic dispatch with a
+- [x] 3.1 Replace the parser's hardcoded mnemonic dispatch with a
       spelling table from the description; unclaimed spellings fall
       through to raw
-- [ ] 3.1a Make operation-position tokenization greedy through dots
+- [x] 3.1a Make operation-position tokenization greedy through dots
       and exempt the first token from scoped-raw qualification, with
       tests covering a dotted spelling, a dotted spelling beside a
       qualified operand, and `.local:` definitions staying labels

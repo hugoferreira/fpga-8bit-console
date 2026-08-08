@@ -316,12 +316,52 @@ static const LaRegisterDesc la_console6502_registers[] = {
     {"y", LA_REGISTER_INDEX}
 };
 
+static const LaSpellingDesc la_console6502_spellings[] = {
+    {"mov",  LA_SPELL_OFFSET_MATERIALIZE | LA_SPELL_QUALIFIED_IMMEDIATE |
+             LA_SPELL_OVERLAY_STORE_IMM | LA_SPELL_FRAME_POINTER_MOVE},
+    {"offset", LA_SPELL_OFFSET_MATERIALIZE},
+    {"cmp",  LA_SPELL_QUALIFIED_IMMEDIATE | LA_SPELL_TYPED_OPERATION},
+    {"lda",  LA_SPELL_LOCAL_OPERATION | LA_SPELL_TYPED_OPERATION},
+    {"sta",  LA_SPELL_LOCAL_OPERATION | LA_SPELL_TYPED_OPERATION},
+    {"stx",  LA_SPELL_TYPED_OPERATION},
+    {"sty",  LA_SPELL_TYPED_OPERATION},
+    {"ldx",  LA_SPELL_TYPED_OPERATION},
+    {"ldy",  LA_SPELL_TYPED_OPERATION},
+    {"add",  LA_SPELL_TYPED_OPERATION},
+    {"sub",  LA_SPELL_TYPED_OPERATION},
+    {"adc",  LA_SPELL_TYPED_OPERATION},
+    {"sbc",  LA_SPELL_TYPED_OPERATION},
+    {"and",  LA_SPELL_BYTE_RMW | LA_SPELL_TYPED_OPERATION},
+    {"ora",  LA_SPELL_BYTE_RMW | LA_SPELL_TYPED_OPERATION},
+    {"inc",  LA_SPELL_BYTE_RMW},
+    {"dec",  LA_SPELL_BYTE_RMW},
+    {"ldw",  LA_SPELL_WORD_TRANSFER},
+    {"stw",  LA_SPELL_WORD_TRANSFER},
+    {"addw", LA_SPELL_WORD_ARITHMETIC},
+    {"subw", LA_SPELL_WORD_ARITHMETIC},
+    {"cmpw", LA_SPELL_WORD_ARITHMETIC},
+    {"decz", LA_SPELL_OBSERVATION},
+    {"tstw", LA_SPELL_OBSERVATION},
+    {"movw", LA_SPELL_WORD_MOVE},
+    {"cbeq", LA_SPELL_OVERLAY_BRANCH},
+    {"cbne", LA_SPELL_OVERLAY_BRANCH},
+    {"cblt", LA_SPELL_OVERLAY_BRANCH},
+    {"cble", LA_SPELL_OVERLAY_BRANCH},
+    {"cbgt", LA_SPELL_OVERLAY_BRANCH},
+    {"cbge", LA_SPELL_OVERLAY_BRANCH},
+    {"tbz",  LA_SPELL_OVERLAY_BRANCH},
+    {"tbnz", LA_SPELL_OVERLAY_BRANCH}
+};
+
 const LaTarget la_target_console6502 = {
     "console6502", 8, 2, 255, LA_TARGET_VERSION,
     la_console6502_conventions, 1,
     "t", 8, 0, 0, 16, 1, 1, 1, LA_BYTE_ORDER_LITTLE, "ab", 1, 1, 1,
     2, LA_BYTE_ORDER_LITTLE,
-    la_console6502_registers, 3
+    la_console6502_registers, 3,
+    la_console6502_spellings,
+    (la_u16)(sizeof(la_console6502_spellings) /
+             sizeof(la_console6502_spellings[0]))
 };
 
 static la_u32 la_align_size(la_u32 value)
@@ -8915,10 +8955,46 @@ static int la_process_operation_line(LaContext *ctx, const char *cursor,
     const char *save_content;
     la_u16 resolved_length;
     int resolved;
+    la_u16 families;
     data_emitted = 0;
     /* Parsers fill only the fields they own; start from a zeroed event so
        unset fields are deterministic. */
     memset(&event, 0, sizeof(event));
+    /* The operation position expects an opcode: the first token lexes
+       greedily through dots and selects the parser families the target
+       description claims for that spelling. A first token followed by
+       '=' is an equate, not an opcode; an unclaimed spelling skips every
+       typed family and falls through to raw. */
+    families = 0;
+    {
+        const char *token_start;
+        const char *token_end;
+        const char *after;
+        token_start = la_trim_left(cursor, content_end);
+        token_end = token_start;
+        if (token_end < content_end && la_is_ident_start(*token_end)) {
+            while (token_end < content_end &&
+                   (la_is_ident(*token_end) || *token_end == '.')) {
+                ++token_end;
+            }
+            after = la_trim_left(token_end, content_end);
+            if (!(after < content_end && *after == '=')) {
+                la_u16 index;
+                for (index = 0; index < ctx->target->spelling_count;
+                     ++index) {
+                    const char *spelling;
+                    spelling = ctx->target->spellings[index].spelling;
+                    if ((la_u16)(token_end - token_start) ==
+                            (la_u16)strlen(spelling) &&
+                        memcmp(token_start, spelling,
+                               (size_t)(token_end - token_start)) == 0) {
+                        families = ctx->target->spellings[index].families;
+                        break;
+                    }
+                }
+            }
+        }
+    }
     /* Resolve bare enclosing-namespace names once, up front, so every
        typed parser (placements, mov/word operands, brackets) sees the
        same qualified spelling the scoped-raw path already resolves. */
@@ -8943,27 +9019,27 @@ static int la_process_operation_line(LaContext *ctx, const char *cursor,
     typed = la_parse_procedure_data(
         ctx, cursor, content_end, line, 1);
     if (typed > 0) data_emitted = 1;
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_OFFSET_MATERIALIZE)) {
         typed = la_parse_offset_materialization(
             ctx, cursor, content_end, line, &event);
     }
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_QUALIFIED_IMMEDIATE)) {
         typed = la_parse_qualified_immediate(
             ctx, cursor, content_end, line, &event);
     }
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_OVERLAY_STORE_IMM)) {
         typed = la_parse_overlay_store_immediate(
             ctx, cursor, content_end, line, &event);
     }
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_OVERLAY_BRANCH)) {
         typed = la_parse_overlay_branch(
             ctx, cursor, content_end, line, &event);
     }
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_FRAME_POINTER_MOVE)) {
         typed = la_parse_frame_pointer_move(
             ctx, cursor, content_end, line, &event);
     }
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_LOCAL_OPERATION)) {
         typed = la_parse_local_operation(ctx, cursor, content_end,
                                          line, &event);
     }
@@ -8971,27 +9047,27 @@ static int la_process_operation_line(LaContext *ctx, const char *cursor,
         typed = la_parse_pool_address(ctx, cursor, content_end,
                                       line, &event);
     }
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_WORD_TRANSFER)) {
         typed = la_parse_typed_word_operation(
             ctx, cursor, content_end, line, &event);
     }
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_WORD_ARITHMETIC)) {
         typed = la_parse_physical_word_arithmetic(
             ctx, cursor, content_end, line, &event);
     }
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_BYTE_RMW)) {
         typed = la_parse_typed_byte_rmw(
             ctx, cursor, content_end, line, &event);
     }
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_OBSERVATION)) {
         typed = la_parse_observation_operation(
             ctx, cursor, content_end, line, &event);
     }
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_WORD_MOVE)) {
         typed = la_parse_word_move(
             ctx, cursor, content_end, line, &event);
     }
-    if (typed == 0) {
+    if (typed == 0 && (families & LA_SPELL_TYPED_OPERATION)) {
         typed = la_parse_typed_operation(ctx, cursor, content_end,
                                          line, &event);
     }

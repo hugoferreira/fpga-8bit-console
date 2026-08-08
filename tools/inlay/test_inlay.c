@@ -1334,6 +1334,45 @@ static void test_invoke_extensions(void)
         "tail invoke of inline rejected");
 }
 
+static void test_spelling_dispatch(void)
+{
+    LaLimits limits;
+    limits = la_default_limits();
+    /* A dotted first token lexes as one opcode: it is not qualified-name
+       rewritten and, unclaimed by the description, falls through to raw. */
+    expect_ok(
+        "namespace N using console6502\n"
+        "proc t naked\n"
+        "begin\n"
+        "    foo.w bar\n"
+        ".done:\n"
+        "    ret\n"
+        "end\n"
+        "end\n",
+        limits, "dotted mnemonic falls through to raw");
+    /* An equate-shaped first token is not an opcode. */
+    expect_ok(
+        "SOME_BASE = 20480\n"
+        "namespace N using console6502\n"
+        "proc t naked\n"
+        "begin\n"
+        "    ret\n"
+        "end\n"
+        "end\n",
+        limits, "equate first token stays an equate");
+    /* A claimed spelling still routes to its family. */
+    expect_error(
+        "struct O packed\ntimer : u8\nend\n"
+        "location p : ptr O\n"
+        "proc t naked\n"
+        "    self : ptr O in p\n"
+        "begin\n"
+        "    decz [self + O.timer]\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_SYNTAX, "claimed spelling still dispatches");
+}
+
 static void test_method_tables(void)
 {
     LaLimits limits;
@@ -2600,6 +2639,7 @@ int main(void)
     test_inline_procedures();
     test_invoke_extensions();
     test_namespace_defaults();
+    test_spelling_dispatch();
     test_method_tables();
     test_semantic_errors();
     test_comments_and_pointer_fields();
