@@ -230,7 +230,13 @@ int main(int argc, char** argv) {
     want.channels = 1;
     want.samples = 1024;
     adev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
-    if (adev) SDL_PauseAudioDevice(adev, 0);
+    if (adev) {
+        // Prime the queue with four frames of silence so the steady-state
+        // level sits away from the dry line instead of starting on it.
+        static const int16_t prime_buf[4 * 735] = {0};
+        SDL_QueueAudio(adev, prime_buf, sizeof prime_buf);
+        SDL_PauseAudioDevice(adev, 0);
+    }
     else fprintf(stderr, "audio disabled: %s\n", SDL_GetError());
     tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888,
         SDL_TEXTUREACCESS_STREAMING, W, H);
@@ -242,7 +248,8 @@ int main(int argc, char** argv) {
     abuf.reserve(1024);
     std::vector<int16_t> wavbuf;          // every sample the console produced
     long adropped = 0, aqueued = 0;       // frames handed to SDL, and thrown away
-    long aunderrun = 0;                   // frames where the queue had run dry
+    long aunderrun = 0;                   // frames with under 2 frames queued
+    long adry = 0;                        // frames where the device truly starved
     long aerr = 0;                        // 735 samples per 19481 pixels
     long asamples = 0, anonzero = 0;      // headless audio activity check
     int amin = 32767, amax = -32768;
@@ -387,9 +394,13 @@ int main(int argc, char** argv) {
                 // the device plays silence until the next frame arrives. The
                 // drop on the other side is silent too - the frame's samples
                 // are discarded, not deferred, so the music skips forward.
+                // The cap is 8 frames (133 ms of latency headroom): the old
+                // 4-frame cap held the operating level against the dry line,
+                // so every pacing wobble crossed it.
                 Uint32 queued = SDL_GetQueuedAudioSize(adev);
                 if (queued < (Uint32)(2 * 735 * 2)) aunderrun++;
-                if (queued < 4 * 735 * 2) {
+                if (queued == 0 && frame > 60) adry++;
+                if (queued < 8 * 735 * 2) {
                     SDL_QueueAudio(adev, abuf.data(),
                                    (Uint32)(abuf.size() * sizeof(int16_t)));
                     aqueued++;
@@ -404,8 +415,16 @@ int main(int argc, char** argv) {
             SDL_RenderCopy(ren, tex, nullptr, nullptr);
             SDL_RenderPresent(ren);
 
-            // Lock to 60 fps: coarse sleep, spin the last stretch
+            // Lock to 60 fps: coarse sleep, spin the last stretch. When the
+            // sim falls more than two frames behind the absolute schedule,
+            // SLIP the schedule instead of sprinting to catch up - the
+            // sprint produced audio faster than the device drains it, so
+            // the catch-up frames were queued into a full buffer and
+            // dropped: an audible skip bought with extra work.
             auto target = t0 + std::chrono::microseconds(16667LL * frame);
+            auto now0 = clockk::now();
+            if (now0 > target + std::chrono::microseconds(2 * 16667LL))
+                t0 += now0 - target;
             for (;;) {
                 auto now = clockk::now();
                 if (now >= target) break;
@@ -451,9 +470,10 @@ int main(int argc, char** argv) {
         // samples are.
         double secs = std::chrono::duration<double>(clockk::now() - t0).count();
         printf("audio delivery: %ld frames queued, %ld dropped (queue full), "
-               "%ld frames with the queue near-dry; produced %.0f samples/s for "
-               "a %d Hz device (%.0f%% of real time)\n",
-               aqueued, adropped, aunderrun, secs > 0 ? asamples / secs : 0.0,
+               "%ld frames with the queue near-dry, %ld truly starved; "
+               "produced %.0f samples/s for a %d Hz device (%.0f%% of real time)\n",
+               aqueued, adropped, aunderrun, adry,
+               secs > 0 ? asamples / secs : 0.0,
                44100, secs > 0 ? 100.0 * asamples / secs / 44100 : 0.0);
     }
     if (profile_from >= 0) {

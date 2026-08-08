@@ -288,7 +288,7 @@ $(SIM_BIN): sim/console.cpp rtl/*.sv rtl/*.svh rtl/*.bin rtl/*.hex
 		-GPSGSIMDIV=$(PSGSIMDIV) -GPSG_CLK_DIV=$(PSG_CLK_DIV) \
 		--exe $(abspath sim/console.cpp) -o console --build -j 8 \
 		-Mdir build/obj_dir \
-		-CFLAGS "-O2 -DPSGSIMDIV=$(PSGSIMDIV) $$(sdl2-config --cflags)" \
+		-CFLAGS "-O3 -DPSGSIMDIV=$(PSGSIMDIV) $$(sdl2-config --cflags)" \
 		-LDFLAGS "$$(sdl2-config --libs)"
 
 # build/$(GAME).sym only exists for customasm games (see GAME_ASM above); pass
