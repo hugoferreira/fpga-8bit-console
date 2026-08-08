@@ -119,6 +119,7 @@ typedef struct {
     la_u16 source_id;
     la_u16 line;
     la_u16 end_line;
+    la_u16 default_convention;
 } LaNamespaceRec;
 
 typedef struct {
@@ -675,6 +676,7 @@ static LaDiagnosticCode la_parse_namespace(LaContext *ctx,
     la_u16 name;
     la_u16 index;
     LaNamespaceRec *record;
+    la_u16 default_convention;
     cursor = la_trim_left(start, end) + 9;
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
@@ -682,10 +684,37 @@ static LaDiagnosticCode la_parse_namespace(LaContext *ctx,
                        la_slice("", 0), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
+    default_convention = LA_INVALID_HANDLE;
+    if (la_take_word(&cursor, end, "using")) {
+        const char *convention_start;
+        la_u16 convention_length;
+        cursor = la_trim_left(cursor, end);
+        if (!la_read_identifier(&cursor, end, &convention_start,
+                                &convention_length)) {
+            return la_fail(ctx, LA_ERR_CONVENTION, line, 1, 1,
+                           la_slice("convention", 10), la_slice("", 0), 0, 0);
+        }
+        for (index = 0; index < ctx->target->convention_count; ++index) {
+            if (la_equal_text(convention_start, convention_length,
+                              ctx->target->conventions[index].name)) {
+                default_convention = index;
+                break;
+            }
+        }
+        if (default_convention == LA_INVALID_HANDLE) {
+            return la_fail(ctx, LA_ERR_CONVENTION, line, 1,
+                           convention_length,
+                           la_slice(convention_start, convention_length),
+                           la_slice(ctx->target->name,
+                                    (la_u16)strlen(ctx->target->name)),
+                           0, 0);
+        }
+        cursor = la_trim_left(cursor, end);
+    }
     if (cursor != end) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1,
                        (la_u16)(end - cursor),
-                       la_slice("namespace NAME", 14),
+                       la_slice("namespace NAME [using CONVENTION]", 33),
                        la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
     }
     if (ctx->namespace_depth >= ctx->limits->max_nesting) {
@@ -718,11 +747,38 @@ static LaDiagnosticCode la_parse_namespace(LaContext *ctx,
     record->source_id = la_source_id_at_line(ctx, line);
     record->line = line;
     record->end_line = 0;
+    record->default_convention = default_convention;
     ctx->current_namespace = ctx->namespace_count++;
     ctx->stats->namespaces = ctx->namespace_count;
     if (ctx->namespace_depth > ctx->stats->nesting) {
         ctx->stats->nesting = ctx->namespace_depth;
     }
+    return LA_OK;
+}
+
+static LaDiagnosticCode la_record_export(LaContext *ctx, la_u16 name,
+                                         la_u16 line)
+{
+    la_u16 index;
+    if (ctx->export_count >= ctx->limits->max_exports) {
+        return la_fail(ctx, LA_ERR_EXPORT_CAPACITY, line, 1, 1,
+                       la_name_slice(ctx, name),
+                       la_slice("exports", 7), ctx->export_count + 1,
+                       ctx->limits->max_exports);
+    }
+    for (index = 0; index < ctx->export_count; ++index) {
+        if (ctx->exports[index].name == name) {
+            return la_fail(ctx, LA_ERR_DUPLICATE_EXPORT, line, 1, 1,
+                           la_name_slice(ctx, name),
+                           la_slice("", 0), 0, 0);
+        }
+    }
+    ctx->exports[ctx->export_count].name = name;
+    ctx->exports[ctx->export_count].source_id =
+        la_source_id_at_line(ctx, line);
+    ctx->exports[ctx->export_count].line = line;
+    ++ctx->export_count;
+    ctx->stats->exports = ctx->export_count;
     return LA_OK;
 }
 
@@ -755,28 +811,10 @@ static LaDiagnosticCode la_parse_export(LaContext *ctx,
                        (la_u16)(end - cursor), la_slice("export NAME", 11),
                        la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
     }
-    if (ctx->export_count >= ctx->limits->max_exports) {
-        return la_fail(ctx, LA_ERR_EXPORT_CAPACITY, line, 1, name_length,
-                       la_slice(name_start, name_length),
-                       la_slice("exports", 7), ctx->export_count + 1,
-                       ctx->limits->max_exports);
-    }
     name = la_intern_qualified(ctx, name_start, name_length, line, 1);
     if (name == LA_INVALID_HANDLE) return ctx->error;
-    for (index = 0; index < ctx->export_count; ++index) {
-        if (ctx->exports[index].name == name) {
-            return la_fail(ctx, LA_ERR_DUPLICATE_EXPORT, line, 1,
-                           name_length, la_name_slice(ctx, name),
-                           la_slice("", 0), 0, 0);
-        }
-    }
-    ctx->exports[ctx->export_count].name = name;
-    ctx->exports[ctx->export_count].source_id =
-        la_source_id_at_line(ctx, line);
-    ctx->exports[ctx->export_count].line = line;
-    ++ctx->export_count;
-    ctx->stats->exports = ctx->export_count;
-    return LA_OK;
+    (void)index;
+    return la_record_export(ctx, name, line);
 }
 
 static int la_parse_constant(LaContext *ctx, const char *start,
@@ -2192,6 +2230,10 @@ static LaDiagnosticCode la_parse_procedure(LaContext *ctx,
     if (procedure->name == LA_INVALID_HANDLE) return ctx->error;
     procedure->convention = LA_INVALID_HANDLE;
     cursor = la_trim_left(cursor, end);
+    if (la_take_word(&cursor, end, "export")) {
+        if (la_record_export(ctx, name, line) != LA_OK) return ctx->error;
+        cursor = la_trim_left(cursor, end);
+    }
     if (la_take_word(&cursor, end, "inline")) {
         procedure->is_inline = 1;
         cursor = la_trim_left(cursor, end);
@@ -2224,6 +2266,19 @@ static LaDiagnosticCode la_parse_procedure(LaContext *ctx,
                            0, 0);
         }
         procedure->convention = convention_index;
+    }
+    if (procedure->convention == LA_INVALID_HANDLE) {
+        la_u16 scope;
+        scope = ctx->current_namespace;
+        while (scope != LA_INVALID_HANDLE) {
+            if (ctx->namespaces[scope].default_convention !=
+                LA_INVALID_HANDLE) {
+                procedure->convention =
+                    ctx->namespaces[scope].default_convention;
+                break;
+            }
+            scope = ctx->namespaces[scope].parent;
+        }
     }
     cursor = la_trim_left(cursor, end);
     if (procedure->is_inline && cursor != end) {

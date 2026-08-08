@@ -405,7 +405,7 @@ static_assert $0030 + GameState.camera_y.offset == $003e
 static_assert $0030 + GameState.buttons.offset == $0040
 static_assert $0030 + GameState.start_game_flash.offset == $004d
 
-namespace Machine
+namespace Machine using console6502
     export t0
     export t1
     export t2

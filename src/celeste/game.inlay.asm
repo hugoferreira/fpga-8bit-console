@@ -6,7 +6,7 @@
 ; overlay; these procedures require no hidden stack locals.
 ; ------------------------------------------------------------------------------
 
-namespace Game
+namespace Game using console6502
     export run
     export frame
     location frames : u8 at $30
@@ -41,7 +41,7 @@ namespace Game
 
 ; Inputs: none. Returns: never. Frame locals: none. Clobbers: all game-visible
 ; volatile state.
-proc run using console6502
+proc run
 begin
     jsr Room.init
     jsr Draw.overlay_init
@@ -78,7 +78,7 @@ end
 
 ; Inputs: none. Returns: none. Frame locals: none. Clobbers: A, X, Y and
 ; subsystem-declared volatile scratch.
-proc frame using console6502
+proc frame
 begin
     jsr Platform.wait_frame     ; PICO-8 _update is 30 Hz; the display is 60,
     jsr Draw.overlay_phase      ; so one game frame spans two display frames.
@@ -90,7 +90,7 @@ begin
 end
 
 ; Inputs: none. Returns: by tail transfer. Frame locals: none. Clobbers: A.
-proc show_title using console6502
+proc show_title
 begin
     lda #0
     sta [game.frames]
@@ -105,7 +105,7 @@ begin
 end
 
 ; Inputs: none. Returns: by tail transfer. Frame locals: none. Clobbers: A.
-proc begin_play using console6502
+proc begin_play
 begin
     lda #0
     sta [game.frames]
@@ -121,7 +121,7 @@ end
 
 ; Inputs: none. Returns: none. Frame locals: none. Clobbers: A, X, Y and
 ; subsystem-declared volatile scratch.
-proc update using console6502
+proc update
 begin
     inc [game.frames]                  ; frames = (frames + 1) % 30
     cblt [game.frames], #30, .clock
@@ -198,7 +198,7 @@ begin
 end
 
 ; Inputs: none. Returns: none. Frame locals: none. Clobbers: A.
-proc title_tick using console6502
+proc title_tick
 begin
     jsr Room.title
     beq .title

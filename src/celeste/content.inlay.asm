@@ -6,7 +6,7 @@
 ; as the stage-1 engine; no room-specific gameplay code lives in the loader.
 ; ------------------------------------------------------------------------------
 
-namespace Berries
+namespace Berries using console6502
     export clear
     export collected
     export take
@@ -14,7 +14,7 @@ namespace Berries
 bit_mask:
     #d8 $01, $02, $04, $08, $10, $20, $40, $80
 
-proc clear using console6502
+proc clear
 begin
     lda #0
     ldx #3
@@ -27,7 +27,7 @@ end
 
 ; A/Z says whether the current level's strawberry has already been collected.
 ; Levels 0..31 fit in the four-byte persistent bitset.
-proc collected using console6502
+proc collected
 begin
     lda [game.level]
     cmp #32
@@ -48,7 +48,7 @@ begin
     ret
 end
 
-proc collect using console6502
+proc collect
 begin
     lda [game.level]
     cmp #32
@@ -70,7 +70,7 @@ end
 
 ; Collect the receiver after Collision.object has left the player in
 ; Machine.other. The life-up allocation intentionally reuses the just-freed slot.
-proc take using console6502
+proc take
     self : ptr CelesteObject in Machine.object
 begin
     mov y, offset CelesteObject.payload.player.dash_jumps
@@ -95,12 +95,12 @@ end
 cel_bob:
     #d8 0, 1, 1, 2, 2, 2, 1, 1, 0, $FF, $FF, $FE, $FE, $FE, $FF, $FF
 
-namespace Spring
+namespace Spring using console6502
     export init
     export update
     export draw
 
-proc init using console6502
+proc init
 begin
     lda #0
     sta [Machine.object.payload.extra.state]
@@ -112,7 +112,7 @@ end
 ; The cart's spring: hide_for in extra.timer, the post-bounce delay in
 ; extra.value, and break_spring's hide_in fuse in extra.state - lit by a
 ; breaking fall floor underneath (Floor.break writes it).
-proc update using console6502
+proc update
 begin
     lda [Machine.object.payload.extra.timer]    ; hidden: count hide_for down
     beq .shown
@@ -261,18 +261,18 @@ begin
     ret
 end
 
-proc draw using console6502
+proc draw
 begin
     jmp Draw.object
 end
 end
 
-namespace Ball
+namespace Ball using console6502
     export init
     export update
     export draw
 
-proc init using console6502
+proc init
 begin
     lda [Machine.object.core.y]
     sta [Machine.object.payload.extra.start_y]
@@ -289,7 +289,7 @@ begin
     ret
 end
 
-proc update using console6502
+proc update
 begin
     lda [Machine.object.core.sprite]
     beq .waiting
@@ -337,7 +337,7 @@ begin
     ret
 end
 
-proc draw using console6502
+proc draw
 begin
     lda [Machine.object.core.sprite]
     beq .done
@@ -364,13 +364,13 @@ begin
 end
 end
 
-namespace Floor
+namespace Floor using console6502
     export init
     export break
     export update
     export draw
 
-proc init using console6502
+proc init
 begin
     lda #0
     sta [Machine.object.payload.extra.state]
@@ -378,7 +378,7 @@ begin
     ret
 end
 
-proc break using console6502
+proc break
 begin
     lda [Machine.object.payload.extra.state]
     bne .done
@@ -402,7 +402,7 @@ begin
     ret
 end
 
-proc update using console6502
+proc update
 begin
     lda [Machine.object.payload.extra.state]
     beq .idle
@@ -471,7 +471,7 @@ begin
     ret
 end
 
-proc draw using console6502
+proc draw
 begin
     lda [Machine.object.payload.extra.state]
     cmp #2
@@ -498,12 +498,12 @@ begin
 end
 end
 
-namespace Fruit
+namespace Fruit using console6502
     export init
     export update
     export draw
 
-proc init using console6502
+proc init
 begin
     lda [Machine.object.core.y]
     sta [Machine.object.payload.extra.start_y]
@@ -512,7 +512,7 @@ begin
     ret
 end
 
-proc update using console6502
+proc update
 begin
     mov Collision.type, #ObjectKind.player
     mov Collision.offset_x, #0
@@ -534,20 +534,20 @@ begin
     ret
 end
 
-proc draw using console6502
+proc draw
 begin
     jmp Draw.object
 end
 end
 
-namespace Fly
+namespace Fly using console6502
     export init
     export update
     export draw
     fly_target = $FC80          ; -3.5
     fly_accel = $0040           ; 0.25
 
-proc init using console6502
+proc init
 begin
     lda [Machine.object.core.y]
     sta [Machine.object.payload.extra.start_y]
@@ -561,7 +561,7 @@ begin
     ret
 end
 
-proc update using console6502
+proc update
 begin
     lda [Machine.object.payload.extra.state]
     bne .flying
@@ -617,7 +617,7 @@ begin
     jmp Objects.destroy
 end
 
-proc draw using console6502
+proc draw
 begin
     lda [Machine.object.payload.extra.state]
     beq .hovering
@@ -657,12 +657,12 @@ begin
 end
 end
 
-namespace Life
+namespace Life using console6502
     export init
     export update
     export draw
 
-proc init using console6502
+proc init
 begin
     lda #30
     sta [Machine.object.payload.extra.timer]
@@ -683,7 +683,7 @@ begin
     ret
 end
 
-proc update using console6502
+proc update
 begin
     dec [Machine.object.payload.extra.timer]
     beq .gone
@@ -695,7 +695,7 @@ begin
 end
 
 ; rows_off: clear the row-colour overrides this lifeup last claimed.
-proc rows_off using console6502
+proc rows_off
 begin
     mov y, offset CelesteObject.payload.extra.start_y
     lda (Machine.object), y
@@ -711,7 +711,7 @@ begin
     ret
 end
 
-proc draw using console6502
+proc draw
 begin
     jsr Draw.overlay_dirty      ; the drifting score is overlay text; keep
     jsr rows_off                ; the rebuild cycling while it lives
@@ -741,11 +741,11 @@ begin
 end
 end
 
-namespace Wall
+namespace Wall using console6502
     export update
     export draw
 
-proc update using console6502
+proc update
 begin
     lda #$FF
     sta [Machine.object.core.hitbox.x]
@@ -851,7 +851,7 @@ begin
     ret
 end
 
-proc draw using console6502
+proc draw
 begin
     lda [Machine.object.core.x]
     sta Machine.t4
@@ -885,7 +885,7 @@ begin
 end
 end
 
-namespace Key
+namespace Key using console6502
     export update
     export draw
 
@@ -895,7 +895,7 @@ spin:
     #d8 8, 8, 8, 9, 9, 9, 9, 9, 10, 10
     #d8 10, 10, 10, 10, 10, 10, 10, 10, 9, 9
 
-proc update using console6502
+proc update
 begin
     ; The cart's spr = 9 + (sin(frames/30) + 0.5): three frames, 8 and 10 at
     ; the sine's crests, 9 between - the table below is that expression per
@@ -923,18 +923,18 @@ begin
     ret
 end
 
-proc draw using console6502
+proc draw
 begin
     jmp Draw.object
 end
 end
 
-namespace Chest
+namespace Chest using console6502
     export init
     export update
     export draw
 
-proc init using console6502
+proc init
 begin
     lda [Machine.object.core.x]
     sub #4
@@ -945,7 +945,7 @@ begin
     ret
 end
 
-proc update using console6502
+proc update
 begin
     lda [game.has_key]
     beq .done
@@ -978,20 +978,20 @@ begin
     ret
 end
 
-proc draw using console6502
+proc draw
 begin
     jmp Draw.object
 end
 end
 
-namespace Mover
+namespace Mover using console6502
     export init
     export configure
     export update
     export draw
     platform_speed = $00A6      ; 0.65
 
-proc init using console6502
+proc init
 begin
     lda [Machine.object.core.x]
     sub #4
@@ -1003,7 +1003,7 @@ begin
     ret
 end
 
-proc configure using console6502
+proc configure
 begin
     lda [Machine.object.payload.extra.value]
     bmi .left
@@ -1020,7 +1020,7 @@ begin
     ret
 end
 
-proc update using console6502
+proc update
 begin
     lda [Machine.object.payload.extra.value]
     bmi .moving_left
@@ -1078,7 +1078,7 @@ begin
     ret
 end
 
-proc draw using console6502
+proc draw
 begin
     lda #1                      ; the cart draws platforms before the main
     sta [video.sprite_control]  ; terrain layer: composite behind the tiles

@@ -15,7 +15,7 @@
 ; 6502 programmer would do and is worth contrasting with nemo's single mul8.
 ; ------------------------------------------------------------------------------
 
-namespace Fixed
+namespace Fixed using console6502
     export compare
     export add
     export subtract
@@ -37,7 +37,7 @@ namespace Fixed
 ; compare: signed compare w0 against w1. Returns N=1 iff w0 < w1, N=0 otherwise
 ; (including equal). Clobbers A only.
 ; ------------------------------------------------------------------------------
-proc compare using console6502 naked
+proc compare naked
     left : u16 in word0
     right : u16 in word1
 begin
@@ -54,7 +54,7 @@ end
 ; ------------------------------------------------------------------------------
 ; add / subtract: w0 += w1 / w0 -= w1. Clobbers A.
 ; ------------------------------------------------------------------------------
-proc add using console6502 naked
+proc add naked
     value : u16 in word0
     amount : u16 in word1
 begin
@@ -64,7 +64,7 @@ begin
     ret
 end
 
-proc subtract using console6502 naked
+proc subtract naked
     value : u16 in word0
     amount : u16 in word1
 begin
@@ -77,7 +77,7 @@ end
 ; ------------------------------------------------------------------------------
 ; negate: w0 = -w0. Clobbers A.
 ; ------------------------------------------------------------------------------
-proc negate using console6502 naked
+proc negate naked
     value : u16 in word0
 begin
     ldab #$0000
@@ -89,7 +89,7 @@ end
 ; ------------------------------------------------------------------------------
 ; absolute: w0 = |w0|. Clobbers A.
 ; ------------------------------------------------------------------------------
-proc absolute using console6502 naked
+proc absolute naked
     value : u16 in word0
 begin
     lda word0+1
@@ -100,7 +100,7 @@ end
 ; ------------------------------------------------------------------------------
 ; sign: A = 1, $FF or 0 for the sign of w0. Clobbers A.
 ; ------------------------------------------------------------------------------
-proc sign using console6502 naked
+proc sign naked
     value : u16 in word0
     result : u8 return in a
 begin
@@ -126,7 +126,7 @@ end
 ;
 ; Clobbers A.
 ; ------------------------------------------------------------------------------
-proc approach using console6502 naked
+proc approach naked
     value : u16 in word0
     target : u16 in word1
     amount : u16 in word2
@@ -162,7 +162,7 @@ end
 ; store_object: the 16-bit field at offset Y = w0.
 ; Both clobber A and Y.
 ; ------------------------------------------------------------------------------
-proc load_object using console6502 naked
+proc load_object naked
     value : u16 return in word0
 begin
     lda (Machine.object), y
@@ -173,7 +173,7 @@ begin
     ret
 end
 
-proc store_object using console6502 naked
+proc store_object naked
     value : u16 in word0
 begin
     lda word0
@@ -188,7 +188,7 @@ end
 ; load_object_target: the same load through w1. Separate entry points avoid a
 ; pointer-to-a-pointer, because the caller always knows which register it means.
 ; ------------------------------------------------------------------------------
-proc load_object_target using console6502 naked
+proc load_object_target naked
     target : u16 return in word1
 begin
     lda (Machine.object), y

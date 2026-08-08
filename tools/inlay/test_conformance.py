@@ -775,7 +775,8 @@ def check_platform_game_design() -> None:
     ) -> str:
         path = CELESTE_DIR / filename
         text = path.read_text(encoding="ascii")
-        if text.count(f"namespace {namespace}\n") != 1:
+        if (text.count(f"namespace {namespace}\n") +
+            text.count(f"namespace {namespace} using console6502\n")) != 1:
             raise AssertionError(
                 f"{filename}: expected one {namespace} namespace"
             )
@@ -790,7 +791,7 @@ def check_platform_game_design() -> None:
         declarations = {
             match.group(1): match.group(0)
             for match in re.finditer(
-                r"^proc ([a-z_]+) using console6502(?: naked)?$",
+                r"^proc ([a-z_]+)(?: using console6502)?(?: naked)?$",
                 text,
                 re.MULTILINE,
             )
@@ -829,11 +830,11 @@ def check_platform_game_design() -> None:
         {"reset", "wait_frame", "sample_input",
          "left", "right", "up", "down", "jump", "dash"},
         {
-            "reset": "proc reset using console6502 naked",
-            "wait_frame": "proc wait_frame using console6502",
-            "sample_input": "proc sample_input using console6502",
-            "upload_palette": "proc upload_palette using console6502",
-            "upload_sheet": "proc upload_sheet using console6502",
+            "reset": "proc reset naked",
+            "wait_frame": "proc wait_frame",
+            "sample_input": "proc sample_input",
+            "upload_palette": "proc upload_palette",
+            "upload_sheet": "proc upload_sheet",
         },
     )
     if platform.count("jmp Game.run") != 1:
@@ -845,12 +846,12 @@ def check_platform_game_design() -> None:
         "Game",
         {"run", "frame"},
         {
-            "run": "proc run using console6502",
-            "frame": "proc frame using console6502",
-            "show_title": "proc show_title using console6502",
-            "begin_play": "proc begin_play using console6502",
-            "update": "proc update using console6502",
-            "title_tick": "proc title_tick using console6502",
+            "run": "proc run",
+            "frame": "proc frame",
+            "show_title": "proc show_title",
+            "begin_play": "proc begin_play",
+            "update": "proc update",
+            "title_tick": "proc title_tick",
         },
     )
     for service in (
@@ -890,7 +891,8 @@ def check_platform_game_design() -> None:
 
 def check_objects_design() -> None:
     text = (CELESTE_DIR / "obj.inlay.asm").read_text(encoding="ascii")
-    if text.count("namespace Objects\n") != 1:
+    if (text.count("namespace Objects\n") +
+        text.count("namespace Objects using console6502\n")) != 1:
         raise AssertionError("obj.inlay.asm must own one Objects namespace")
     expected_exports = {
         "pointer", "clear", "allocate", "spawn_marker", "dispatch", "spawn_smoke",
@@ -907,25 +909,25 @@ def check_objects_design() -> None:
             f"expected {sorted(expected_exports)}, got {sorted(exports)}"
         )
     expected_procedures = {
-        "pointer": "proc pointer using console6502",
-        "noop": "proc noop using console6502 naked",
-        "spawn_marker": "proc spawn_marker using console6502",
-        "clear": "proc clear using console6502",
-        "allocate": "proc allocate using console6502",
-        "dispatch": "proc dispatch using console6502 naked",
-        "spawn_smoke": "proc spawn_smoke using console6502",
-        "destroy": "proc destroy using console6502",
-        "update_all": "proc update_all using console6502",
-        "draw_all": "proc draw_all using console6502",
-        "move": "proc move using console6502",
-        "prepare_step": "proc prepare_step using console6502 naked",
-        "step_x": "proc step_x using console6502",
-        "step_y": "proc step_y using console6502",
+        "pointer": "proc pointer",
+        "noop": "proc noop naked",
+        "spawn_marker": "proc spawn_marker",
+        "clear": "proc clear",
+        "allocate": "proc allocate",
+        "dispatch": "proc dispatch naked",
+        "spawn_smoke": "proc spawn_smoke",
+        "destroy": "proc destroy",
+        "update_all": "proc update_all",
+        "draw_all": "proc draw_all",
+        "move": "proc move",
+        "prepare_step": "proc prepare_step naked",
+        "step_x": "proc step_x",
+        "step_y": "proc step_y",
     }
     declarations = {
         match.group(1): match.group(0)
         for match in re.finditer(
-            r"^proc ([a-z_]+) using console6502(?: naked)?$",
+            r"^proc ([a-z_]+)(?: using console6502)?(?: naked)?$",
             text,
             re.MULTILINE,
         )
@@ -980,7 +982,9 @@ def check_object_kind_design() -> set[str]:
     namespaces = ("Player", "Spawn", "Smoke", "Title")
     starts = []
     for namespace in namespaces:
-        marker = f"namespace {namespace}\n"
+        marker = f"namespace {namespace} using console6502\n"
+        if marker not in text:
+            marker = f"namespace {namespace}\n"
         if text.count(marker) != 1:
             raise AssertionError(
                 f"player.inlay.asm: expected one {namespace} namespace"
@@ -1013,7 +1017,7 @@ def check_object_kind_design() -> set[str]:
                 f"expected ['draw', 'init', 'update'], got {sorted(exports)}"
             )
         procedures = set(re.findall(
-            r"^proc ([a-z_]+) using console6502(?: naked)?$",
+            r"^proc ([a-z_]+)(?: using console6502)?(?: naked)?$",
             body,
             re.MULTILINE,
         ))
@@ -1116,7 +1120,8 @@ def check_remaining_subsystem_design() -> None:
     for filename, manifest in manifests.items():
         namespace, expected_exports, expected_labels, expected_procs = manifest
         text = (CELESTE_DIR / filename).read_text(encoding="ascii")
-        if text.count(f"namespace {namespace}\n") != 1:
+        if (text.count(f"namespace {namespace}\n") +
+            text.count(f"namespace {namespace} using console6502\n")) != 1:
             raise AssertionError(
                 f"{filename}: expected one {namespace} namespace"
             )
@@ -1127,7 +1132,7 @@ def check_remaining_subsystem_design() -> None:
             r"^([a-z_][a-z0-9_]*):$", text, re.MULTILINE
         ))
         procedures = set(re.findall(
-            r"^proc ([a-z_]+) using console6502(?: naked)?$",
+            r"^proc ([a-z_]+)(?: using console6502)?(?: naked)?$",
             text,
             re.MULTILINE,
         ))

@@ -9,7 +9,7 @@
 ; other bank's left edge would be visible in the 32 columns the HUD uses,
 ; because the tile layer wraps at 256 and the display is 160 wide.
 ; ------------------------------------------------------------------------------
-namespace Room
+namespace Room using console6502
     export init
     export title
     export load

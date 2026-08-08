@@ -12,7 +12,7 @@
 ; only, and shaking the terrain out from under a stationary player would be
 ; worse than not shaking at all.
 ; ------------------------------------------------------------------------------
-namespace Draw
+namespace Draw using console6502
     export frame
     export sprite
     export cart_sprite

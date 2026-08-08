@@ -1199,6 +1199,63 @@ static void test_inline_procedures(void)
         "inline tail jmp into live frame rejected");
 }
 
+static void test_namespace_defaults(void)
+{
+    LaLimits limits;
+    limits = la_default_limits();
+    /* A namespace-level convention default applies to procedures that omit
+       their using clause; adoption is byte-identical to the explicit form. */
+    expect_ok(
+        "namespace N using console6502\n"
+        "    export helper\n"
+        "proc helper\n"
+        "    value : u8\n"
+        "begin\n"
+        "    ret\n"
+        "end\n"
+        "end\n",
+        limits, "namespace default convention accepted");
+    expect_error(
+        "namespace N using missing\n"
+        "end\n",
+        limits, LA_ERR_CONVENTION, "unknown namespace convention rejected");
+    /* export as a declaration qualifier registers visibility. */
+    expect_ok(
+        "namespace N using console6502\n"
+        "proc helper export\n"
+        "    value : u8\n"
+        "begin\n"
+        "    ret\n"
+        "end\n"
+        "end\n"
+        "namespace M using console6502\n"
+        "proc caller naked\n"
+        "begin\n"
+        "    invoke N.helper, value=#1\n"
+        "    ret\n"
+        "end\n"
+        "end\n",
+        limits, "export qualifier grants cross-namespace visibility");
+    /* Privacy is module-scoped: an unexported neighbour in the same
+       module remains reachable, with or without the qualifier. */
+    expect_ok(
+        "namespace N using console6502\n"
+        "proc helper\n"
+        "    value : u8\n"
+        "begin\n"
+        "    ret\n"
+        "end\n"
+        "end\n"
+        "namespace M using console6502\n"
+        "proc caller naked\n"
+        "begin\n"
+        "    invoke N.helper, value=#1\n"
+        "    ret\n"
+        "end\n"
+        "end\n",
+        limits, "same-module unexported neighbour reachable");
+}
+
 static void test_invoke_extensions(void)
 {
     LaLimits limits;
@@ -2459,6 +2516,7 @@ int main(void)
     test_word_moves();
     test_inline_procedures();
     test_invoke_extensions();
+    test_namespace_defaults();
     test_semantic_errors();
     test_comments_and_pointer_fields();
     test_indexed_pools_and_procedures();

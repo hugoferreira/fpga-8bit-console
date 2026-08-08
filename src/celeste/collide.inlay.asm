@@ -9,7 +9,7 @@
 ; Everything here is called from Objects.step_x/step_y, so nothing here may
 ; touch t0, t1 or t2 - those hold the step and the loop counter of the caller.
 ; ------------------------------------------------------------------------------
-namespace Collision
+namespace Collision using console6502
     export offset_x
     export offset_y
     location x : u8 at $22
@@ -355,7 +355,7 @@ lo:
 hi:
     data u8 high(down), high(up), high(right), high(left)
 ; tile 17, pointing down: ((y+h-1)%8 >= 6 or y+h == j*8+8) and yspd >= 0
-proc down using console6502 naked
+proc down naked
 begin
     mov y, offset CelesteObject.core.speed_y.integer
     lda (Machine.object), y
@@ -380,7 +380,7 @@ begin
     rts
 end
 ; tile 27, pointing up: y%8 <= 2 and yspd <= 0
-proc up using console6502 naked
+proc up naked
 begin
     mov y, offset CelesteObject.core.speed_y.integer
     lda (Machine.object), y
@@ -400,7 +400,7 @@ begin
     rts
 end
 ; tile 43, pointing right: x%8 <= 2 and xspd <= 0
-proc right using console6502 naked
+proc right naked
 begin
     mov y, offset CelesteObject.core.speed_x.integer
     lda (Machine.object), y
@@ -420,7 +420,7 @@ begin
     rts
 end
 ; tile 59, pointing left: ((x+w-1)%8 >= 6 or x+w == i*8+8) and xspd >= 0
-proc left using console6502 naked
+proc left naked
 begin
     mov y, offset CelesteObject.core.speed_x.integer
     lda (Machine.object), y

@@ -6,7 +6,7 @@
 ; that Inlay cannot yet encode.
 ; ------------------------------------------------------------------------------
 
-namespace Platform
+namespace Platform using console6502
     export reset
     export wait_frame
     export sample_input
@@ -28,7 +28,7 @@ namespace Platform
 ; Inputs: reset machine state. Returns: never; transfers to Game.run.
 ; Frame locals: none. Clobbers: A, X, Y, pSrc, t0, t1 and hardware upload
 ; state. Naked because no valid caller frame exists at reset.
-proc reset using console6502 naked
+proc reset naked
 begin
     sei
     cld
@@ -39,18 +39,19 @@ begin
     jmp Game.run
 end
 
-; Inputs: none. Returns: none. Frame locals: none. Clobbers: flags.
-proc wait_frame using console6502
+; Inputs: none. Returns: none. Frame locals: none. Clobbers: nothing.
+; WAI sleeps the core until the chip's vsync wake - the same rising edge the
+; $400D frame counter counts, so the semantics of the poll loop this
+; replaces are unchanged, minus its bus traffic, its A clobber, and its
+; poll-phase wake jitter.
+proc wait_frame
 begin
-    lda [video.frame]
-.wait:
-    cmp [video.frame]
-    beq .wait
+    wai
     ret
 end
 
 ; Inputs: none. Returns: buttons in A. Frame locals: none. Clobbers: A.
-proc sample_input using console6502
+proc sample_input
     buttons : u8 return in a
 begin
     lda [game.buttons]
@@ -61,7 +62,7 @@ begin
 end
 
 ; Inputs: none. Returns: none. Frame locals: none. Clobbers: A, X.
-proc upload_palette using console6502
+proc upload_palette
 begin
     ldx #15
 .entry:
@@ -74,7 +75,7 @@ end
 
 ; Inputs: none. Returns: none. Frame locals: none. Clobbers: A, Y, pSrc,
 ; t0, t1 and sheet upload state.
-proc upload_sheet using console6502
+proc upload_sheet
 begin
     lda #0
     sta [video.sheet_address_low]

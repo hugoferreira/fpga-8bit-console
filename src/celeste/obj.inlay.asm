@@ -33,7 +33,7 @@ obj_hi:
     #d8 ((OBJPOOL+$200))[15:8], ((OBJPOOL+$200))[15:8], ((OBJPOOL+$200))[15:8], ((OBJPOOL+$200))[15:8]
     #d8 ((OBJPOOL+$300))[15:8], ((OBJPOOL+$300))[15:8], ((OBJPOOL+$300))[15:8], ((OBJPOOL+$300))[15:8]
 
-namespace Objects
+namespace Objects using console6502
     export pointer
     export clear
     export allocate
@@ -64,7 +64,7 @@ namespace Objects
 ; ------------------------------------------------------------------------------
 ; pointer: pObj = the record for slot A. Clobbers A, X.
 ; ------------------------------------------------------------------------------
-proc pointer using console6502
+proc pointer
     result : ptr CelesteObject return in Machine.object
     slot : u8 in a
 begin
@@ -118,7 +118,7 @@ marker_kind:
 type_hide:
     #d8 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0
 
-proc noop using console6502 naked
+proc noop naked
 begin
     ret
 end
@@ -128,7 +128,7 @@ end
 ; Unknown markers are ignored. Objects hidden after this room's strawberry has
 ; been collected follow the cart's `if_not_fruit` rule.
 ; ------------------------------------------------------------------------------
-proc spawn_marker using console6502
+proc spawn_marker
 begin
     sta Machine.t7
     ldx #0
@@ -170,7 +170,7 @@ end
 ; ------------------------------------------------------------------------------
 ; clear: empty the pool. Inputs: none. Returns: none. Clobbers: A, X, Y.
 ; ------------------------------------------------------------------------------
-proc clear using console6502
+proc clear
 begin
     lda #0
     ldx #slot_count-1
@@ -199,7 +199,7 @@ end
 ; allocate: kind/x/y are fixed physical inputs. Slot and receiver are returned;
 ; slot is $FF if the pool is full. Clobbers A, X, Y, t0 and pObj.
 ; ------------------------------------------------------------------------------
-proc allocate using console6502
+proc allocate
     kind : ObjectKind in spawn_type
     x_position : i8 in spawn_x
     y_position : i8 in spawn_y
@@ -269,7 +269,7 @@ end
 ; dispatch: jmp (pFn) as a subroutine, so the method's rts returns to our
 ; caller. Input: pFn. Receiver: pObj. Clobbers: callee-defined.
 ; ------------------------------------------------------------------------------
-proc dispatch using console6502 naked
+proc dispatch naked
 begin
     jmp (Machine.function)
 end
@@ -279,7 +279,7 @@ end
 ; the player alone. The caller's receiver is an explicit frame local rather
 ; than a handwritten hardware-stack convention.
 ; ------------------------------------------------------------------------------
-proc spawn_smoke using console6502
+proc spawn_smoke
     self : ptr CelesteObject in Machine.object
     x_position : i8 in a
     y_position : i8 in x
@@ -301,7 +301,7 @@ end
 ; record is a no-op rather than a count underflow. Clobbers A, X, Y, t3 -
 ; the chest and player-death sites carry x/y across this call in t6/t7.
 ; ------------------------------------------------------------------------------
-proc destroy using console6502
+proc destroy
     self : ptr CelesteObject in Machine.object
 begin
     mov y, offset CelesteObject.core.kind
@@ -334,7 +334,7 @@ end
 ; matters here (nothing in stage 1 depends on two objects updating in a
 ; particular order relative to each other).
 ; ------------------------------------------------------------------------------
-proc update_all using console6502
+proc update_all
 begin
     mov slot, #0
 .loop:
@@ -368,7 +368,7 @@ end
 ; draw_all: traverse live records and dispatch each draw lifecycle method.
 ; Inputs: none. Returns: none. Clobbers: A, X, Y, pObj, pFn and obj_slot.
 ; ------------------------------------------------------------------------------
-proc draw_all using console6502
+proc draw_all
 begin
     mov slot, #0
 .loop:
@@ -405,7 +405,7 @@ end
 ; byte off the high half. Three 16-bit chains per axis, per object, per frame.
 ; Clobbers everything. t0 holds the integer step amount.
 ; ------------------------------------------------------------------------------
-proc move using console6502
+proc move
     self : ptr CelesteObject in Machine.object
     value : u16 in Fixed.word0
     operand : u16 in Fixed.word1
@@ -477,7 +477,7 @@ end
 ; prepare_step: turn signed amount t0 into step t1 and inclusive count t2.
 ; This physical helper is shared by both collision axes.
 ; ------------------------------------------------------------------------------
-proc prepare_step using console6502 naked
+proc prepare_step naked
     amount : i8 in Machine.t0
     step : i8 return in Machine.t1
     remaining : u8 return in Machine.t2
@@ -508,7 +508,7 @@ end
 ; than corrected: the port is a reimplementation of this cart, not of the game
 ; it was trying to be. Clobbers A, X, Y, t1, t2.
 ; ------------------------------------------------------------------------------
-proc step_x using console6502
+proc step_x
     self : ptr CelesteObject in Machine.object
     amount : i8 in Machine.t0
 begin
@@ -550,7 +550,7 @@ end
 ; ------------------------------------------------------------------------------
 ; step_y: the same, vertically. Clobbers A, X, Y, t1, t2.
 ; ------------------------------------------------------------------------------
-proc step_y using console6502
+proc step_y
     self : ptr CelesteObject in Machine.object
     amount : i8 in Machine.t0
 begin

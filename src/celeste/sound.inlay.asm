@@ -15,7 +15,7 @@
 ; nemo's cart that number is honest - its patterns use exactly those three. So
 ; the mask is the cart's, not a corrected one.
 ; ------------------------------------------------------------------------------
-namespace Audio
+namespace Audio using console6502
     export init
     export sfx
     export guarded_sfx

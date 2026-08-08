@@ -31,7 +31,7 @@
 ; the list is not either.
 ; ------------------------------------------------------------------------------
 
-namespace Fx
+namespace Fx using console6502
     export init
     export update
     export draw_clouds
@@ -60,7 +60,7 @@ namespace Fx
 ; ------------------------------------------------------------------------------
 ; init: seed both from the hardware LFSR. Clobbers A, X.
 ; ------------------------------------------------------------------------------
-proc init using console6502 naked
+proc init naked
 begin
     ldx #cloud_count-1
 .cloud:
@@ -140,7 +140,7 @@ end
 ; kill point at 3 px/frame for ten frames. All eight share one timer; the
 ; per-direction 8.8 speeds are the constants below. Clobbers A, X, t3, t4.
 ; ------------------------------------------------------------------------------
-proc burst using console6502 naked
+proc burst naked
     center_x : u8 in a
     center_y : u8 in x
 begin
@@ -176,7 +176,7 @@ burst_sy_high:
 ; update: the cart moves both inside _draw; the port moves them here, which
 ; is the same 30 Hz tick. Clobbers A, X, Y, t0.
 ; ------------------------------------------------------------------------------
-proc update using console6502 naked
+proc update naked
 begin
     mov Machine.t0, #133        ; particle respawn bound: past the playfield
     jsr Room.title              ; in play, past the full 160 on the title
@@ -293,7 +293,7 @@ sin_high:
 ; draw_clouds: staged FIRST, so that everything here lands below the
 ; behind-split and composites before the tile layer. Clobbers A, X, Y, t3..t6.
 ; ------------------------------------------------------------------------------
-proc draw_clouds using console6502 naked
+proc draw_clouds naked
 begin
     ldx #0
 .cloud:
@@ -319,7 +319,7 @@ end
 ; terrain and the player - which is where the cart draws them, and is what
 ; puts the stars on the title screen. Clobbers A, X, Y, t3..t6.
 ; ------------------------------------------------------------------------------
-proc draw_particles using console6502 naked
+proc draw_particles naked
 begin
     mov [video.repeat], #1
     ldx #0
@@ -352,7 +352,7 @@ end
 ; 14+t%2: the 4x4 blob carries the big half of the life, the dot the tail,
 ; alternating the two pinks by remaining time. Clobbers A, X, Y, t3..t6.
 ; ------------------------------------------------------------------------------
-proc draw_burst using console6502 naked
+proc draw_burst naked
 begin
     lda [dead_burst.timer]
     bne .live

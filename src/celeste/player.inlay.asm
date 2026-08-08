@@ -3,7 +3,7 @@
 ; State that remains live across the split procedures belongs to Player's
 ; explicit physical scratch block at $50-$5f. It is neither a hidden virtual
 ; value nor a procedure-local frame with the wrong lifetime.
-namespace Player
+namespace Player using console6502
     export init
     export update
     export draw
@@ -43,7 +43,7 @@ namespace Player
     vinput = $5E
     wall = $5F
 ; Player.init
-proc init using console6502
+proc init
     self : ptr CelesteObject in Machine.object
 begin
     lda #1                      ; hitbox = {1,3,6,5}
@@ -61,7 +61,7 @@ begin
     jmp create_hair
 ; Player.update
 end
-proc update using console6502
+proc update
     self : ptr CelesteObject in Machine.object
 begin
     lda [game.pause_player]
@@ -71,7 +71,7 @@ begin
     jmp sample_input
 end
 ; Input: self in pObj. Output: Player.input. Clobbers: A.
-proc sample_input using console6502
+proc sample_input
     self : ptr CelesteObject in Machine.object
 begin
     tbz [game.buttons], #Platform.Input.right, .noright  ; input = right and 1 or (left and -1 or 0)
@@ -89,7 +89,7 @@ begin
 end
 ; Input: self in pObj. Outputs: owned ground/ice/edge/grace state.
 ; Clobbers: A, X, Y and collision scratch.
-proc environment using console6502
+proc environment
     self : ptr CelesteObject in Machine.object
 begin
     lda #0                      ; spikes collide
@@ -174,7 +174,7 @@ begin
 end
 ; Input: self in pObj and owned environment state. Returns through either
 ; Player.horizontal or Player.animation. Clobbers: A, X, Y and w0-w2.
-proc active_dash using console6502
+proc active_dash
     self : ptr CelesteObject in Machine.object
 begin
     ; Zero must stay zero: underflow made an ordinary fake-wall bump look like
@@ -223,7 +223,7 @@ begin
     jmp animation
 ; The cart's `else` branch: run, gravity, wall slide, jump, dash.
 end
-proc horizontal using console6502
+proc horizontal
     self : ptr CelesteObject in Machine.object
 begin
     mov maxrun, #<max_run
@@ -301,7 +301,7 @@ begin
 end
 ; Input: self and owned environment state. Updates vertical speed/wall slide.
 ; Clobbers: A, X, Y, w0-w2 and collision scratch.
-proc vertical using console6502
+proc vertical
     self : ptr CelesteObject in Machine.object
 begin
     movw maxfall, #max_fall
@@ -360,7 +360,7 @@ begin
 end
 ; Input: self and owned input/environment state. Performs jump and dash
 ; transitions. Clobbers: A, X, Y, w0-w2 and collision scratch.
-proc jump_dash using console6502
+proc jump_dash
     self : ptr CelesteObject in Machine.object
 begin
     lda [Machine.object.payload.player.jump_buffer]
@@ -549,7 +549,7 @@ begin
     jmp animation
 end
 ; Animation, the level exit, and the ground latch.
-proc animation using console6502
+proc animation
     self : ptr CelesteObject in Machine.object
 begin
     mov y, offset CelesteObject.payload.player.sprite_offset ; inlay-exception: wrapping add-and-mask update
@@ -609,7 +609,7 @@ end
 ; Player.set_speed_x_signed / Player.set_speed_y_signed: spd = A * {X,Y}, where A is -1, 0 or 1.
 ; The cart writes `input * d_full`; with a sign for a multiplier that is a
 ; select, not a multiply.
-proc set_speed_x_signed using console6502 naked
+proc set_speed_x_signed naked
     self : ptr CelesteObject in Machine.object
     sign : i8 in a
     low : u8 in x
@@ -619,7 +619,7 @@ begin
     mov y, offset CelesteObject.core.speed_x
     jmp Fixed.store_object
 end
-proc set_speed_y_signed using console6502 naked
+proc set_speed_y_signed naked
     self : ptr CelesteObject in Machine.object
     sign : i8 in a
     low : u8 in x
@@ -630,7 +630,7 @@ begin
     jmp Fixed.store_object
 end
 ; Player.signed_word: w0 = A * {X,Y} for A in {-1, 0, 1}. Clobbers A.
-proc signed_word using console6502 naked
+proc signed_word naked
     sign : i8 in a
     low : u8 in x
     high : u8 in y
@@ -650,17 +650,17 @@ begin
 end
 ; Player owns the hair lifecycle surface; Draw provides the private staging
 ; implementation until the drawing subsystem is scoped in phase 10.
-proc create_hair using console6502 naked
+proc create_hair naked
     self : ptr CelesteObject in Machine.object
 begin
     jmp Draw.hair_create
 end
-proc set_hair_color using console6502 naked
+proc set_hair_color naked
     dash_jumps : u8 in a
 begin
     jmp Draw.hair_color
 end
-proc draw_hair using console6502 naked
+proc draw_hair naked
     self : ptr CelesteObject in Machine.object
 begin
     jmp Draw.hair_draw
@@ -669,7 +669,7 @@ end
 ; keeps the table alive - and this port returns instead. Nothing in stage 1 can
 ; tell the difference: everything after the spike test either reads state that
 ; is about to be thrown away, or spawns smoke that a restart clears.
-proc kill using console6502
+proc kill
     self : ptr CelesteObject in Machine.object
 begin
     mov [game.sfx_timer], #12
@@ -693,7 +693,7 @@ begin
     ret
 end
 ; Player.draw: clamp into the room, then hair, then the player.
-proc draw using console6502
+proc draw
     self : ptr CelesteObject in Machine.object
 begin
     lda [Machine.object.core.x]
@@ -717,13 +717,13 @@ begin
 ; player_spawn - the cart's three-state entry animation.
 end
 end
-namespace Spawn
+namespace Spawn using console6502
     export init
     export update
     export draw
     gravity = $0080   ; 0.5
     speed = $FC00   ; -4
-proc init using console6502
+proc init
     self : ptr CelesteObject in Machine.object
 begin
     lda #4
@@ -741,7 +741,7 @@ begin
     and [Machine.object.core.flags], #~Objects.flag_solids ; solids = false
     jmp Player.create_hair
 end
-proc update using console6502
+proc update
     self : ptr CelesteObject in Machine.object
 begin
     lda [Machine.object.payload.spawn.phase]
@@ -818,7 +818,7 @@ begin
 .stillhere:
     rts
 end
-proc draw using console6502
+proc draw
     self : ptr CelesteObject in Machine.object
 begin
     lda [game.max_dash_jumps]
@@ -828,12 +828,12 @@ begin
 ; smoke
 end
 end
-namespace Smoke
+namespace Smoke using console6502
     export init
     export update
     export draw
     speed_y = $FFE6   ; -0.1
-proc init using console6502
+proc init
     self : ptr CelesteObject in Machine.object
 begin
     lda #29
@@ -867,7 +867,7 @@ begin
     and [Machine.object.core.flags], #~Objects.flag_solids
     rts
 end
-proc update using console6502
+proc update
     self : ptr CelesteObject in Machine.object
 begin
     inc [Machine.object.payload.player.sprite_offset] ; spr += 0.2 -> destroy after 15 frames
@@ -888,7 +888,7 @@ begin
 .gone:
     jmp Objects.destroy
 end
-proc draw using console6502
+proc draw
     self : ptr CelesteObject in Machine.object
 begin
     jmp Draw.object
@@ -896,23 +896,23 @@ begin
 ; so the port does too - it is the only object whose update is nil.
 end
 end
-namespace Title
+namespace Title using console6502
     export init
     export update
     export draw
-proc init using console6502
+proc init
     self : ptr CelesteObject in Machine.object
 begin
     lda #5
     sta [Machine.object.payload.player.delay]
     rts
 end
-proc update using console6502
+proc update
     self : ptr CelesteObject in Machine.object
 begin
     rts
 end
-proc draw using console6502
+proc draw
     self : ptr CelesteObject in Machine.object
 begin
     ; The cart shows the banner for delay -1..-30 and destroys past -30.
