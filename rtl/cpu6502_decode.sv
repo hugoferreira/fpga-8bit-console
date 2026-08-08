@@ -74,7 +74,9 @@ typedef enum logic [4:0] {
     OP_SUB,      // SBC with borrow-in forced to 0, decimal ignored
     OP_TRAP,     // diagnostic trap carrying an immediate
     // --- add-isa-word-ops ---
-    OP_LDW, OP_STW, OP_ADDW, OP_SUBW, OP_CMPW
+    OP_LDW, OP_STW, OP_ADDW, OP_SUBW, OP_CMPW,
+    // --- add-isa-xba ---
+    OP_XBA       // exchange the halves of the 16-bit accumulator
 } aluop_t;
 
 // The register operand. For AM_IMP and AM_ACC it is also the second operand,
@@ -161,6 +163,7 @@ module cpu6502_decode (
             OP_CLI, OP_SEI:              fwset = FW_I;
             OP_CLV:                      fwset = FW_V;
             OP_CLD, OP_SED:              fwset = FW_D;
+            OP_XBA:                      fwset = FW_N | FW_Z;
             default:                     fwset = FW_NONE;
         endcase
     endfunction
@@ -405,10 +408,23 @@ module cpu6502_decode (
         // ---- add-isa-wait ----
         // $CB is the WDC 65C02's own WAI encoding, adopted with its meaning:
         // the SEI+WAI idiom. The core halts until IRQ rises, then resumes at
-        // the following instruction; the interrupt VECTOR path remains
-        // refactor-cpu-core task 5.x, so with I set (which reset leaves set)
-        // this is a pure sleep-until-wake.
+        // the following instruction. With I set - which reset leaves set, and
+        // which both corpora keep - that is a pure sleep-until-wake; with I
+        // clear the wake is followed by the vector.
         8'hCB: d = row(AM_WAI,  OP_NOP,  R_NONE, D_NONE);   // WAI
+
+        // ---- add-isa-xba ----
+        // $EB is the 65C816's own XBA, adopted with its meaning: exchange the
+        // two halves of the 16-bit accumulator, N and Z from the new A. Like
+        // $CB above, this is a claim on a WDC encoding that PRESERVES the
+        // option of that part rather than burning it.
+        //
+        // It exists because an interrupt entry saves PC and P and nothing
+        // else, so a handler had no way to preserve B and could not use the
+        // word ops at all. `xba / pha` ... `pla / xba` is the idiom, and it
+        // needs one opcode rather than a PHB/PLB pair - which on a real '816
+        // are the data bank register, not this.
+        8'hEB: d = row(AM_IMP,  OP_XBA,  R_NONE, D_A);      // XBA
 
         8'h83: d = row(AM_WZP,  OP_LDW,  R_NONE, D_NONE);   // LDAB zp
         8'h93: d = row(AM_WZP,  OP_STW,  R_NONE, D_NONE);   // STAB zp

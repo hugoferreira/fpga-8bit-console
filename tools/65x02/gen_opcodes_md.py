@@ -52,6 +52,10 @@ for _op in range(0x8B, 0x100, 0x10): EXTENSION[_op] = "add-isa-pointer-ops"
 # one claim of a WDC encoding that PRESERVES compatibility rather than
 # burning it.
 EXTENSION[0xCB] = "add-isa-wait"
+# $EB is the 65C816's XBA, claimed the same way $CB was: with the WDC meaning
+# adopted, so the encoding is preserved rather than burned. The second of the
+# two claims in this table that costs nothing in compatibility.
+EXTENSION[0xEB] = "add-isa-xba"
 EXTENSION[0x02] = "add-isa-frame-pointer (prefix, opens a second 256-slot page)"
 
 

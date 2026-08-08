@@ -185,8 +185,74 @@ word_checks:
     cmp #0x22
     bne fail14
 
+    ; ---- XBA : exchange the halves of AB ----
+    ; A genuine exchange, not a copy: both halves must move.
+    ldab #0x1234             ; A = 0x12, B = 0x34
+    xba
+    cmp #0x34                ; new A is the old B
+    bne fail15
+    stab 0x30
+    lda 0x30
+    cmp #0x12                ; new B is the old A
+    bne fail15
+
+    ; ...so twice is the identity
+    ldab #0xC37E
+    xba
+    xba
+    cmp #0xC3
+    bne fail16
+    stab 0x30
+    lda 0x30
+    cmp #0x7E
+    bne fail16
+
+    ; the idiom this exists for: an interrupt handler preserving BOTH halves
+    ; across a body that destroys them. 0x38, not 0x31: `stab 0x30` writes B at
+    ; 0x30 and A at 0x31, so parking the stack pointer there loses it.
+    tsx
+    stx 0x38                 ; S before
+    ldab #0xBEEF             ; A = 0xBE, B = 0xEF
+    pha                      ; save A
+    xba
+    pha                      ; save B - the exchange is what makes it reachable
+    ldab #0x0000             ; the "handler" destroys both halves
+    pla                      ; A = old B
+    xba                      ; ...into B, where it belongs
+    pla                      ; A = old A
+    cmp #0xBE
+    bne fail17               ; A came back
+    stab 0x30
+    lda 0x30
+    cmp #0xEF
+    bne fail17               ; and so did B
+    tsx
+    cpx 0x38
+    bne fail17               ; the idiom is stack-neutral
+
+    ; N and Z come from the NEW A, which is the old B
+    ldab #0xFF00             ; B = 0x00
+    xba
+    beq xba_zero_ok
+    jmp fail18
+xba_zero_ok:
+    ldab #0x0080             ; B = 0x80
+    xba
+    bpl fail18
+
 pass:
     jmp pass
+
+; These four sit here, not with fail1..fail14 above, because a branch from the
+; XBA checks cannot reach that far back.
+fail15: lda #15
+    jmp fail
+fail16: lda #16
+    jmp fail
+fail17: lda #17
+    jmp fail
+fail18: lda #18
+    jmp fail
 
 
 table:

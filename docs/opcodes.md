@@ -13,10 +13,10 @@ row.
 
 | | slots |
 | --- | --- |
-| Implemented | 170 |
+| Implemented | 171 |
 | Reserved for 65C02 compatibility | 58 |
-| Extension space, claimed | 19 |
-| Extension space, assigned but unclaimed | 14 |
+| Extension space, claimed | 20 |
+| Extension space, assigned but unclaimed | 13 |
 | Unallocated | 14 |
 | **Total** | **256** |
 
@@ -190,6 +190,7 @@ scored against this column.
 | `$E8` | INX | imp | 1 | 2.00 | 2.00 |
 | `$E9` | SBC | imm | 2 | 2.00 | 2.00 |
 | `$EA` | NOP | imp | 1 | 2.00 | 2.00 |
+| `$EB` | XBA | | | | *add-isa-xba* |
 | `$EC` | CPX | abs | 3 | 4.00 | 4.00 |
 | `$ED` | SBC | abs | 3 | 4.00 | 4.00 |
 | `$EE` | INC | abs | 3 | 5.00 ◀ | 6.00 |
@@ -287,7 +288,6 @@ option of adopting its 65C02 meaning later.
 | `$AB` | add-isa-pointer-ops |
 | `$BB` | add-isa-pointer-ops |
 | `$DB` | add-isa-pointer-ops |
-| `$EB` | add-isa-pointer-ops |
 | `$FB` | add-isa-pointer-ops |
 
 ## Unallocated

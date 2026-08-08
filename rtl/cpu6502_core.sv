@@ -251,6 +251,10 @@ module cpu6502_core (
             OP_ORA: begin alu_r = ra_val | opb; alu_n = alu_r[7]; alu_z = (alu_r == 0); end
             OP_AND: begin alu_r = ra_val & opb; alu_n = alu_r[7]; alu_z = (alu_r == 0); end
             OP_EOR: begin alu_r = ra_val ^ opb; alu_n = alu_r[7]; alu_z = (alu_r == 0); end
+            // XBA drives B onto the result, so the D_A commit lands the new A
+            // and the flags come from it - which is the 65C816's rule, N and Z
+            // from A after the exchange. The other half is in the commit block.
+            OP_XBA: begin alu_r = b; alu_n = b[7]; alu_z = (b == 8'h00); end
 
             OP_ADC: begin
                 // Z comes from the binary sum in both modes, which is what NMOS
@@ -878,6 +882,12 @@ module cpu6502_core (
                 D_S: s_n = alu_r;
                 default: ;                      // D_MEM, D_NONE: no register
             endcase
+            // XBA is the one instruction that writes two registers. The
+            // destination half goes through the case above (D_A takes
+            // alu_r, which the ALU drove from B); this is the other half,
+            // and it reads the register rather than a_n, so the two are a
+            // genuine exchange and not a copy.
+            if (dec_r.op == OP_XBA) b_n = a;
             if (dec_r.fw[5]) fn_n = alu_n;
             if (dec_r.fw[4]) fv_n = alu_v;
             if (dec_r.fw[3]) fd_n = alu_d;
@@ -944,9 +954,9 @@ module cpu6502_core (
     // S_BRK0..S_BRK4. 65x02 covers none of this - rtl/cpu6502_irq_tb.sv is
     // the only evidence for the path (gate T3), and docs/cpu-core.md says so.
     //
-    // What an interrupt still does NOT save is B, the low half of the 16-bit
-    // accumulator: there is no PHB/PLB, so a handler cannot preserve it and
-    // must not use the word ops. See docs/cpu-core.md.
+    // An entry saves PC and P and nothing else, as the 6502's does, so both
+    // halves of the accumulator are the handler's to preserve. B is reached
+    // with XBA ($EB) - see docs/cpu-core.md for the idiom.
 
 endmodule
 

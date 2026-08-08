@@ -128,3 +128,25 @@
     addw #{v: i32}         => 0xE3 @ v[7:0] @ v[15:8]   ; 3 / 3
     subw #{v: i32}         => 0xF3 @ v[7:0] @ v[15:8]   ; 3 / 3
 }
+
+; add-isa-xba: XBA, at the 65C816's own $EB with its meaning adopted.
+;
+; Exchanges the two halves of the 16-bit accumulator and sets N and Z from the
+; new A. 1 byte, 1 cycle.
+;
+; It exists because an interrupt entry saves PC and P and nothing else, exactly
+; as the 6502's does. A and B are the handler's to preserve, and no instruction
+; reached B by name - so a handler could not use the word ops at all. The idiom
+; is
+;
+;   xba / pha        ; ... at entry, after the usual pha for A
+;   pla / xba        ; ... before rti
+;
+; A push/pull pair for B would have needed two opcodes, and on a real 65C816
+; PHB/PLB are the data bank register - so that spelling would have burned two
+; encodings AND taken two mnemonics that mean something else. This claims one
+; encoding and preserves its meaning, as `wai` does at $CB.
+#ruledef ext_xba
+{
+    xba => 0xEB
+}

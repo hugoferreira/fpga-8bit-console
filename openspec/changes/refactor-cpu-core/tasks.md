@@ -249,10 +249,14 @@ would have been unlikely to reach — see task 4.1.
       stronger T3 than ten directed cases, and `rtl/cpu6502_sst.sv` already
       carries the `irq`/`nmi` ports for it — only `tools/65x02/harness.cpp`
       needs the driver
-- [ ] 5.5 An interrupt does not save `B`, the low half of the 16-bit
-      accumulator, and no `PHB`/`PLB` exists for a handler to save it with. So a
-      handler must not use the word ops, and nothing enforces that. Either add
-      the push/pull pair or make the restriction checkable
+- [x] 5.5 An interrupt does not save `B`, the low half of the 16-bit
+      accumulator, and no instruction reached it by name, so a handler could not
+      use the word ops. **Fixed by `add-isa-xba`**: `XBA` at `$EB`, the
+      65C816's own encoding adopted with its meaning, exchanges the halves and
+      sets N and Z from the new `A`. `pha / xba / pha` at entry and
+      `pla / xba / pla` before `rti`. Chosen over a `PHB`/`PLB` pair, which
+      would have cost two encodings and taken two mnemonics that mean the data
+      bank register on a real '816. Covered by `make test-ext`
 
 ## 6. Integration
 

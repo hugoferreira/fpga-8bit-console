@@ -480,12 +480,25 @@ Three things depart from NMOS, all deliberate:
   but does not decode the byte it fetched, so counting it as a retire would
   make `dbg_pc` name an instruction that never ran.
 
-**What an interrupt does not save is `B`**, the low half of the 16-bit
-accumulator. There is no `PHB`/`PLB`, so a handler cannot preserve it: a handler
-must not use the word ops. Nothing enforces this, and nothing in the repo needs
-it yet — both corpora keep `I` set from reset and use `wai` as a frame tick, so
-neither takes a vector at all. Their `$FFFA`/`$FFFE` entries point at their
-reset paths, which is only harmless for as long as that stays true.
+**An entry saves PC and P and nothing else**, as the 6502's does, so both
+halves of the 16-bit accumulator are the handler's to preserve. `A` goes
+through `PHA`/`PLA`; `B` is reached with **`XBA`** (`$EB`, `add-isa-xba`),
+which exchanges the halves and sets N and Z from the new `A`:
+
+```
+    pha / xba / pha        ; at entry
+    pla / xba / pla        ; before rti
+```
+
+`$EB` is the 65C816's own `XBA` encoding, adopted with its meaning — the same
+kind of claim as `WAI` at `$CB`, one that preserves a WDC encoding instead of
+burning it. A `PHB`/`PLB` pair would have cost two encodings *and* taken two
+mnemonics that mean the data bank register on a real '816.
+
+Nothing in the repo needs any of this yet: both corpora keep `I` set from reset
+and use `wai` as a frame tick, so neither takes a vector at all. Their
+`$FFFA`/`$FFFE` entries point at their reset paths, which is only harmless for
+as long as that stays true.
 
 Cost, on `make synth-cpu` over 5 nextpnr seeds: **1786 → 1862 logic cells**,
 Fmax median 41.21 → 41.60 MHz against a 4 MHz seed spread, with the critical

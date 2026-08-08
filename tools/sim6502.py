@@ -197,7 +197,8 @@ class Sim6502:
     EXT = {0x03, 0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73,
            0x8B, 0x9B,                      # add-isa-pointer-ops
            0x83, 0x93, 0xA3, 0xB3, 0xC3, 0xD3, 0xE3, 0xF3,   # add-isa-word-ops
-           0xCB}                            # add-isa-wait: WAI
+           0xCB,                            # add-isa-wait: WAI
+           0xEB}                            # add-isa-xba: XBA
 
     # add-isa-word-ops, column $x3 high half. AB is the 16-bit accumulator with
     # A the high byte and B the low, and a zero-page operand is little-endian,
@@ -280,6 +281,9 @@ class Sim6502:
             # wants. A hook models the wake source (the console's vsync).
             if self.wai is not None:
                 self.wai()
+        elif op == 0xEB:                     # XBA - exchange the halves of AB
+            self.a, self.b = self.b, self.a  # N and Z from the new A
+            self.setnz(self.a)
         return True
 
     def _add(self, v, cin):
