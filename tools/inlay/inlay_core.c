@@ -323,21 +323,27 @@ typedef struct {
     LaDiagnosticCode error;
 } LaContext;
 
+/* BEGIN TARGET DESCRIPTION console6502
+   Everything between these markers is the console6502 description: the
+   only place in this file where a register name, an operation spelling
+   or emitted instruction text may appear. Conformance enforces that. */
+
 static const LaConvention la_console6502_conventions[] = {
     {"console6502", {"a", "x", "y", 0}, 3, "a"}
 };
 
 static const LaRegisterDesc la_console6502_registers[] = {
-    {"a", LA_REGISTER_ACCUMULATOR},
-    {"x", LA_REGISTER_INDEX},
-    {"y", LA_REGISTER_INDEX}
+    {"a", LA_REGISTER_ACCUMULATOR, 0},
+    {"x", LA_REGISTER_INDEX,
+     LA_REGISTER_POINTER_INDEX | LA_REGISTER_ABSOLUTE_INDEX},
+    {"y", LA_REGISTER_INDEX, LA_REGISTER_ABSOLUTE_INDEX}
 };
 
 static const LaSpellingDesc la_console6502_spellings[] = {
     {"mov",  LA_SPELL_OFFSET_MATERIALIZE | LA_SPELL_QUALIFIED_IMMEDIATE |
              LA_SPELL_OVERLAY_STORE_IMM | LA_SPELL_FRAME_POINTER_MOVE},
-    {"offset", LA_SPELL_OFFSET_MATERIALIZE},
-    {"cmp",  LA_SPELL_QUALIFIED_IMMEDIATE | LA_SPELL_TYPED_OPERATION},
+    {"offset", LA_SPELL_OFFSET_KEYWORD},
+    {"cmp",  LA_SPELL_VALUE_COMPARE | LA_SPELL_TYPED_OPERATION},
     {"lda",  LA_SPELL_LOCAL_OPERATION | LA_SPELL_TYPED_OPERATION},
     {"sta",  LA_SPELL_LOCAL_OPERATION | LA_SPELL_TYPED_OPERATION},
     {"stx",  LA_SPELL_TYPED_OPERATION},
@@ -710,6 +716,15 @@ static const LaStrategyLane la_c6502_pool_lanes[] = {
     {"", "", 1, la_c6502_pool_high, 0}
 };
 
+/* Raw spellings the core recognizes but never emits: these move the
+   stack pointer, so a procedure with frame locals cannot contain one. */
+static const char *const la_c6502_stack_mutators[] = {
+    "pha", "pla", "php", "plp", "txs", 0
+};
+/* A transfer out of an inline body, which cannot expand into a caller
+   whose frame is live. */
+static const char *const la_c6502_nonlocal_transfers[] = { "jmp", 0 };
+
 static const LaStrategyDesc la_console6502_strategies[] = {
     {LA_STRATEGY_DISPATCH_TABLE, "split-low-high", "procedure-address",
      1, 2, la_c6502_split_lanes, la_c6502_table_label},
@@ -735,8 +750,11 @@ const LaTarget la_target_console6502 = {
              sizeof(la_console6502_lowerings[0])),
     la_console6502_strategies,
     (la_u8)(sizeof(la_console6502_strategies) /
-            sizeof(la_console6502_strategies[0]))
+            sizeof(la_console6502_strategies[0])),
+    la_c6502_stack_mutators, "rts", la_c6502_nonlocal_transfers
 };
+
+/* END TARGET DESCRIPTION console6502 */
 
 static la_u32 la_align_size(la_u32 value)
 {
@@ -1235,6 +1253,11 @@ static la_u16 la_find_procedure_scoped(LaContext *ctx, const char *text,
 static int la_count_operation(LaContext *ctx, la_u16 line);
 static la_u16 la_find_pool_text(LaContext *ctx, const char *text,
                                 la_u16 length);
+static LaSlice la_accumulator_slice(const LaContext *ctx);
+static int la_slice_is_accumulator(const LaContext *ctx, LaSlice slice);
+static int la_register_allows(const LaContext *ctx, LaSlice slice,
+                              la_u8 use);
+static LaSlice la_register_names(LaContext *ctx, la_u8 use);
 static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                                            const char *text,
                                            const char *end,
@@ -3751,14 +3774,10 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
                     in_body = 0;
                     ctx->current_procedure = LA_INVALID_HANDLE;
                 } else if (procedure->local_count != 0) {
-                    static const char *mutators[] = {
-                        "pha", "pla", "php", "plp", "txs"
-                    };
+                    const char *const *mutators;
                     la_u16 mutator;
-                    for (mutator = 0;
-                         mutator < (la_u16)(sizeof(mutators) /
-                                            sizeof(mutators[0]));
-                         ++mutator) {
+                    mutators = ctx->target->stack_mutators;
+                    for (mutator = 0; mutators[mutator] != 0; ++mutator) {
                         if (la_line_keyword(trimmed, content_end,
                                             mutators[mutator])) {
                             return la_fail(
@@ -3769,10 +3788,15 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
                                 la_name_slice(ctx, procedure->name), 0, 0);
                         }
                     }
-                    if (la_line_keyword(trimmed, content_end, "rts")) {
-                        return la_fail(ctx, LA_ERR_FRAME_STACK_MUTATION,
-                                       line, 1, 3, la_slice("rts", 3),
-                                       la_slice("use ret", 7), 0, 0);
+                    if (la_line_keyword(trimmed, content_end,
+                                        ctx->target->raw_return)) {
+                        return la_fail(
+                            ctx, LA_ERR_FRAME_STACK_MUTATION, line, 1,
+                            (la_u16)strlen(ctx->target->raw_return),
+                            la_slice(ctx->target->raw_return,
+                                     (la_u16)strlen(
+                                         ctx->target->raw_return)),
+                            la_slice("use ret", 7), 0, 0);
                     }
                 }
             } else if (la_line_keyword(trimmed, content_end, "namespace")) {
@@ -5734,18 +5758,17 @@ static int la_parse_typed_operation(LaContext *ctx,
                 ctx, root_start, root_length, path_start,
                 (la_u16)(close - path_start), line, &field_index, &offset,
                 &index, &stride, &count) != LA_OK) return -1;
-        if (!is_overlay) {
-            if (!la_equal_text(index.data, index.length, "x")) {
+        {
+            /* Pointer-indexed and absolute-indexed addressing admit the
+               registers the description declares for each use. */
+            la_u8 use;
+            use = is_overlay ? LA_REGISTER_ABSOLUTE_INDEX :
+                               LA_REGISTER_POINTER_INDEX;
+            if (!la_register_allows(ctx, index, use)) {
                 la_fail(ctx, LA_ERR_INDEX_LOCATION, line, 1, index.length,
-                        index, la_slice("x", 1), 0, 0);
+                        index, la_register_names(ctx, use), 0, 0);
                 return -1;
             }
-        } else if (!la_equal_text(index.data, index.length, "x") &&
-                   !la_equal_text(index.data, index.length, "y")) {
-            /* Absolute indexed addressing accepts either physical index. */
-            la_fail(ctx, LA_ERR_INDEX_LOCATION, line, 1, index.length,
-                    index, la_slice("x or y", 6), 0, 0);
-            return -1;
         }
         if ((!is_overlay &&
              stride != 1 && stride != 2 && stride != 4 && stride != 8) ||
@@ -6152,7 +6175,7 @@ static int la_parse_typed_word_operation(LaContext *ctx,
         event->aux =
             la_name_slice(ctx, ctx->locations[word_location].physical);
     }
-    event->scratch = la_slice("a", 1);
+    event->scratch = la_accumulator_slice(ctx);
     event->clobbers = la_slice("a,flags", 7);
     event->value = field_offset;
     event->access_width = 2;
@@ -6503,7 +6526,7 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
                 LA_TARGET_OP_OR8_OVERLAY_ABS;
         event->base = la_name_slice(ctx, ctx->overlays[overlay_base].base);
         if (is_mask) {
-            event->scratch = la_slice("a", 1);
+            event->scratch = la_accumulator_slice(ctx);
             event->clobbers = la_slice("a,flags", 7);
         } else {
             event->scratch = la_slice("", 0);
@@ -6515,7 +6538,7 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
         event->operation = operation;
         event->base =
             la_name_slice(ctx, ctx->locations[pointer_location].physical);
-        event->scratch = la_slice("a", 1);
+        event->scratch = la_accumulator_slice(ctx);
         event->clobbers = la_slice("a,flags", 7);
         event->volatility = LA_ACCESS_NONVOLATILE;
     }
@@ -6613,7 +6636,7 @@ static int la_parse_observation_operation(LaContext *ctx,
         event->base =
             la_name_slice(ctx, ctx->locations[word_location].physical);
         event->owner = la_name_slice(ctx, ctx->locations[word_location].name);
-        event->scratch = la_slice("a", 1);
+        event->scratch = la_accumulator_slice(ctx);
         event->clobbers = la_slice("a,flags", 7);
         event->access_width = 2;
         event->volatility = LA_ACCESS_NONVOLATILE;
@@ -6732,7 +6755,7 @@ static int la_parse_observation_operation(LaContext *ctx,
     if (is_decz) {
         event->aux = la_slice(label_start,
                               (la_u16)(cursor - label_start));
-        event->scratch = la_slice("a", 1);
+        event->scratch = la_accumulator_slice(ctx);
         event->clobbers = la_slice("a,flags", 7);
     } else {
         /* The pointer word test reads the high unit through (base),y. */
@@ -6855,7 +6878,7 @@ static int la_parse_word_move(LaContext *ctx,
         event->aux =
             la_name_slice(ctx, ctx->locations[source_location].physical);
     }
-    event->scratch = la_slice("a", 1);
+    event->scratch = la_accumulator_slice(ctx);
     event->clobbers = la_slice("a,flags", 7);
     event->access_width = 2;
     event->byte_order = ctx->target->byte_order;
@@ -6900,9 +6923,6 @@ static int la_parse_overlay_branch(LaContext *ctx,
                                    const char *start, const char *end,
                                    la_u16 line, LaEvent *event)
 {
-    static const char *const mnemonics[] = {
-        "cbeq", "cbne", "cblt", "cble", "cbgt", "cbge", "tbz", "tbnz"
-    };
     const char *cursor;
     const char *mnem_start;
     const char *mnem_end;
@@ -6920,15 +6940,20 @@ static int la_parse_overlay_branch(LaContext *ctx,
     la_u16 field_offset;
     la_u16 field_size;
     int matched;
-    unsigned i;
+    la_u16 i;
     cursor = la_trim_left(start, end);
     mnem_start = cursor;
     while (cursor < end && la_is_ident(*cursor)) ++cursor;
     mnem_end = cursor;
     mnem_length = (la_u16)(mnem_end - mnem_start);
+    /* The branch spellings are the description's; the matched one is
+       passed through to the lowering verbatim. */
     matched = 0;
-    for (i = 0; i < sizeof(mnemonics) / sizeof(mnemonics[0]); ++i) {
-        if (la_equal_text(mnem_start, mnem_length, mnemonics[i])) {
+    for (i = 0; i < ctx->target->spelling_count; ++i) {
+        if ((ctx->target->spellings[i].families &
+             LA_SPELL_OVERLAY_BRANCH) == 0) continue;
+        if (la_equal_text(mnem_start, mnem_length,
+                          ctx->target->spellings[i].spelling)) {
             matched = 1;
             break;
         }
@@ -7238,9 +7263,11 @@ static int la_parse_pool_address(LaContext *ctx,
                 la_name_slice(ctx, pool->type_name), 0, 0);
         return -1;
     }
-    if (!la_equal_text(index_start, index_length, "a")) {
+    if (!la_slice_is_accumulator(
+            ctx, la_slice(index_start, index_length))) {
         la_fail(ctx, LA_ERR_INDEX_LOCATION, line, 1, index_length,
-                la_slice(index_start, index_length), la_slice("a", 1), 0, 0);
+                la_slice(index_start, index_length),
+                la_accumulator_slice(ctx), 0, 0);
         return -1;
     }
     if (!la_count_operation(ctx, line)) return -1;
@@ -7452,7 +7479,7 @@ static int la_parse_frame_pointer_move(LaContext *ctx,
     event->path = la_name_slice(ctx, ctx->locals[local_index].name);
     event->base =
         la_name_slice(ctx, ctx->locations[location_index].physical);
-    event->aux2 = la_slice("a", 1);
+    event->aux2 = la_accumulator_slice(ctx);
     event->operation = store ? LA_TARGET_OP_STORE_PTR_FRAME :
                                LA_TARGET_OP_LOAD_PTR_FRAME;
     event->value = (la_u16)(
@@ -7504,6 +7531,67 @@ static int la_register_lookup(const LaContext *ctx, LaSlice slice)
 static int la_slice_is_register(const LaContext *ctx, LaSlice slice)
 {
     return la_register_lookup(ctx, slice) >= 0;
+}
+
+/* Append to the diagnostic scratch buffer, bounded by the line limit;
+   diagnostics whose text is composed from the description build here. */
+static la_u16 la_append_text(LaContext *ctx, la_u16 length,
+                             const char *text)
+{
+    la_u16 amount;
+    amount = (la_u16)strlen(text);
+    if (length + amount >= ctx->limits->max_line_bytes) return length;
+    memcpy(ctx->path_buffer + length, text, amount);
+    return (la_u16)(length + amount);
+}
+
+/* The accumulator role's name: the register memory reads pass through,
+   which the marshalling events report as their scratch. */
+static LaSlice la_accumulator_slice(const LaContext *ctx)
+{
+    la_u8 index;
+    for (index = 0; index < ctx->target->register_count; ++index) {
+        if (ctx->target->registers[index].role == LA_REGISTER_ACCUMULATOR) {
+            return la_slice(
+                ctx->target->registers[index].name,
+                (la_u16)strlen(ctx->target->registers[index].name));
+        }
+    }
+    return la_slice("", 0);
+}
+
+/* Does this register declare the use a form requires? */
+static int la_register_allows(const LaContext *ctx, LaSlice slice,
+                              la_u8 use)
+{
+    int index;
+    index = la_register_lookup(ctx, slice);
+    return index >= 0 &&
+           (ctx->target->registers[index].uses & use) == use;
+}
+
+/* The declared register names carrying a use, comma-separated, for the
+   diagnostics that reject a register no form admits. Use 0 for all. */
+static LaSlice la_register_names(LaContext *ctx, la_u8 use)
+{
+    la_u16 length;
+    la_u8 index;
+    length = 0;
+    for (index = 0; index < ctx->target->register_count; ++index) {
+        const char *name;
+        la_u16 name_length;
+        if ((ctx->target->registers[index].uses & use) != use) continue;
+        name = ctx->target->registers[index].name;
+        name_length = (la_u16)strlen(name);
+        if (length + name_length + 2 >= ctx->limits->max_line_bytes) break;
+        if (length != 0) {
+            ctx->path_buffer[length++] = ',';
+            ctx->path_buffer[length++] = ' ';
+        }
+        memcpy(ctx->path_buffer + length, name, name_length);
+        length = (la_u16)(length + name_length);
+    }
+    return la_slice(ctx->path_buffer, length);
 }
 
 static int la_slice_is_accumulator(const LaContext *ctx, LaSlice slice)
@@ -8611,12 +8699,40 @@ static int la_parse_procedure_data(LaContext *ctx,
     return 1;
 }
 
+/* The spelling a family claims, or 0 when the description declares
+   none. A family with one claimant names a word the core reads but
+   never emits. */
+static const char *la_family_spelling(LaContext *ctx, la_u16 family)
+{
+    la_u16 index;
+    for (index = 0; index < ctx->target->spelling_count; ++index) {
+        if ((ctx->target->spellings[index].families & family) != 0) {
+            return ctx->target->spellings[index].spelling;
+        }
+    }
+    return 0;
+}
+
+/* Step over the operation-position token the dispatcher already matched
+   against the description, lexed the same way. */
+static const char *la_skip_spelling(const char *start, const char *end)
+{
+    const char *cursor;
+    cursor = la_trim_left(start, end);
+    while (cursor < end && (la_is_ident(*cursor) || *cursor == '.')) {
+        ++cursor;
+    }
+    return cursor;
+}
+
 static int la_parse_offset_materialization(LaContext *ctx,
                                            const char *start,
                                            const char *end,
-                                           la_u16 line, LaEvent *event)
+                                           la_u16 line, la_u16 families,
+                                           LaEvent *event)
 {
     const char *cursor;
+    const char *keyword;
     const char *physical_start;
     const char *path_start;
     const char *path_end;
@@ -8626,14 +8742,27 @@ static int la_parse_offset_materialization(LaContext *ctx,
     la_u16 offset;
     la_i32 addend;
     cursor = la_trim_left(start, end);
-    if (la_line_keyword(cursor, end, "offset")) {
-        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, 6,
-                la_slice(cursor, 6),
-                la_slice("mov DEST, offset TYPE.FIELD", 27), 0, 0);
+    keyword = la_family_spelling(ctx, LA_SPELL_OFFSET_KEYWORD);
+    if (keyword == 0) return 0;
+    /* The keyword alone is the shape this operation is not: name the
+       form the description does claim, in its own spellings. */
+    if ((families & LA_SPELL_OFFSET_KEYWORD) != 0) {
+        const char *move;
+        la_u16 length;
+        move = la_family_spelling(ctx, LA_SPELL_OFFSET_MATERIALIZE);
+        if (move == 0) return 0;
+        length = 0;
+        length = la_append_text(ctx, length, move);
+        length = la_append_text(ctx, length, " DEST, ");
+        length = la_append_text(ctx, length, keyword);
+        length = la_append_text(ctx, length, " TYPE.FIELD");
+        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
+                (la_u16)strlen(keyword),
+                la_slice(cursor, (la_u16)strlen(keyword)),
+                la_slice(ctx->path_buffer, length), 0, 0);
         return -1;
     }
-    if (!la_line_keyword(cursor, end, "mov")) return 0;
-    cursor += 3;
+    cursor = la_skip_spelling(cursor, end);
     if (!la_read_identifier(
             &cursor, end, &physical_start, &physical_length)) {
         return 0;
@@ -8643,13 +8772,12 @@ static int la_parse_offset_materialization(LaContext *ctx,
         return 0;
     }
     cursor = la_trim_left(cursor, end);
-    if (!la_take_word(&cursor, end, "offset")) return 0;
-    if (!(la_equal_text(physical_start, physical_length, "a") ||
-          la_equal_text(physical_start, physical_length, "x") ||
-          la_equal_text(physical_start, physical_length, "y"))) {
+    if (!la_take_word(&cursor, end, keyword)) return 0;
+    if (!la_slice_is_register(
+            ctx, la_slice(physical_start, physical_length))) {
         la_fail(ctx, LA_ERR_MEMBER_PLACEMENT, line, 1, physical_length,
                 la_slice(physical_start, physical_length),
-                la_slice("a, x, or y", 10), 0, 0);
+                la_register_names(ctx, 0), 0, 0);
         return -1;
     }
     path_start = la_trim_left(cursor, end);
@@ -8724,7 +8852,8 @@ static int la_parse_offset_materialization(LaContext *ctx,
 static int la_parse_qualified_immediate(LaContext *ctx,
                                         const char *start,
                                         const char *end,
-                                        la_u16 line, LaEvent *event)
+                                        la_u16 line, la_u16 families,
+                                        LaEvent *event)
 {
     const char *cursor;
     const char *destination_start;
@@ -8737,19 +8866,20 @@ static int la_parse_qualified_immediate(LaContext *ctx,
     cursor = la_trim_left(start, end);
     destination_start = 0;
     destination_length = 0;
-    if (la_line_keyword(cursor, end, "mov")) {
+    /* The claiming family says which operation this spelling is: the
+       compare reads the immediate alone, the move takes a destination
+       first. */
+    if ((families & LA_SPELL_VALUE_COMPARE) != 0) {
+        operation = LA_TARGET_OP_VALUE_CMP;
+        cursor = la_skip_spelling(cursor, end);
+    } else {
         operation = LA_TARGET_OP_VALUE_MOV;
-        cursor += 3;
+        cursor = la_skip_spelling(cursor, end);
         if (!la_read_qualified_identifier(
                 &cursor, end, &destination_start,
                 &destination_length)) return 0;
         cursor = la_trim_left(cursor, end);
         if (cursor >= end || *cursor++ != ',') return 0;
-    } else if (la_line_keyword(cursor, end, "cmp")) {
-        operation = LA_TARGET_OP_VALUE_CMP;
-        cursor += 3;
-    } else {
-        return 0;
     }
     cursor = la_trim_left(cursor, end);
     layout_query = 0;
@@ -9650,13 +9780,15 @@ static int la_process_operation_line(LaContext *ctx, const char *cursor,
     typed = la_parse_procedure_data(
         ctx, cursor, content_end, line, 1);
     if (typed > 0) data_emitted = 1;
-    if (typed == 0 && (families & LA_SPELL_OFFSET_MATERIALIZE)) {
+    if (typed == 0 && (families & (LA_SPELL_OFFSET_MATERIALIZE |
+                                   LA_SPELL_OFFSET_KEYWORD))) {
         typed = la_parse_offset_materialization(
-            ctx, cursor, content_end, line, &event);
+            ctx, cursor, content_end, line, families, &event);
     }
-    if (typed == 0 && (families & LA_SPELL_QUALIFIED_IMMEDIATE)) {
+    if (typed == 0 && (families & (LA_SPELL_QUALIFIED_IMMEDIATE |
+                                   LA_SPELL_VALUE_COMPARE))) {
         typed = la_parse_qualified_immediate(
-            ctx, cursor, content_end, line, &event);
+            ctx, cursor, content_end, line, families, &event);
     }
     if (typed == 0 && (families & LA_SPELL_OVERLAY_STORE_IMM)) {
         typed = la_parse_overlay_store_immediate(
@@ -9804,9 +9936,15 @@ static int la_capture_inline_line(LaContext *ctx, la_u16 procedure,
             return -1;
         }
     }
-    if (la_line_keyword(start, end, "jmp")) {
-        scan = la_trim_left(start + 3, end);
-        if (scan < end && *scan != '.') record->has_nonlocal_jmp = 1;
+    {
+        const char *const *transfers;
+        la_u16 index;
+        transfers = ctx->target->nonlocal_transfers;
+        for (index = 0; transfers[index] != 0; ++index) {
+            if (!la_line_keyword(start, end, transfers[index])) continue;
+            scan = la_trim_left(start + strlen(transfers[index]), end);
+            if (scan < end && *scan != '.') record->has_nonlocal_jmp = 1;
+        }
     }
     if (ctx->inline_line_count >= ctx->limits->max_inline_body_lines) {
         la_fail(ctx, LA_ERR_INLINE_CAPACITY, line, 1, 1,

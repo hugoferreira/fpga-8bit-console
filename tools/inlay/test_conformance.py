@@ -30,6 +30,22 @@ CELESTE_REFERENCE_DIR = (
     ROOT / "tests/inlay/reference/celeste-customasm"
 )
 CELESTE_MEMMAP = CELESTE_REFERENCE_DIR / "memmap.asm"
+# `offset` is also the language's layout-query keyword (beside `sizeof`,
+# `alignof`, `countof`) and the emitted `__offset` property suffix. Where
+# the core names it, it is that vocabulary, not the target spelling that
+# `mov DEST, offset TYPE.FIELD` claims.
+LANGUAGE_VOCABULARY = {"offset"}
+INLAY_CORE = ROOT / "tools/inlay/inlay_core.c"
+CORE_SOURCES = (
+    INLAY_CORE,
+    ROOT / "tools/inlay/inlay_modules.c",
+    ROOT / "tools/inlay/inlay.h",
+)
+ISA_DESCRIPTION = (
+    ROOT / "src/isa/nmos6502.asm",
+    ROOT / "src/isa/ext_core.asm",
+    ROOT / "src/isa/pseudo.asm",
+)
 EXPECTED_CELESTE_TYPED_OPERATIONS = 293
 EXPECTED_CELESTE_OVERLAY_OPERATIONS = 248
 EXPECTED_CELESTE_OFFSET_SETUPS = 0
@@ -476,6 +492,108 @@ def check_fixture(first: Path, second: Path) -> dict[str, int]:
     if fixture_bin.read_bytes() != reference_bin.read_bytes():
         raise AssertionError("typed field operations differ from reference bytes")
     return json.loads(stats_result.stdout)
+
+
+def check_core_is_target_name_free() -> int:
+    """Outside the marked description, no core source may name a
+    register, an operation spelling, or a raw spelling the description
+    declares. The marked region is the description; everything else is
+    the portable core."""
+    described = json.loads(run(INLAY, "--describe").stdout)
+    names = {entry["name"] for entry in described["registers"]}
+    names |= set(described["spellings"])
+    names |= set(described["rawSpellings"])
+    names -= LANGUAGE_VOCABULARY
+    offenders: list[str] = []
+    for path in CORE_SOURCES:
+        text = path.read_text(encoding="utf-8")
+        if path == INLAY_CORE:
+            begin = text.index("/* BEGIN TARGET DESCRIPTION")
+            end = text.index("/* END TARGET DESCRIPTION")
+            text = text[:begin] + text[end:]
+        for number, line in enumerate(text.splitlines(), start=1):
+            for literal in re.findall(r'"((?:[^"\\]|\\.)*)"', line):
+                if literal in names:
+                    offenders.append(f"{path.name}:{number}: \"{literal}\"")
+    if offenders:
+        raise AssertionError(
+            "target names outside the description: " + ", ".join(offenders)
+        )
+    return len(names)
+
+
+def isa_mnemonics() -> set[str]:
+    """Every mnemonic the canonical ISA description defines. A ruledef
+    rule is `pattern => encoding`; the pattern's first token is the
+    mnemonic. Rules whose pattern opens with a placeholder belong to
+    subruledefs and name no mnemonic."""
+    defined: set[str] = set()
+    leading = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)")
+    for path in ISA_DESCRIPTION:
+        in_rules = False
+        for line in path.read_text(encoding="ascii").splitlines():
+            stripped = line.split(";", 1)[0].strip()
+            if stripped.startswith("#ruledef"):
+                in_rules = True
+                continue
+            if stripped.startswith("#subruledef"):
+                in_rules = False
+                continue
+            if not in_rules or "=>" not in stripped:
+                continue
+            match = leading.match(stripped.split("=>", 1)[0])
+            if match:
+                defined.add(match.group(1))
+    if len(defined) < 50:
+        raise AssertionError(
+            f"ISA description parsed as only {len(defined)} mnemonics"
+        )
+    return defined
+
+
+def check_isa_cross_validation() -> tuple[int, int]:
+    """No description template may emit a mnemonic the ISA description
+    does not define. Slots inside a mnemonic expand over the declared
+    register names; a mnemonic that is entirely a slot comes from source
+    and is validated when the fixture assembles."""
+    described = json.loads(run(INLAY, "--describe").stdout)
+    defined = isa_mnemonics()
+    registers = [entry["name"] for entry in described["registers"]]
+    undefined: list[str] = []
+    checked = 0
+    deferred = 0
+    for key, entry in described["templates"].items():
+        for line in entry["lines"]:
+            text = line
+            while text[:1] in ("*", "?", "@"):
+                text = (
+                    text[text.index("@", 1) + 1:] if text[0] == "@"
+                    else text[1:]
+                )
+            token = text.strip().split(" ", 1)[0]
+            if not token or token.startswith("#") or token.endswith(":"):
+                continue
+            if token.startswith("%"):
+                deferred += 1
+                continue
+            candidates = (
+                [token.replace("%b", register) for register in registers]
+                if "%" in token else [token]
+            )
+            for candidate in candidates:
+                checked += 1
+                if "%" in candidate:
+                    raise AssertionError(
+                        f"{key}: unexpanded mnemonic slot in {line!r}"
+                    )
+                if candidate not in defined:
+                    undefined.append(f"{key}: {candidate}")
+    if undefined:
+        raise AssertionError(
+            "description templates emit mnemonics the ISA description "
+            f"does not define: {sorted(undefined)}"
+        )
+    return checked, deferred
 
 
 def check_template_coverage(tmp: Path) -> int:
@@ -1406,6 +1524,18 @@ def check_full_rom(tmp: Path) -> tuple[int, str, int, int, int]:
     translate(
         CELESTE_INLAY, generated, tmp / "celeste.map.json"
     )
+    # Forced twice: the digest proves bytes, this proves the frontend
+    # reaches them the same way, comment text and source map included.
+    repeat = tmp / "celeste-repeat.asm"
+    repeat_map = tmp / "celeste-repeat.map.json"
+    translate(CELESTE_INLAY, repeat, repeat_map)
+    if generated.read_bytes() != repeat.read_bytes():
+        raise AssertionError("forced Celeste builds differ in generated text")
+    first_map = json.loads((tmp / "celeste.map.json").read_text())
+    second_map = json.loads(repeat_map.read_text())
+    second_map["generated"] = first_map["generated"]
+    if first_map != second_map:
+        raise AssertionError("forced Celeste builds differ in source map")
     generated_text = generated.read_text(encoding="ascii")
     for name in lifecycle_names:
         target_name = "__inlay_q" + "".join(
@@ -1491,6 +1621,8 @@ def main() -> int:
         tmp_a = Path(raw_a)
         tmp_b = Path(raw_b)
         check_cli(tmp_a)
+        target_names = check_core_is_target_name_free()
+        mnemonics, deferred_mnemonics = check_isa_cross_validation()
         templates = check_template_coverage(tmp_a)
         stats = check_fixture(tmp_a, tmp_b)
         check_structured_fixture(tmp_a, tmp_b)
@@ -1507,7 +1639,10 @@ def main() -> int:
         ) = check_full_rom(tmp_a)
     print(
         "Inlay conformance: passed; "
-        f"description templates={templates} all referenced; "
+        f"core free of {target_names} declared target names; "
+        f"description templates={templates} all referenced, "
+        f"{mnemonics} emitted mnemonics defined by the ISA "
+        f"({deferred_mnemonics} source-supplied); "
         f"fixture operations={stats['operations']}, "
         f"workspace={stats['workspaceBytes']} bytes; "
         f"Celeste overlay operations={overlay_operations}, "

@@ -71,6 +71,71 @@ customasm v0.14.1
 The structured events, not generated customasm spelling, are the semantic
 boundary.
 
+## Target descriptions
+
+Every target-specific fact the frontend consumes comes from one
+description. `console6502` is the first, declared between the
+`BEGIN TARGET DESCRIPTION` / `END TARGET DESCRIPTION` markers in
+`tools/inlay/inlay_core.c`; the rest of the core is generic algorithms
+over what it declares. `inlay --describe` prints the live description as
+JSON.
+
+A description declares:
+
+- **Machine facts** — storage unit, byte order, pointer and code-pointer
+  units, displacement window, alignment ceilings, capability flags.
+- **Registers** (`LaRegisterDesc`) — name, role (`accumulator`,
+  `index`), and the uses each one admits (`POINTER_INDEX`,
+  `ABSOLUTE_INDEX`). Roles and uses, never names, parameterize the core:
+  marshalling passes memory reads through the accumulator role, and an
+  indexed operand is checked against the registers declaring that use.
+- **Conventions** — named argument-placement walks and the return
+  placement, replacing a hardcoded register order.
+- **Scratch** — the marshalling pool as a name prefix plus unit count.
+- **Spellings** (`LaSpellingDesc`) — the source spellings the target
+  claims and, as a family bitmask, which typed parsers each one selects.
+  A spelling the description does not claim falls through to raw. The
+  first token of an operation-position line lexes greedily through dots,
+  so a spelling may contain them.
+- **Lowerings** (`LaLoweringDesc`) — one template per semantic
+  operation: ordered output lines with substitution slots. Slots: `%b`
+  base, `%a` aux, `%c` aux2, `%x` index, `%s` scratch, `%t` scoped-raw
+  tail, `%d` displacement, `%D` its successor, `%l`/`%h` immediate
+  halves, `%i` byte-update immediate, `%v` signed immediate, `%m`
+  mangled field-offset symbol, `%q` qualified procedure symbol,
+  `%F`/`%G` page-one frame addresses, `%o`/`%p` provenance, `%%` a
+  literal percent. Line prefixes: `*` repeats the line the event's count
+  times, `?` emits it only when that count is nonzero, `@kind@`
+  overrides that line's source-map reason.
+- **Strategies** (`LaStrategyDesc`) — how a table's entries are cut into
+  lanes. A strategy has a kind (dispatch, value, pool), a label template
+  and its lanes; a lane declares the spellings a declaration site may
+  select it by (`low`, `high`, `addr full`), the label suffix, the
+  storage one row occupies, and the templates for a filled and an absent
+  entry. A lane with no absent template rejects `absent`. console6502
+  declares split low/high dispatch, word-per-entry dispatch, byte value
+  rows, and symbolic `(BASE+offset)` pool rows.
+- **Raw spellings** — instructions the core must recognize without ever
+  emitting them: those that move the stack pointer under a live frame,
+  the raw return a procedure must spell `ret` instead, and transfers
+  that can leave an inline body.
+
+Three conformance checks hold the boundary, all in
+`tools/inlay/test_conformance.py`:
+
+- **Target-name-free core** — outside the description markers, no core
+  source may contain a string literal equal to a declared register,
+  spelling or raw spelling.
+- **ISA cross-check** — every mnemonic a template emits must be defined
+  by a ruledef in `src/isa`. A mnemonic slot inside a token expands over
+  the declared register names; a template whose whole mnemonic is a slot
+  takes it from source, and customasm checks it when the fixture
+  assembles.
+- **Reference coverage** — every declared template must be exercised by
+  a fixture whose bytes are compared against a handwritten reference.
+  Templates that no site can reach are listed explicitly with their
+  reason.
+
 ## Implemented source slice
 
 Inlay source files use the `.inlay.asm` suffix. The implemented declarations
@@ -773,9 +838,11 @@ build/inlay/inlay \
   input.inlay.asm
 ```
 
-`--stats` prints bounded-table usage. `--check-customasm` invokes the pinned
-downstream assembler after translation. `--native` fails explicitly because
-native encoding is not implemented.
+`--stats` prints bounded-table usage and, per description template, how
+often this build used it. `--describe` prints the target description as
+JSON and exits. `--check-customasm` invokes the pinned downstream
+assembler after translation. `--native` fails explicitly because native
+encoding is not implemented.
 
 ### Legacy naming compatibility
 

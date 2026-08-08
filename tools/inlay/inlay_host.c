@@ -987,10 +987,42 @@ static void write_template_report(FILE *file, const HostOutput *usage)
 
 static void describe(FILE *file)
 {
+    const LaTarget *target;
+    la_u8 index;
+    target = &la_target_console6502;
     fprintf(file, "{\n  \"format\":1,\n  \"target\":");
-    json_string(file, la_target_console6502.name);
-    fprintf(file, ",\n  \"targetFormat\":%u,\n  \"templates\":",
+    json_string(file, target->name);
+    fprintf(file, ",\n  \"targetFormat\":%u,\n  \"registers\":[",
             LA_TARGET_VERSION);
+    for (index = 0; index < target->register_count; ++index) {
+        if (index != 0) fputc(',', file);
+        fputs("\n    {\"name\":", file);
+        json_string(file, target->registers[index].name);
+        fputs(",\"role\":", file);
+        json_string(file,
+                    target->registers[index].role == LA_REGISTER_ACCUMULATOR ?
+                        "accumulator" : "index");
+        fputc('}', file);
+    }
+    fputs("\n  ],\n  \"spellings\":[", file);
+    {
+        la_u16 spelling;
+        for (spelling = 0; spelling < target->spelling_count; ++spelling) {
+            if (spelling != 0) fputc(',', file);
+            json_string(file, target->spellings[spelling].spelling);
+        }
+    }
+    fputs("],\n  \"rawSpellings\":[", file);
+    json_string(file, target->raw_return);
+    for (index = 0; target->stack_mutators[index] != 0; ++index) {
+        fputc(',', file);
+        json_string(file, target->stack_mutators[index]);
+    }
+    for (index = 0; target->nonlocal_transfers[index] != 0; ++index) {
+        fputc(',', file);
+        json_string(file, target->nonlocal_transfers[index]);
+    }
+    fputs("],\n  \"templates\":", file);
     write_template_report(file, 0);
     fputs("\n}\n", file);
 }

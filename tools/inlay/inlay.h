@@ -435,9 +435,16 @@ typedef enum {
     LA_REGISTER_INDEX
 } LaRegisterRole;
 
+/* What a register may index, beyond its role. */
+enum {
+    LA_REGISTER_POINTER_INDEX  = 0x01,
+    LA_REGISTER_ABSOLUTE_INDEX = 0x02
+};
+
 typedef struct {
     const char *name;
     la_u8 role;
+    la_u8 uses;
 } LaRegisterDesc;
 
 /* Families of typed-operation parsing a spelling can participate in.
@@ -454,7 +461,9 @@ enum {
     LA_SPELL_BYTE_RMW            = 0x0100,
     LA_SPELL_OBSERVATION         = 0x0200,
     LA_SPELL_WORD_MOVE           = 0x0400,
-    LA_SPELL_TYPED_OPERATION     = 0x0800
+    LA_SPELL_TYPED_OPERATION     = 0x0800,
+    LA_SPELL_VALUE_COMPARE       = 0x1000,
+    LA_SPELL_OFFSET_KEYWORD      = 0x2000
 };
 
 typedef struct {
@@ -540,6 +549,13 @@ typedef struct {
     la_u16 lowering_count;
     const LaStrategyDesc *strategies;
     la_u8 strategy_count;
+    /* Raw spellings the core must recognize without emitting them:
+       instructions that move the stack pointer under a live frame, the
+       raw return a procedure must spell `ret` instead, and transfers
+       that can leave an inline body. All NULL-terminated. */
+    const char *const *stack_mutators;
+    const char *raw_return;
+    const char *const *nonlocal_transfers;
 } LaTarget;
 
 typedef struct {

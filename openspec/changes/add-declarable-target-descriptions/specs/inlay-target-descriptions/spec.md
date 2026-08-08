@@ -4,18 +4,20 @@
 The frontend SHALL obtain every target-specific fact from a per-target
 description: machine facts (storage unit, byte order, pointer and
 code-pointer units, displacement window, maximum alignment), the
-register set with roles (accumulator, index, stack), named calling
-conventions with omitted-placement order, the marshalling scratch
-naming scheme and unit count, per-operation spellings, constraints,
-lowering templates and contracts, the frame model templates, and the
-data-emission strategies. The portable core SHALL contain no target
-register name, mnemonic spelling, clobber set, or instruction
-sequence.
+register set with roles (accumulator, index, stack) and the uses each
+register admits, named calling conventions with omitted-placement
+order, the marshalling scratch naming scheme and unit count,
+per-operation spellings, constraints, lowering templates and contracts,
+the frame model templates, the data-emission strategies, and the raw
+spellings the core must recognize without emitting them. The portable
+core SHALL contain no target register name, mnemonic spelling, clobber
+set, or instruction sequence.
 
 #### Scenario: Core is target-name-free
-- **WHEN** the portable core sources are searched for target register
-  names, operation spellings, or lowering instruction text
-- **THEN** none appear outside the description loader and its tables
+- **WHEN** the portable core sources are searched for string literals
+  equal to a declared register name, operation spelling or raw spelling
+- **THEN** none appear outside the marked description region, and
+  conformance fails naming the file and line if one does
 
 #### Scenario: Unsupported operation rejects
 - **WHEN** source uses a semantic operation for which the active

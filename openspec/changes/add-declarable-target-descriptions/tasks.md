@@ -65,10 +65,10 @@
 
 ## 8. Cross-check and close-out
 
-- [ ] 8.1 Cross-validate description templates against the canonical
+- [x] 8.1 Cross-validate description templates against the canonical
       ISA description: an emitted mnemonic the ISA description does
       not define fails the build
-- [ ] 8.2 Sweep the core for residual target-named knowledge; document
+- [x] 8.2 Sweep the core for residual target-named knowledge; document
       the description format in docs/inlay.md; final double
       forced-build determinism and digest check; strict OpenSpec
       validation
