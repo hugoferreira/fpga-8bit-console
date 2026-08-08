@@ -2,6 +2,7 @@
 // One process, no FFI seams: the frame loop drives the model directly and
 // paces to a locked 60 fps.
 #include "Vtop.h"
+#include "Vtop___024root.h"
 #include "verilated.h"
 #include <SDL.h>
 #include <chrono>
@@ -12,6 +13,7 @@
 #include <cstdlib>
 #include <vector>
 #include <map>
+#include <algorithm>
 #include <string>
 #include <fstream>
 #include <sstream>
@@ -144,6 +146,8 @@ int main(int argc, char** argv) {
     bool audio_trace = false;             // per-frame audio energy to stdout
     const char* audio_wav = nullptr;      // dump what the console actually plays
     bool psg_trace = false;               // per-frame PSG channel state
+    long peek_addr = -1;                  // RAM byte whose change cadence to report
+    long profile_from = -1;               // sample the CPU PC from this frame on
     const char* sym_path = nullptr;
     const char* resolve_addr = nullptr;
     std::vector<KeyEvent> script;
@@ -157,6 +161,10 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--audio-wav") && i + 1 < argc)
             audio_wav = argv[++i];
         else if (!strcmp(argv[i], "--psg-trace")) psg_trace = true;
+        else if (!strcmp(argv[i], "--peek") && i + 1 < argc)
+            peek_addr = strtol(argv[++i], nullptr, 0);
+        else if (!strcmp(argv[i], "--profile-from") && i + 1 < argc)
+            profile_from = atol(argv[++i]);
         else if (!strcmp(argv[i], "--sym") && i + 1 < argc)
             sym_path = argv[++i];
         else if (!strcmp(argv[i], "--resolve") && i + 1 < argc)
@@ -245,6 +253,29 @@ int main(int argc, char** argv) {
     uint32_t hpos = 0, vpos = 0, frame = 0;
     bool vblank = true, hblank = false;
 
+    // --peek: watch one RAM byte once per display frame and report the
+    // distribution of change intervals. Pointing it at a counter the game
+    // bumps once per game tick (Celeste: game.frames at $30) separates
+    // emulated slowdown from host slowdown: a healthy 30 Hz game changes it
+    // every 2 display frames; 3+ means the game overran its CPU budget,
+    // whatever the host fps says.
+    uint8_t peek_last = 0;
+    uint32_t peek_last_frame = 0;
+    long peek_hist[9] = {0};              // interval 1..8, [0] collects >8
+
+    // --profile-from: sample the emulated CPU's PC once per pixel (one sample
+    // per three CPU clocks) and attribute wall time to the nearest preceding
+    // symbol from --sym. Stalled cycles (DMA, psg_hold) accumulate at the
+    // stalled instruction, which is the correct attribution for a budget.
+    std::vector<uint64_t> prof, prof_late;
+    if (profile_from >= 0) {
+        prof.assign(65536, 0);
+        // With --peek also active, samples taken while the watched counter is
+        // overdue (its tick is in a 3rd-or-later display frame) land in a
+        // second histogram: the work profile of exactly the overrun ticks.
+        if (peek_addr >= 0) prof_late.assign(65536, 0);
+    }
+
     using clockk = std::chrono::steady_clock;
     auto t0 = clockk::now();
     bool running = true;
@@ -256,6 +287,13 @@ int main(int argc, char** argv) {
             tb->clk_i = 0; tb->eval();
         }
         bool vs = tb->vsync, hs = tb->hsync;
+
+        if (profile_from >= 0 && (long)frame >= profile_from) {
+            uint16_t pc = tb->rootp->top__DOT__chip__DOT__cpu0__DOT__core__DOT__pc;
+            prof[pc]++;
+            if (peek_addr >= 0 && frame - peek_last_frame >= 2)
+                prof_late[pc]++;
+        }
 
         // sample the PSG's 22050 Hz PCM at 44100 Hz (Bresenham across the
         // frame) - a natural 2x zero-order hold of the chip's native rate
@@ -330,6 +368,17 @@ int main(int argc, char** argv) {
                 fflush(stdout);
             }
             fsum = 0; fn = 0; fmin = 32767; fmax = -32768;
+
+            if (peek_addr >= 0) {
+                uint8_t v = tb->rootp
+                    ->top__DOT__chip__DOT__ram__DOT__mem[peek_addr & 0xFFFF];
+                if (v != peek_last) {
+                    uint32_t dt = frame - peek_last_frame;
+                    peek_hist[(dt >= 1 && dt <= 8) ? dt : 0]++;
+                    peek_last = v;
+                    peek_last_frame = frame;
+                }
+            }
 
             if (max_frames && (long)frame >= max_frames) running = false;
 
@@ -406,6 +455,42 @@ int main(int argc, char** argv) {
                "a %d Hz device (%.0f%% of real time)\n",
                aqueued, adropped, aunderrun, secs > 0 ? asamples / secs : 0.0,
                44100, secs > 0 ? 100.0 * asamples / secs / 44100 : 0.0);
+    }
+    if (profile_from >= 0) {
+        // Aggregate samples by nearest preceding symbol and print the ranking.
+        auto report = [&](const char* title, std::vector<uint64_t>& h, size_t top) {
+            std::map<std::string, uint64_t> by_sym;
+            uint64_t total = 0;
+            for (uint32_t a = 0; a < 65536; a++) {
+                if (!h[a]) continue;
+                total += h[a];
+                std::string sym;
+                auto it = g_symbols.upper_bound(a);
+                if (it == g_symbols.begin()) { char hx[8]; snprintf(hx, sizeof hx, "$%04X", a); sym = hx; }
+                else { --it; sym = it->second; }
+                by_sym[sym] += h[a];
+            }
+            std::vector<std::pair<uint64_t, std::string>> rank;
+            for (auto& kv : by_sym) rank.push_back({kv.second, kv.first});
+            std::sort(rank.rbegin(), rank.rend());
+            printf("%s: %llu PC samples from frame %ld\n", title,
+                   (unsigned long long)total, profile_from);
+            for (size_t i = 0; i < rank.size() && i < top; i++)
+                printf("  %6.2f%%  %llu  %s\n", 100.0 * rank[i].first / total,
+                       (unsigned long long)rank[i].first, rank[i].second.c_str());
+        };
+        report("profile", prof, 40);
+        if (peek_addr >= 0) report("overrun-tick profile", prof_late, 20);
+    }
+    if (peek_addr >= 0) {
+        long ticks = 0;
+        for (int i = 0; i < 9; i++) ticks += peek_hist[i];
+        printf("peek $%04lX: %ld changes; interval histogram (display frames):",
+               peek_addr & 0xFFFF, ticks);
+        for (int i = 1; i <= 8; i++)
+            if (peek_hist[i]) printf(" %d:%ld", i, peek_hist[i]);
+        if (peek_hist[0]) printf(" >8:%ld", peek_hist[0]);
+        printf("\n");
     }
     if (audio_wav) write_wav(audio_wav, wavbuf, 44100);
     if (shot) write_ppm(shot, fb, W, H);
