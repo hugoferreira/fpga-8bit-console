@@ -38,7 +38,7 @@ module ppu_golden_tb;
   // literal so the harness does not depend on the type being visible.
   localparam [3:0] E_IDLE = 4'd0;
 
-  localparam NSCENE = 10;
+  localparam NSCENE = 11;
 
   bit clk = 0;
   always #5 clk = ~clk;
@@ -167,7 +167,7 @@ module ppu_golden_tb;
         if (overrun_n == 0) begin
           ov_line = dut.line_y;
           ov_scan = dut.scan.scan_i;
-          ov_lim  = dut.scan.scan_limit;
+          ov_lim  = dut.scan.count_eff;
           ov_est  = dut.est;
           ov_tk   = dut.tmap.tk;
         end
@@ -364,6 +364,10 @@ module ppu_golden_tb;
     cpuwrite(6'h0C, 8'h00);             // sprite count
     cpuwrite(6'h08, 8'h00);             // list index
     cpuwrite(6'h36, 8'h00);             // behind-split
+    cpuwrite(6'h3A, 8'h00);             // staged behind bit
+    cpuwrite(6'h38, 8'h00);             // overlay row colours: all defaulted
+    for (int k = 0; k < 128; k++)
+      cpuwrite(6'h39, 8'h00);
     cpuwrite(6'h37, 8'h01);             // repeat = one cell
     cpuwrite(6'h34, 8'h01);             // only value 0 transparent
     cpuwrite(6'h35, 8'h00);
@@ -702,6 +706,34 @@ module ppu_golden_tb;
     cpuwrite(6'h05, 8'h03);
   endtask
 
+  task scene_rowlut();              // per-entry behind bit + overlay row colours
+    defaults();
+    build_ovl();
+    cpuwrite(6'h08, 8'd0);
+    // Front entries FIRST in the list, behind-bit entries after them: with
+    // the split at zero, only the bit decides the pass, and list position no
+    // longer implies it. The last entry proves the staged bit cleared.
+    for (int i = 0; i < 4; i++)
+      spr(12 + i * 32, 30 + i * 8, P3, 2'd2, 1'b0, 1'b0, 4'd8, 2);
+    cpuwrite(6'h3A, 8'h01);
+    for (int i = 0; i < 4; i++)
+      spr(4 + i * 36, 26 + i * 10, P4, 2'd3, 1'b0, 1'b0, 4'd0, 4);
+    cpuwrite(6'h3A, 8'h00);
+    spr(70, 90, P2, 2'd1, 1'b0, 1'b0, 4'd5, 3);
+    cpuwrite(6'h0C, 8'd9);
+    cpuwrite(6'h06, 8'd10);         // global overlay colour: yellow
+    cpuwrite(6'h38, 8'd40);         // rows 40..59 override to red
+    for (int r = 0; r < 20; r++)
+      cpuwrite(6'h39, 8'h88);
+    cpuwrite(6'h38, 8'd80);         // rows 80..89 override to green,
+    for (int r = 0; r < 10; r++)    // then the tail rewritten with the
+      cpuwrite(6'h39, 8'h8B);       // override bit clear: back to yellow,
+    cpuwrite(6'h38, 8'd85);         // proving bit 7 gates and does not just
+    for (int r = 0; r < 5; r++)     // recolour
+      cpuwrite(6'h39, 8'h0B);
+    cpuwrite(6'h05, 8'h03);
+  endtask
+
   // ------------------------------------------------------------------
   initial begin
     regen  = $test$plusargs("regen");
@@ -728,6 +760,7 @@ module ppu_golden_tb;
     scene_palt();    settle_and_check(7, "palt");
     scene_overlay(); settle_and_check(8, "overlay");
     scene_all();     settle_and_check(9, "all");
+    scene_rowlut();  settle_and_check(10, "rowlut");
 
     clear_ovl();
     readback_checks();

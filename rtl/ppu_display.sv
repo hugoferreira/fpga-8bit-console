@@ -33,6 +33,10 @@ module ppu_display(input bit clk, input bit reset,
                    input  logic [7:0]  di,
                    input  logic        ovl_en,
                    input  logic [3:0]  ovl_color,
+                   // Row-colour override write port ($38/$39 in ppu_regs)
+                   input  logic        ovlrow_we,
+                   input  logic [6:0]  ovlrow_waddr,
+                   input  logic [4:0]  ovlrow_wdata,
                    // Screen palette: written from the register file, read here
                    input  logic        spal_we,
                    input  logic [3:0]  spal_waddr,
@@ -50,6 +54,21 @@ module ppu_display(input bit clk, input bit reset,
     else if (spal_we)
       spal[spal_waddr] <= spal_wdata;
   assign spal_rdata = spal[spal_raddr];
+
+  // Per-row overlay colour override: bit4 override, bits3:0 the colour. A
+  // zeroed row falls back to the global $06 register, so a program that
+  // never touches $38/$39 behaves exactly as before. The colour is consumed
+  // per line, so the registered read is never stale where it matters: vpos
+  // changes during blanking.
+  logic [4:0] ovlrow[0:127];
+  initial for (int k = 0; k < 128; k++) ovlrow[k] = 5'd0;
+  logic [4:0] ovlrow_q;
+  always_ff @(posedge clk) begin
+    if (ovlrow_we)
+      ovlrow[ovlrow_waddr] <= ovlrow_wdata;
+    ovlrow_q <= ovlrow[vpos];
+  end
+  wire [3:0] ovl_color_eff = ovlrow_q[4] ? ovlrow_q[3:0] : ovl_color;
 
   // Overlay bitmap. Sized to 2560 bytes for a clean bound; 2400 are live.
   logic [7:0] ovl[0:2559];
@@ -77,7 +96,7 @@ module ppu_display(input bit clk, input bit reset,
       disp_rd_q <= disp_slot;
       if (disp_rd_q) begin
         if (ovl_en && ovl_rdata[hpos[2:0]])
-          color <= spal[ovl_color];
+          color <= spal[ovl_color_eff];
         else
           color <= spal[rd_data[{2'b0, hpos[2:0]} * 4 +: 4]];
       end

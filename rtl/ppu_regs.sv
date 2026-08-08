@@ -20,6 +20,9 @@
 //   $10-$1F draw palette           $30-$33 clip rectangle x0/y0/x1/y1
 //   $20-$2F screen palette         $34/$35 transparency mask lo/hi
 //   $36 behind-split               $37 staged repeat count, in cells
+//   $38 overlay row-colour index (auto-inc on $39 write)
+//   $39 overlay row-colour data: bit7 override, bits3:0 colour
+//   $3A staged sprite control: bit0 = composite behind the tile layer
 //
 // The two palettes are handled the same way as the sheet and the list, and for
 // the same reason: they are small memories, read by the blit (draw) and the
@@ -49,13 +52,18 @@ module ppu_regs(input bit clk, input bit reset,
                 // Sprite list write port; the array lives in ppu_scan
                 output logic        list_we,
                 output logic [6:0]  list_waddr,
-                output logic [33:0] list_wdata,
+                output logic [34:0] list_wdata,
+                // Overlay row-colour write port; the array lives in ppu_display
+                output logic        ovlrow_we,
+                output logic [6:0]  ovlrow_waddr,
+                output logic [4:0]  ovlrow_wdata,
                 // Configuration
                 output logic [7:0]  camera_x,
                 output logic [6:0]  camera_y,
                 output logic        tiles_en,
                 output logic        ovl_en,
                 output logic [3:0]  ovl_color,
+                output logic        count_we,
                 output logic [7:0]  sp_count,
                 output logic [7:0]  bsplit,
                 // Palette write port and readback port; the arrays live with
@@ -82,6 +90,8 @@ module ppu_regs(input bit clk, input bit reset,
   logic [6:0]  stage_y;
   logic [7:0]  stage_base;
   logic [2:0]  stage_rep;
+  logic        stage_behind;
+  logic [6:0]  ovlrow_i;     // row-colour upload pointer, auto-incrementing
   logic [7:0]  frame_count;
   logic        vsync_q;
   logic [15:0] lfsr;         // free-running, taps 16/14/13/11
@@ -108,8 +118,15 @@ module ppu_regs(input bit clk, input bit reset,
 
   assign list_we    = reg_write && (reg_addr == 6'h0B);
   assign list_waddr = sp_index[6:0];
-  assign list_wdata = {stage_rep, reg_data[7:2], reg_data[1], reg_data[0],
+  assign list_wdata = {stage_behind, stage_rep,
+                       reg_data[7:2], reg_data[1], reg_data[0],
                        stage_base, stage_y, stage_x};
+
+  assign ovlrow_we    = reg_write && (reg_addr == 6'h39);
+  assign ovlrow_waddr = ovlrow_i;
+  assign ovlrow_wdata = {reg_data[7], reg_data[3:0]};
+
+  assign count_we = reg_write && (reg_addr == 6'h0C);
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -126,6 +143,8 @@ module ppu_regs(input bit clk, input bit reset,
       lfsr <= 16'hACE1;
       bsplit <= 0;
       stage_rep <= 0;
+      stage_behind <= 0;
+      ovlrow_i <= 0;
       palt_t <= 16'h0001;
       clip_x0 <= 0;
       clip_y0 <= 0;
@@ -167,6 +186,9 @@ module ppu_regs(input bit clk, input bit reset,
           6'h37: stage_rep <= (reg_data == 8'd0)   ? 3'd0 :
                               (reg_data >= 8'd8)   ? 3'd7 :
                                                      reg_data[2:0] - 3'd1;
+          6'h38: ovlrow_i <= reg_data[6:0];
+          6'h39: ovlrow_i <= ovlrow_i + 1;       // the entry goes out on ovlrow_we
+          6'h3A: stage_behind <= reg_data[0];
           default: ;  // $6, $7, $D, $F: unmapped / read-only
         endcase
       end else if (cs && !rw) begin
@@ -197,6 +219,8 @@ module ppu_regs(input bit clk, input bit reset,
           6'h34: dout <= palt_t[7:0];
           6'h35: dout <= palt_t[15:8];
           6'h36: dout <= bsplit;
+          6'h38: dout <= {1'b0, ovlrow_i};
+          6'h3A: dout <= {7'b0, stage_behind};
           6'h0F: dout <= lfsr[7:0];
           default: dout <= 8'h00;
         endcase

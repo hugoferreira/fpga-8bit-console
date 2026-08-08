@@ -41,9 +41,14 @@
 //   $7  buttons (read-only): bit0 left, 1 right, 2 up, 3 down, 4 O, 5 X
 //   $F  LFSR random byte (read-only, free-running)
 //   $36 behind-split: list entries 0..split-1 composite BEFORE the tile
-//       layer (background sprites), entries split..count-1 after. 0 (the
-//       reset value) keeps the whole list in front - no extra scan cost
-//       either way, the list is partitioned, never scanned twice.
+//       layer (background sprites). An entry also composites behind when it
+//       was committed with the $3A behind bit set, wherever it sits in the
+//       list; both passes walk the whole list and filter on that predicate.
+//   $38 overlay row-colour index, auto-incremented by $39 writes
+//   $39 overlay row-colour data: bit7 override on, bits3:0 the colour that
+//       row's overlay pixels take instead of $06
+//   $3A staged sprite control: bit0 composite-behind, latched into each
+//       committed entry like X/Y/base
 //   $37 staged repeat count, in CELLS (0 and 1 both mean one cell, so the
 //       reset value is the old behaviour). A committed entry blits its ONE
 //       fetched row into that many consecutive 8-pixel cells, which is what
@@ -98,12 +103,16 @@ module sprite_compositor(input bit clk, input bit reset,
   logic [7:0]  sheet_wdata;
   logic        list_we;
   logic [6:0]  list_waddr;
-  logic [33:0] list_wdata;
+  logic [34:0] list_wdata;
+  logic        ovlrow_we;
+  logic [6:0]  ovlrow_waddr;
+  logic [4:0]  ovlrow_wdata;
   logic [7:0]  camera_x;
   logic [6:0]  camera_y;
   logic        tiles_en;
   logic        ovl_en;
   logic [3:0]  ovl_color;
+  logic        count_we;
   logic [7:0]  sp_count;
   logic [7:0]  bsplit;
   logic        pal_we, pal_sel, pal_rsel;
@@ -118,8 +127,9 @@ module sprite_compositor(input bit clk, input bit reset,
     .dma_active, .dma_write, .dma_addr, .dma_data,
     .sheet_we, .sheet_waddr, .sheet_wdata,
     .list_we, .list_waddr, .list_wdata,
+    .ovlrow_we, .ovlrow_waddr, .ovlrow_wdata,
     .camera_x, .camera_y, .tiles_en, .ovl_en, .ovl_color,
-    .sp_count, .bsplit,
+    .count_we, .sp_count, .bsplit,
     .pal_we, .pal_sel, .pal_addr, .pal_wdata,
     .pal_raddr, .pal_rsel, .pal_rdata,
     .palt_t,
@@ -163,9 +173,9 @@ module sprite_compositor(input bit clk, input bit reset,
   // yosys accept it.
   logic        map_at_end, map_empty;
   logic [33:0] map_entry;
-  logic [33:0] entry_q;      // the entry in flight, latched at fetch_start
+  logic [34:0] entry_q;      // the entry in flight, latched at fetch_start
   logic        scan_valid, scan_hit, scan_exhausted, scan_pass;
-  logic [33:0] scan_entry;
+  logic [34:0] scan_entry;
   logic        fetch_done, fetch_more, fetch_reused;
   logic [7:0]  cell_x;
   logic [7:0]  prow0, prow1, prow2, prow3;
@@ -210,7 +220,7 @@ module sprite_compositor(input bit clk, input bit reset,
   ppu_scan #(.MAX_SPRITES(MAX_SPRITES)) scan(
     .clk, .reset,
     .list_we, .list_waddr, .list_wdata,
-    .sp_count, .bsplit, .line_y,
+    .count_we, .sp_count, .bsplit, .line_y,
     .line_start,
     .advance(scan_advance), .next_pass(scan_next_pass),
     .entry(scan_entry), .valid(scan_valid), .hit(scan_hit),
@@ -248,7 +258,7 @@ module sprite_compositor(input bit clk, input bit reset,
   // memory's output register folds into ppu_scan's entry, so the mux lands
   // between a block RAM output and the blit rather than in front of a
   // flip-flop.
-  wire [33:0] entry_next = tile_start ? map_entry : scan_entry;
+  wire [34:0] entry_next = tile_start ? {1'b0, map_entry} : scan_entry;
 
   // The row index for the entry about to be latched: ppu_fetch samples its
   // pattern key at `start`, one clock before entry_q holds the entry.
@@ -327,6 +337,7 @@ module sprite_compositor(input bit clk, input bit reset,
     .clk, .reset,
     .hpos, .vpos, .disp_slot, .rd_data,
     .ovl_cs, .rw, .ovl_addr, .di, .ovl_en, .ovl_color,
+    .ovlrow_we, .ovlrow_waddr, .ovlrow_wdata,
     .spal_we(pal_we && pal_sel), .spal_waddr(pal_addr), .spal_wdata(pal_wdata),
     .spal_raddr(pal_raddr), .spal_rdata,
     .color);
