@@ -510,87 +510,6 @@ static int slice_is_accumulator(LaSlice slice)
                LA_REGISTER_ACCUMULATOR;
 }
 
-static int emit_pointer_displacement(HostOutput *output,
-                                     const LaEvent *event)
-{
-    if (!begin_line(output, event->span, "target-operation")) return 0;
-    fprintf(output->assembly, "    %s (%.*s), #",
-            event->operation == LA_TARGET_OP_LOAD8_PTR_DISP ? "lda" : "sta",
-            (int)event->base.length, event->base.data);
-    mangle_path(output->assembly, event->owner, event->path);
-    fprintf(output->assembly, "__offset ; inlay %.*s.%.*s\n",
-            (int)event->owner.length, event->owner.data,
-            (int)event->path.length, event->path.data);
-    return 1;
-}
-
-static int emit_pointer_word_transfer(HostOutput *output,
-                                      const LaEvent *event)
-{
-    unsigned step;
-    int store;
-    store = event->operation == LA_TARGET_OP_STORE16_PTR_DISP;
-    for (step = 0; step < event->access_width; ++step) {
-        unsigned unit;
-        const char *suffix;
-        unit = step;
-        suffix = unit == 0 ? "" : "+1";
-        if (store) {
-            if (!begin_line(output, event->span, "word-field-store")) return 0;
-            fprintf(output->assembly, "    lda %.*s%s\n",
-                    (int)event->aux.length, event->aux.data, suffix);
-        }
-        if (!begin_line(output, event->span,
-                        store ? "word-field-store" : "word-field-load")) {
-            return 0;
-        }
-        fprintf(output->assembly, "    %s (%.*s), #%u",
-                store ? "sta" : "lda",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value + step);
-        fprintf(output->assembly, " ; inlay %.*s.%.*s[%u]\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data, unit);
-        if (!store) {
-            if (!begin_line(output, event->span, "word-field-load")) return 0;
-            fprintf(output->assembly, "    sta %.*s%s\n",
-                    (int)event->aux.length, event->aux.data, suffix);
-        }
-    }
-    return 1;
-}
-
-static int emit_overlay_displacement(HostOutput *output,
-                                     const LaEvent *event)
-{
-    if (!begin_line(output, event->span, "overlay-operation")) return 0;
-    fprintf(output->assembly, "    %s %.*s + ",
-            event->operation == LA_TARGET_OP_LOAD8_OVERLAY_DISP ?
-                "lda" : "sta",
-            (int)event->base.length, event->base.data);
-    mangle_path(output->assembly, event->owner, event->path);
-    fprintf(output->assembly, "__offset ; inlay overlay %.*s.%.*s\n",
-            (int)event->owner.length, event->owner.data,
-            (int)event->path.length, event->path.data);
-    return 1;
-}
-
-static int emit_overlay_indexed(HostOutput *output,
-                                const LaEvent *event)
-{
-    if (!begin_line(output, event->span, "overlay-indexed-operation")) return 0;
-    fprintf(output->assembly, "    %s %.*s + %u, %.*s",
-            event->operation == LA_TARGET_OP_LOAD8_OVERLAY_INDEXED ?
-                "lda" : "sta",
-            (int)event->base.length, event->base.data,
-            (unsigned)event->value,
-            (int)event->index.length, event->index.data);
-    fprintf(output->assembly, " ; inlay overlay %.*s.%.*s\n",
-            (int)event->owner.length, event->owner.data,
-            (int)event->path.length, event->path.data);
-    return 1;
-}
-
 static int emit_indexed_operation(HostOutput *output, const LaEvent *event)
 {
     unsigned shifts;
@@ -626,96 +545,6 @@ static int emit_indexed_operation(HostOutput *output, const LaEvent *event)
             (int)event->base.length, event->base.data,
             (int)event->owner.length, event->owner.data,
             (int)event->path.length, event->path.data);
-    return 1;
-}
-
-static int emit_pool_address(HostOutput *output, const LaEvent *event)
-{
-    if (!begin_line(output, event->span, "pool-address")) return 0;
-    fputs("    tax\n", output->assembly);
-    if (!begin_line(output, event->span, "pool-address")) return 0;
-    fprintf(output->assembly, "    mov %.*s, %.*s + x\n",
-            (int)event->base.length, event->base.data,
-            (int)event->aux.length, event->aux.data);
-    if (!begin_line(output, event->span, "pool-address")) return 0;
-    fprintf(output->assembly, "    lda %.*s, x\n",
-            (int)event->aux2.length, event->aux2.data);
-    if (!begin_line(output, event->span, "pool-address")) return 0;
-    fprintf(output->assembly, "    sta %.*s+1\n",
-            (int)event->base.length, event->base.data);
-    return 1;
-}
-
-static int emit_procedure_start(HostOutput *output, const LaEvent *event)
-{
-    unsigned step;
-    if (!begin_line(output, event->span, "procedure")) return 0;
-    emit_target_symbol(output->assembly, event->owner);
-    fputs(":\n", output->assembly);
-    if (event->operation == LA_TARGET_OP_PROC_FRAME) {
-        for (step = 0; step < event->value; ++step) {
-            if (!begin_line(output, event->span, "frame-prologue")) return 0;
-            fputs("    pha\n", output->assembly);
-        }
-    }
-    return 1;
-}
-
-static int emit_procedure_return(HostOutput *output, const LaEvent *event)
-{
-    unsigned step;
-    if (event->value != 0) {
-        if (!begin_line(output, event->span, "frame-epilogue")) return 0;
-        fputs("    tsx\n", output->assembly);
-        for (step = 0; step < event->value; ++step) {
-            if (!begin_line(output, event->span, "frame-epilogue")) return 0;
-            fputs("    inx\n", output->assembly);
-        }
-        if (!begin_line(output, event->span, "frame-epilogue")) return 0;
-        fputs("    txs\n", output->assembly);
-    }
-    if (!begin_line(output, event->span, "procedure-return")) return 0;
-    fputs("    rts\n", output->assembly);
-    return 1;
-}
-
-static int emit_frame_local(HostOutput *output, const LaEvent *event)
-{
-    if (!begin_line(output, event->span, "frame-local")) return 0;
-    fputs("    tsx\n", output->assembly);
-    if (!begin_line(output, event->span, "frame-local")) return 0;
-    fprintf(output->assembly, "    %s $%04x, x ; inlay local %.*s\n",
-            event->operation == LA_TARGET_OP_LOAD8_FRAME_LOCAL ? "lda" : "sta",
-            0x0100u + (unsigned)event->value,
-            (int)event->path.length, event->path.data);
-    return 1;
-}
-
-static int emit_frame_pointer(HostOutput *output, const LaEvent *event)
-{
-    unsigned step;
-    int store;
-    store = event->operation == LA_TARGET_OP_STORE_PTR_FRAME;
-    if (!begin_line(output, event->span, "frame-pointer")) return 0;
-    fputs("    tsx\n", output->assembly);
-    for (step = 0; step < event->stride; ++step) {
-        unsigned address;
-        address = 0x0100u + (unsigned)event->value - step;
-        if (!begin_line(output, event->span, "frame-pointer")) return 0;
-        if (store) {
-            fprintf(output->assembly, "    lda %.*s%s\n",
-                    (int)event->base.length, event->base.data,
-                    step == 0 ? "" : "+1");
-            if (!begin_line(output, event->span, "frame-pointer")) return 0;
-            fprintf(output->assembly, "    sta $%04x, x\n", address);
-        } else {
-            fprintf(output->assembly, "    lda $%04x, x\n", address);
-            if (!begin_line(output, event->span, "frame-pointer")) return 0;
-            fprintf(output->assembly, "    sta %.*s%s\n",
-                    (int)event->base.length, event->base.data,
-                    step == 0 ? "" : "+1");
-        }
-    }
     return 1;
 }
 
@@ -798,15 +627,47 @@ static int emit_invoke_assign(HostOutput *output, const LaEvent *event)
 }
 
 /* Interpret a description lowering template: one output line per template
-   line, slots resolved from the event. */
+   line, slots resolved from the event. Line prefixes: '*' repeats the
+   line event->value times, '?' emits only when event->value is nonzero,
+   '@kind@' overrides the source-map reason for that line. */
 static int emit_lowering_template(HostOutput *output, const LaEvent *event,
                                   const LaLoweringDesc *lowering)
 {
     la_u16 index;
     for (index = 0; lowering->lines[index] != 0; ++index) {
         const char *cursor;
-        if (!begin_line(output, event->span, lowering->reason)) return 0;
-        for (cursor = lowering->lines[index]; *cursor != 0; ++cursor) {
+        const char *line;
+        const char *reason;
+        char reason_buffer[32];
+        unsigned repeats;
+        unsigned pass;
+        line = lowering->lines[index];
+        reason = lowering->reason;
+        repeats = 1;
+        while (*line == '*' || *line == '?' || *line == '@') {
+            if (*line == '*') {
+                repeats = (unsigned)event->value;
+                ++line;
+            } else if (*line == '?') {
+                if (event->value == 0) repeats = 0;
+                ++line;
+            } else {
+                const char *close;
+                size_t length;
+                close = line + 1;
+                while (*close != 0 && *close != '@') ++close;
+                length = (size_t)(close - line - 1);
+                if (*close != '@' ||
+                    length + 1 > sizeof(reason_buffer)) return 0;
+                memcpy(reason_buffer, line + 1, length);
+                reason_buffer[length] = 0;
+                reason = reason_buffer;
+                line = close + 1;
+            }
+        }
+        for (pass = 0; pass < repeats; ++pass) {
+        if (!begin_line(output, event->span, reason)) return 0;
+        for (cursor = line; *cursor != 0; ++cursor) {
             if (*cursor != '%') {
                 fputc(*cursor, output->assembly);
                 continue;
@@ -848,6 +709,40 @@ static int emit_lowering_template(HostOutput *output, const LaEvent *event,
                 fprintf(output->assembly, "%.*s",
                         (int)event->path.length, event->path.data);
                 break;
+            case 'm':
+                mangle_path(output->assembly, event->owner, event->path);
+                fputs("__offset", output->assembly);
+                break;
+            case 'q':
+                emit_target_symbol(output->assembly, event->owner);
+                break;
+            case 'c':
+                fprintf(output->assembly, "%.*s",
+                        (int)event->aux2.length, event->aux2.data);
+                break;
+            case 'x':
+                fprintf(output->assembly, "%.*s",
+                        (int)event->index.length, event->index.data);
+                break;
+            case 's':
+                fprintf(output->assembly, "%.*s",
+                        (int)event->scratch.length, event->scratch.data);
+                break;
+            case 't':
+                emit_scoped_raw(output->assembly, event->text);
+                break;
+            case 'v':
+                fprintf(output->assembly, "%ld",
+                        (long)event->signed_value);
+                break;
+            case 'F':
+                fprintf(output->assembly, "$%04x",
+                        0x0100u + (unsigned)event->value);
+                break;
+            case 'G':
+                fprintf(output->assembly, "$%04x",
+                        0x0100u + (unsigned)event->value - 1);
+                break;
             case '%':
                 fputc('%', output->assembly);
                 break;
@@ -856,6 +751,7 @@ static int emit_lowering_template(HostOutput *output, const LaEvent *event,
             }
         }
         fputc('\n', output->assembly);
+        }
     }
     return 1;
 }
@@ -881,52 +777,13 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
         }
     }
     switch (event->operation) {
-    case LA_TARGET_OP_LOAD8_PTR_DISP:
-    case LA_TARGET_OP_STORE8_PTR_DISP:
-        return emit_pointer_displacement(output, event);
-    case LA_TARGET_OP_LOAD16_PTR_DISP:
-    case LA_TARGET_OP_STORE16_PTR_DISP:
-        return emit_pointer_word_transfer(output, event);
-    case LA_TARGET_OP_ADD16_PHYSICAL:
-    case LA_TARGET_OP_SUB16_PHYSICAL:
-    case LA_TARGET_OP_CMP16_PHYSICAL:
-        if (!begin_line(output, event->span, "physical-word-arithmetic")) {
-            return 0;
-        }
-        fprintf(output->assembly, "    %s %.*s\n",
-                event->operation == LA_TARGET_OP_ADD16_PHYSICAL ? "addw" :
-                event->operation == LA_TARGET_OP_SUB16_PHYSICAL ? "subw" :
-                                                                  "cmpw",
-                (int)event->aux.length, event->aux.data);
-        return 1;
     case LA_TARGET_OP_LOAD8_PTR_INDEXED:
     case LA_TARGET_OP_STORE8_PTR_INDEXED:
         return emit_indexed_operation(output, event);
-    case LA_TARGET_OP_ADDRESS_POOL_TABLE:
-        return emit_pool_address(output, event);
-    case LA_TARGET_OP_PROC_FRAME:
-    case LA_TARGET_OP_PROC_NAKED:
-        return emit_procedure_start(output, event);
-    case LA_TARGET_OP_PROC_RETURN:
-        return emit_procedure_return(output, event);
-    case LA_TARGET_OP_LOAD8_FRAME_LOCAL:
-    case LA_TARGET_OP_STORE8_FRAME_LOCAL:
-        return emit_frame_local(output, event);
-    case LA_TARGET_OP_STORE_PTR_FRAME:
-    case LA_TARGET_OP_LOAD_PTR_FRAME:
-        return emit_frame_pointer(output, event);
     case LA_TARGET_OP_INVOKE_SAVE:
         return emit_invoke_save(output, event);
     case LA_TARGET_OP_INVOKE_ASSIGN:
         return emit_invoke_assign(output, event);
-    case LA_TARGET_OP_INVOKE_CALL:
-    case LA_TARGET_OP_INVOKE_TAIL:
-        if (!begin_line(output, event->span, "invoke-call")) return 0;
-        fputs(event->operation == LA_TARGET_OP_INVOKE_TAIL ?
-                  "    jmp " : "    jsr ", output->assembly);
-        emit_target_symbol(output->assembly, event->owner);
-        fputc('\n', output->assembly);
-        return 1;
     case LA_TARGET_OP_INVOKE_FIELD: {
         unsigned step;
         if (event->count == 2) {
@@ -976,66 +833,6 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
         }
         return 1;
     }
-    case LA_TARGET_OP_LOAD8_OVERLAY_DISP:
-    case LA_TARGET_OP_STORE8_OVERLAY_DISP:
-        return emit_overlay_displacement(output, event);
-    case LA_TARGET_OP_LOAD8_OVERLAY_INDEXED:
-    case LA_TARGET_OP_STORE8_OVERLAY_INDEXED:
-        return emit_overlay_indexed(output, event);
-    case LA_TARGET_OP_ADC8_OVERLAY_INDEXED:
-    case LA_TARGET_OP_SBC8_OVERLAY_INDEXED:
-        if (!begin_line(output, event->span, "overlay-indexed-operation")) {
-            return 0;
-        }
-        fprintf(output->assembly, "    %s %.*s + %u, %.*s",
-                event->operation == LA_TARGET_OP_ADC8_OVERLAY_INDEXED ?
-                    "adc" : "sbc",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value,
-                (int)event->index.length, event->index.data);
-        fprintf(output->assembly, " ; inlay overlay %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
-    case LA_TARGET_OP_DATA_PROC_LOW:
-    case LA_TARGET_OP_DATA_PROC_HIGH:
-    case LA_TARGET_OP_DATA_PROC_FULL:
-        if (!begin_line(output, event->span, "procedure-address")) return 0;
-        if (event->operation == LA_TARGET_OP_DATA_PROC_FULL) {
-            fprintf(output->assembly, "    #d%u ",
-                    (unsigned)(event->access_width * 8));
-        } else {
-            fputs("    #d8 ", output->assembly);
-        }
-        if (event->operation != LA_TARGET_OP_DATA_PROC_FULL) fputc('(', output->assembly);
-        emit_target_symbol(output->assembly, event->owner);
-        if (event->operation == LA_TARGET_OP_DATA_PROC_LOW) {
-            fputs(")[7:0]", output->assembly);
-        } else if (event->operation == LA_TARGET_OP_DATA_PROC_HIGH) {
-            fputs(")[15:8]", output->assembly);
-        }
-        fputc('\n', output->assembly);
-        return 1;
-    case LA_TARGET_OP_DATA_CODEPTR:
-        if (!begin_line(output, event->span, "procedure-address")) return 0;
-        if (event->access_width != 2) return 0;
-        fputs("    #d8 (", output->assembly);
-        emit_target_symbol(output->assembly, event->owner);
-        fputs(event->byte_order == LA_BYTE_ORDER_LITTLE ?
-              ")[7:0], (" : ")[15:8], (", output->assembly);
-        emit_target_symbol(output->assembly, event->owner);
-        fputs(event->byte_order == LA_BYTE_ORDER_LITTLE ?
-              ")[15:8]\n" : ")[7:0]\n", output->assembly);
-        return 1;
-    case LA_TARGET_OP_MATERIALIZE_FIELD_OFFSET:
-        if (!begin_line(output, event->span, "field-offset")) return 0;
-        fprintf(output->assembly, "    ld%.*s #%u",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        fprintf(output->assembly, " ; inlay offset %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
     case LA_TARGET_OP_VALUE_MOV:
         if (!begin_line(output, event->span, "qualified-immediate")) return 0;
         if (slice_is_register(event->base)) {
@@ -1047,113 +844,6 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
             emit_target_symbol(output->assembly, event->base);
             fprintf(output->assembly, ", #%ld\n", (long)event->signed_value);
         }
-        return 1;
-    case LA_TARGET_OP_VALUE_CMP:
-        if (!begin_line(output, event->span, "qualified-immediate")) return 0;
-        fprintf(output->assembly, "    cmp #%ld\n",
-                (long)event->signed_value);
-        return 1;
-    case LA_TARGET_OP_BRANCH_OVERLAY_DISP:
-        if (!begin_line(output, event->span, "overlay-branch")) return 0;
-        fprintf(output->assembly, "    %.*s %.*s + %u, ",
-                (int)event->scratch.length, event->scratch.data,
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        /* The tail may name scoped Inlay constants; mangle them like raw. */
-        emit_scoped_raw(output->assembly, event->text);
-        fprintf(output->assembly, " ; inlay branch %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
-    case LA_TARGET_OP_STORE_IMM_OVERLAY_ABS:
-        if (!begin_line(output, event->span, "overlay-store-source")) return 0;
-        fprintf(output->assembly, "    mov %.*s + %u, ",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        emit_scoped_raw(output->assembly, event->text);
-        fprintf(output->assembly, " ; inlay store %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
-    case LA_TARGET_OP_CMP8_OVERLAY_DISP:
-        if (!begin_line(output, event->span, "overlay-compare")) return 0;
-        fprintf(output->assembly, "    cmp %.*s + %u",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        fprintf(output->assembly, " ; inlay compare %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
-    case LA_TARGET_OP_STOREX_OVERLAY_DISP:
-    case LA_TARGET_OP_STOREY_OVERLAY_DISP:
-    case LA_TARGET_OP_AND8A_OVERLAY_DISP:
-    case LA_TARGET_OP_ORA8A_OVERLAY_DISP:
-    case LA_TARGET_OP_LOADX_OVERLAY_DISP:
-    case LA_TARGET_OP_LOADY_OVERLAY_DISP:
-    case LA_TARGET_OP_ADD8A_OVERLAY_DISP:
-    case LA_TARGET_OP_SUB8A_OVERLAY_DISP:
-        if (!begin_line(output, event->span, "overlay-operation")) return 0;
-        fprintf(output->assembly, "    %s %.*s + %u",
-                event->operation == LA_TARGET_OP_STOREX_OVERLAY_DISP ? "stx" :
-                event->operation == LA_TARGET_OP_STOREY_OVERLAY_DISP ? "sty" :
-                event->operation == LA_TARGET_OP_AND8A_OVERLAY_DISP ? "and" :
-                event->operation == LA_TARGET_OP_ORA8A_OVERLAY_DISP ? "ora" :
-                event->operation == LA_TARGET_OP_LOADX_OVERLAY_DISP ? "ldx" :
-                event->operation == LA_TARGET_OP_LOADY_OVERLAY_DISP ? "ldy" :
-                event->operation == LA_TARGET_OP_ADD8A_OVERLAY_DISP ? "add" :
-                    "sub",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        fprintf(output->assembly, " ; inlay overlay %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
-    case LA_TARGET_OP_INC8_OVERLAY_ABS:
-    case LA_TARGET_OP_DEC8_OVERLAY_ABS:
-        if (!begin_line(output, event->span, "overlay-update")) return 0;
-        fprintf(output->assembly, "    %s %.*s + %u",
-                event->operation == LA_TARGET_OP_INC8_OVERLAY_ABS ?
-                    "inc" : "dec",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        fprintf(output->assembly, " ; inlay update %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
-    case LA_TARGET_OP_AND8_OVERLAY_ABS:
-    case LA_TARGET_OP_OR8_OVERLAY_ABS:
-        if (!begin_line(output, event->span, "overlay-update")) return 0;
-        fprintf(output->assembly, "    lda %.*s + %u\n",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        if (!begin_line(output, event->span, "overlay-update")) return 0;
-        fprintf(output->assembly, "    %s #%u\n",
-                event->operation == LA_TARGET_OP_AND8_OVERLAY_ABS ?
-                    "and" : "ora",
-                (unsigned)event->offset);
-        if (!begin_line(output, event->span, "overlay-update")) return 0;
-        fprintf(output->assembly, "    sta %.*s + %u",
-                (int)event->base.length, event->base.data,
-                (unsigned)event->value);
-        fprintf(output->assembly, " ; inlay update %.*s.%.*s\n",
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
-        return 1;
-    case LA_TARGET_OP_ADDRESS_OVERLAY_FIELD:
-        if (!begin_line(output, event->span, "overlay-address")) return 0;
-        fprintf(output->assembly, "    mov %.*s, #<(%.*s + %u)\n",
-                (int)event->base.length, event->base.data,
-                (int)event->aux.length, event->aux.data,
-                (unsigned)event->value);
-        if (!begin_line(output, event->span, "overlay-address")) return 0;
-        fprintf(output->assembly,
-                "    mov %.*s+1, #>(%.*s + %u)"
-                " ; inlay address %.*s.%.*s\n",
-                (int)event->base.length, event->base.data,
-                (int)event->aux.length, event->aux.data,
-                (unsigned)event->value,
-                (int)event->owner.length, event->owner.data,
-                (int)event->path.length, event->path.data);
         return 1;
     default:
         return 0;

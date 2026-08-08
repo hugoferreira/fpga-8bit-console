@@ -29,13 +29,13 @@
       and exempt the first token from scoped-raw qualification, with
       tests covering a dotted spelling, a dotted spelling beside a
       qualified operand, and `.local:` definitions staying labels
-- [ ] 3.2 Express each operation's operand constraints (width, range,
+- [x] 3.2 Express each operation's operand constraints (width, range,
       stride set, volatility) as declared predicates from the bounded
       vocabulary; identical diagnostics; digest gate
 
 ## 4. Lowering templates and contracts
 
-- [ ] 4.1 Implement the template interpreter (slots, byte slices,
+- [x] 4.1 Implement the template interpreter (slots, byte slices,
       parameter arithmetic, fresh labels, per-line conditionals) and
       move every typed-operation emitter case into console6502
       templates with declared clobber/flag contracts
@@ -44,7 +44,7 @@
 
 ## 5. Frame model
 
-- [ ] 5.1 Move prologue, epilogue, member-access and pointer-copy
+- [x] 5.1 Move prologue, epilogue, member-access and pointer-copy
       sequences into frame templates parameterized by size and offset;
       digest gate
 

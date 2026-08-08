@@ -418,7 +418,239 @@ static const char *const la_c6502_or8[] = {
     0
 };
 
+static const char *const la_c6502_load8_ptr[] = {
+    "    lda (%b), #%m ; inlay %o.%p", 0
+};
+static const char *const la_c6502_store8_ptr[] = {
+    "    sta (%b), #%m ; inlay %o.%p", 0
+};
+static const char *const la_c6502_load8_overlay[] = {
+    "    lda %b + %m ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_store8_overlay[] = {
+    "    sta %b + %m ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_load16_ptr[] = {
+    "    lda (%b), #%d ; inlay %o.%p[0]",
+    "    sta %a",
+    "    lda (%b), #%D ; inlay %o.%p[1]",
+    "    sta %a+1",
+    0
+};
+static const char *const la_c6502_store16_ptr[] = {
+    "    lda %a",
+    "    sta (%b), #%d ; inlay %o.%p[0]",
+    "    lda %a+1",
+    "    sta (%b), #%D ; inlay %o.%p[1]",
+    0
+};
+static const char *const la_c6502_addw[] = { "    addw %a", 0 };
+static const char *const la_c6502_subw[] = { "    subw %a", 0 };
+static const char *const la_c6502_cmpw[] = { "    cmpw %a", 0 };
+static const char *const la_c6502_offset_mat[] = {
+    "    ld%b #%d ; inlay offset %o.%p", 0
+};
+static const char *const la_c6502_load8_ovl_indexed[] = {
+    "    lda %b + %d, %x ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_store8_ovl_indexed[] = {
+    "    sta %b + %d, %x ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_adc8_ovl_indexed[] = {
+    "    adc %b + %d, %x ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_sbc8_ovl_indexed[] = {
+    "    sbc %b + %d, %x ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_pool_address[] = {
+    "    tax",
+    "    mov %b, %a + x",
+    "    lda %c, x",
+    "    sta %b+1",
+    0
+};
+static const char *const la_c6502_invoke_call[] = { "    jsr %q", 0 };
+static const char *const la_c6502_invoke_tail[] = { "    jmp %q", 0 };
+static const char *const la_c6502_data_low[] = {
+    "    #d8 (%q)[7:0]", 0
+};
+static const char *const la_c6502_data_high[] = {
+    "    #d8 (%q)[15:8]", 0
+};
+static const char *const la_c6502_data_full[] = { "    #d16 %q", 0 };
+static const char *const la_c6502_data_codeptr[] = {
+    "    #d8 (%q)[7:0], (%q)[15:8]", 0
+};
+static const char *const la_c6502_value_cmp[] = { "    cmp #%v", 0 };
+static const char *const la_c6502_overlay_branch[] = {
+    "    %s %b + %d, %t ; inlay branch %o.%p", 0
+};
+static const char *const la_c6502_overlay_store_imm[] = {
+    "    mov %b + %d, %t ; inlay store %o.%p", 0
+};
+static const char *const la_c6502_overlay_cmp[] = {
+    "    cmp %b + %d ; inlay compare %o.%p", 0
+};
+static const char *const la_c6502_ovl_stx[] = {
+    "    stx %b + %d ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_ovl_sty[] = {
+    "    sty %b + %d ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_ovl_and[] = {
+    "    and %b + %d ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_ovl_ora[] = {
+    "    ora %b + %d ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_ovl_ldx[] = {
+    "    ldx %b + %d ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_ovl_ldy[] = {
+    "    ldy %b + %d ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_ovl_add[] = {
+    "    add %b + %d ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_ovl_sub[] = {
+    "    sub %b + %d ; inlay overlay %o.%p", 0
+};
+static const char *const la_c6502_ovl_inc[] = {
+    "    inc %b + %d ; inlay update %o.%p", 0
+};
+static const char *const la_c6502_ovl_dec[] = {
+    "    dec %b + %d ; inlay update %o.%p", 0
+};
+static const char *const la_c6502_ovl_and_abs[] = {
+    "    lda %b + %d",
+    "    and #%i",
+    "    sta %b + %d ; inlay update %o.%p",
+    0
+};
+static const char *const la_c6502_ovl_or_abs[] = {
+    "    lda %b + %d",
+    "    ora #%i",
+    "    sta %b + %d ; inlay update %o.%p",
+    0
+};
+static const char *const la_c6502_overlay_address[] = {
+    "    mov %b, #<(%a + %d)",
+    "    mov %b+1, #>(%a + %d) ; inlay address %o.%p",
+    0
+};
+static const char *const la_c6502_proc_naked[] = { "%q:", 0 };
+static const char *const la_c6502_proc_frame[] = {
+    "%q:",
+    "*@frame-prologue@    pha",
+    0
+};
+static const char *const la_c6502_proc_return[] = {
+    "?    tsx",
+    "*    inx",
+    "?    txs",
+    "@procedure-return@    rts",
+    0
+};
+static const char *const la_c6502_frame_load[] = {
+    "    tsx",
+    "    lda %F, x ; inlay local %p",
+    0
+};
+static const char *const la_c6502_frame_store[] = {
+    "    tsx",
+    "    sta %F, x ; inlay local %p",
+    0
+};
+static const char *const la_c6502_frame_ptr_store[] = {
+    "    tsx",
+    "    lda %b",
+    "    sta %F, x",
+    "    lda %b+1",
+    "    sta %G, x",
+    0
+};
+static const char *const la_c6502_frame_ptr_load[] = {
+    "    tsx",
+    "    lda %F, x",
+    "    sta %b",
+    "    lda %G, x",
+    "    sta %b+1",
+    0
+};
+
 static const LaLoweringDesc la_console6502_lowerings[] = {
+    {LA_TARGET_OP_LOAD8_PTR_DISP, "target-operation", la_c6502_load8_ptr},
+    {LA_TARGET_OP_STORE8_PTR_DISP, "target-operation", la_c6502_store8_ptr},
+    {LA_TARGET_OP_LOAD8_OVERLAY_DISP, "overlay-operation",
+     la_c6502_load8_overlay},
+    {LA_TARGET_OP_STORE8_OVERLAY_DISP, "overlay-operation",
+     la_c6502_store8_overlay},
+    {LA_TARGET_OP_LOAD16_PTR_DISP, "word-field-load", la_c6502_load16_ptr},
+    {LA_TARGET_OP_STORE16_PTR_DISP, "word-field-store",
+     la_c6502_store16_ptr},
+    {LA_TARGET_OP_ADD16_PHYSICAL, "physical-word-arithmetic",
+     la_c6502_addw},
+    {LA_TARGET_OP_SUB16_PHYSICAL, "physical-word-arithmetic",
+     la_c6502_subw},
+    {LA_TARGET_OP_CMP16_PHYSICAL, "physical-word-arithmetic",
+     la_c6502_cmpw},
+    {LA_TARGET_OP_MATERIALIZE_FIELD_OFFSET, "field-offset",
+     la_c6502_offset_mat},
+    {LA_TARGET_OP_LOAD8_OVERLAY_INDEXED, "overlay-indexed-operation",
+     la_c6502_load8_ovl_indexed},
+    {LA_TARGET_OP_STORE8_OVERLAY_INDEXED, "overlay-indexed-operation",
+     la_c6502_store8_ovl_indexed},
+    {LA_TARGET_OP_ADC8_OVERLAY_INDEXED, "overlay-indexed-operation",
+     la_c6502_adc8_ovl_indexed},
+    {LA_TARGET_OP_SBC8_OVERLAY_INDEXED, "overlay-indexed-operation",
+     la_c6502_sbc8_ovl_indexed},
+    {LA_TARGET_OP_ADDRESS_POOL_TABLE, "pool-address",
+     la_c6502_pool_address},
+    {LA_TARGET_OP_INVOKE_CALL, "invoke-call", la_c6502_invoke_call},
+    {LA_TARGET_OP_INVOKE_TAIL, "invoke-call", la_c6502_invoke_tail},
+    {LA_TARGET_OP_DATA_PROC_LOW, "procedure-address", la_c6502_data_low},
+    {LA_TARGET_OP_DATA_PROC_HIGH, "procedure-address", la_c6502_data_high},
+    {LA_TARGET_OP_DATA_PROC_FULL, "procedure-address", la_c6502_data_full},
+    {LA_TARGET_OP_DATA_CODEPTR, "procedure-address", la_c6502_data_codeptr},
+    {LA_TARGET_OP_VALUE_CMP, "qualified-immediate", la_c6502_value_cmp},
+    {LA_TARGET_OP_BRANCH_OVERLAY_DISP, "overlay-branch",
+     la_c6502_overlay_branch},
+    {LA_TARGET_OP_STORE_IMM_OVERLAY_ABS, "overlay-store-source",
+     la_c6502_overlay_store_imm},
+    {LA_TARGET_OP_CMP8_OVERLAY_DISP, "overlay-compare",
+     la_c6502_overlay_cmp},
+    {LA_TARGET_OP_STOREX_OVERLAY_DISP, "overlay-operation",
+     la_c6502_ovl_stx},
+    {LA_TARGET_OP_STOREY_OVERLAY_DISP, "overlay-operation",
+     la_c6502_ovl_sty},
+    {LA_TARGET_OP_AND8A_OVERLAY_DISP, "overlay-operation",
+     la_c6502_ovl_and},
+    {LA_TARGET_OP_ORA8A_OVERLAY_DISP, "overlay-operation",
+     la_c6502_ovl_ora},
+    {LA_TARGET_OP_LOADX_OVERLAY_DISP, "overlay-operation",
+     la_c6502_ovl_ldx},
+    {LA_TARGET_OP_LOADY_OVERLAY_DISP, "overlay-operation",
+     la_c6502_ovl_ldy},
+    {LA_TARGET_OP_ADD8A_OVERLAY_DISP, "overlay-operation",
+     la_c6502_ovl_add},
+    {LA_TARGET_OP_SUB8A_OVERLAY_DISP, "overlay-operation",
+     la_c6502_ovl_sub},
+    {LA_TARGET_OP_INC8_OVERLAY_ABS, "overlay-update", la_c6502_ovl_inc},
+    {LA_TARGET_OP_DEC8_OVERLAY_ABS, "overlay-update", la_c6502_ovl_dec},
+    {LA_TARGET_OP_AND8_OVERLAY_ABS, "overlay-update",
+     la_c6502_ovl_and_abs},
+    {LA_TARGET_OP_OR8_OVERLAY_ABS, "overlay-update", la_c6502_ovl_or_abs},
+    {LA_TARGET_OP_ADDRESS_OVERLAY_FIELD, "overlay-address",
+     la_c6502_overlay_address},
+    {LA_TARGET_OP_PROC_NAKED, "procedure", la_c6502_proc_naked},
+    {LA_TARGET_OP_PROC_FRAME, "procedure", la_c6502_proc_frame},
+    {LA_TARGET_OP_PROC_RETURN, "frame-epilogue", la_c6502_proc_return},
+    {LA_TARGET_OP_LOAD8_FRAME_LOCAL, "frame-local", la_c6502_frame_load},
+    {LA_TARGET_OP_STORE8_FRAME_LOCAL, "frame-local", la_c6502_frame_store},
+    {LA_TARGET_OP_STORE_PTR_FRAME, "frame-pointer",
+     la_c6502_frame_ptr_store},
+    {LA_TARGET_OP_LOAD_PTR_FRAME, "frame-pointer",
+     la_c6502_frame_ptr_load},
     {LA_TARGET_OP_DECZ8_PTR_DISP, "byte-field-decz", la_c6502_decz},
     {LA_TARGET_OP_TSTW_PTR_DISP, "word-field-test", la_c6502_tstw_ptr},
     {LA_TARGET_OP_TSTW_LOCATION, "word-location-test", la_c6502_tstw_loc},
