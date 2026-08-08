@@ -102,7 +102,8 @@ A target description declares, as data:
   operand-shape constraints (width, range, stride set, volatility
   rules) drawn from a bounded predicate vocabulary; a lowering
   template with substitution slots and bounded parameter arithmetic
-  (`disp+1`, `imm[7:0]`, freshened labels); and a declared contract
+  (displacement successor, immediate halves, page-one frame
+  addresses); and a declared contract
   (clobbered registers and flags, meaningless flags, preserved
   registers). An operation kind with no entry is unsupported and
   rejects, exactly as the capability booleans gate today. A spelling
@@ -142,11 +143,27 @@ equates today; the rule pins the precedence rather than trusting that.
 ### D3. Templates, not code
 
 Lowering templates are the declarable analogue of the current emitter
-cases: an ordered list of output lines with slots. The template
-language is deliberately small — slots, byte-slicing, add/subtract on
-parameters, a per-expansion fresh-label primitive, and per-line
-conditionals keyed on declared facts (byte order, addend present).
-Anything beyond that (loops over members, strategy selection) is a D4
+cases: an ordered list of output lines with slots. As landed, the
+template language is exactly this and no more:
+
+- **Slots**: `%b` base, `%a` aux, `%c` aux2, `%x` index, `%s` scratch
+  slice, `%t` scoped-raw tail, `%d` displacement, `%D` displacement
+  successor, `%l`/`%h` immediate low/high bytes, `%i` byte-update
+  immediate, `%v` signed immediate, `%m` mangled field-offset symbol,
+  `%q` qualified procedure symbol, `%F`/`%G` page-one frame addresses,
+  `%o`/`%p` provenance, `%%` literal percent.
+- **Line prefixes**: `*` repeats the line the event's count times, `?`
+  emits it only when that count is nonzero, `@kind@` overrides the
+  per-line source-map reason. These three are what let the frame model
+  (label, `pha` prologue, `tsx`/`inx`/`txs` epilogue) become data.
+
+Two forms sketched in revision 1 turned out unnecessary and were not
+built: a fresh-label primitive (label freshening happens upstream in
+inline expansion, before templates see text) and conditionals on
+declared machine facts (the description is per-target, so a fact like
+byte order is baked into the target's own template — the codeptr
+template spells little-endian directly). Anything beyond the list
+above (loops over members, mode selection, strategy choice) is a D4
 algorithm calling templates, not a template. This is the discipline
 that keeps the description from growing into an unbounded macro
 language: the *shape* of every lowering is enumerated by the fixed
@@ -157,14 +174,18 @@ operation vocabulary; targets fill in text.
 The planner, frame arithmetic, coverage checking and table emission
 stay in the core as generic algorithms over declared data:
 
-- The invoke planner's phase structure generalizes: today's
-  "register saves, field reads, assignments, then register-destination
-  reads Y, X, A" is a hand-scheduled special case of scheduling by
-  declared defs and clobbers, where field reads clobber the
-  accumulator role. Emission order derives from a dependency ordering
-  over the bindings' declared clobber sets; on a machine where any
-  register loads memory, the same algorithm produces the natural
-  schedule.
+- The invoke planner's phase structure generalizes (landed in phase
+  6): every save, field read, assignment and register-destination read
+  is an item declaring what it reads, what it writes, and whether it
+  passes through the accumulator role, and the order derives from four
+  rules — an item runs before the item that overwrites a resource it
+  reads; a binding's save or field read precedes its own assignment;
+  accumulator readers precede accumulator clobbers; the
+  accumulator-destination item runs after every clobber. The legacy
+  phase order survives only as the deterministic tie-break between
+  independent items, and a binding set with no safe order is a
+  diagnostic. On a machine where any register loads memory, the same
+  rules produce the natural schedule.
 - Identity elision and overlap-only snapshotting already operate on
   names and are target-free once register names come from the
   description.

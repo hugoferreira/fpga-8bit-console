@@ -54,13 +54,18 @@ description's register set.
 ### Requirement: Template Lowerings With Declared Contracts
 Each declared operation SHALL carry operand constraints drawn from a
 bounded predicate vocabulary, a lowering template using only the
-specified slot and arithmetic forms (substitution slots, byte slices,
-parameter add/subtract, per-expansion fresh labels, per-line
-conditionals on declared facts), and a declared contract naming
-clobbered and preserved registers and flag validity. Validation SHALL
-remain frontend-side; templates MAY delegate pure text expansion to
-customasm ruledefs but their constraints and contracts SHALL live in
-the description.
+specified forms — the enumerated substitution slots (base, aux, aux2,
+index, scratch, scoped-raw tail, displacement and successor,
+immediate halves, byte-update immediate, signed immediate, mangled
+offset symbol, qualified procedure symbol, page-one frame addresses,
+provenance) and the three line prefixes (repeat-by-count,
+emit-when-count-nonzero, per-line source-map reason) — and a declared
+contract naming clobbered and preserved registers and flag validity.
+Extending the slot or prefix vocabulary SHALL be a specification
+change, not a target-file convenience. Validation SHALL remain
+frontend-side; templates MAY delegate pure text expansion to customasm
+ruledefs but their constraints and contracts SHALL live in the
+description.
 
 #### Scenario: Template emits the declared sequence
 - **WHEN** a typed operation matches a declared entry and passes its
@@ -74,20 +79,40 @@ the description.
 - **THEN** the frontend rejects with a stable-code diagnostic before
   any text reaches customasm
 
+#### Scenario: Count-driven lines express the frame model
+- **WHEN** a procedure with a three-byte frame is emitted under a
+  description whose prologue template repeats a push line by count and
+  whose epilogue guards its stack-adjust lines on a nonzero count
+- **THEN** the prologue emits three pushes, the epilogue emits the
+  adjust sequence, and a zero-frame procedure emits neither
+
 ### Requirement: Role-parameterized Algorithms
 The invoke planner, frame arithmetic and table emission SHALL be
-generic algorithms over declared data: marshalling order SHALL derive
-from dependency scheduling over the bindings' declared defs and
-clobbers (memory reads clobbering the accumulator role), and the frame
-model SHALL be the description's templates parameterized by frame size
-and member offset. For the console6502 description these SHALL
-reproduce the current schedules and sequences exactly.
+generic algorithms over declared data: each marshalling item SHALL
+declare what it reads, what it writes, and whether it passes through
+the accumulator role, and emission order SHALL derive from dependency
+scheduling over those declarations — reads before their resource is
+overwritten, same-binding saves and reads before their assignment,
+accumulator readers before accumulator clobbers, the
+accumulator-destination item after every clobber — with the legacy
+class order used only as the deterministic tie-break between
+independent items. A binding set with no safe order SHALL be a
+stable-code diagnostic. The frame model SHALL be the description's
+templates parameterized by frame size and member offset. For the
+console6502 description these SHALL reproduce the current schedules
+and sequences exactly.
 
 #### Scenario: Scheduler reproduces the current console6502 order
 - **WHEN** an invocation with register-destination field reads is
   marshalled under the console6502 description
 - **THEN** the emitted order equals today's register saves, field
   reads, assignments, then index-before-accumulator register reads
+
+#### Scenario: Unorderable bindings are a diagnostic
+- **WHEN** an invocation's items admit no order satisfying the
+  dependency rules
+- **THEN** assembly fails with a stable-code diagnostic instead of
+  emitting a schedule that violates parallel-assignment semantics
 
 ### Requirement: Declarable Data Strategies
 Dispatch-entry and pool-table emission SHALL be strategies declared by
