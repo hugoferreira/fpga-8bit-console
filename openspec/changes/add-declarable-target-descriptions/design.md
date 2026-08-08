@@ -202,9 +202,9 @@ strategy leaked into the vocabulary are re-cut:
 
 - `DATA_PROC_LOW`/`DATA_PROC_HIGH` become one **dispatch-entry**
   operation whose emission strategy (split low/high byte tables versus
-  word-per-entry) the description declares, with per-declaration
-  override. `method_table` `code` slots and split lifecycle consumers
-  keep their console6502 behavior via the split strategy.
+  word-per-entry) the description declares. `method_table` `code` slots
+  and split lifecycle consumers keep their console6502 behavior via the
+  split strategy.
 - `pool tables` emission likewise selects a declared strategy; the
   console6502 strategy is the current symbolic `(BASE+offset)`
   low/high pair.
@@ -212,6 +212,23 @@ strategy leaked into the vocabulary are re-cut:
 The surface syntax of `method_table`, `pool tables`, `data codeptr`
 and split `low()`/`high()` data is unchanged; only where their bytes
 come from moves.
+
+As landed, a strategy is a kind (dispatch, value, pool) plus an ordered
+list of **lanes**, one emitted table each. A lane declares the
+spellings a declaration site may name it by (`low`, `high`,
+`addr full`), the label suffix (`_lo`), the storage one row occupies,
+and the templates for a filled and an absent entry. Four things the
+core used to spell now derive from that data: the label suffix and the
+number of tables a column emits, the operand-width check on `data u8
+low(P)` versus `data u16 addr(P)` (the declared width must be the
+lane's row width), the expectation list in the diagnostic that rejects
+an unclaimed part spelling, and the rejection of `absent` in a value
+slot (a lane with no absent template cannot express one). The table
+label itself is a template (`%b:`), so the core composes the name and
+the description spells the syntax. Sites resolve their strategy by
+kind — a description declaring none for a kind cannot emit that table,
+and says so with a stable-code diagnostic rather than falling back to
+core-authored rows.
 
 ### D6. Verification per target
 

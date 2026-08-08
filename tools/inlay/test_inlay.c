@@ -22,6 +22,11 @@ typedef struct {
     unsigned raw;
     unsigned labels;
     unsigned scoped_raw;
+    unsigned table_labels;
+    unsigned table_rows;
+    unsigned table_holes;
+    unsigned dispatch_entries;
+    unsigned dispatch_units;
     int saw_hitbox_w;
     int saw_hair;
     int saw_left_a;
@@ -136,6 +141,10 @@ static int test_event(void *context, const LaEvent *event)
     events->hash *= 16777619UL;
     events->hash ^= event->access_width;
     events->hash *= 16777619UL;
+    events->hash ^= event->strategy;
+    events->hash *= 16777619UL;
+    events->hash ^= event->lane;
+    events->hash *= 16777619UL;
     events->hash ^= event->explicit_offset;
     events->hash *= 16777619UL;
     if (event->kind == LA_EVENT_PROPERTY) {
@@ -185,6 +194,16 @@ static int test_event(void *context, const LaEvent *event)
         }
     } else if (event->kind == LA_EVENT_TARGET_OPERATION) {
         ++events->operations;
+        if (event->operation == LA_TARGET_OP_TABLE_LABEL) {
+            ++events->table_labels;
+        } else if (event->operation == LA_TARGET_OP_TABLE_ROW) {
+            ++events->table_rows;
+        } else if (event->operation == LA_TARGET_OP_TABLE_HOLE) {
+            ++events->table_holes;
+        } else if (event->operation == LA_TARGET_OP_DISPATCH_ENTRY) {
+            ++events->dispatch_entries;
+            events->dispatch_units = event->access_width;
+        }
         if (event->operation == LA_TARGET_OP_DATA_CODEPTR) {
             check(event->access_width == 2,
                   "code pointer reports target storage width");
@@ -1449,11 +1468,116 @@ static void test_method_tables(void)
         "end\n",
         limits, LA_ERR_DUPLICATE_ENUM_MEMBER,
         "aliased member inside domain rejected");
-    /* Pool table emission is validated byte-for-byte by the structured
-       conformance fixture; here only the statement's parse surface. */
+    /* Pool table emission is validated byte-for-byte by the Celeste
+       digest gate; here only the statement's parse surface. */
     expect_error(
         "pool tables missing\n",
         limits, LA_ERR_UNKNOWN_POOL, "unknown pool tables rejected");
+}
+
+/* A second description, declaring word-per-entry dispatch where
+   console6502 declares split low/high. Same source, same surfaces; the
+   strategy decides how many tables the declaration emits and how wide
+   an entry is. */
+static const char *const test_table_label[] = { "@table-label@%b:", 0 };
+static const char *const test_word_row[] = { "    #d16 %q", 0 };
+static const char *const test_word_hole[] = { "    #d16 0", 0 };
+static const char *const test_value_row[] = { "    #d8 %v", 0 };
+static const char *const test_pool_row[] = { "    #d16 (%b+%d)", 0 };
+static const LaStrategyLane test_word_lanes[] = {
+    {"addr full", "", 2, test_word_row, test_word_hole}
+};
+static const LaStrategyLane test_value_lanes[] = {
+    {"", "", 1, test_value_row, 0}
+};
+static const LaStrategyLane test_pool_lanes[] = {
+    {"", "", 2, test_pool_row, 0}
+};
+static const LaStrategyDesc test_word_strategies[] = {
+    {LA_STRATEGY_DISPATCH_TABLE, "word-per-entry", "procedure-address",
+     1, 1, test_word_lanes, test_table_label},
+    {LA_STRATEGY_VALUE_TABLE, "byte-rows", "table-value",
+     1, 1, test_value_lanes, test_table_label},
+    {LA_STRATEGY_POOL_TABLE, "word-rows", "pool-address",
+     1, 1, test_pool_lanes, test_table_label}
+};
+
+static void test_data_strategies(void)
+{
+    static const char source[] =
+        "enum Kind : u8\n"
+        "    player = 0\n"
+        "    spawn = 1\n"
+        "end\n"
+        "proc a_init naked\nbegin\nret\nend\n"
+        "method_table kinds : Kind[player .. spawn]\n"
+        "    k_tile : u8\n"
+        "    k_init : code\n"
+        "    player = 7, a_init\n"
+        "    spawn = 9, absent\n"
+        "end\n";
+    LaLimits limits;
+    TestEvents events;
+    TestDiagnostic diagnostic;
+    LaStats stats;
+    LaTarget target;
+    limits = la_default_limits();
+    check(compile_source(source, 0, limits, &events, &diagnostic,
+                         &stats) == LA_OK,
+          "method table compiles under the split strategy");
+    check(events.table_labels == 3,
+          "split strategy labels one value and two code tables");
+    check(events.dispatch_entries == 2 && events.table_holes == 2,
+          "split strategy emits one entry per lane per code cell");
+    check(events.table_rows == 2, "value column emits one row per member");
+    check(events.dispatch_units == 1, "split lane entries are one unit");
+    target = la_target_console6502;
+    target.strategies = test_word_strategies;
+    target.strategy_count = (la_u8)(sizeof(test_word_strategies) /
+                                    sizeof(test_word_strategies[0]));
+    check(compile_source_target(source, 0, limits, &events, &diagnostic,
+                                &stats, &target) == LA_OK,
+          "the same source compiles under the word-per-entry strategy");
+    check(events.table_labels == 2,
+          "word strategy labels one table per column");
+    check(events.dispatch_entries == 1 && events.table_holes == 1,
+          "word strategy emits one entry per code cell");
+    check(events.dispatch_units == 2, "word lane entries are two units");
+    /* The lane spellings a declaration site may name come from the
+       description, and so does the width each one carries. */
+    check(compile_source_target(
+              "proc run naked\nbegin\nret\nend\n"
+              "data u16 addr(run)\n",
+              0, limits, &events, &diagnostic, &stats, &target) == LA_OK,
+          "word lane claims the addr spelling");
+    check(events.dispatch_entries == 1 && events.dispatch_units == 2,
+          "declared word entry reports the lane width");
+    check(compile_source_target(
+              "proc run naked\nbegin\nret\nend\n"
+              "data u8 low(run)\n",
+              0, limits, &events, &diagnostic, &stats, &target) ==
+              LA_ERR_SYNTAX,
+          "a spelling no lane claims is rejected");
+    check(compile_source_target(
+              "proc run naked\nbegin\nret\nend\n"
+              "data u8 addr(run)\n",
+              0, limits, &events, &diagnostic, &stats, &target) ==
+              LA_ERR_ACCESS_WIDTH,
+          "declared width must be the lane's row width");
+    /* A description with no strategy of a kind cannot emit that table. */
+    target.strategies = test_word_strategies;
+    target.strategy_count = 1;
+    check(compile_source_target(source, 0, limits, &events, &diagnostic,
+                                &stats, &target) ==
+              LA_ERR_UNSUPPORTED_OPERATION,
+          "a method table needs a declared value strategy");
+    check(compile_source_target(
+              "struct Item packed\n    value : u8\nend\n"
+              "pool items : Item[2] at BASE table item_lo, item_hi\n"
+              "pool tables items\n",
+              0, limits, &events, &diagnostic, &stats, &target) ==
+              LA_ERR_POOL_STRATEGY,
+          "pool tables need a declared pool strategy");
 }
 
 static void test_semantic_errors(void)
@@ -2641,6 +2765,7 @@ int main(void)
     test_namespace_defaults();
     test_spelling_dispatch();
     test_method_tables();
+    test_data_strategies();
     test_semantic_errors();
     test_comments_and_pointer_fields();
     test_indexed_pools_and_procedures();

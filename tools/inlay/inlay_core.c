@@ -488,13 +488,6 @@ static const char *const la_c6502_pool_address[] = {
 };
 static const char *const la_c6502_invoke_call[] = { "    jsr %q", 0 };
 static const char *const la_c6502_invoke_tail[] = { "    jmp %q", 0 };
-static const char *const la_c6502_data_low[] = {
-    "    #d8 (%q)[7:0]", 0
-};
-static const char *const la_c6502_data_high[] = {
-    "    #d8 (%q)[15:8]", 0
-};
-static const char *const la_c6502_data_full[] = { "    #d16 %q", 0 };
 static const char *const la_c6502_data_codeptr[] = {
     "    #d8 (%q)[7:0], (%q)[15:8]", 0
 };
@@ -625,9 +618,6 @@ static const LaLoweringDesc la_console6502_lowerings[] = {
      la_c6502_pool_address},
     {LA_TARGET_OP_INVOKE_CALL, "invoke-call", la_c6502_invoke_call},
     {LA_TARGET_OP_INVOKE_TAIL, "invoke-call", la_c6502_invoke_tail},
-    {LA_TARGET_OP_DATA_PROC_LOW, "procedure-address", la_c6502_data_low},
-    {LA_TARGET_OP_DATA_PROC_HIGH, "procedure-address", la_c6502_data_high},
-    {LA_TARGET_OP_DATA_PROC_FULL, "procedure-address", la_c6502_data_full},
     {LA_TARGET_OP_DATA_CODEPTR, "procedure-address", la_c6502_data_codeptr},
     {LA_TARGET_OP_VALUE_CMP, "qualified-immediate", la_c6502_value_cmp},
     {LA_TARGET_OP_BRANCH_OVERLAY_DISP, "overlay-branch",
@@ -681,6 +671,56 @@ static const LaLoweringDesc la_console6502_lowerings[] = {
     {LA_TARGET_OP_OR8_PTR_DISP, "byte-field-update", la_c6502_or8}
 };
 
+/* Strategy templates. A table label takes the composed name in %b; a
+   dispatch row takes the procedure symbol in %q; a pool row takes the
+   pool base in %b and the slot's byte offset in %d; a value row takes
+   the cell in %v. */
+static const char *const la_c6502_table_label[] = {
+    "@table-label@%b:", 0
+};
+static const char *const la_c6502_dispatch_low[] = {
+    "    #d8 (%q)[7:0]", 0
+};
+static const char *const la_c6502_dispatch_high[] = {
+    "    #d8 (%q)[15:8]", 0
+};
+static const char *const la_c6502_dispatch_word[] = { "    #d16 %q", 0 };
+static const char *const la_c6502_hole8[] = { "    #d8 0", 0 };
+static const char *const la_c6502_hole16[] = { "    #d16 0", 0 };
+static const char *const la_c6502_value_row[] = { "    #d8 %v", 0 };
+static const char *const la_c6502_pool_low[] = {
+    "    #d8 (%b+%d)[7:0]", 0
+};
+static const char *const la_c6502_pool_high[] = {
+    "    #d8 (%b+%d)[15:8]", 0
+};
+
+static const LaStrategyLane la_c6502_split_lanes[] = {
+    {"low", "_lo", 1, la_c6502_dispatch_low, la_c6502_hole8},
+    {"high", "_hi", 1, la_c6502_dispatch_high, la_c6502_hole8}
+};
+static const LaStrategyLane la_c6502_word_lanes[] = {
+    {"addr full", "", 2, la_c6502_dispatch_word, la_c6502_hole16}
+};
+static const LaStrategyLane la_c6502_value_lanes[] = {
+    {"", "", 1, la_c6502_value_row, 0}
+};
+static const LaStrategyLane la_c6502_pool_lanes[] = {
+    {"", "", 1, la_c6502_pool_low, 0},
+    {"", "", 1, la_c6502_pool_high, 0}
+};
+
+static const LaStrategyDesc la_console6502_strategies[] = {
+    {LA_STRATEGY_DISPATCH_TABLE, "split-low-high", "procedure-address",
+     1, 2, la_c6502_split_lanes, la_c6502_table_label},
+    {LA_STRATEGY_DISPATCH_TABLE, "word-per-entry", "procedure-address",
+     0, 1, la_c6502_word_lanes, la_c6502_table_label},
+    {LA_STRATEGY_VALUE_TABLE, "byte-rows", "table-value",
+     1, 1, la_c6502_value_lanes, la_c6502_table_label},
+    {LA_STRATEGY_POOL_TABLE, "symbolic-base-offset", "pool-address",
+     1, 2, la_c6502_pool_lanes, la_c6502_table_label}
+};
+
 const LaTarget la_target_console6502 = {
     "console6502", 8, 2, 255, LA_TARGET_VERSION,
     la_console6502_conventions, 1,
@@ -692,7 +732,10 @@ const LaTarget la_target_console6502 = {
              sizeof(la_console6502_spellings[0])),
     la_console6502_lowerings,
     (la_u16)(sizeof(la_console6502_lowerings) /
-             sizeof(la_console6502_lowerings[0]))
+             sizeof(la_console6502_lowerings[0])),
+    la_console6502_strategies,
+    (la_u8)(sizeof(la_console6502_strategies) /
+            sizeof(la_console6502_strategies[0]))
 };
 
 static la_u32 la_align_size(la_u32 value)
@@ -1462,10 +1505,112 @@ static LaDiagnosticCode la_parse_method_row(LaContext *ctx,
     return LA_OK;
 }
 
+/* Does a lane's selector list claim this spelling? */
+static int la_lane_claims(const char *selectors, const char *text,
+                          la_u16 length)
+{
+    const char *cursor;
+    cursor = selectors;
+    while (*cursor != 0) {
+        const char *start;
+        start = cursor;
+        while (*cursor != 0 && *cursor != ' ') ++cursor;
+        if ((la_u16)(cursor - start) == length && length != 0 &&
+            memcmp(start, text, length) == 0) return 1;
+        while (*cursor == ' ') ++cursor;
+    }
+    return 0;
+}
+
+/* The description's default strategy of a kind, or -1 when the target
+   declares none - a table of that kind is then unsupported. */
+static int la_default_strategy(LaContext *ctx, la_u8 kind)
+{
+    la_u8 index;
+    for (index = 0; index < ctx->target->strategy_count; ++index) {
+        if (ctx->target->strategies[index].kind == kind &&
+            ctx->target->strategies[index].is_default) return (int)index;
+    }
+    return -1;
+}
+
+/* The lane a declaration site selects by spelling, over every strategy
+   of a kind. Returns -1 when no lane claims the spelling. */
+static int la_strategy_lane(LaContext *ctx, la_u8 kind, const char *text,
+                            la_u16 length, la_u8 *strategy, la_u8 *lane)
+{
+    la_u8 index;
+    for (index = 0; index < ctx->target->strategy_count; ++index) {
+        const LaStrategyDesc *desc;
+        la_u8 slot;
+        desc = &ctx->target->strategies[index];
+        if (desc->kind != kind) continue;
+        for (slot = 0; slot < desc->lane_count; ++slot) {
+            if (la_lane_claims(desc->lanes[slot].selectors, text, length)) {
+                *strategy = index;
+                *lane = slot;
+                return 0;
+            }
+        }
+    }
+    return -1;
+}
+
+/* The spellings a kind's lanes claim, comma-separated, for the
+   diagnostic that rejects an unclaimed one. */
+static LaSlice la_strategy_selectors(LaContext *ctx, la_u8 kind)
+{
+    la_u16 length;
+    la_u8 index;
+    length = 0;
+    for (index = 0; index < ctx->target->strategy_count; ++index) {
+        const LaStrategyDesc *desc;
+        la_u8 slot;
+        desc = &ctx->target->strategies[index];
+        if (desc->kind != kind) continue;
+        for (slot = 0; slot < desc->lane_count; ++slot) {
+            const char *cursor;
+            cursor = desc->lanes[slot].selectors;
+            if (*cursor == 0) continue;
+            while (*cursor != 0) {
+                if (*cursor == ' ') {
+                    ctx->path_buffer[length++] = ',';
+                    ctx->path_buffer[length++] = ' ';
+                } else {
+                    ctx->path_buffer[length++] = *cursor;
+                }
+                ++cursor;
+                if (length + 2 >= ctx->limits->max_line_bytes) break;
+            }
+            if (*cursor == 0 && length != 0 &&
+                length + 2 < ctx->limits->max_line_bytes) {
+                ctx->path_buffer[length++] = ',';
+                ctx->path_buffer[length++] = ' ';
+            }
+        }
+    }
+    if (length >= 2) length = (la_u16)(length - 2);
+    return la_slice(ctx->path_buffer, length);
+}
+
+/* A strategy's label, carrying the composed table name. */
+static int la_emit_strategy_label(LaContext *ctx, la_u16 line,
+                                  la_u8 strategy, la_u8 lane, LaSlice name)
+{
+    LaEvent event;
+    la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line,
+                  name.length);
+    event.operation = LA_TARGET_OP_TABLE_LABEL;
+    event.strategy = strategy;
+    event.lane = lane;
+    event.base = name;
+    return la_write_event(ctx, &event);
+}
+
 /* Emission runs in the main pass at the declaration's end line, once enum
    member values have resolved: rows are ordered by member value over the
-   inclusive domain, coverage is total, and code cells emit through the
-   procedure-address events. */
+   inclusive domain, coverage is total, and every row's text comes from
+   the lane of the strategy its column selects. */
 static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
                                 la_u16 line)
 {
@@ -1473,7 +1618,23 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
     la_i32 high_value;
     la_i32 value;
     la_u16 column;
+    la_u8 dispatch_strategy;
+    la_u8 value_strategy;
     LaEvent event;
+    {
+        int dispatch;
+        int values;
+        dispatch = la_default_strategy(ctx, LA_STRATEGY_DISPATCH_TABLE);
+        values = la_default_strategy(ctx, LA_STRATEGY_VALUE_TABLE);
+        if (dispatch < 0 || values < 0) {
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, record->line, 1, 1,
+                    la_slice("method table", 12),
+                    la_slice("no declared strategy", 20), 0, 0);
+            return 0;
+        }
+        dispatch_strategy = (la_u8)dispatch;
+        value_strategy = (la_u8)values;
+    }
     low_value = ctx->enum_members[record->low].value;
     high_value = ctx->enum_members[record->high].value;
     if (high_value < low_value) {
@@ -1509,30 +1670,35 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
     }
     for (column = 0; column < record->column_count; ++column) {
         LaMethodColumnRec *col;
-        la_u16 half;
-        la_u16 halves;
+        const LaStrategyDesc *strategy;
+        la_u8 strategy_index;
+        la_u8 lane_index;
         col = &ctx->method_columns[record->first_column + column];
-        halves = col->is_code ? 2 : 1;
-        for (half = 0; half < halves; ++half) {
+        strategy_index = col->is_code ? dispatch_strategy : value_strategy;
+        strategy = &ctx->target->strategies[strategy_index];
+        for (lane_index = 0; lane_index < strategy->lane_count;
+             ++lane_index) {
+            const LaStrategyLane *lane;
             LaSlice label;
             LaSlice table_name;
             la_u16 length;
+            la_u16 suffix_length;
+            lane = &strategy->lanes[lane_index];
             table_name = la_name_slice(ctx, record->name);
             label = la_name_slice(ctx, col->label);
+            suffix_length = (la_u16)strlen(lane->suffix);
             memcpy(ctx->path_buffer, table_name.data, table_name.length);
             length = table_name.length;
             ctx->path_buffer[length++] = '_';
             memcpy(ctx->path_buffer + length, label.data, label.length);
             length = (la_u16)(length + label.length);
-            if (col->is_code) {
-                memcpy(ctx->path_buffer + length,
-                       half == 0 ? "_lo" : "_hi", 3);
-                length = (la_u16)(length + 3);
+            memcpy(ctx->path_buffer + length, lane->suffix, suffix_length);
+            length = (la_u16)(length + suffix_length);
+            if (!la_emit_strategy_label(ctx, line, strategy_index,
+                                        lane_index,
+                                        la_slice(ctx->path_buffer, length))) {
+                return 0;
             }
-            ctx->path_buffer[length++] = ':';
-            la_init_event(ctx, &event, LA_EVENT_RAW, line, length);
-            event.text = la_slice(ctx->path_buffer, length);
-            if (!la_write_event(ctx, &event)) return 0;
             for (value = low_value; value <= high_value; ++value) {
                 la_u16 scan;
                 la_u16 cell;
@@ -1558,14 +1724,19 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
                 }
                 text = la_name_slice(ctx, ctx->method_values[cell]);
                 if (la_equal_text(text.data, text.length, "absent")) {
-                    if (!col->is_code) {
+                    /* A lane with no hole template cannot express an
+                       absent entry. */
+                    if (lane->hole == 0) {
                         la_fail(ctx, LA_ERR_SYNTAX, record->line, 1, 1,
                                 la_slice("absent in value slot", 20),
                                 la_slice("", 0), 0, 0);
                         return 0;
                     }
-                    la_init_event(ctx, &event, LA_EVENT_RAW, line, 10);
-                    event.text = la_slice("    #d8 0", 9);
+                    la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION,
+                                  line, 1);
+                    event.operation = LA_TARGET_OP_TABLE_HOLE;
+                    event.strategy = strategy_index;
+                    event.lane = lane_index;
                     if (!la_write_event(ctx, &event)) return 0;
                     continue;
                 }
@@ -1596,40 +1767,34 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
                                   line, 1);
                     event.owner = la_name_slice(
                         ctx, ctx->procedures[procedure].name);
-                    event.operation = half == 0 ?
-                        LA_TARGET_OP_DATA_PROC_LOW :
-                        LA_TARGET_OP_DATA_PROC_HIGH;
-                    event.access_width = 1;
+                    event.operation = LA_TARGET_OP_DISPATCH_ENTRY;
+                    event.strategy = strategy_index;
+                    event.lane = lane_index;
+                    event.access_width = lane->units;
                     event.byte_order = ctx->target->byte_order;
                     if (!la_write_event(ctx, &event)) return 0;
                 } else {
                     la_i32 cell_value;
-                    char *out;
-                    la_u16 out_length;
+                    la_i32 cell_limit;
                     if (la_eval_expression(
                             ctx, text.data, text.data + text.length,
                             record->line, &cell_value) != LA_OK) return 0;
-                    if (cell_value < 0 || cell_value > 255) {
+                    cell_limit = (la_i32)
+                        ((1UL << (lane->units * 8)) - 1UL);
+                    if (cell_value < 0 || cell_value > cell_limit) {
                         la_fail(ctx, LA_ERR_ACCESS_WIDTH, record->line,
                                 1, text.length, text,
-                                la_slice("byte cell", 9), cell_value, 255);
+                                la_slice("table cell", 10), cell_value,
+                                cell_limit);
                         return 0;
                     }
-                    out = ctx->path_buffer;
-                    memcpy(out, "    #d8 ", 8);
-                    out_length = 8;
-                    if (cell_value >= 100) {
-                        out[out_length++] =
-                            (char)('0' + (cell_value / 100) % 10);
-                    }
-                    if (cell_value >= 10) {
-                        out[out_length++] =
-                            (char)('0' + (cell_value / 10) % 10);
-                    }
-                    out[out_length++] = (char)('0' + cell_value % 10);
-                    la_init_event(ctx, &event, LA_EVENT_RAW, line,
-                                  out_length);
-                    event.text = la_slice(out, out_length);
+                    la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION,
+                                  line, 1);
+                    event.operation = LA_TARGET_OP_TABLE_ROW;
+                    event.strategy = strategy_index;
+                    event.lane = lane_index;
+                    event.access_width = lane->units;
+                    event.signed_value = cell_value;
                     if (!la_write_event(ctx, &event)) return 0;
                 }
             }
@@ -1638,9 +1803,11 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
     return 1;
 }
 
-/* pool tables NAME - emit the pool's low/high address-byte tables from
-   its base, stride and count, at this statement's position. The base must
-   resolve to a compile-time constant. */
+/* pool tables NAME - emit the pool's address tables from its base,
+   stride and count, at this statement's position. One table per lane of
+   the declared pool strategy, labelled by the pool's own table names;
+   the rows are the strategy's, so the base need only resolve for the
+   downstream assembler. */
 static int la_emit_pool_tables(LaContext *ctx, const char *start,
                                const char *end, la_u16 line)
 {
@@ -1648,7 +1815,9 @@ static int la_emit_pool_tables(LaContext *ctx, const char *start,
     const char *name_start;
     la_u16 name_length;
     la_u16 pool_index;
-    la_u16 half;
+    la_u8 lane_index;
+    la_u8 strategy_index;
+    const LaStrategyDesc *strategy;
     LaPoolRec *pool;
     LaEvent event;
     cursor = la_trim_left(start, end) + 4;
@@ -1668,57 +1837,48 @@ static int la_emit_pool_tables(LaContext *ctx, const char *start,
         return -1;
     }
     pool = &ctx->pools[pool_index];
-    for (half = 0; half < 2; ++half) {
-        LaSlice label;
+    {
+        int selected;
+        selected = la_default_strategy(ctx, LA_STRATEGY_POOL_TABLE);
+        /* The declaration names one label per lane, so a strategy with a
+           different lane count cannot emit this pool. */
+        if (selected < 0 ||
+            ctx->target->strategies[selected].lane_count != 2) {
+            la_fail(ctx, LA_ERR_POOL_STRATEGY, line, 1, name_length,
+                    la_slice(name_start, name_length),
+                    la_slice("no declared strategy", 20), 0, 0);
+            return -1;
+        }
+        strategy_index = (la_u8)selected;
+        strategy = &ctx->target->strategies[strategy_index];
+    }
+    for (lane_index = 0; lane_index < strategy->lane_count; ++lane_index) {
         LaSlice base;
-        la_u16 length;
         la_u16 slot;
-        label = la_name_slice(ctx,
-                              half == 0 ? pool->table_low :
-                                          pool->table_high);
         base = la_name_slice(ctx, pool->base);
-        memcpy(ctx->path_buffer, label.data, label.length);
-        length = label.length;
-        ctx->path_buffer[length++] = ':';
-        la_init_event(ctx, &event, LA_EVENT_RAW, line, length);
-        event.text = la_slice(ctx->path_buffer, length);
-        if (!la_write_event(ctx, &event)) return -1;
+        if (!la_emit_strategy_label(
+                ctx, line, strategy_index, lane_index,
+                la_name_slice(ctx, lane_index == 0 ? pool->table_low :
+                                                     pool->table_high))) {
+            return -1;
+        }
         for (slot = 0; slot < pool->count; ++slot) {
-            /* Symbolic rows: the base may be a raw target constant, so
-               customasm evaluates (BASE+offset)[7:0] / [15:8]. */
             la_u32 offset;
-            char *out;
-            la_u16 out_length;
-            la_u16 digits;
-            char decimal[8];
             offset = (la_u32)slot * (la_u32)pool->stride;
-            out = ctx->path_buffer;
-            memcpy(out, "    #d8 (", 9);
-            out_length = 9;
-            if (out_length + base.length + 24 >
-                ctx->limits->max_line_bytes) {
-                la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+            if (offset > 65535UL) {
+                la_fail(ctx, LA_ERR_POOL_STRATEGY, line, 1, name_length,
+                        la_slice(name_start, name_length),
                         la_slice("pool table row", 14),
-                        la_slice("", 0), 0, 0);
+                        (la_i32)offset, 65535);
                 return -1;
             }
-            memcpy(out + out_length, base.data, base.length);
-            out_length = (la_u16)(out_length + base.length);
-            out[out_length++] = '+';
-            digits = 0;
-            do {
-                decimal[digits++] = (char)('0' + offset % 10);
-                offset /= 10;
-            } while (offset != 0);
-            while (digits > 0) {
-                out[out_length++] = decimal[--digits];
-            }
-            out[out_length++] = ')';
-            memcpy(out + out_length,
-                   half == 0 ? "[7:0]" : "[15:8]", half == 0 ? 5 : 6);
-            out_length = (la_u16)(out_length + (half == 0 ? 5 : 6));
-            la_init_event(ctx, &event, LA_EVENT_RAW, line, out_length);
-            event.text = la_slice(out, out_length);
+            la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
+            event.operation = LA_TARGET_OP_TABLE_ROW;
+            event.strategy = strategy_index;
+            event.lane = lane_index;
+            event.base = base;
+            event.value = (la_u16)offset;
+            event.access_width = strategy->lanes[lane_index].units;
             if (!la_write_event(ctx, &event)) return -1;
         }
     }
@@ -8336,7 +8496,11 @@ static int la_parse_procedure_data(LaContext *ctx,
         la_u16 name_length;
         la_u16 procedure;
         LaTargetOperationKind operation;
+        la_u8 strategy;
+        la_u8 lane;
         int is_private;
+        strategy = 0;
+        lane = 0;
         if (is_code_pointer) {
             operation = LA_TARGET_OP_DATA_CODEPTR;
             if (!la_read_qualified_identifier(
@@ -8348,24 +8512,24 @@ static int la_parse_procedure_data(LaContext *ctx,
             part_start = type_start;
             part_length = type_length;
         } else {
+            operation = LA_TARGET_OP_DISPATCH_ENTRY;
             if (!la_read_identifier(
                     &cursor, end, &part_start, &part_length)) {
                 la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                        la_slice("low, high, addr, or full", 24),
+                        la_strategy_selectors(
+                            ctx, LA_STRATEGY_DISPATCH_TABLE),
                         la_slice("", 0), 0, 0);
                 return -1;
             }
-            if (la_equal_text(part_start, part_length, "low")) {
-                operation = LA_TARGET_OP_DATA_PROC_LOW;
-            } else if (la_equal_text(part_start, part_length, "high")) {
-                operation = LA_TARGET_OP_DATA_PROC_HIGH;
-            } else if (la_equal_text(part_start, part_length, "addr") ||
-                       la_equal_text(part_start, part_length, "full")) {
-                operation = LA_TARGET_OP_DATA_PROC_FULL;
-            } else {
+            /* The part spelling selects a dispatch lane; the description
+               owns which spellings exist and what each one emits. */
+            if (la_strategy_lane(ctx, LA_STRATEGY_DISPATCH_TABLE,
+                                 part_start, part_length,
+                                 &strategy, &lane) < 0) {
                 la_fail(ctx, LA_ERR_SYNTAX, line, 1, part_length,
                         la_slice(part_start, part_length),
-                        la_slice("low, high, addr, or full", 24), 0, 0);
+                        la_strategy_selectors(
+                            ctx, LA_STRATEGY_DISPATCH_TABLE), 0, 0);
                 return -1;
             }
             cursor = la_trim_left(cursor, end);
@@ -8384,10 +8548,11 @@ static int la_parse_procedure_data(LaContext *ctx,
                 return -1;
             }
         }
-        if ((!is_code_pointer && type_length == 2 &&
-             operation == LA_TARGET_OP_DATA_PROC_FULL) ||
-            (!is_code_pointer && type_length == 3 &&
-             operation != LA_TARGET_OP_DATA_PROC_FULL)) {
+        /* The declared width must be the lane's row width: `data u8` is
+           a one-unit lane, `data u16` a two-unit one. */
+        if (!is_code_pointer &&
+            ctx->target->strategies[strategy].lanes[lane].units !=
+                (type_length == 2 ? 1 : 2)) {
             la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, part_length,
                     la_slice(type_start, type_length),
                     la_slice(part_start, part_length), 0, 0);
@@ -8423,11 +8588,12 @@ static int la_parse_procedure_data(LaContext *ctx,
             event.owner =
                 la_name_slice(ctx, ctx->procedures[procedure].name);
             event.operation = operation;
+            event.strategy = strategy;
+            event.lane = lane;
             event.access_width =
-                operation == LA_TARGET_OP_DATA_CODEPTR ?
+                is_code_pointer ?
                     ctx->target->code_pointer_units :
-                operation == LA_TARGET_OP_DATA_PROC_FULL ?
-                    2 : 1;
+                    ctx->target->strategies[strategy].lanes[lane].units;
             event.byte_order = is_code_pointer ?
                 ctx->target->code_pointer_byte_order :
                 ctx->target->byte_order;

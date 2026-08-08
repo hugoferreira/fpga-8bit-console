@@ -57,10 +57,10 @@
 
 ## 7. Strategies
 
-- [ ] 7.1 Re-cut dispatch entries as one operation with a declared
+- [x] 7.1 Re-cut dispatch entries as one operation with a declared
       strategy (split low/high vs word-per-entry); keep the
       console6502 split strategy and all current surfaces; digest gate
-- [ ] 7.2 Move `pool tables` emission to a declared strategy with the
+- [x] 7.2 Move `pool tables` emission to a declared strategy with the
       symbolic `(BASE+offset)` console6502 form; digest gate
 
 ## 8. Cross-check and close-out

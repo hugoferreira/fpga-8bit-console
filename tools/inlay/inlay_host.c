@@ -767,8 +767,45 @@ static const LaLoweringDesc *find_lowering(la_u8 operation)
     return 0;
 }
 
+/* Strategy rows carry their strategy and lane, so the template comes
+   from the description's lane rather than from the operation kind. */
+static int emit_strategy_template(HostOutput *output, const LaEvent *event)
+{
+    const LaStrategyDesc *strategy;
+    const LaStrategyLane *lane;
+    LaLoweringDesc lowering;
+    if (event->strategy >= la_target_console6502.strategy_count) return 0;
+    strategy = &la_target_console6502.strategies[event->strategy];
+    if (event->lane >= strategy->lane_count) return 0;
+    lane = &strategy->lanes[event->lane];
+    lowering.operation = (la_u8)event->operation;
+    lowering.reason = strategy->reason;
+    switch (event->operation) {
+    case LA_TARGET_OP_TABLE_LABEL:
+        lowering.lines = strategy->label;
+        break;
+    case LA_TARGET_OP_TABLE_HOLE:
+        lowering.lines = lane->hole;
+        break;
+    default:
+        lowering.lines = lane->row;
+        break;
+    }
+    if (lowering.lines == 0) return 0;
+    return emit_lowering_template(output, event, &lowering);
+}
+
 static int emit_target_operation(HostOutput *output, const LaEvent *event)
 {
+    switch (event->operation) {
+    case LA_TARGET_OP_TABLE_LABEL:
+    case LA_TARGET_OP_TABLE_HOLE:
+    case LA_TARGET_OP_TABLE_ROW:
+    case LA_TARGET_OP_DISPATCH_ENTRY:
+        return emit_strategy_template(output, event);
+    default:
+        break;
+    }
     {
         const LaLoweringDesc *lowering;
         lowering = find_lowering((la_u8)event->operation);

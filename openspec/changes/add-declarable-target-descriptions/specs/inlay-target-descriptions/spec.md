@@ -115,10 +115,17 @@ and sequences exactly.
   emitting a schedule that violates parallel-assignment semantics
 
 ### Requirement: Declarable Data Strategies
-Dispatch-entry and pool-table emission SHALL be strategies declared by
-the description, selectable per declaration, over a fixed semantic
-operation vocabulary that targets cannot extend. The console6502
-strategies SHALL be split low/high byte tables and the symbolic
+Table emission SHALL be strategies declared by the description, over a
+fixed semantic operation vocabulary that targets cannot extend. A
+strategy SHALL declare its lanes — one emitted table each — and each
+lane SHALL carry the spellings a declaration site may name it by, the
+label suffix, the storage a row occupies, and the templates for a
+filled and an absent entry; a lane declaring no absent template SHALL
+reject an absent entry with a stable-code diagnostic. A declaration
+site SHALL select its lane by the spelling the description claims, and
+the declared width SHALL be the selected lane's row width. The
+console6502 strategies SHALL be split low/high dispatch tables,
+word-per-entry dispatch, byte value rows and the symbolic
 `(BASE+offset)` pool rows, preserving the current `method_table`,
 `pool tables`, `data codeptr` and split `low()`/`high()` surfaces
 unchanged.
@@ -126,8 +133,14 @@ unchanged.
 #### Scenario: Strategy selection changes bytes, not surface
 - **WHEN** the same `method_table` declaration is built under a
   description declaring a word-per-entry dispatch strategy
-- **THEN** the source is unchanged and the emitted table layout
-  follows the declared strategy
+- **THEN** the source is unchanged and the declaration emits one table
+  per column with two-unit entries instead of split low/high tables
+
+#### Scenario: Table without a declared strategy rejects
+- **WHEN** a declaration emits a table of a kind the active
+  description declares no strategy for
+- **THEN** assembly fails with a stable-code diagnostic instead of
+  emitting core-authored rows
 
 ### Requirement: Description Verification
 Every target description SHALL be cross-checked against the canonical

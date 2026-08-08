@@ -169,9 +169,10 @@ typedef enum {
     LA_TARGET_OP_INVOKE_CALL,
     LA_TARGET_OP_LOAD8_OVERLAY_DISP,
     LA_TARGET_OP_STORE8_OVERLAY_DISP,
-    LA_TARGET_OP_DATA_PROC_LOW,
-    LA_TARGET_OP_DATA_PROC_HIGH,
-    LA_TARGET_OP_DATA_PROC_FULL,
+    LA_TARGET_OP_DISPATCH_ENTRY,
+    LA_TARGET_OP_TABLE_ROW,
+    LA_TARGET_OP_TABLE_HOLE,
+    LA_TARGET_OP_TABLE_LABEL,
     LA_TARGET_OP_DATA_CODEPTR,
     LA_TARGET_OP_MATERIALIZE_FIELD_OFFSET,
     LA_TARGET_OP_VALUE_MOV,
@@ -309,6 +310,8 @@ typedef struct {
     LaSlice clobbers;
     LaPropertyKind property;
     LaTargetOperationKind operation;
+    la_u8 strategy;
+    la_u8 lane;
     LaAggregateKind aggregate_kind;
     LaLayoutPolicy layout_policy;
     LaByteOrder byte_order;
@@ -470,6 +473,42 @@ typedef struct {
     const char *const *lines;
 } LaLoweringDesc;
 
+/* The tables a description knows how to emit. The kind fixes what a
+   row denotes; the strategy fixes how the rows are cut. */
+typedef enum {
+    LA_STRATEGY_DISPATCH_TABLE = 1,
+    LA_STRATEGY_VALUE_TABLE,
+    LA_STRATEGY_POOL_TABLE
+} LaStrategyKind;
+
+/* One lane of a strategy: the rows of one emitted table. `selectors`
+   is the space-separated list of spellings that name this lane at a
+   declaration site (`data u8 low(P)`), empty when the lane is reachable
+   only through its strategy; `suffix` extends the generated table
+   label; `units` is the storage one row occupies; `row` emits a filled
+   entry and `hole` an absent one - a lane without `hole` rejects
+   absence. */
+typedef struct {
+    const char *selectors;
+    const char *suffix;
+    la_u8 units;
+    const char *const *row;
+    const char *const *hole;
+} LaStrategyLane;
+
+/* A declarable data-emission strategy. The core owns the loops - domain
+   coverage, row order, capacity - and the strategy owns the lane count,
+   the label form and the row text. */
+typedef struct {
+    la_u8 kind;
+    const char *name;
+    const char *reason;
+    la_u8 is_default;
+    la_u8 lane_count;
+    const LaStrategyLane *lanes;
+    const char *const *label;
+} LaStrategyDesc;
+
 typedef struct {
     const char *name;
     la_u8 storage_unit_bits;
@@ -499,6 +538,8 @@ typedef struct {
     la_u16 spelling_count;
     const LaLoweringDesc *lowerings;
     la_u16 lowering_count;
+    const LaStrategyDesc *strategies;
+    la_u8 strategy_count;
 } LaTarget;
 
 typedef struct {
