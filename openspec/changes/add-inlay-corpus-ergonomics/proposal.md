@@ -26,12 +26,15 @@ annotating them as exceptions.
   identity-binding elision and overlap-only scratch, 16-bit immediates
   binding to `u16` members, typed object-field sources with optional
   constant displacement, and `invoke tail` emitting `jmp`.
-- `method_table`: enum-value-keyed dispatch tables over a declared domain,
-  generated from qualified procedure identities with total coverage
-  validation and a published index bias, replacing hand-maintained parallel
-  lo/hi tables.
-- `pool` declarations may emit their own low/high address tables under
-  qualified names, retiring the last documented global-label exception.
+- `method_table`: enum-value-keyed dispatch tables over a declared domain.
+  The body uses the language's declaration shapes — `name : u8` and
+  `name : code` slots, bare `member = ...` assignments — with total
+  coverage validation, a published `NAME.bias`, and generated labels
+  scoped by the table name (`lifecycle_init_lo`, ...), replacing
+  hand-maintained parallel lo/hi tables.
+- A positioned `pool tables NAME` statement emits a pool's low/high
+  address tables from its own geometry as symbolic `(BASE+offset)` rows,
+  retiring the raw high-byte base slices.
 - Namespace-level defaults: `namespace X using console6502` and `export` as a
   declaration qualifier.
 - The Celeste source migrates to each feature as it lands; conformance

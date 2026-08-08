@@ -1,7 +1,11 @@
 # Design: corpus-driven Inlay ergonomics
 
-Revision 2. Revision 1 was reviewed adversarially; the 24 findings are folded
-in below. Material corrections: `decz` is a branch form (the fallthrough
+Revision 3. Revision 1 was reviewed adversarially; the 24 findings are folded
+in below. Revision 3 records the as-landed `method_table` and pool-table
+syntax (D6, D7): the interim `column`/`row` keywords and `type_`-prefixed
+slot names were replaced by the language's own declaration shapes and
+table-scoped generated labels, and pool tables emit through a positioned
+`pool tables NAME` statement. Material corrections: `decz` is a branch form (the fallthrough
 contract failed the spawn-delay site), `method_table` keys rows by enum value
 over a declared domain (declaration-order emission broke the `-1,x` bias and
 aliased members), the `invoke` planner gains an explicit ordering contract and
@@ -313,45 +317,56 @@ are the caller's own locations marshals nothing.
 ### D6. `method_table` — value-keyed over a declared domain
 
 ```asm
-method_table lifecycle : ObjectKind[player .. mover] -> init, update, draw
-    player = Player
-    spawn  = Spawn
+method_table lifecycle : ObjectKind[player .. platform]
+    tile : u8
+    init : code
+    update : code
+    draw : code
+    hide : u8
+    player = 0, Player.init, Player.update, Player.draw, 0
+    spawn = Room.tile_spawn, Spawn.init, Spawn.update, Spawn.draw, 0
     ...
-    key.init = absent
 end
 ```
 
-Rules (rewritten per review finding 2):
+Rules (rewritten per review finding 2; syntax as landed):
 
-- **Rows are keyed by enum member value over an explicit inclusive domain**,
-  not by declaration order. The emitted table has
-  `high(domain) - low(domain) + 1` rows per column; the base bias is derived
-  from `low(domain)` and published as a queryable property
+- **The body uses the language's own declaration shapes, no per-line
+  keywords.** `name : u8` declares a per-kind attribute slot and
+  `name : code` a method slot — the struct-field shape; a bare
+  `member = value, ...` line assigns one enum member's slots in slot
+  declaration order — the enum-member shape. Slot lines must precede
+  member lines.
+- **Members are keyed by enum member value over an explicit inclusive
+  domain**, not by declaration order. The emitted table has
+  `high(domain) - low(domain) + 1` entries per slot; the base bias is
+  derived from `low(domain)` and published as a queryable property
   (`lifecycle.bias`), so the consumer's `-1, x` indexing derives from the
   declaration instead of a hand-written literal. `ObjectKind.free = 0`
-  simply lies outside the domain — no forced row, no silent shift.
+  simply lies outside the domain — no forced entry, no silent shift.
 - Enum members with duplicate values inside the domain are rejected
-  (aliases like `actor = ObjectKind.player` cannot generate two rows).
-- Coverage is total over the domain: every value in range must be assigned
-  or explicitly marked `absent`, so adding an `ObjectKind` inside the
-  domain without updating the table is a diagnostic.
-- `absent` is legal **only for code-pointer columns**, where it emits the
-  zero entry the dispatch guard (`ora`/`beq`) tests. Value (`u8`) columns
-  require an explicit value for every row — in the corpus's `type_hide`,
+  (aliases like `actor = ObjectKind.player` cannot generate two entries).
+- Coverage is total over the domain: every value in range must have a
+  member line, so adding an `ObjectKind` inside the domain without
+  updating the table is a diagnostic.
+- `absent` is legal **only in `code` slots**, where it emits the zero
+  entry the dispatch guard (`ora`/`beq`) tests. `u8` slots require an
+  explicit value in every member line — in the corpus's `hide` slot,
   zero is a meaningful value ("not hidden"), not an absence, and coverage
   checking must not conflate them.
-- Column emission: code-pointer columns emit split `low`/`high` tables
-  under generated qualified names (`Objects.lifecycle.init_lo`, …); `u8`
-  columns emit one table each. The generated-name shape and
-  qualified-label-plus-offset indexed operands (`lifecycle.init_lo + bias,
-  x` style) get lowering-reference tests before the stage lands (review
-  finding 21).
+- **Slot labels generate under the table's name**: a `code` slot emits
+  split `TABLE_slot_lo`/`TABLE_slot_hi` tables through the same
+  procedure-address events as `data u8 low(...)` (inline procedures are
+  rejected); a `u8` slot emits one `TABLE_slot` byte table. The construct
+  name provides the label namespace, so slot names stay clean (`tile`,
+  not `type_tile`). Tables emit at the declaration's source position.
 - Migration is byte-compared: generated tables must equal the handwritten
   ones before the handwritten ones are deleted. Note: today's tables have
   *no* zero entries — kinds without an init use `noop` (obj.inlay.asm:84).
-  Migrating `noop` rows to `absent` changes those bytes and is behavioral
+  Migrating `noop` cells to `absent` changes those bytes and is behavioral
   only because of the existing `ora`/`beq` guard; that step is its own
-  commit with the functional gates as acceptance, or the rows stay `= noop`.
+  commit with the functional gates as acceptance, or the cells stay
+  `Objects.noop`.
 
 The dispatch control flow stays handwritten; this generates the data.
 `marker_tile`/`marker_kind` are out of scope (Non-Goals) — they are a
@@ -359,15 +374,22 @@ linear-search pair keyed by cart tile id, a different shape.
 
 ### D7. Pool-emitted tables and namespace defaults
 
-`pool` gains an emitting form:
-`pool objects : CelesteObject[16] at OBJPOOL emit table Objects.slot_lo, Objects.slot_hi`
-generates the low/high address-byte tables from base, stride and count —
-the same 32 bytes handwritten today at obj.inlay.asm:27-34. This retires
-the frozen "four raw high-byte slices for the fixed numeric object-pool
-base" exception category outright. Qualified table names resolve through
-the same generated-name machinery as D6, covered by the same
-qualified-label-plus-offset lowering references. The non-emitting
-`table a, b` form remains for pre-existing tables.
+Pool tables emit through a positioned statement (as landed; emission at
+the declaration would relocate the bytes, since the pool is declared in
+the layout module and the tables live in the object module):
+
+```asm
+pool tables objects
+```
+
+at the data position generates the pool declaration's `table` labels with
+symbolic `(BASE+offset)` low/high rows computed from the pool's base,
+stride and count — byte-identical to the 32 bytes handwritten today at
+obj.inlay.asm:27-34, and working for a raw target-constant base because
+customasm evaluates the rows. This retires the frozen "four raw
+high-byte slices for the fixed numeric object-pool base" exception
+category outright. The table names remain the pool declaration's target
+identifiers; qualified table names stay future work.
 
 `namespace X using console6502` sets the default convention for procedures
 declared inside; per-proc `using` overrides. `export` becomes a declaration

@@ -149,24 +149,26 @@ diagnostic when the enclosing procedure's frame size is greater than zero.
   conflict
 
 ### Requirement: Pool-emitted Address Tables
-The `pool` declaration SHALL accept an emitting form
-`pool name : Type[N] at BASE emit table qlow, qhigh` where `qlow` and
-`qhigh` may be qualified names. The frontend SHALL generate the low and
-high address-byte tables from the pool's base, stride and count. The
-non-emitting `table` form SHALL remain valid. Qualified generated table
-labels SHALL resolve in raw indexed operands, including with constant
-offsets.
+The frontend SHALL accept a positioned `pool tables NAME` statement that
+emits the named pool's low and high address-byte tables at the
+statement's source position, under the labels named by the pool
+declaration's `table` clause, as symbolic `(BASE+offset)` rows computed
+from the pool's base, stride and count — so a base that is a raw target
+constant is evaluated by the downstream assembler. A `pool tables`
+statement naming an undeclared pool SHALL be a diagnostic. The pool
+declaration itself SHALL remain semantic-only.
 
 #### Scenario: Emitted tables match handwritten bytes
-- **WHEN** a pool with base `OBJPOOL`, stride 64 and count 16 uses
-  `emit table Objects.slot_lo, Objects.slot_hi`
-- **THEN** the generated tables are byte-identical to the corresponding
-  handwritten low/high tables
+- **WHEN** a pool with base `OBJPOOL`, stride 64 and count 16 declared
+  with `table obj_lo, obj_hi` is emitted via `pool tables objects` at
+  the handwritten tables' position
+- **THEN** the generated tables are byte-identical to the handwritten
+  low/high tables they replace
 
-#### Scenario: Qualified table with offset in an indexed operand
-- **WHEN** raw source reads `lda Objects.slot_lo + 1, x`
-- **THEN** the operand resolves to the generated label plus one and
-  assembles
+#### Scenario: Unknown pool rejected
+- **WHEN** source contains `pool tables missing` with no such pool
+  declared
+- **THEN** assembly fails with a stable-code diagnostic
 
 ### Requirement: Namespace Convention Default and Export Qualifier
 `namespace X using <target>` SHALL set the default procedure convention for
