@@ -467,9 +467,7 @@ begin
     sta [Machine.object.payload.extra.timer]
     lda #0
     sta [Machine.object.core.sprite]
-    lda [Machine.object.core.flags]
-    and #<!Objects.flag_collideable
-    sta [Machine.object.core.flags]
+    and [Machine.object.core.flags], #~Objects.flag_collideable
     ret
 .idle:
     mov Collision.type, #ObjectKind.player
@@ -579,9 +577,7 @@ begin
     sta [Machine.object.payload.extra.state]
     lda #8
     sta [Machine.object.payload.extra.timer]
-    lda [Machine.object.core.flags]
-    and #<!Objects.flag_solids
-    sta [Machine.object.core.flags]
+    and [Machine.object.core.flags], #~Objects.flag_solids
     ret
 end
 
@@ -707,9 +703,7 @@ begin
     sta [Machine.object.core.speed_y.fraction]
     lda #$FF
     sta [Machine.object.core.speed_y.integer]
-    lda [Machine.object.core.flags]
-    and #<!Objects.flag_solids
-    sta [Machine.object.core.flags]
+    and [Machine.object.core.flags], #~Objects.flag_solids
     ret
 end
 
@@ -1029,9 +1023,7 @@ begin
     sta [Machine.object.payload.extra.start_x]
     lda #16
     sta [Machine.object.core.hitbox.w]
-    lda [Machine.object.core.flags]
-    and #<!Objects.flag_solids
-    sta [Machine.object.core.flags]
+    and [Machine.object.core.flags], #~Objects.flag_solids
     ret
 end
 

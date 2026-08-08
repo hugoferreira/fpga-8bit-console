@@ -167,6 +167,7 @@ typedef struct {
 
 typedef struct {
     la_i32 value;
+    la_u8 family;
 } LaValueRec;
 
 typedef struct {
@@ -213,6 +214,7 @@ typedef struct {
     la_u16 source_length;
     la_u16 active_source_id;
     la_u16 active_line;
+    la_u8 expression_family;
     const char *legacy_cursor;
     la_u16 name_length;
     la_u16 struct_count;
@@ -3340,7 +3342,23 @@ enum {
     LA_OP_MOD,
     LA_OP_NOT,
     LA_OP_NEG,
+    LA_OP_BOR,
+    LA_OP_BXOR,
+    LA_OP_BAND,
+    LA_OP_SHL,
+    LA_OP_SHR,
+    LA_OP_BNOT,
     LA_OP_LPAREN
+};
+
+/* Expression families for the bitwise/comparison mixing rule. A bitwise
+   operand of a comparison, equality or logical operator must be
+   parenthesized, and vice versa; parentheses and plain arithmetic reset a
+   value to the neutral family. */
+enum {
+    LA_EXPR_NEUTRAL = 0,
+    LA_EXPR_BITWISE = 1,
+    LA_EXPR_CMPLOGIC = 2
 };
 
 static int la_precedence(la_u8 op)
@@ -3350,9 +3368,37 @@ static int la_precedence(la_u8 op)
     if (op == LA_OP_EQ || op == LA_OP_NE) return 3;
     if (op == LA_OP_LT || op == LA_OP_LE ||
         op == LA_OP_GT || op == LA_OP_GE) return 4;
-    if (op == LA_OP_ADD || op == LA_OP_SUB) return 5;
-    if (op == LA_OP_MUL || op == LA_OP_DIV || op == LA_OP_MOD) return 6;
-    if (op == LA_OP_NOT || op == LA_OP_NEG) return 7;
+    if (op == LA_OP_BOR) return 5;
+    if (op == LA_OP_BXOR) return 6;
+    if (op == LA_OP_BAND) return 7;
+    if (op == LA_OP_SHL || op == LA_OP_SHR) return 8;
+    if (op == LA_OP_ADD || op == LA_OP_SUB) return 9;
+    if (op == LA_OP_MUL || op == LA_OP_DIV || op == LA_OP_MOD) return 10;
+    if (op == LA_OP_NOT || op == LA_OP_NEG || op == LA_OP_BNOT) return 11;
+    return 0;
+}
+
+static la_u8 la_op_family(la_u8 op)
+{
+    if (op == LA_OP_BOR || op == LA_OP_BXOR || op == LA_OP_BAND ||
+        op == LA_OP_SHL || op == LA_OP_SHR || op == LA_OP_BNOT) {
+        return LA_EXPR_BITWISE;
+    }
+    if (op == LA_OP_OR || op == LA_OP_AND ||
+        op == LA_OP_EQ || op == LA_OP_NE ||
+        op == LA_OP_LT || op == LA_OP_LE ||
+        op == LA_OP_GT || op == LA_OP_GE || op == LA_OP_NOT) {
+        return LA_EXPR_CMPLOGIC;
+    }
+    return LA_EXPR_NEUTRAL;
+}
+
+static int la_family_conflict(la_u8 op_family, la_u8 operand_family)
+{
+    if (op_family == LA_EXPR_BITWISE &&
+        operand_family == LA_EXPR_CMPLOGIC) return 1;
+    if (op_family == LA_EXPR_CMPLOGIC &&
+        operand_family == LA_EXPR_BITWISE) return 1;
     return 0;
 }
 
@@ -3424,20 +3470,38 @@ static LaDiagnosticCode la_apply_operator(LaContext *ctx, la_u8 op,
 {
     la_i32 left;
     la_i32 right;
-    if (op == LA_OP_NOT || op == LA_OP_NEG) {
+    la_u8 op_family;
+    op_family = la_op_family(op);
+    if (op == LA_OP_NOT || op == LA_OP_NEG || op == LA_OP_BNOT) {
         if (*value_count < 1) {
             return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
                            la_slice("expression operand", 18),
                            la_slice("", 0), 0, 0);
         }
+        if (la_family_conflict(op_family,
+                               ctx->values[*value_count - 1].family)) {
+            return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                           la_slice("parenthesized bitwise mix", 25),
+                           la_slice("", 0), 0, 0);
+        }
         right = ctx->values[*value_count - 1].value;
         ctx->values[*value_count - 1].value =
-            op == LA_OP_NOT ? !right : -right;
+            op == LA_OP_NOT ? !right :
+            op == LA_OP_BNOT ? (la_i32)~(la_u32)right : -right;
+        ctx->values[*value_count - 1].family = op_family;
         return LA_OK;
     }
     if (*value_count < 2) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
                        la_slice("binary operands", 15),
+                       la_slice("", 0), 0, 0);
+    }
+    if (la_family_conflict(op_family,
+                           ctx->values[*value_count - 1].family) ||
+        la_family_conflict(op_family,
+                           ctx->values[*value_count - 2].family)) {
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                       la_slice("parenthesized bitwise mix", 25),
                        la_slice("", 0), 0, 0);
     }
     right = ctx->values[*value_count - 1].value;
@@ -3455,6 +3519,20 @@ static LaDiagnosticCode la_apply_operator(LaContext *ctx, la_u8 op,
     case LA_OP_ADD: left += right; break;
     case LA_OP_SUB: left -= right; break;
     case LA_OP_MUL: left *= right; break;
+    case LA_OP_BOR: left = (la_i32)((la_u32)left | (la_u32)right); break;
+    case LA_OP_BXOR: left = (la_i32)((la_u32)left ^ (la_u32)right); break;
+    case LA_OP_BAND: left = (la_i32)((la_u32)left & (la_u32)right); break;
+    case LA_OP_SHL:
+    case LA_OP_SHR:
+        if (right < 0 || right > 31) {
+            return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                           la_slice("shift count 0..31", 17),
+                           la_slice("", 0), right, 31);
+        }
+        left = op == LA_OP_SHL ?
+            (la_i32)((la_u32)left << right) :
+            (la_i32)((la_u32)left >> right);
+        break;
     case LA_OP_DIV:
         if (right == 0) {
             return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
@@ -3476,6 +3554,7 @@ static LaDiagnosticCode la_apply_operator(LaContext *ctx, la_u8 op,
                        la_slice("operator", 8), la_slice("", 0), op, 0);
     }
     ctx->values[*value_count - 1].value = left;
+    ctx->values[*value_count - 1].family = op_family;
     return LA_OK;
 }
 
@@ -3741,8 +3820,9 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                 ++cursor;
                 continue;
             }
-            if (*cursor == '!' || *cursor == '-') {
-                op = *cursor == '!' ? LA_OP_NOT : LA_OP_NEG;
+            if (*cursor == '!' || *cursor == '-' || *cursor == '~') {
+                op = *cursor == '!' ? LA_OP_NOT :
+                     *cursor == '~' ? LA_OP_BNOT : LA_OP_NEG;
                 if (op_count >= ctx->limits->max_expression_nodes) {
                     return la_fail(ctx, LA_ERR_EXPRESSION_CAPACITY, line,
                                    (la_u16)(cursor - text + 1), 1,
@@ -3846,6 +3926,7 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                                value_count + 1,
                                ctx->limits->max_expression_nodes);
             }
+            ctx->values[value_count].family = LA_EXPR_NEUTRAL;
             ctx->values[value_count++].value = value;
             if (value_count + op_count > ctx->stats->expression_nodes) {
                 ctx->stats->expression_nodes =
@@ -3853,7 +3934,8 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
             }
             while (op_count > 0 &&
                    (ctx->operators[op_count - 1].op == LA_OP_NOT ||
-                    ctx->operators[op_count - 1].op == LA_OP_NEG)) {
+                    ctx->operators[op_count - 1].op == LA_OP_NEG ||
+                    ctx->operators[op_count - 1].op == LA_OP_BNOT)) {
                 op = ctx->operators[--op_count].op;
                 if (la_apply_operator(ctx, op, &value_count, line) != LA_OK) {
                     return ctx->error;
@@ -3875,6 +3957,10 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                                0, 0);
             }
             --op_count;
+            /* A parenthesized result returns to the neutral family. */
+            if (value_count > 0) {
+                ctx->values[value_count - 1].family = LA_EXPR_NEUTRAL;
+            }
             ++cursor;
         } else {
             la_u8 next_op;
@@ -3886,6 +3972,8 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                 else if (cursor[0] == '!' && cursor[1] == '=') next_op = LA_OP_NE;
                 else if (cursor[0] == '<' && cursor[1] == '=') next_op = LA_OP_LE;
                 else if (cursor[0] == '>' && cursor[1] == '=') next_op = LA_OP_GE;
+                else if (cursor[0] == '<' && cursor[1] == '<') next_op = LA_OP_SHL;
+                else if (cursor[0] == '>' && cursor[1] == '>') next_op = LA_OP_SHR;
                 if (next_op != LA_OP_NONE) cursor += 2;
             }
             if (next_op == LA_OP_NONE) {
@@ -3896,6 +3984,9 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                 else if (*cursor == '*') next_op = LA_OP_MUL;
                 else if (*cursor == '/') next_op = LA_OP_DIV;
                 else if (*cursor == '%') next_op = LA_OP_MOD;
+                else if (*cursor == '&') next_op = LA_OP_BAND;
+                else if (*cursor == '^') next_op = LA_OP_BXOR;
+                else if (*cursor == '|') next_op = LA_OP_BOR;
                 if (next_op != LA_OP_NONE) ++cursor;
             }
             if (next_op == LA_OP_NONE) {
@@ -3946,6 +4037,7 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                        la_slice("", 0), value_count, 1);
     }
     *result = ctx->values[0].value;
+    ctx->expression_family = ctx->values[0].family;
     return LA_OK;
 }
 
@@ -5002,6 +5094,11 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
         immediate_start = cursor;
         if (la_eval_expression(ctx, immediate_start, end, line,
                                &immediate) != LA_OK) return -1;
+        /* A bitwise result is masked to the operand width; other values
+           keep the strict range check. */
+        if (ctx->expression_family == LA_EXPR_BITWISE) {
+            immediate = (la_i32)((la_u32)immediate & 0xff);
+        }
         if (immediate < 0 || immediate > 255) {
             la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
                     (la_u16)(end - immediate_start),
@@ -6408,6 +6505,11 @@ static int la_parse_qualified_immediate(LaContext *ctx,
     if (la_eval_expression(
             ctx, expression_start, end, line, &value) != LA_OK) {
         return -1;
+    }
+    /* A bitwise result is masked to the operand width; other values keep
+       the strict range check. */
+    if (ctx->expression_family == LA_EXPR_BITWISE) {
+        value = (la_i32)((la_u32)value & 0xff);
     }
     if (value < -128 || value > 255) {
         la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,

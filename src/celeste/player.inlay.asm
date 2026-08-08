@@ -116,8 +116,7 @@ begin
     sta ice
     lda ground              ; landing smoke
     beq .nosmoke
-    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: mask constant remains target-owned
-    lda (Machine.object), y
+    lda [Machine.object.payload.player.player_bits]
     and #bit_ground
     bne .nosmoke
     lda [Machine.object.core.x]
@@ -129,25 +128,18 @@ begin
     jsr Objects.spawn_smoke
 .nosmoke:
     tbz [game.buttons], #Platform.Input.jump, .nojumpheld  ; jump = btn(jump) and not Player.jump_edge
-    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
-    lda (Machine.object), y
+    lda [Machine.object.payload.player.player_bits]
     and #bit_jump
     bne .jumpheld
     mov jump_edge, #1
-    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: mask constant remains target-owned
-    lda (Machine.object), y
-    ora #bit_jump
-    sta (Machine.object), y
+    ora [Machine.object.payload.player.player_bits], #bit_jump
     jmp .jbuf
 .jumpheld:
     mov jump_edge, #0
     jmp .jbufdec
 .nojumpheld:
     mov jump_edge, #0
-    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
-    lda (Machine.object), y
-    and #<!bit_jump
-    sta (Machine.object), y
+    and [Machine.object.payload.player.player_bits], #~bit_jump
 .jbufdec:
     mov y, offset CelesteObject.payload.player.jump_buffer ; inlay-exception: branch observes pre-decrement value
     lda (Machine.object), y
@@ -160,25 +152,18 @@ begin
     sta [Machine.object.payload.player.jump_buffer]
 .dashedge:
     tbz [game.buttons], #Platform.Input.dash, .nodashheld  ; dash = btn(dash) and not Player.dash_edge
-    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: mask constant remains target-owned
-    lda (Machine.object), y
+    lda [Machine.object.payload.player.player_bits]
     and #bit_dash
     bne .dashheld
     mov dash_edge, #1
-    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
-    lda (Machine.object), y
-    ora #bit_dash
-    sta (Machine.object), y
+    ora [Machine.object.payload.player.player_bits], #bit_dash
     jmp .grace
 .dashheld:
     mov dash_edge, #0
     jmp .grace
 .nodashheld:
     mov dash_edge, #0
-    mov y, offset CelesteObject.payload.player.player_bits ; inlay-exception: complemented target constant
-    lda (Machine.object), y
-    and #<!bit_dash
-    sta (Machine.object), y
+    and [Machine.object.payload.player.player_bits], #~bit_dash
 .grace:
     lda ground
     beq .airborne
@@ -877,10 +862,7 @@ begin
     lda #>speed
     iny
     sta (Machine.object), y
-    mov y, offset CelesteObject.core.flags ; inlay-exception: complemented target constant
-    lda (Machine.object), y                ; solids = false
-    and #<!Objects.flag_solids
-    sta (Machine.object), y
+    and [Machine.object.core.flags], #~Objects.flag_solids ; solids = false
     jmp Player.create_hair
 end
 proc update using console6502
@@ -1036,10 +1018,7 @@ begin
     lda [video.random]                 ; flip.x = maybe(), flip.y = maybe()
     and #3
     sta [Machine.object.core.flip]
-    mov y, offset CelesteObject.core.flags ; inlay-exception: complemented target constant
-    lda (Machine.object), y
-    and #<!Objects.flag_solids
-    sta (Machine.object), y
+    and [Machine.object.core.flags], #~Objects.flag_solids
     rts
 end
 proc update using console6502

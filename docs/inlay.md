@@ -267,9 +267,17 @@ accesses are rejected. A numeric fixed base is checked against an aligned
 aggregate's placement requirement; symbolic bases publish that alignment for
 downstream validation.
 
-Expressions support decimal integer constants, parentheses, unary `-` and `!`,
-`* / %`, `+ -`, comparisons, equality, `&&` and `||`, in that precedence
-order. Available properties and values are:
+Expressions support decimal integer constants, parentheses, unary `-`, `!`
+and `~`, `* / %`, `+ -`, `<< >>`, `&`, `^`, `|`, comparisons, equality,
+`&&` and `||`, in that precedence order (tightest first). Bitwise results
+are plain integers, never enum values. Mixing the bitwise family with
+comparisons, equality or the logical operators requires parentheses around
+the inner expression; an unparenthesized mix is a diagnostic. Arithmetic
+mixes freely with both families. A bitwise result bound to a byte operand
+is masked to the operand width before the range check, so
+`and [p + T.flags], #~mask` is the typed spelling of the former raw
+`#<!mask`; non-bitwise out-of-range immediates are still rejected. Shift
+counts are limited to 0..31. Available properties and values are:
 
 - structure, union and enum `.size` and `.align`;
 - qualified enum member values such as `ObjectKind.player`;
@@ -941,10 +949,11 @@ categories:
 
 - 129 dynamic `(pObj|pOth),y` accesses whose runtime-selected displacement
   cannot be represented by a compile-time typed field path;
-- 21 offset materialisations with an inline `inlay-exception`: three
-  pre-decrement flag observations, six complemented target masks, two
-  following-flag dependencies, three target-owned masks, six variable update
-  operands and one wrapping add/mask update;
+- 12 offset materialisations with an inline `inlay-exception`: three
+  pre-decrement flag observations, two following-flag dependencies, six
+  variable update operands and one wrapping add/mask update (the nine mask
+  exceptions were retired by bitwise compile-time operators and typed
+  `and`/`ora` mask operands);
 - four raw high-byte slices for the fixed numeric object-pool base and eight
   low/high slices in the opaque generated room pointer table;
 - target-bound physical aliases for non-accumulator MMIO transfers,

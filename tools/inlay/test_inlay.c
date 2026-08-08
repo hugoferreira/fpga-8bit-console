@@ -910,6 +910,105 @@ static void expect_error(const char *source, LaLimits limits,
     }
 }
 
+static void expect_ok(const char *source, LaLimits limits,
+                      const char *message)
+{
+    TestEvents events;
+    TestDiagnostic diagnostic;
+    LaStats stats;
+    LaDiagnosticCode result;
+    result = compile_source(source, 2, limits, &events, &diagnostic, &stats);
+    check(result == LA_OK, message);
+    check(!diagnostic.seen, "valid source has no diagnostic");
+}
+
+static void test_bitwise_expressions(void)
+{
+    LaLimits limits;
+    limits = la_default_limits();
+    /* Precedence among the bitwise family and against arithmetic. */
+    expect_ok(
+        "static_assert (1 | 2 ^ 3 & 4) == (1 | (2 ^ (3 & 4)))\n",
+        limits, "bitwise precedence | ^ &");
+    expect_ok(
+        "static_assert (1 << 4) == 16\n"
+        "static_assert (256 >> 4) == 16\n"
+        "static_assert (1 << 2 + 1) == 8\n",
+        limits, "shifts bind looser than addition");
+    expect_ok(
+        "static_assert (~1 & 255) == 254\n"
+        "static_assert (~0 & 65535) == 65535\n",
+        limits, "bitwise complement truncates via mask");
+    /* Enum members compose to plain integers. */
+    expect_ok(
+        "enum Input : u8\n"
+        "    left = 32\n"
+        "    right = 64\n"
+        "end\n"
+        "static_assert (Input.left | Input.right) == 96\n",
+        limits, "enum members compose bitwise");
+    /* Unparenthesized bitwise/comparison mixes are diagnostics. */
+    expect_error(
+        "static_assert 1 & 2 == 2\n",
+        limits, LA_ERR_SYNTAX, "unparenthesized & against == rejected");
+    expect_error(
+        "static_assert 1 == 1 | 1\n",
+        limits, LA_ERR_SYNTAX, "unparenthesized | against == rejected");
+    expect_error(
+        "static_assert (1 & 1) && 2 | 4\n",
+        limits, LA_ERR_SYNTAX, "unparenthesized | against && rejected");
+    expect_error(
+        "static_assert !1 & 1\n",
+        limits, LA_ERR_SYNTAX, "logical not under & rejected");
+    expect_error(
+        "static_assert ~1 == 1\n",
+        limits, LA_ERR_SYNTAX, "unparenthesized complement against == rejected");
+    expect_ok(
+        "static_assert (~(1 == 1)) != 0\n" /* fully parenthesized: ~1 = -2 */
+        "static_assert (~1) != 0\n",
+        limits, "parenthesized complement mixes accepted");
+    /* Parenthesized mixes are legal. */
+    expect_ok(
+        "static_assert (1 & 2) == 0\n"
+        "static_assert (3 & 1) == 1 && (4 | 1) == 5\n",
+        limits, "parenthesized mixes accepted");
+    /* Shift count range. */
+    expect_error(
+        "static_assert (1 << 32) == 0\n",
+        limits, LA_ERR_SYNTAX, "shift count above 31 rejected");
+    /* Arithmetic continues to mix freely with comparisons. */
+    expect_ok(
+        "struct A packed\nx : u8\ny : u16\nend\n"
+        "static_assert A.y.offset + 1 == A.size - 1\n",
+        limits, "arithmetic comparison mixing unaffected");
+    /* Masked bitwise byte-update immediate. */
+    expect_ok(
+        "struct F packed\nflags : u8\nend\n"
+        "location p : ptr F\n"
+        "namespace N\n"
+        "    bit_jump = 1\n"
+        "proc t naked\n"
+        "    self : ptr F in p\n"
+        "begin\n"
+        "    and [self + F.flags], #~bit_jump\n"
+        "    ora [self + F.flags], #(bit_jump | 2)\n"
+        "    ret\n"
+        "end\n"
+        "end\n",
+        limits, "bitwise mask operands in typed byte updates");
+    /* Non-bitwise out-of-range immediates still reject. */
+    expect_error(
+        "struct F packed\nflags : u8\nend\n"
+        "location p : ptr F\n"
+        "proc t naked\n"
+        "    self : ptr F in p\n"
+        "begin\n"
+        "    and [self + F.flags], #300\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_ACCESS_WIDTH, "non-bitwise immediate range kept");
+}
+
 static void test_semantic_errors(void)
 {
     LaLimits limits;
@@ -2087,6 +2186,7 @@ static void test_field_operand_shorthand(void)
 int main(void)
 {
     test_valid_layout();
+    test_bitwise_expressions();
     test_semantic_errors();
     test_comments_and_pointer_fields();
     test_indexed_pools_and_procedures();
