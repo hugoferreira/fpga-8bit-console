@@ -481,10 +481,15 @@ typedef struct {
    %d displacement, %D displacement+1, %l immediate low byte,
    %h immediate high byte, %i byte-update immediate, %o owner, %p path,
    %% literal percent. */
+/* `scratch` is what the lowering reads through, `clobbers` what it
+   leaves undefined; both are declared text, 0 when the operation has
+   no such contract. */
 typedef struct {
     la_u8 operation;
     const char *reason;
     const char *const *lines;
+    const char *scratch;
+    const char *clobbers;
 } LaLoweringDesc;
 
 /* The tables a description knows how to emit. The kind fixes what a

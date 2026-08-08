@@ -27,9 +27,26 @@ ordinary instructions or machine-code encoding.
 ## Architecture
 
 The semantic implementation is the conservative C89-compatible core in
-`tools/inlay/inlay_core.c` plus the bounded module expander in
-`tools/inlay/inlay_modules.c`. Neither has a heap, filesystem, process,
-environment, locale or JSON dependency. A platform supplies:
+`tools/inlay/inlay_*.c` plus the bounded module expander in
+`tools/inlay/inlay_modules.c`. The core is split by responsibility, one
+translation unit each, over the shared records in
+`tools/inlay/inlay_internal.h`:
+
+| unit | owns |
+| --- | --- |
+| `inlay_workspace.c` | the bounded workspace, slices, interning, source lines, diagnostics, the event sink |
+| `inlay_describe.c` | the core's view of the description: register roles and uses, claimed spellings, strategies |
+| `inlay_declare.c` | declaration parsing and the first pass |
+| `inlay_layout.c` | field offsets, alignment, path resolution, layout property events |
+| `inlay_expression.c` | constant expressions, layout queries, assertions |
+| `inlay_tables.c` | method tables, pool tables, procedure address data |
+| `inlay_operations.c` | typed operation parsing, one parser per operand shape |
+| `inlay_invoke.c` | invocation binding, scratch, the marshalling scheduler |
+| `inlay_emit.c` | scoped-raw resolution, inline expansion, the operation-line dispatch, `la_compile` |
+| `inlay_target.c` | the console6502 description, and nothing else |
+
+No core unit has a heap, filesystem, process, environment, locale or
+JSON dependency. A platform supplies:
 
 - a caller-owned byte workspace and explicit table limits;
 - an input callback;
@@ -74,10 +91,9 @@ boundary.
 ## Target descriptions
 
 Every target-specific fact the frontend consumes comes from one
-description. `console6502` is the first, declared between the
-`BEGIN TARGET DESCRIPTION` / `END TARGET DESCRIPTION` markers in
-`tools/inlay/inlay_core.c`; the rest of the core is generic algorithms
-over what it declares. `inlay --describe` prints the live description as
+description. `console6502` is the first, and it is the whole of
+`tools/inlay/inlay_target.c`; every other core unit is generic
+algorithms over what it declares. `inlay --describe` prints the live description as
 JSON.
 
 A description declares:
@@ -123,9 +139,9 @@ A description declares:
 Three conformance checks hold the boundary, all in
 `tools/inlay/test_conformance.py`:
 
-- **Target-name-free core** — outside the description markers, no core
-  source may contain a string literal equal to a declared register,
-  spelling or raw spelling.
+- **Target-name-free core** — outside `inlay_target.c`, no core source
+  may contain a string literal equal to a declared register, spelling or
+  raw spelling, padding stripped.
 - **ISA cross-check** — every mnemonic a template emits must be defined
   by a ruledef in `src/isa`. A mnemonic slot inside a token expands over
   the declared register names; a template whose whole mnemonic is a slot

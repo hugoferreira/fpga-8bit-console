@@ -35,11 +35,16 @@ CELESTE_MEMMAP = CELESTE_REFERENCE_DIR / "memmap.asm"
 # the core names it, it is that vocabulary, not the target spelling that
 # `mov DEST, offset TYPE.FIELD` claims.
 LANGUAGE_VOCABULARY = {"offset"}
-INLAY_CORE = ROOT / "tools/inlay/inlay_core.c"
-CORE_SOURCES = (
-    INLAY_CORE,
-    ROOT / "tools/inlay/inlay_modules.c",
-    ROOT / "tools/inlay/inlay.h",
+# The description is one file; every other core source is the portable
+# core and may not name a target.
+INLAY_TARGET = ROOT / "tools/inlay/inlay_target.c"
+CORE_SOURCES = tuple(
+    ROOT / "tools/inlay" / name for name in (
+        "inlay_workspace.c", "inlay_describe.c", "inlay_declare.c",
+        "inlay_layout.c", "inlay_expression.c", "inlay_tables.c",
+        "inlay_operations.c", "inlay_invoke.c", "inlay_emit.c",
+        "inlay_modules.c", "inlay.h", "inlay_internal.h",
+    )
 )
 ISA_DESCRIPTION = (
     ROOT / "src/isa/nmos6502.asm",
@@ -505,12 +510,10 @@ def check_core_is_target_name_free() -> int:
     names |= set(described["rawSpellings"])
     names -= LANGUAGE_VOCABULARY
     offenders: list[str] = []
+    if not INLAY_TARGET.exists():
+        raise AssertionError(f"missing {INLAY_TARGET}")
     for path in CORE_SOURCES:
         text = path.read_text(encoding="utf-8")
-        if path == INLAY_CORE:
-            begin = text.index("/* BEGIN TARGET DESCRIPTION")
-            end = text.index("/* END TARGET DESCRIPTION")
-            text = text[:begin] + text[end:]
         for number, line in enumerate(text.splitlines(), start=1):
             for literal in re.findall(r'"((?:[^"\\]|\\.)*)"', line):
                 # Padding does not make a target name something else:

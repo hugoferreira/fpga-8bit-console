@@ -1704,24 +1704,33 @@ CELESTE_INLAY_DEPS      = $(filter-out $(CELESTE_INLAY_SOURCE),$(celeste_DEPS)) 
 CELESTE_INLAY_ASM       = $(CELESTE_INLAY_DIR)/celeste.asm
 CELESTE_INLAY_MAP       = $(CELESTE_INLAY_DIR)/celeste.map.json
 
-$(INLAY_HOST): tools/inlay/inlay.h tools/inlay/inlay_core.c \
+# The semantic core is one library split by responsibility; every target
+# that links it takes the whole set.
+INLAY_CORE_SRC = tools/inlay/inlay_workspace.c tools/inlay/inlay_describe.c \
+                 tools/inlay/inlay_declare.c tools/inlay/inlay_layout.c \
+                 tools/inlay/inlay_expression.c tools/inlay/inlay_tables.c \
+                 tools/inlay/inlay_operations.c tools/inlay/inlay_invoke.c \
+                 tools/inlay/inlay_emit.c tools/inlay/inlay_target.c
+INLAY_CORE_HDR = tools/inlay/inlay.h tools/inlay/inlay_internal.h
+
+$(INLAY_HOST): $(INLAY_CORE_HDR) $(INLAY_CORE_SRC) \
                tools/inlay/inlay_modules.c tools/inlay/inlay_host.c
 	@mkdir -p $(@D)
 	$(INLAY_CC) -std=c99 -pedantic -Wall -Wextra -Werror \
-	  tools/inlay/inlay_core.c tools/inlay/inlay_modules.c \
+	  $(INLAY_CORE_SRC) tools/inlay/inlay_modules.c \
 	  tools/inlay/inlay_host.c -o $@
 
-$(INLAY_CORE_TEST): tools/inlay/inlay.h tools/inlay/inlay_core.c \
+$(INLAY_CORE_TEST): $(INLAY_CORE_HDR) $(INLAY_CORE_SRC) \
                     tools/inlay/test_inlay.c
 	@mkdir -p $(@D)
 	$(INLAY_CC) -std=c89 -pedantic -Wall -Wextra -Werror \
-	  tools/inlay/inlay_core.c tools/inlay/test_inlay.c -o $@
+	  $(INLAY_CORE_SRC) tools/inlay/test_inlay.c -o $@
 
-$(INLAY_MODULE_TEST): tools/inlay/inlay.h tools/inlay/inlay_core.c \
+$(INLAY_MODULE_TEST): $(INLAY_CORE_HDR) $(INLAY_CORE_SRC) \
                       tools/inlay/inlay_modules.c tools/inlay/test_modules.c
 	@mkdir -p $(@D)
 	$(INLAY_CC) -std=c89 -pedantic -Wall -Wextra -Werror \
-	  tools/inlay/inlay_core.c tools/inlay/inlay_modules.c \
+	  $(INLAY_CORE_SRC) tools/inlay/inlay_modules.c \
 	  tools/inlay/test_modules.c -o $@
 
 $(LAASM_COMPAT): $(INLAY_HOST) tools/inlay/laasm-compat.sh
