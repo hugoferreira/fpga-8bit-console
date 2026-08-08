@@ -4663,6 +4663,8 @@ static int la_parse_typed_word_operation(LaContext *ctx,
     la_u16 word_size;
     la_u16 procedure;
     int store;
+    int immediate_store;
+    la_i32 immediate_value;
     cursor = la_trim_left(start, end);
     if ((la_u16)(end - cursor) >= 4 && memcmp(cursor, "ldw ", 4) == 0) {
         store = 0;
@@ -4742,6 +4744,8 @@ static int la_parse_typed_word_operation(LaContext *ctx,
         if (tail < 0) return -1;
     }
     cursor = la_trim_left(close + 1, end);
+    immediate_store = 0;
+    immediate_value = 0;
     if (store) {
         if (cursor >= end || *cursor++ != ',') {
             la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
@@ -4750,9 +4754,32 @@ static int la_parse_typed_word_operation(LaContext *ctx,
             return -1;
         }
         cursor = la_trim_left(cursor, end);
-        word_start = cursor;
-        while (cursor < end && la_is_ident(*cursor)) ++cursor;
-        word_end = cursor;
+        if (cursor < end && *cursor == '#') {
+            /* stw [pointer + Type.field], #expr16 */
+            ++cursor;
+            if (la_eval_expression(ctx, cursor, end, line,
+                                   &immediate_value) != LA_OK) return -1;
+            if (ctx->expression_family == LA_EXPR_BITWISE) {
+                immediate_value =
+                    (la_i32)((la_u32)immediate_value & 0xffff);
+            }
+            if (immediate_value < -32768 || immediate_value > 65535) {
+                la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
+                        (la_u16)(end - cursor),
+                        la_slice(cursor, (la_u16)(end - cursor)),
+                        la_slice("16-bit immediate", 16),
+                        immediate_value, 65535);
+                return -1;
+            }
+            immediate_store = 1;
+            word_start = cursor;
+            word_end = end;
+            cursor = end;
+        } else {
+            word_start = cursor;
+            while (cursor < end && la_is_ident(*cursor)) ++cursor;
+            word_end = cursor;
+        }
     }
     if (word_end == word_start || la_trim_left(cursor, end) != end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
@@ -4762,18 +4789,21 @@ static int la_parse_typed_word_operation(LaContext *ctx,
                 la_slice("", 0), 0, 0);
         return -1;
     }
-    word_location = la_find_location_text_at(
-        ctx, word_start, (la_u16)(word_end - word_start), procedure);
-    if (word_location == LA_INVALID_HANDLE ||
-        ctx->locations[word_location].is_pointer ||
-        !la_scalar_size(ctx, ctx->locations[word_location].type_name,
-                        &word_size) ||
-        word_size != 2) {
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                (la_u16)(word_end - word_start),
-                la_slice(word_start, (la_u16)(word_end - word_start)),
-                la_slice("physical two-unit word", 22), 0, 0);
-        return -1;
+    word_location = LA_INVALID_HANDLE;
+    if (!immediate_store) {
+        word_location = la_find_location_text_at(
+            ctx, word_start, (la_u16)(word_end - word_start), procedure);
+        if (word_location == LA_INVALID_HANDLE ||
+            ctx->locations[word_location].is_pointer ||
+            !la_scalar_size(ctx, ctx->locations[word_location].type_name,
+                            &word_size) ||
+            word_size != 2) {
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
+                    (la_u16)(word_end - word_start),
+                    la_slice(word_start, (la_u16)(word_end - word_start)),
+                    la_slice("physical two-unit word", 22), 0, 0);
+            return -1;
+        }
     }
     if (la_resolve_path(ctx, root_start, root_length, path_start,
                         (la_u16)(close - path_start), line,
@@ -4810,14 +4840,19 @@ static int la_parse_typed_word_operation(LaContext *ctx,
     ctx->stats->operations = ctx->operation_count;
     la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
                   (la_u16)(end - start));
-    event->operation = store ? LA_TARGET_OP_STORE16_PTR_DISP :
+    event->operation = immediate_store ? LA_TARGET_OP_STORE16_IMM_PTR_DISP :
+                       store ? LA_TARGET_OP_STORE16_PTR_DISP :
                                LA_TARGET_OP_LOAD16_PTR_DISP;
     event->owner = la_slice(root_start, root_length);
     event->path = la_slice(path_start, (la_u16)(close - path_start));
     event->base =
         la_name_slice(ctx, ctx->locations[pointer_location].physical);
-    event->aux =
-        la_name_slice(ctx, ctx->locations[word_location].physical);
+    if (immediate_store) {
+        event->signed_value = immediate_value;
+    } else {
+        event->aux =
+            la_name_slice(ctx, ctx->locations[word_location].physical);
+    }
     event->scratch = la_slice("a", 1);
     event->clobbers = la_slice("a,flags", 7);
     event->value = field_offset;
@@ -5399,6 +5434,124 @@ static int la_parse_observation_operation(LaContext *ctx,
     }
     event->value = field_offset;
     event->access_width = (la_u16)required_size;
+    event->volatility = LA_ACCESS_NONVOLATILE;
+    return 1;
+}
+
+/* movw WORD, #expr16 / movw WORD, WORD - immediate or location-to-location
+   word transfer through A. Destination and source must be declared two-unit
+   physical word locations. Clobbers A and flags. */
+static int la_parse_word_move(LaContext *ctx,
+                              const char *start, const char *end,
+                              la_u16 line, LaEvent *event)
+{
+    const char *cursor;
+    const char *dest_start;
+    const char *dest_end;
+    const char *source_start;
+    const char *source_end;
+    la_u16 dest_location;
+    la_u16 source_location;
+    la_u16 word_size;
+    la_u16 procedure;
+    la_i32 immediate;
+    int is_immediate;
+    cursor = la_trim_left(start, end);
+    if ((la_u16)(end - cursor) < 5 || memcmp(cursor, "movw ", 5) != 0) {
+        return 0;
+    }
+    cursor = la_trim_left(cursor + 4, end);
+    procedure = la_procedure_at_line(ctx, line);
+    dest_start = cursor;
+    dest_end = dest_start;
+    while (dest_end < end && la_is_ident(*dest_end)) ++dest_end;
+    la_extend_qualified_base(ctx, dest_start, &dest_end, end, procedure);
+    cursor = la_trim_left(dest_end, end);
+    if (dest_end == dest_start || cursor >= end || *cursor++ != ',') {
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                la_slice("movw WORD, #expr16 or WORD", 26),
+                la_slice("", 0), 0, 0);
+        return -1;
+    }
+    dest_location = la_find_location_text_at(
+        ctx, dest_start, (la_u16)(dest_end - dest_start), procedure);
+    if (dest_location == LA_INVALID_HANDLE ||
+        ctx->locations[dest_location].is_pointer ||
+        !la_scalar_size(ctx, ctx->locations[dest_location].type_name,
+                        &word_size) ||
+        word_size != 2) {
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
+                (la_u16)(dest_end - dest_start),
+                la_slice(dest_start, (la_u16)(dest_end - dest_start)),
+                la_slice("physical two-unit word", 22), 0, 0);
+        return -1;
+    }
+    cursor = la_trim_left(cursor, end);
+    is_immediate = 0;
+    immediate = 0;
+    source_location = LA_INVALID_HANDLE;
+    if (cursor < end && *cursor == '#') {
+        ++cursor;
+        if (la_eval_expression(ctx, cursor, end, line,
+                               &immediate) != LA_OK) return -1;
+        if (ctx->expression_family == LA_EXPR_BITWISE) {
+            immediate = (la_i32)((la_u32)immediate & 0xffff);
+        }
+        if (immediate < -32768 || immediate > 65535) {
+            la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
+                    (la_u16)(end - cursor),
+                    la_slice(cursor, (la_u16)(end - cursor)),
+                    la_slice("16-bit immediate", 16), immediate, 65535);
+            return -1;
+        }
+        is_immediate = 1;
+    } else {
+        source_start = cursor;
+        source_end = source_start;
+        while (source_end < end && la_is_ident(*source_end)) ++source_end;
+        la_extend_qualified_base(ctx, source_start, &source_end, end,
+                                 procedure);
+        if (source_end == source_start ||
+            la_trim_left(source_end, end) != end) {
+            la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
+                    la_slice("movw WORD, #expr16 or WORD", 26),
+                    la_slice("", 0), 0, 0);
+            return -1;
+        }
+        source_location = la_find_location_text_at(
+            ctx, source_start, (la_u16)(source_end - source_start),
+            procedure);
+        if (source_location == LA_INVALID_HANDLE ||
+            ctx->locations[source_location].is_pointer ||
+            !la_scalar_size(ctx,
+                            ctx->locations[source_location].type_name,
+                            &word_size) ||
+            word_size != 2) {
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
+                    (la_u16)(source_end - source_start),
+                    la_slice(source_start,
+                             (la_u16)(source_end - source_start)),
+                    la_slice("physical two-unit word", 22), 0, 0);
+            return -1;
+        }
+    }
+    if (!la_count_operation(ctx, line)) return -1;
+    la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
+                  (la_u16)(end - start));
+    event->operation = is_immediate ? LA_TARGET_OP_MOVW_IMM :
+                                      LA_TARGET_OP_MOVW_LOCATION;
+    event->base = la_name_slice(ctx, ctx->locations[dest_location].physical);
+    event->owner = la_name_slice(ctx, ctx->locations[dest_location].name);
+    if (is_immediate) {
+        event->signed_value = immediate;
+    } else {
+        event->aux =
+            la_name_slice(ctx, ctx->locations[source_location].physical);
+    }
+    event->scratch = la_slice("a", 1);
+    event->clobbers = la_slice("a,flags", 7);
+    event->access_width = 2;
+    event->byte_order = ctx->target->byte_order;
     event->volatility = LA_ACCESS_NONVOLATILE;
     return 1;
 }
@@ -7493,6 +7646,10 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
             }
             if (typed == 0) {
                 typed = la_parse_observation_operation(
+                    ctx, cursor, content_end, line, &event);
+            }
+            if (typed == 0) {
+                typed = la_parse_word_move(
                     ctx, cursor, content_end, line, &event);
             }
             if (typed == 0) {

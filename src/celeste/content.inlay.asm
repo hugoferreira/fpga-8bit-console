@@ -614,12 +614,8 @@ begin
 .speed:
     mov y, offset CelesteObject.core.speed_y
     jsr Fixed.load_object
-    lda #<fly_target
-    ldx #>fly_target
-    jsr Fixed.set_target
-    lda #<fly_accel
-    ldx #>fly_accel
-    jsr Fixed.set_amount
+    movw Fixed.word1, #fly_target
+    movw Fixed.word2, #fly_accel
     jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_y
     jsr Fixed.store_object

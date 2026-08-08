@@ -26,9 +26,6 @@ namespace Fixed
     export load_object
     export store_object
     export load_object_target
-    export set_value
-    export set_target
-    export set_amount
     export word0
     export word1
     export word2
@@ -199,40 +196,6 @@ begin
     iny
     lda (Machine.object), y
     sta word1+1
-    ret
-end
-
-; ------------------------------------------------------------------------------
-; set_value / set_target / set_amount: load a constant into a word register.
-; A is the low byte and X the high byte.
-; ------------------------------------------------------------------------------
-proc set_value using console6502 naked
-    low : u8 in a
-    high : u8 in x
-    value : u16 return in word0
-begin
-    sta word0
-    stx word0+1
-    ret
-end
-
-proc set_target using console6502 naked
-    low : u8 in a
-    high : u8 in x
-    target : u16 return in word1
-begin
-    sta word1
-    stx word1+1
-    ret
-end
-
-proc set_amount using console6502 naked
-    low : u8 in a
-    high : u8 in x
-    amount : u16 return in word2
-begin
-    sta word2
-    stx word2+1
     ret
 end
 end

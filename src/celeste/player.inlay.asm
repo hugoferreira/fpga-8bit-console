@@ -36,10 +36,10 @@ namespace Player
     jump_edge = $53
     dash_edge = $54
     maxrun = $55
-    accel = $56
-    decel_word = $58
-    maxfall = $5A
-    grav = $5C
+    location accel : u16 at $56
+    location decel_word : u16 at $58
+    location maxfall : u16 at $5A
+    location grav : u16 at $5C
     vinput = $5E
     wall = $5F
 ; Player.init
@@ -237,24 +237,18 @@ proc horizontal using console6502
     self : ptr CelesteObject in Machine.object
 begin
     mov maxrun, #<max_run
-    mov accel, #<accel_ground
-    mov accel+1, #>accel_ground
-    mov decel_word, #<deceleration
-    mov decel_word+1, #>deceleration
+    movw accel, #accel_ground
+    movw decel_word, #deceleration
     lda ground
     bne .grounded
-    mov accel, #<accel_air
-    mov accel+1, #>accel_air
+    movw accel, #accel_air
     jmp .run
 .grounded:
     lda ice
     beq .run
-    mov accel, #<accel_ice
-    mov accel+1, #>accel_ice
+    movw accel, #accel_ice
 .run:
-    lda #<max_run                ; if abs(spd.x) > maxrun then decelerate
-    ldx #>max_run
-    jsr Fixed.set_value
+    movw Fixed.word0, #max_run   ; if abs(spd.x) > maxrun then decelerate
     mov y, offset CelesteObject.core.speed_x
     jsr Fixed.load_object_target
     lda Fixed.word1+1
@@ -269,18 +263,12 @@ begin
     jsr Fixed.load_object
     lda Fixed.word0+1
     bmi .decelneg
-    lda #<max_run
-    ldx #>max_run
-    jsr Fixed.set_target
+    movw Fixed.word1, #max_run
     jmp .decel
 .decelneg:
-    lda #<(-max_run & $FFFF)
-    ldx #>(-max_run & $FFFF)
-    jsr Fixed.set_target
+    movw Fixed.word1, #-max_run
 .decel:
-    lda decel_word
-    ldx decel_word+1
-    jsr Fixed.set_amount
+    movw Fixed.word2, decel_word
     jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_x
     jsr Fixed.store_object
@@ -291,23 +279,15 @@ begin
     lda input
     beq .targetzero
     bmi .targetneg
-    lda #<max_run
-    ldx #>max_run
-    jsr Fixed.set_target
+    movw Fixed.word1, #max_run
     jmp .doaccel
 .targetneg:
-    lda #<(-max_run & $FFFF)
-    ldx #>(-max_run & $FFFF)
-    jsr Fixed.set_target
+    movw Fixed.word1, #-max_run
     jmp .doaccel
 .targetzero:
-    lda #0
-    tax
-    jsr Fixed.set_target
+    movw Fixed.word1, #0
 .doaccel:
-    lda accel
-    ldx accel+1
-    jsr Fixed.set_amount
+    movw Fixed.word2, accel
     jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_x
     jsr Fixed.store_object
@@ -334,23 +314,18 @@ end
 proc vertical using console6502
     self : ptr CelesteObject in Machine.object
 begin
-    mov maxfall, #<max_fall
-    mov maxfall+1, #>max_fall
-    mov grav, #<gravity
-    mov grav+1, #>gravity
+    movw maxfall, #max_fall
+    movw grav, #gravity
     mov y, offset CelesteObject.core.speed_y                 ; if abs(spd.y) <= 0.15 then gravity *= 0.5
     jsr Fixed.load_object
     jsr Fixed.absolute
-    lda #<y_epsilon
-    ldx #>y_epsilon
-    jsr Fixed.set_target
+    movw Fixed.word1, #y_epsilon
     jsr Fixed.compare                   ; N set: abs(spd.y) < 0.15
     bmi .halfgrav
     cbne Fixed.word0, #<y_epsilon, .slide  ; the cart's test is <=, so catch equality too
     cbne Fixed.word0+1, #>y_epsilon, .slide
 .halfgrav:
-    mov grav, #<gravity_half
-    mov grav+1, #>gravity_half
+    movw grav, #gravity_half
 .slide:                         ; wall slide
     lda input
     beq .fall
@@ -363,8 +338,7 @@ begin
     mov Collision.offset_y, #0
     jsr Collision.ice
     bne .fall
-    mov maxfall, #<fall_slide
-    mov maxfall+1, #>fall_slide
+    movw maxfall, #fall_slide
     lda [video.random]                 ; if rnd(10) < 2 then a puff off the wall
     cmp #51
     bcs .fall
@@ -386,12 +360,8 @@ begin
     bne .done
     mov y, offset CelesteObject.core.speed_y                 ; spd.y = Fixed.approach(spd.y, maxfall, gravity)
     jsr Fixed.load_object
-    lda maxfall
-    ldx maxfall+1
-    jsr Fixed.set_target
-    lda grav
-    ldx grav+1
-    jsr Fixed.set_amount
+    movw Fixed.word1, maxfall
+    movw Fixed.word2, grav
     jsr Fixed.approach
     mov y, offset CelesteObject.core.speed_y
     jsr Fixed.store_object
@@ -414,12 +384,7 @@ begin
     lda #0
     sta [Machine.object.payload.player.jump_buffer]
     sta [Machine.object.payload.player.grace]
-    lda #<jump_speed
-    mov y, offset CelesteObject.core.speed_y.fraction
-    sta (Machine.object), y
-    lda #>jump_speed
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.core.speed_y], #jump_speed
     lda [Machine.object.core.x]
     pha
     mov y, offset CelesteObject.core.y
@@ -447,26 +412,14 @@ begin
     jsr Audio.guarded_sfx
     lda #0
     sta [Machine.object.payload.player.jump_buffer]
-    lda #<jump_speed
-    mov y, offset CelesteObject.core.speed_y.fraction
-    sta (Machine.object), y
-    lda #>jump_speed
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.core.speed_y], #jump_speed
     lda wall               ; spd.x = -wall_dir * (maxrun + 1)
     bmi .wjright
-    lda #<(-wall_jump & $FFFF)
-    ldx #>(-wall_jump & $FFFF)
-    jmp .wjset
+    stw [Machine.object.core.speed_x], #-wall_jump
+    jmp .wjdone
 .wjright:
-    lda #<wall_jump
-    ldx #>wall_jump
-.wjset:
-    mov y, offset CelesteObject.core.speed_x.fraction
-    sta (Machine.object), y
-    txa
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.core.speed_x], #wall_jump
+.wjdone:
     lda wall               ; the puff, unless the wall is ice
     asl a, 2
     add wall  ; wall_dir * 5 ... the cart tests ice at *3
@@ -608,39 +561,20 @@ begin
     beq .yzero
     lda [Machine.object.core.speed_y.integer]
     bpl .ynonzero
-    lda #<(-dash_target_up & $FFFF)
-    mov y, offset CelesteObject.payload.player.dash_target_y.fraction
-    sta (Machine.object), y
-    lda #>(-dash_target_up & $FFFF)
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.payload.player.dash_target_y], #-dash_target_up
 .ynonzero:
-    lda #<dash_accel_diag       ; spd.y != 0: dash_accel.x *= sqrt(2)/2
-    ldx #>dash_accel_diag
-    jmp .setax
+    stw [Machine.object.payload.player.dash_accel_x], #dash_accel_diag ; spd.y != 0: *= sqrt(2)/2
+    jmp .accelxdone
 .yzero:
-    lda #<dash_accel
-    ldx #>dash_accel
-.setax:
-    mov y, offset CelesteObject.payload.player.dash_accel_x.fraction
-    sta (Machine.object), y
-    txa
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.payload.player.dash_accel_x], #dash_accel
+.accelxdone:
     tstw [Machine.object.core.speed_x]      ; spd.x != 0: dash_accel.y *= sqrt(2)/2
     beq .xzero
-    lda #<dash_accel_diag
-    ldx #>dash_accel_diag
-    jmp .setay
+    stw [Machine.object.payload.player.dash_accel_y], #dash_accel_diag
+    jmp .accelydone
 .xzero:
-    lda #<dash_accel
-    ldx #>dash_accel
-.setay:
-    mov y, offset CelesteObject.payload.player.dash_accel_y.fraction
-    sta (Machine.object), y
-    txa
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.payload.player.dash_accel_y], #dash_accel
+.accelydone:
     jmp animation
 end
 ; Animation, the level exit, and the ground latch.
@@ -803,11 +737,7 @@ begin
     lda #$FF
 .clamped:
     sta [Machine.object.core.x]
-    lda #0                      ; and stop, as the cart does
-    mov y, offset CelesteObject.core.speed_x.fraction
-    sta (Machine.object), y
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.core.speed_x], #0 ; and stop, as the cart does
 .inside:
     lda [Machine.object.payload.player.dash_jumps]
     jsr set_hair_color
@@ -836,12 +766,7 @@ begin
     sta [Machine.object.payload.spawn.target_y]
     lda #127                    ; the cart starts at y = 128, one past what a
     sta [Machine.object.core.y]  ; screen either way
-    lda #<speed
-    mov y, offset CelesteObject.core.speed_y.fraction
-    sta (Machine.object), y
-    lda #>speed
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.core.speed_y], #speed
     and [Machine.object.core.flags], #~Objects.flag_solids ; solids = false
     jmp Player.create_hair
 end
@@ -871,9 +796,7 @@ begin
 .falling:
     mov y, offset CelesteObject.core.speed_y                 ; spd.y += 0.5
     jsr Fixed.load_object
-    lda #<gravity
-    ldx #>gravity
-    jsr Fixed.set_target
+    movw Fixed.word1, #gravity
     jsr Fixed.add
     mov y, offset CelesteObject.core.speed_y
     jsr Fixed.store_object
@@ -882,11 +805,7 @@ begin
     tstw Fixed.word0
     beq .done2
     decz [Machine.object.payload.player.delay], .land
-    lda #0
-    mov y, offset CelesteObject.core.speed_y.fraction
-    sta (Machine.object), y
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.core.speed_y], #0
 .done2:
     rts
 .land:
@@ -899,15 +818,8 @@ begin
     beq .done2
     lda Machine.t3
     sta [Machine.object.core.y]
-    lda #0
-    mov y, offset CelesteObject.core.speed_x.fraction
-    sta (Machine.object), y
-    iny
-    sta (Machine.object), y
-    mov y, offset CelesteObject.core.speed_y.fraction
-    sta (Machine.object), y
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.core.speed_x], #0
+    stw [Machine.object.core.speed_y], #0
     lda #2
     sta [Machine.object.payload.spawn.phase]
     lda #5
@@ -962,12 +874,7 @@ proc init using console6502
 begin
     lda #29
     sta [Machine.object.core.sprite]
-    lda #<speed_y
-    mov y, offset CelesteObject.core.speed_y.fraction
-    sta (Machine.object), y
-    lda #>speed_y
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.core.speed_y], #speed_y
     lda [video.random]                 ; spd.x = 0.3 + rnd(0.2)
     and #$33
     add #$4D

@@ -186,6 +186,18 @@ begin
     ret
 end
 
+proc word_moves naked
+    self : ptr WordObject in pWord
+    word : u16 in w0
+    other : u16 in w1
+begin
+    movw word, #$1234
+    movw word, #-2
+    movw other, word
+    stw [self + WordObject.value], #$8001
+    ret
+end
+
 obj_lo:
     #d8 $00, $18, $30, $48
 obj_hi:
@@ -195,6 +207,7 @@ OBJPOOL = $8000
 pOther = $12
 pWord = $14
 w0 = $16
+w1 = $18
 REGS = $4100
 t0 = $20
 t1 = $21

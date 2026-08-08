@@ -441,9 +441,7 @@ begin
     stab Fixed.word0
     stw [self.core.remainder_x], value
 
-    lda #$80                    ; amount = flr(rem.x + 0.5)
-    ldx #$00
-    jsr Fixed.set_target
+    movw Fixed.word1, #$0080    ; amount = flr(rem.x + 0.5)
     jsr Fixed.add
     lda Fixed.word0+1
     sta Machine.t0
@@ -462,9 +460,7 @@ begin
     stab Fixed.word0
     stw [self.core.remainder_y], value
 
-    lda #$80
-    ldx #$00
-    jsr Fixed.set_target
+    movw Fixed.word1, #$0080
     jsr Fixed.add
     lda Fixed.word0+1
     sta Machine.t0
@@ -546,15 +542,8 @@ begin
     rts
 
 .blocked:
-    lda #0                      ; spd.x = 0, rem.x = 0
-    mov y, offset CelesteObject.core.speed_x.fraction
-    sta (Machine.object), y
-    iny
-    sta (Machine.object), y
-    mov y, offset CelesteObject.core.remainder_x.fraction
-    sta (Machine.object), y
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.core.speed_x], #0 ; spd.x = 0, rem.x = 0
+    stw [Machine.object.core.remainder_x], #0
     ret
 end
 
@@ -595,15 +584,8 @@ begin
     rts
 
 .blocked:
-    lda #0
-    mov y, offset CelesteObject.core.speed_y.fraction
-    sta (Machine.object), y
-    iny
-    sta (Machine.object), y
-    mov y, offset CelesteObject.core.remainder_y.fraction
-    sta (Machine.object), y
-    iny
-    sta (Machine.object), y
+    stw [Machine.object.core.speed_y], #0
+    stw [Machine.object.core.remainder_y], #0
     ret
 end
 end

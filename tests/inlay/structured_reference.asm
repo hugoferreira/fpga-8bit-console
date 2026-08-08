@@ -183,6 +183,25 @@ observation_operations:
     ora w0+1
     rts
 
+word_moves:
+    lda #$34
+    sta w0
+    lda #$12
+    sta w0+1
+    lda #$fe
+    sta w0
+    lda #$ff
+    sta w0+1
+    lda w0
+    sta w1
+    lda w0+1
+    sta w1+1
+    lda #$01
+    sta (pWord), #0
+    lda #$80
+    sta (pWord), #1
+    rts
+
 obj_lo:
     #d8 $00, $18, $30, $48
 obj_hi:
@@ -192,6 +211,7 @@ OBJPOOL = $8000
 pOther = $12
 pWord = $14
 w0 = $16
+w1 = $18
 REGS = $4100
 t0 = $20
 t1 = $21

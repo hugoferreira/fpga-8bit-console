@@ -1075,6 +1075,58 @@ static void test_observation_operations(void)
         limits, LA_ERR_LOCATION_TYPE, "decz on fixed overlay rejected");
 }
 
+static void test_word_moves(void)
+{
+    LaLimits limits;
+    limits = la_default_limits();
+    expect_ok(
+        "struct O packed\nvalue : u16\nend\n"
+        "location p : ptr O\n"
+        "location w : u16\n"
+        "location v : u16\n"
+        "namespace N\n"
+        "    k = 256\n"
+        "proc t naked\n"
+        "    self : ptr O in p\n"
+        "begin\n"
+        "    movw w, #k\n"
+        "    movw w, #-512\n"
+        "    movw v, w\n"
+        "    stw [self + O.value], #k\n"
+        "    stw [self + O.value], #-2\n"
+        "    ret\n"
+        "end\n"
+        "end\n",
+        limits, "movw and immediate stw forms accepted");
+    expect_error(
+        "location w : u16\n"
+        "movw w, #65536\n",
+        limits, LA_ERR_ACCESS_WIDTH, "movw immediate above 16 bits rejected");
+    expect_error(
+        "location w : u16\n"
+        "movw w, #-32769\n",
+        limits, LA_ERR_ACCESS_WIDTH, "movw immediate below 16 bits rejected");
+    expect_error(
+        "location b : u8\n"
+        "movw b, #1\n",
+        limits, LA_ERR_LOCATION_TYPE, "movw byte destination rejected");
+    expect_error(
+        "location w : u16\n"
+        "location b : u8\n"
+        "movw w, b\n",
+        limits, LA_ERR_LOCATION_TYPE, "movw byte source rejected");
+    expect_error(
+        "struct O packed\nbyte : u8\nend\n"
+        "location p : ptr O\n"
+        "proc t naked\n"
+        "    self : ptr O in p\n"
+        "begin\n"
+        "    stw [self + O.byte], #1\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_ACCESS_WIDTH, "immediate stw to byte field rejected");
+}
+
 static void test_semantic_errors(void)
 {
     LaLimits limits;
@@ -2254,6 +2306,7 @@ int main(void)
     test_valid_layout();
     test_bitwise_expressions();
     test_observation_operations();
+    test_word_moves();
     test_semantic_errors();
     test_comments_and_pointer_fields();
     test_indexed_pools_and_procedures();

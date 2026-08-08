@@ -329,7 +329,24 @@ end
 `ldw WORD, [pointer + Type.field]` and
 `stw [pointer + Type.field], WORD` require a declared two-unit physical word
 location and a scalar or aggregate field whose complete width is two storage
-units. The semantic operation records the access width, target byte order,
+units. Word constants and word copies have direct forms:
+
+```asm
+movw Fixed.word1, #max_run
+movw Fixed.word1, #-wall_jump
+movw Fixed.word2, accel
+stw [self + CelesteObject.core.speed_y], #jump_speed
+stw [self + CelesteObject.core.speed_x], #0
+```
+
+`movw WORD, #expr16` writes a compile-time 16-bit value (signed or unsigned
+acceptance, like `#d16`) into a declared word location; `movw WORD, WORD`
+copies one word location to another; `stw [pointer + Type.field], #expr16`
+writes the immediate through pointer displacement. All three transfer low
+unit then high unit through `A` and clobber `A` and flags only. A single
+signed spelling such as `#-wall_jump` replaces the paired
+`#<(-k & $FFFF)`/`#>(-k & $FFFF)` halves that previously had to agree by
+hand. The semantic operation records the access width, target byte order,
 physical pointer and word locations, and its scratch/clobber contract. The
 console6502 lowering transfers the low unit and then the high unit through
 `A`, so it clobbers `A` and flags but does not consume or change `Y`. Both

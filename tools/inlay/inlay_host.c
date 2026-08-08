@@ -814,6 +814,57 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
                 (int)event->owner.length, event->owner.data,
                 (int)event->path.length, event->path.data);
         return 1;
+    case LA_TARGET_OP_MOVW_IMM:
+        if (!begin_line(output, event->span, "word-move")) return 0;
+        fprintf(output->assembly, "    lda #%u\n",
+                (unsigned)((la_u32)event->signed_value & 0xff));
+        if (!begin_line(output, event->span, "word-move")) return 0;
+        fprintf(output->assembly, "    sta %.*s\n",
+                (int)event->base.length, event->base.data);
+        if (!begin_line(output, event->span, "word-move")) return 0;
+        fprintf(output->assembly, "    lda #%u\n",
+                (unsigned)(((la_u32)event->signed_value >> 8) & 0xff));
+        if (!begin_line(output, event->span, "word-move")) return 0;
+        fprintf(output->assembly, "    sta %.*s+1",
+                (int)event->base.length, event->base.data);
+        fprintf(output->assembly, " ; inlay movw %.*s\n",
+                (int)event->owner.length, event->owner.data);
+        return 1;
+    case LA_TARGET_OP_MOVW_LOCATION:
+        if (!begin_line(output, event->span, "word-move")) return 0;
+        fprintf(output->assembly, "    lda %.*s\n",
+                (int)event->aux.length, event->aux.data);
+        if (!begin_line(output, event->span, "word-move")) return 0;
+        fprintf(output->assembly, "    sta %.*s\n",
+                (int)event->base.length, event->base.data);
+        if (!begin_line(output, event->span, "word-move")) return 0;
+        fprintf(output->assembly, "    lda %.*s+1\n",
+                (int)event->aux.length, event->aux.data);
+        if (!begin_line(output, event->span, "word-move")) return 0;
+        fprintf(output->assembly, "    sta %.*s+1",
+                (int)event->base.length, event->base.data);
+        fprintf(output->assembly, " ; inlay movw %.*s\n",
+                (int)event->owner.length, event->owner.data);
+        return 1;
+    case LA_TARGET_OP_STORE16_IMM_PTR_DISP:
+        if (!begin_line(output, event->span, "word-field-immediate")) return 0;
+        fprintf(output->assembly, "    lda #%u\n",
+                (unsigned)((la_u32)event->signed_value & 0xff));
+        if (!begin_line(output, event->span, "word-field-immediate")) return 0;
+        fprintf(output->assembly, "    sta (%.*s), #%u\n",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value);
+        if (!begin_line(output, event->span, "word-field-immediate")) return 0;
+        fprintf(output->assembly, "    lda #%u\n",
+                (unsigned)(((la_u32)event->signed_value >> 8) & 0xff));
+        if (!begin_line(output, event->span, "word-field-immediate")) return 0;
+        fprintf(output->assembly, "    sta (%.*s), #%u",
+                (int)event->base.length, event->base.data,
+                (unsigned)event->value + 1);
+        fprintf(output->assembly, " ; inlay stw %.*s.%.*s\n",
+                (int)event->owner.length, event->owner.data,
+                (int)event->path.length, event->path.data);
+        return 1;
     case LA_TARGET_OP_TSTW_LOCATION:
         if (!begin_line(output, event->span, "word-location-test")) return 0;
         fprintf(output->assembly, "    lda %.*s\n",
