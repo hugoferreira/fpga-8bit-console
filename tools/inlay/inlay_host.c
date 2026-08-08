@@ -1009,9 +1009,17 @@ static void describe(FILE *file)
         la_u16 spelling;
         for (spelling = 0; spelling < target->spelling_count; ++spelling) {
             if (spelling != 0) fputc(',', file);
+            fputs("\n    {\"spelling\":", file);
             json_string(file, target->spellings[spelling].spelling);
+            fprintf(file, ",\"family\":%u,\"operation\":",
+                    (unsigned)target->spellings[spelling].family);
+            json_string(file,
+                        la_operation_name(
+                            target->spellings[spelling].operation));
+            fputc('}', file);
         }
     }
+    fputs("\n  ", file);
     fputs("],\n  \"rawSpellings\":[", file);
     json_string(file, target->raw_return);
     for (index = 0; target->stack_mutators[index] != 0; ++index) {

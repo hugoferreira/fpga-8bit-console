@@ -501,7 +501,7 @@ def check_core_is_target_name_free() -> int:
     the portable core."""
     described = json.loads(run(INLAY, "--describe").stdout)
     names = {entry["name"] for entry in described["registers"]}
-    names |= set(described["spellings"])
+    names |= {entry["spelling"] for entry in described["spellings"]}
     names |= set(described["rawSpellings"])
     names -= LANGUAGE_VOCABULARY
     offenders: list[str] = []
@@ -513,7 +513,9 @@ def check_core_is_target_name_free() -> int:
             text = text[:begin] + text[end:]
         for number, line in enumerate(text.splitlines(), start=1):
             for literal in re.findall(r'"((?:[^"\\]|\\.)*)"', line):
-                if literal in names:
+                # Padding does not make a target name something else:
+                # `"lda "` named the same instruction `"lda"` does.
+                if literal.strip() in names:
                     offenders.append(f"{path.name}:{number}: \"{literal}\"")
     if offenders:
         raise AssertionError(

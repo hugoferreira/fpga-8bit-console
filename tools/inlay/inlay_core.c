@@ -340,40 +340,47 @@ static const LaRegisterDesc la_console6502_registers[] = {
 };
 
 static const LaSpellingDesc la_console6502_spellings[] = {
-    {"mov",  LA_SPELL_OFFSET_MATERIALIZE | LA_SPELL_QUALIFIED_IMMEDIATE |
-             LA_SPELL_OVERLAY_STORE_IMM | LA_SPELL_FRAME_POINTER_MOVE},
-    {"offset", LA_SPELL_OFFSET_KEYWORD},
-    {"cmp",  LA_SPELL_VALUE_COMPARE | LA_SPELL_TYPED_OPERATION},
-    {"lda",  LA_SPELL_LOCAL_OPERATION | LA_SPELL_TYPED_OPERATION},
-    {"sta",  LA_SPELL_LOCAL_OPERATION | LA_SPELL_TYPED_OPERATION},
-    {"stx",  LA_SPELL_TYPED_OPERATION},
-    {"sty",  LA_SPELL_TYPED_OPERATION},
-    {"ldx",  LA_SPELL_TYPED_OPERATION},
-    {"ldy",  LA_SPELL_TYPED_OPERATION},
-    {"add",  LA_SPELL_TYPED_OPERATION},
-    {"sub",  LA_SPELL_TYPED_OPERATION},
-    {"adc",  LA_SPELL_TYPED_OPERATION},
-    {"sbc",  LA_SPELL_TYPED_OPERATION},
-    {"and",  LA_SPELL_BYTE_RMW | LA_SPELL_TYPED_OPERATION},
-    {"ora",  LA_SPELL_BYTE_RMW | LA_SPELL_TYPED_OPERATION},
-    {"inc",  LA_SPELL_BYTE_RMW},
-    {"dec",  LA_SPELL_BYTE_RMW},
-    {"ldw",  LA_SPELL_WORD_TRANSFER},
-    {"stw",  LA_SPELL_WORD_TRANSFER},
-    {"addw", LA_SPELL_WORD_ARITHMETIC},
-    {"subw", LA_SPELL_WORD_ARITHMETIC},
-    {"cmpw", LA_SPELL_WORD_ARITHMETIC},
-    {"decz", LA_SPELL_OBSERVATION},
-    {"tstw", LA_SPELL_OBSERVATION},
-    {"movw", LA_SPELL_WORD_MOVE},
-    {"cbeq", LA_SPELL_OVERLAY_BRANCH},
-    {"cbne", LA_SPELL_OVERLAY_BRANCH},
-    {"cblt", LA_SPELL_OVERLAY_BRANCH},
-    {"cble", LA_SPELL_OVERLAY_BRANCH},
-    {"cbgt", LA_SPELL_OVERLAY_BRANCH},
-    {"cbge", LA_SPELL_OVERLAY_BRANCH},
-    {"tbz",  LA_SPELL_OVERLAY_BRANCH},
-    {"tbnz", LA_SPELL_OVERLAY_BRANCH}
+    {"mov",  LA_SPELL_OFFSET_MATERIALIZE, LA_TARGET_OP_MATERIALIZE_FIELD_OFFSET},
+    {"mov",  LA_SPELL_QUALIFIED_IMMEDIATE, LA_TARGET_OP_VALUE_MOV},
+    {"mov",  LA_SPELL_OVERLAY_STORE_IMM, LA_TARGET_OP_STORE_IMM_OVERLAY_ABS},
+    {"mov",  LA_SPELL_FRAME_POINTER_MOVE, LA_TARGET_OP_STORE_PTR_FRAME},
+    {"offset", LA_SPELL_OFFSET_KEYWORD, 0},
+    {"cmp",  LA_SPELL_VALUE_COMPARE, LA_TARGET_OP_VALUE_CMP},
+    {"cmp",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_CMP8_OVERLAY_DISP},
+    {"lda",  LA_SPELL_LOCAL_OPERATION, LA_TARGET_OP_LOAD8_FRAME_LOCAL},
+    {"lda",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_LOAD8_PTR_DISP},
+    {"sta",  LA_SPELL_LOCAL_OPERATION, LA_TARGET_OP_STORE8_FRAME_LOCAL},
+    {"sta",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_STORE8_PTR_DISP},
+    {"stx",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_STOREX_OVERLAY_DISP},
+    {"sty",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_STOREY_OVERLAY_DISP},
+    {"ldx",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_LOADX_OVERLAY_DISP},
+    {"ldy",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_LOADY_OVERLAY_DISP},
+    {"add",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_ADD8A_OVERLAY_DISP},
+    {"sub",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_SUB8A_OVERLAY_DISP},
+    {"adc",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_ADC8_OVERLAY_INDEXED},
+    {"sbc",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_SBC8_OVERLAY_INDEXED},
+    {"and",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_AND8A_OVERLAY_DISP},
+    {"and",  LA_SPELL_BYTE_RMW, LA_TARGET_OP_AND8_PTR_DISP},
+    {"ora",  LA_SPELL_TYPED_OPERATION, LA_TARGET_OP_ORA8A_OVERLAY_DISP},
+    {"ora",  LA_SPELL_BYTE_RMW, LA_TARGET_OP_OR8_PTR_DISP},
+    {"inc",  LA_SPELL_BYTE_RMW, LA_TARGET_OP_INC8_PTR_DISP},
+    {"dec",  LA_SPELL_BYTE_RMW, LA_TARGET_OP_DEC8_PTR_DISP},
+    {"ldw",  LA_SPELL_WORD_TRANSFER, LA_TARGET_OP_LOAD16_PTR_DISP},
+    {"stw",  LA_SPELL_WORD_TRANSFER, LA_TARGET_OP_STORE16_PTR_DISP},
+    {"addw", LA_SPELL_WORD_ARITHMETIC, LA_TARGET_OP_ADD16_PHYSICAL},
+    {"subw", LA_SPELL_WORD_ARITHMETIC, LA_TARGET_OP_SUB16_PHYSICAL},
+    {"cmpw", LA_SPELL_WORD_ARITHMETIC, LA_TARGET_OP_CMP16_PHYSICAL},
+    {"decz", LA_SPELL_OBSERVATION, LA_TARGET_OP_DECZ8_PTR_DISP},
+    {"tstw", LA_SPELL_OBSERVATION, LA_TARGET_OP_TSTW_PTR_DISP},
+    {"movw", LA_SPELL_WORD_MOVE, LA_TARGET_OP_MOVW_LOCATION},
+    {"cbeq", LA_SPELL_OVERLAY_BRANCH, LA_TARGET_OP_BRANCH_OVERLAY_DISP},
+    {"cbne", LA_SPELL_OVERLAY_BRANCH, LA_TARGET_OP_BRANCH_OVERLAY_DISP},
+    {"cblt", LA_SPELL_OVERLAY_BRANCH, LA_TARGET_OP_BRANCH_OVERLAY_DISP},
+    {"cble", LA_SPELL_OVERLAY_BRANCH, LA_TARGET_OP_BRANCH_OVERLAY_DISP},
+    {"cbgt", LA_SPELL_OVERLAY_BRANCH, LA_TARGET_OP_BRANCH_OVERLAY_DISP},
+    {"cbge", LA_SPELL_OVERLAY_BRANCH, LA_TARGET_OP_BRANCH_OVERLAY_DISP},
+    {"tbz",  LA_SPELL_OVERLAY_BRANCH, LA_TARGET_OP_BRANCH_OVERLAY_DISP},
+    {"tbnz", LA_SPELL_OVERLAY_BRANCH, LA_TARGET_OP_BRANCH_OVERLAY_DISP}
 };
 
 static const char *const la_c6502_decz[] = {
@@ -876,6 +883,13 @@ static LaSlice la_slice(const char *data, la_u16 length)
     return slice;
 }
 
+/* A slice over a C string literal: the length is the literal's, never a
+   hand-counted one. */
+static LaSlice la_text(const char *literal)
+{
+    return la_slice(literal, (la_u16)strlen(literal));
+}
+
 static void la_set_span(LaContext *ctx, LaSpan *span,
                         la_u16 line, la_u16 column, la_u16 length)
 {
@@ -966,7 +980,7 @@ static LaSlice la_name_slice(LaContext *ctx, la_u16 handle)
 {
     const char *name;
     if (handle == LA_INVALID_HANDLE) {
-        return la_slice("", 0);
+        return la_text("");
     }
     name = ctx->names + handle;
     return la_slice(name, (la_u16)strlen(name));
@@ -976,7 +990,7 @@ static LaDiagnosticCode la_token(LaContext *ctx, la_u16 line, la_u16 column)
 {
     if (ctx->token_count >= ctx->limits->max_tokens) {
         return la_fail(ctx, LA_ERR_TOKEN_CAPACITY, line, column, 1,
-                       la_slice("tokens", 6), la_slice("", 0),
+                       la_text("tokens"), la_text(""),
                        ctx->token_count + 1, ctx->limits->max_tokens);
     }
     ++ctx->token_count;
@@ -1039,9 +1053,8 @@ static la_u16 la_intern(LaContext *ctx, const char *text, la_u16 length,
     }
     if ((la_u32)ctx->name_length + length + 1 >
         ctx->limits->max_name_bytes) {
-        la_fail(ctx, LA_ERR_NAME_CAPACITY, line, column, length,
-                la_slice(text, length), la_slice("names", 5),
-                ctx->name_length + length + 1,
+        la_fail(ctx, LA_ERR_NAME_CAPACITY, line, column, length, la_slice(text,
+                length), la_text("names"), ctx->name_length + length + 1,
                 ctx->limits->max_name_bytes);
         return LA_INVALID_HANDLE;
     }
@@ -1140,7 +1153,7 @@ static la_u16 la_intern_qualified(LaContext *ctx,
     total = (la_u16)(owner.length + 1 + length);
     if ((la_u32)total + 1 > ctx->limits->max_line_bytes) {
         la_fail(ctx, LA_ERR_NAME_CAPACITY, line, column, length,
-                la_slice(text, length), la_slice("qualified name", 14),
+                la_slice(text, length), la_text("qualified name"),
                 total + 1, ctx->limits->max_line_bytes);
         return LA_INVALID_HANDLE;
     }
@@ -1165,8 +1178,7 @@ static LaDiagnosticCode la_parse_namespace(LaContext *ctx,
     cursor = la_trim_left(start, end) + 9;
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("namespace name", 14),
-                       la_slice("", 0), 0, 0);
+                       la_text("namespace name"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     default_convention = LA_INVALID_HANDLE;
@@ -1177,7 +1189,7 @@ static LaDiagnosticCode la_parse_namespace(LaContext *ctx,
         if (!la_read_identifier(&cursor, end, &convention_start,
                                 &convention_length)) {
             return la_fail(ctx, LA_ERR_CONVENTION, line, 1, 1,
-                           la_slice("convention", 10), la_slice("", 0), 0, 0);
+                           la_text("convention"), la_text(""), 0, 0);
         }
         for (index = 0; index < ctx->target->convention_count; ++index) {
             if (la_equal_text(convention_start, convention_length,
@@ -1187,33 +1199,28 @@ static LaDiagnosticCode la_parse_namespace(LaContext *ctx,
             }
         }
         if (default_convention == LA_INVALID_HANDLE) {
-            return la_fail(ctx, LA_ERR_CONVENTION, line, 1,
-                           convention_length,
+            return la_fail(ctx, LA_ERR_CONVENTION, line, 1, convention_length,
                            la_slice(convention_start, convention_length),
                            la_slice(ctx->target->name,
-                                    (la_u16)strlen(ctx->target->name)),
-                           0, 0);
+                           (la_u16)strlen(ctx->target->name)), 0, 0);
         }
         cursor = la_trim_left(cursor, end);
     }
     if (cursor != end) {
-        return la_fail(ctx, LA_ERR_SYNTAX, line, 1,
-                       (la_u16)(end - cursor),
-                       la_slice("namespace NAME [using CONVENTION]", 33),
+        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, (la_u16)(end - cursor),
+                       la_text("namespace NAME [using CONVENTION]"),
                        la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
     }
     if (ctx->namespace_depth >= ctx->limits->max_nesting) {
         return la_fail(ctx, LA_ERR_NAMESPACE_DEPTH, line, 1, name_length,
                        la_slice(name_start, name_length),
-                       la_slice("namespace depth", 15),
-                       ctx->namespace_depth + 1,
+                       la_text("namespace depth"), ctx->namespace_depth + 1,
                        ctx->limits->max_nesting);
     }
     if (ctx->namespace_count >= ctx->limits->max_namespaces) {
         return la_fail(ctx, LA_ERR_NAMESPACE_CAPACITY, line, 1, name_length,
                        la_slice(name_start, name_length),
-                       la_slice("namespaces", 10),
-                       ctx->namespace_count + 1,
+                       la_text("namespaces"), ctx->namespace_count + 1,
                        ctx->limits->max_namespaces);
     }
     name = la_intern_qualified(ctx, name_start, name_length, line, 1);
@@ -1222,7 +1229,7 @@ static LaDiagnosticCode la_parse_namespace(LaContext *ctx,
         if (ctx->namespaces[index].name == name) {
             return la_fail(ctx, LA_ERR_DUPLICATE_NAMESPACE, line, 1,
                            name_length, la_name_slice(ctx, name),
-                           la_slice("", 0), 0, 0);
+                           la_text(""), 0, 0);
         }
     }
     ctx->namespace_stack[ctx->namespace_depth++] = ctx->current_namespace;
@@ -1251,9 +1258,13 @@ static la_u16 la_find_procedure_scoped(LaContext *ctx, const char *text,
                                        la_u16 namespace_handle,
                                        la_u16 source_id, int *is_private);
 static int la_count_operation(LaContext *ctx, la_u16 line);
+static la_u16 la_field_leaf_size(const LaContext *ctx, la_u16 field);
 static la_u16 la_find_pool_text(LaContext *ctx, const char *text,
                                 la_u16 length);
 static LaSlice la_accumulator_slice(const LaContext *ctx);
+static const char *la_skip_spelling(const char *start, const char *end);
+static la_u8 la_claimed_operation(LaContext *ctx, const char *start,
+                                  const char *end, la_u16 family);
 static int la_slice_is_accumulator(const LaContext *ctx, LaSlice slice);
 static int la_register_allows(const LaContext *ctx, LaSlice slice,
                               la_u8 use);
@@ -1304,7 +1315,7 @@ static LaDiagnosticCode la_parse_method_table(LaContext *ctx,
     LaMethodTableRec *record;
     if (ctx->method_table_count >= ctx->limits->max_method_tables) {
         return la_fail(ctx, LA_ERR_STRUCT_CAPACITY, line, 1, 1,
-                       la_slice("method tables", 13), la_slice("", 0),
+                       la_text("method tables"), la_text(""),
                        ctx->method_table_count + 1,
                        ctx->limits->max_method_tables);
     }
@@ -1312,51 +1323,48 @@ static LaDiagnosticCode la_parse_method_table(LaContext *ctx,
     cursor = la_trim_left(cursor, end);
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("method table name", 17),
-                       la_slice("", 0), 0, 0);
+                       la_text("method table name"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != ':') {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice(":", 1), la_slice("", 0), 0, 0);
+                       la_text(":"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (!la_read_identifier(&cursor, end, &enum_start, &enum_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("enum name", 9), la_slice("", 0), 0, 0);
+                       la_text("enum name"), la_text(""), 0, 0);
     }
     enum_handle = la_find_enum_text(ctx, enum_start, enum_length);
     if (enum_handle == LA_INVALID_HANDLE) {
         return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, line, 1, enum_length,
                        la_slice(enum_start, enum_length),
-                       la_slice("declared enum", 13), 0, 0);
+                       la_text("declared enum"), 0, 0);
     }
     if (cursor >= end || *cursor++ != '[') {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("[low .. high]", 13), la_slice("", 0), 0, 0);
+                       la_text("[low .. high]"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (!la_read_identifier(&cursor, end, &low_start, &low_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("domain low member", 17),
-                       la_slice("", 0), 0, 0);
+                       la_text("domain low member"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if ((la_u16)(end - cursor) < 2 || cursor[0] != '.' || cursor[1] != '.') {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("..", 2), la_slice("", 0), 0, 0);
+                       la_text(".."), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor + 2, end);
     if (!la_read_identifier(&cursor, end, &high_start, &high_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("domain high member", 18),
-                       la_slice("", 0), 0, 0);
+                       la_text("domain high member"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != ']' ||
         la_trim_left(cursor, end) != end) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("]", 1), la_slice("", 0), 0, 0);
+                       la_text("]"), la_text(""), 0, 0);
     }
     low_member = la_find_enum_member_text(ctx, enum_handle,
                                           low_start, low_length);
@@ -1365,7 +1373,7 @@ static LaDiagnosticCode la_parse_method_table(LaContext *ctx,
     if (low_member == LA_INVALID_HANDLE ||
         high_member == LA_INVALID_HANDLE) {
         return la_fail(ctx, LA_ERR_ENUM_VALUE, line, 1, 1,
-                       la_slice("domain member", 13), la_slice("", 0), 0, 0);
+                       la_text("domain member"), la_text(""), 0, 0);
     }
     record = &ctx->method_tables[ctx->method_table_count];
     record->name = la_intern(ctx, name_start, name_length, line, 1);
@@ -1397,24 +1405,23 @@ static LaDiagnosticCode la_parse_method_column(LaContext *ctx,
     record = &ctx->method_tables[ctx->method_table_count - 1];
     if (record->row_count != 0) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 6,
-                       la_slice("slots before members", 20),
-                       la_slice("", 0), 0, 0);
+                       la_text("slots before members"), la_text(""), 0, 0);
     }
     if (ctx->method_column_count >= ctx->limits->max_method_columns) {
         return la_fail(ctx, LA_ERR_STRUCT_CAPACITY, line, 1, 1,
-                       la_slice("method table slots", 18), la_slice("", 0),
+                       la_text("method table slots"), la_text(""),
                        ctx->method_column_count + 1,
                        ctx->limits->max_method_columns);
     }
     cursor = la_trim_left(start, end);
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("slot name", 9), la_slice("", 0), 0, 0);
+                       la_text("slot name"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != ':') {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice(":", 1), la_slice("", 0), 0, 0);
+                       la_text(":"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (!la_read_identifier(&cursor, end, &kind_start, &kind_length) ||
@@ -1422,7 +1429,7 @@ static LaDiagnosticCode la_parse_method_column(LaContext *ctx,
         (!la_equal_text(kind_start, kind_length, "u8") &&
          !la_equal_text(kind_start, kind_length, "code"))) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("u8 or code", 10), la_slice("", 0), 0, 0);
+                       la_text("u8 or code"), la_text(""), 0, 0);
     }
     column = &ctx->method_columns[ctx->method_column_count];
     column->label = la_intern(ctx, name_start, name_length, line, 1);
@@ -1448,42 +1455,38 @@ static LaDiagnosticCode la_parse_method_row(LaContext *ctx,
     record = &ctx->method_tables[ctx->method_table_count - 1];
     if (record->column_count == 0) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 3,
-                       la_slice("slots before members", 20),
-                       la_slice("", 0), 0, 0);
+                       la_text("slots before members"), la_text(""), 0, 0);
     }
     if (ctx->method_row_count >= ctx->limits->max_method_rows) {
         return la_fail(ctx, LA_ERR_STRUCT_CAPACITY, line, 1, 1,
-                       la_slice("method rows", 11), la_slice("", 0),
+                       la_text("method rows"), la_text(""),
                        ctx->method_row_count + 1,
                        ctx->limits->max_method_rows);
     }
     cursor = la_trim_left(start, end);
     if (!la_read_identifier(&cursor, end, &member_start, &member_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("member name", 11), la_slice("", 0), 0, 0);
+                       la_text("member name"), la_text(""), 0, 0);
     }
     member = la_find_enum_member_text(ctx, record->enum_handle,
                                       member_start, member_length);
     if (member == LA_INVALID_HANDLE) {
         return la_fail(ctx, LA_ERR_ENUM_VALUE, line, 1, member_length,
-                       la_slice(member_start, member_length),
-                       la_name_slice(
-                           ctx, ctx->enums[record->enum_handle].name),
-                       0, 0);
+                       la_slice(member_start, member_length), la_name_slice(
+                       ctx, ctx->enums[record->enum_handle].name), 0, 0);
     }
     for (scan = record->first_row;
          scan < record->first_row + record->row_count; ++scan) {
         if (ctx->method_rows[scan].member_value == (la_i32)member) {
-            return la_fail(ctx, LA_ERR_DUPLICATE_FIELD, line, 1,
-                           member_length,
+            return la_fail(ctx, LA_ERR_DUPLICATE_FIELD, line, 1, member_length,
                            la_slice(member_start, member_length),
-                           la_slice("method row", 10), 0, 0);
+                           la_text("method row"), 0, 0);
         }
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != '=') {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("=", 1), la_slice("", 0), 0, 0);
+                       la_text("="), la_text(""), 0, 0);
     }
     row = &ctx->method_rows[ctx->method_row_count];
     row->member_value = (la_i32)member;
@@ -1501,11 +1504,11 @@ static LaDiagnosticCode la_parse_method_row(LaContext *ctx,
                la_is_space(value_end[-1])) --value_end;
         if (value_end == value_start) {
             return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                           la_slice("row value", 9), la_slice("", 0), 0, 0);
+                           la_text("row value"), la_text(""), 0, 0);
         }
         if (ctx->method_value_count >= ctx->limits->max_method_values) {
             return la_fail(ctx, LA_ERR_STRUCT_CAPACITY, line, 1, 1,
-                           la_slice("method values", 13), la_slice("", 0),
+                           la_text("method values"), la_text(""),
                            ctx->method_value_count + 1,
                            ctx->limits->max_method_values);
         }
@@ -1520,8 +1523,7 @@ static LaDiagnosticCode la_parse_method_row(LaContext *ctx,
     }
     if (la_trim_left(cursor, end) != end) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("one value per slot", 18),
-                       la_slice("", 0), 0, 0);
+                       la_text("one value per slot"), la_text(""), 0, 0);
     }
     ++ctx->method_row_count;
     ++record->row_count;
@@ -1651,8 +1653,8 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
         values = la_default_strategy(ctx, LA_STRATEGY_VALUE_TABLE);
         if (dispatch < 0 || values < 0) {
             la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, record->line, 1, 1,
-                    la_slice("method table", 12),
-                    la_slice("no declared strategy", 20), 0, 0);
+                    la_text("method table"),
+                    la_text("no declared strategy"), 0, 0);
             return 0;
         }
         dispatch_strategy = (la_u8)dispatch;
@@ -1662,8 +1664,7 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
     high_value = ctx->enum_members[record->high].value;
     if (high_value < low_value) {
         la_fail(ctx, LA_ERR_ENUM_VALUE, record->line, 1, 1,
-                la_slice("domain order", 12), la_slice("", 0),
-                high_value, low_value);
+                la_text("domain order"), la_text(""), high_value, low_value);
         return 0;
     }
     /* Aliased members inside the domain would generate duplicate rows. */
@@ -1682,10 +1683,9 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
                  ++b) {
                 if (ctx->enum_members[a].value ==
                     ctx->enum_members[b].value) {
-                    la_fail(ctx, LA_ERR_DUPLICATE_ENUM_MEMBER,
-                            record->line, 1, 1,
-                            la_name_slice(ctx, ctx->enum_members[b].name),
-                            la_slice("aliased in domain", 17), 0, 0);
+                    la_fail(ctx, LA_ERR_DUPLICATE_ENUM_MEMBER, record->line, 1,
+                            1, la_name_slice(ctx, ctx->enum_members[b].name),
+                            la_text("aliased in domain"), 0, 0);
                     return 0;
                 }
             }
@@ -1741,8 +1741,7 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
                 if (cell == LA_INVALID_HANDLE) {
                     la_fail(ctx, LA_ERR_ENUM_VALUE, record->line, 1, 1,
                             la_name_slice(ctx, record->name),
-                            la_slice("uncovered domain value", 22),
-                            value, 0);
+                            la_text("uncovered domain value"), value, 0);
                     return 0;
                 }
                 text = la_name_slice(ctx, ctx->method_values[cell]);
@@ -1751,8 +1750,8 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
                        absent entry. */
                     if (lane->hole == 0) {
                         la_fail(ctx, LA_ERR_SYNTAX, record->line, 1, 1,
-                                la_slice("absent in value slot", 20),
-                                la_slice("", 0), 0, 0);
+                                la_text("absent in value slot"),
+                                la_text(""), 0, 0);
                         return 0;
                     }
                     la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION,
@@ -1771,18 +1770,15 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
                         la_source_id_at_line(ctx, record->line),
                         &is_private);
                     if (procedure == LA_INVALID_HANDLE) {
-                        la_fail(ctx, LA_ERR_UNKNOWN_PROCEDURE,
-                                record->line, 1, text.length, text,
-                                la_slice("", 0), 0, 0);
+                        la_fail(ctx, LA_ERR_UNKNOWN_PROCEDURE, record->line, 1,
+                                text.length, text, la_text(""), 0, 0);
                         return 0;
                     }
                     if (ctx->procedures[procedure].is_inline) {
                         la_fail(ctx, LA_ERR_INLINE_BODY, record->line, 1,
-                                text.length,
-                                la_name_slice(
-                                    ctx, ctx->procedures[procedure].name),
-                                la_slice("inline has no address", 21),
-                                0, 0);
+                                text.length, la_name_slice( ctx,
+                                ctx->procedures[procedure].name),
+                                la_text("inline has no address"), 0, 0);
                         return 0;
                     }
                     if (!la_count_operation(ctx, line)) return 0;
@@ -1805,10 +1801,9 @@ static int la_emit_method_table(LaContext *ctx, LaMethodTableRec *record,
                     cell_limit = (la_i32)
                         ((1UL << (lane->units * 8)) - 1UL);
                     if (cell_value < 0 || cell_value > cell_limit) {
-                        la_fail(ctx, LA_ERR_ACCESS_WIDTH, record->line,
-                                1, text.length, text,
-                                la_slice("table cell", 10), cell_value,
-                                cell_limit);
+                        la_fail(ctx, LA_ERR_ACCESS_WIDTH, record->line, 1,
+                                text.length, text, la_text("table cell"),
+                                cell_value, cell_limit);
                         return 0;
                     }
                     la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION,
@@ -1850,13 +1845,13 @@ static int la_emit_pool_tables(LaContext *ctx, const char *start,
     if (!la_read_identifier(&cursor, end, &name_start, &name_length) ||
         la_trim_left(cursor, end) != end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("pool tables NAME", 16), la_slice("", 0), 0, 0);
+                la_text("pool tables NAME"), la_text(""), 0, 0);
         return -1;
     }
     pool_index = la_find_pool_text(ctx, name_start, name_length);
     if (pool_index == LA_INVALID_HANDLE) {
         la_fail(ctx, LA_ERR_UNKNOWN_POOL, line, 1, name_length,
-                la_slice(name_start, name_length), la_slice("", 0), 0, 0);
+                la_slice(name_start, name_length), la_text(""), 0, 0);
         return -1;
     }
     pool = &ctx->pools[pool_index];
@@ -1869,7 +1864,7 @@ static int la_emit_pool_tables(LaContext *ctx, const char *start,
             ctx->target->strategies[selected].lane_count != 2) {
             la_fail(ctx, LA_ERR_POOL_STRATEGY, line, 1, name_length,
                     la_slice(name_start, name_length),
-                    la_slice("no declared strategy", 20), 0, 0);
+                    la_text("no declared strategy"), 0, 0);
             return -1;
         }
         strategy_index = (la_u8)selected;
@@ -1891,8 +1886,7 @@ static int la_emit_pool_tables(LaContext *ctx, const char *start,
             if (offset > 65535UL) {
                 la_fail(ctx, LA_ERR_POOL_STRATEGY, line, 1, name_length,
                         la_slice(name_start, name_length),
-                        la_slice("pool table row", 14),
-                        (la_i32)offset, 65535);
+                        la_text("pool table row"), (la_i32)offset, 65535);
                 return -1;
             }
             la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
@@ -1914,15 +1908,13 @@ static LaDiagnosticCode la_record_export(LaContext *ctx, la_u16 name,
     la_u16 index;
     if (ctx->export_count >= ctx->limits->max_exports) {
         return la_fail(ctx, LA_ERR_EXPORT_CAPACITY, line, 1, 1,
-                       la_name_slice(ctx, name),
-                       la_slice("exports", 7), ctx->export_count + 1,
-                       ctx->limits->max_exports);
+                       la_name_slice(ctx, name), la_text("exports"),
+                       ctx->export_count + 1, ctx->limits->max_exports);
     }
     for (index = 0; index < ctx->export_count; ++index) {
         if (ctx->exports[index].name == name) {
             return la_fail(ctx, LA_ERR_DUPLICATE_EXPORT, line, 1, 1,
-                           la_name_slice(ctx, name),
-                           la_slice("", 0), 0, 0);
+                           la_name_slice(ctx, name), la_text(""), 0, 0);
         }
     }
     ctx->exports[ctx->export_count].name = name;
@@ -1945,8 +1937,7 @@ static LaDiagnosticCode la_parse_export(LaContext *ctx,
     la_u16 index;
     if (ctx->current_namespace == LA_INVALID_HANDLE) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 6,
-                       la_slice("export inside namespace", 23),
-                       la_slice("", 0), 0, 0);
+                       la_text("export inside namespace"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(start, end) + 6;
     cursor = la_trim_left(cursor, end);
@@ -1955,12 +1946,12 @@ static LaDiagnosticCode la_parse_export(LaContext *ctx,
     }
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("export name", 11), la_slice("", 0), 0, 0);
+                       la_text("export name"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor != end) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1,
-                       (la_u16)(end - cursor), la_slice("export NAME", 11),
+                       (la_u16)(end - cursor), la_text("export NAME"),
                        la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
     }
     name = la_intern_qualified(ctx, name_start, name_length, line, 1);
@@ -1987,16 +1978,14 @@ static int la_parse_constant(LaContext *ctx, const char *start,
     ++cursor;
     value_start = la_trim_left(cursor, end);
     if (value_start == end) {
-        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("constant expression", 19),
-                la_slice("", 0), 0, 0);
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1, la_text("constant expression"),
+                la_text(""), 0, 0);
         return -1;
     }
     if (ctx->constant_count >= ctx->limits->max_constants) {
         la_fail(ctx, LA_ERR_CONSTANT_CAPACITY, line, 1, name_length,
-                la_slice(name_start, name_length),
-                la_slice("constants", 9), ctx->constant_count + 1,
-                ctx->limits->max_constants);
+                la_slice(name_start, name_length), la_text("constants"),
+                ctx->constant_count + 1, ctx->limits->max_constants);
         return -1;
     }
     name = la_intern_qualified(
@@ -2005,7 +1994,7 @@ static int la_parse_constant(LaContext *ctx, const char *start,
     for (index = 0; index < ctx->constant_count; ++index) {
         if (ctx->constants[index].name == name) {
             la_fail(ctx, LA_ERR_DUPLICATE_CONSTANT, line, 1, name_length,
-                    la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+                    la_name_slice(ctx, name), la_text(""), 0, 0);
             return -1;
         }
     }
@@ -2041,7 +2030,7 @@ static int la_parse_scoped_label(LaContext *ctx, const char *start,
     if (cursor != end) return 0;
     if (ctx->label_count >= ctx->limits->max_labels) {
         la_fail(ctx, LA_ERR_LABEL_CAPACITY, line, 1, name_length,
-                la_slice(name_start, name_length), la_slice("labels", 6),
+                la_slice(name_start, name_length), la_text("labels"),
                 ctx->label_count + 1, ctx->limits->max_labels);
         return -1;
     }
@@ -2050,7 +2039,7 @@ static int la_parse_scoped_label(LaContext *ctx, const char *start,
     for (index = 0; index < ctx->label_count; ++index) {
         if (ctx->labels[index].name == name) {
             la_fail(ctx, LA_ERR_DUPLICATE_LABEL, line, 1, name_length,
-                    la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+                    la_name_slice(ctx, name), la_text(""), 0, 0);
             return -1;
         }
     }
@@ -2250,9 +2239,8 @@ static la_u16 la_checked_type_name(LaContext *ctx, la_u16 type_name,
     if (owner_namespace != LA_INVALID_HANDLE &&
         owner_source != source_id &&
         !la_name_is_exported(ctx, type_name)) {
-        la_fail(ctx, LA_ERR_PRIVATE_NAME, line, 1, 1,
-                la_name_slice(ctx, type_name),
-                la_slice("export", 6), 0, 0);
+        la_fail(ctx, LA_ERR_PRIVATE_NAME, line, 1, 1, la_name_slice(ctx,
+                type_name), la_text("export"), 0, 0);
         return LA_INVALID_HANDLE;
     }
     return type_name;
@@ -2436,9 +2424,8 @@ static LaDiagnosticCode la_parse_aggregate(LaContext *ctx,
     cursor = la_trim_left(cursor, end);
     name_start = cursor;
     if (cursor >= end || !la_is_ident_start(*cursor)) {
-        return la_fail(ctx, LA_ERR_SYNTAX, line,
-                       (la_u16)(cursor - start + 1), 1,
-                       la_slice("aggregate name", 14), la_slice("", 0), 0, 0);
+        return la_fail(ctx, LA_ERR_SYNTAX, line, (la_u16)(cursor - start + 1),
+                       1, la_text("aggregate name"), la_text(""), 0, 0);
     }
     while (cursor < end && la_is_ident(*cursor)) {
         ++cursor;
@@ -2461,11 +2448,10 @@ static LaDiagnosticCode la_parse_aggregate(LaContext *ctx,
             number = cursor + 8;
             parsed = 0;
             if (number == end - 1) {
-                return la_fail(ctx, LA_ERR_LAYOUT_POLICY, line,
-                               (la_u16)(cursor - start + 1),
-                               (la_u16)(end - cursor),
+                return la_fail(ctx, LA_ERR_LAYOUT_POLICY, line, (la_u16)(cursor
+                               - start + 1), (la_u16)(end - cursor),
                                la_slice(cursor, (la_u16)(end - cursor)),
-                               la_slice("aligned(power-of-two)", 21), 0, 0);
+                               la_text("aligned(power-of-two)"), 0, 0);
             }
             while (number < end - 1 && *number >= '0' && *number <= '9') {
                 parsed = parsed * 10 + (la_u32)(*number++ - '0');
@@ -2474,21 +2460,19 @@ static LaDiagnosticCode la_parse_aggregate(LaContext *ctx,
                 (parsed & (parsed - 1)) != 0 ||
                 parsed > ctx->target->max_aggregate_alignment) {
                 return la_fail(ctx, LA_ERR_LAYOUT_ALIGNMENT, line,
-                               (la_u16)(cursor - start + 1),
-                               (la_u16)(end - cursor),
-                               la_slice(cursor, (la_u16)(end - cursor)),
-                               la_slice("target maximum", 14),
+                               (la_u16)(cursor - start + 1), (la_u16)(end -
+                               cursor), la_slice(cursor, (la_u16)(end -
+                               cursor)), la_text("target maximum"),
                                (la_i32)parsed,
                                ctx->target->max_aggregate_alignment);
             }
             policy = LA_LAYOUT_ALIGNED;
             alignment = (la_u16)parsed;
         } else {
-            return la_fail(ctx, LA_ERR_LAYOUT_POLICY, line,
-                           (la_u16)(cursor - start + 1),
-                           (la_u16)(end - cursor),
-                           la_slice(cursor, (la_u16)(end - cursor)),
-                           la_slice("packed or aligned(N)", 20), 0, 0);
+            return la_fail(ctx, LA_ERR_LAYOUT_POLICY, line, (la_u16)(cursor -
+                           start + 1), (la_u16)(end - cursor), la_slice(cursor,
+                           (la_u16)(end - cursor)),
+                           la_text("packed or aligned(N)"), 0, 0);
         }
     }
     name = la_intern_qualified(ctx, name_start, name_length, line,
@@ -2501,23 +2485,21 @@ static LaDiagnosticCode la_parse_aggregate(LaContext *ctx,
         return la_fail(ctx, kind == LA_AGGREGATE_STRUCT ?
                        LA_ERR_DUPLICATE_STRUCT : LA_ERR_DUPLICATE_UNION, line,
                        (la_u16)(name_start - start + 1), name_length,
-                       la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+                       la_name_slice(ctx, name), la_text(""), 0, 0);
     }
     if ((kind == LA_AGGREGATE_STRUCT &&
          ctx->plain_struct_count >= ctx->limits->max_structs) ||
         (kind == LA_AGGREGATE_UNION &&
          ctx->union_count >= ctx->limits->max_unions)) {
         if (kind == LA_AGGREGATE_STRUCT) {
-            return la_fail(ctx, LA_ERR_STRUCT_CAPACITY,
-                           line, 1, name_length, la_name_slice(ctx, name),
-                           la_slice("structures", 10),
+            return la_fail(ctx, LA_ERR_STRUCT_CAPACITY, line, 1, name_length,
+                           la_name_slice(ctx, name), la_text("structures"),
                            ctx->plain_struct_count + 1,
                            ctx->limits->max_structs);
         }
-        return la_fail(ctx, LA_ERR_UNION_CAPACITY,
-                       line, 1, name_length, la_name_slice(ctx, name),
-                       la_slice("unions", 6), ctx->union_count + 1,
-                       ctx->limits->max_unions);
+        return la_fail(ctx, LA_ERR_UNION_CAPACITY, line, 1, name_length,
+                       la_name_slice(ctx, name), la_text("unions"),
+                       ctx->union_count + 1, ctx->limits->max_unions);
     }
     ctx->current_struct = ctx->struct_count;
     ctx->structs[ctx->struct_count].name = name;
@@ -2564,7 +2546,7 @@ static LaDiagnosticCode la_parse_field(LaContext *ctx,
     name_start = cursor;
     if (cursor >= end || !la_is_ident_start(*cursor)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("field name", 10), la_slice("", 0), 0, 0);
+                       la_text("field name"), la_text(""), 0, 0);
     }
     while (cursor < end && la_is_ident(*cursor)) {
         ++cursor;
@@ -2572,9 +2554,8 @@ static LaDiagnosticCode la_parse_field(LaContext *ctx,
     name_length = (la_u16)(cursor - name_start);
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor != ':') {
-        return la_fail(ctx, LA_ERR_SYNTAX, line,
-                       (la_u16)(cursor - start + 1), 1,
-                       la_slice(":", 1), la_slice("", 0), 0, 0);
+        return la_fail(ctx, LA_ERR_SYNTAX, line, (la_u16)(cursor - start + 1),
+                       1, la_text(":"), la_text(""), 0, 0);
     }
     ++cursor;
     cursor = la_trim_left(cursor, end);
@@ -2588,9 +2569,8 @@ static LaDiagnosticCode la_parse_field(LaContext *ctx,
     }
     if (!la_read_qualified_identifier(
             &cursor, end, &type_start, &type_length)) {
-        return la_fail(ctx, LA_ERR_SYNTAX, line,
-                       (la_u16)(cursor - start + 1), 1,
-                       la_slice("field type", 10), la_slice("", 0), 0, 0);
+        return la_fail(ctx, LA_ERR_SYNTAX, line, (la_u16)(cursor - start + 1),
+                       1, la_text("field type"), la_text(""), 0, 0);
     }
     count = 1;
     has_explicit_offset = 0;
@@ -2601,20 +2581,18 @@ static LaDiagnosticCode la_parse_field(LaContext *ctx,
         ++cursor;
         parsed = 0;
         if (cursor >= end || *cursor < '0' || *cursor > '9') {
-            return la_fail(ctx, LA_ERR_SYNTAX, line,
-                           (la_u16)(cursor - start + 1), 1,
-                           la_slice("positive array count", 20),
-                           la_slice("", 0), 0, 0);
+            return la_fail(ctx, LA_ERR_SYNTAX, line, (la_u16)(cursor - start +
+                           1), 1, la_text("positive array count"), la_text(""),
+                           0, 0);
         }
         while (cursor < end && *cursor >= '0' && *cursor <= '9') {
             parsed = parsed * 10 + (la_u32)(*cursor - '0');
             ++cursor;
         }
         if (cursor >= end || *cursor != ']' || parsed == 0 || parsed > 65535) {
-            return la_fail(ctx, LA_ERR_SYNTAX, line,
-                           (la_u16)(cursor - start + 1), 1,
-                           la_slice("valid array count", 17),
-                           la_slice("", 0), (la_i32)parsed, 65535);
+            return la_fail(ctx, LA_ERR_SYNTAX, line, (la_u16)(cursor - start +
+                           1), 1, la_text("valid array count"), la_text(""),
+                           (la_i32)parsed, 65535);
         }
         count = (la_u16)parsed;
         ++cursor;
@@ -2622,28 +2600,23 @@ static LaDiagnosticCode la_parse_field(LaContext *ctx,
     }
     if (la_take_word(&cursor, end, "at")) {
         if (ctx->structs[ctx->current_struct].kind == LA_AGGREGATE_UNION) {
-            return la_fail(ctx, LA_ERR_UNION_OFFSET, line,
-                           (la_u16)(cursor - start + 1), 2,
-                           la_slice(name_start, name_length),
-                           la_name_slice(
-                               ctx, ctx->structs[ctx->current_struct].name),
-                           0, 0);
+            return la_fail(ctx, LA_ERR_UNION_OFFSET, line, (la_u16)(cursor -
+                           start + 1), 2, la_slice(name_start, name_length),
+                           la_name_slice( ctx,
+                           ctx->structs[ctx->current_struct].name), 0, 0);
         }
         offset_start = la_trim_left(cursor, end);
         if (offset_start == end) {
-            return la_fail(ctx, LA_ERR_FIELD_OFFSET, line,
-                           (la_u16)(cursor - start + 1), 1,
-                           la_slice("constant expression", 19),
-                           la_slice("", 0), 0, 0);
+            return la_fail(ctx, LA_ERR_FIELD_OFFSET, line, (la_u16)(cursor -
+                           start + 1), 1, la_text("constant expression"),
+                           la_text(""), 0, 0);
         }
         has_explicit_offset = 1;
         cursor = end;
     }
     if (cursor != end) {
-        return la_fail(ctx, LA_ERR_SYNTAX, line,
-                       (la_u16)(cursor - start + 1),
-                       (la_u16)(end - cursor),
-                       la_slice("end of field", 12),
+        return la_fail(ctx, LA_ERR_SYNTAX, line, (la_u16)(cursor - start + 1),
+                       (la_u16)(end - cursor), la_text("end of field"),
                        la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
     }
     if (la_token(ctx, line, (la_u16)(name_start - start + 1)) != LA_OK ||
@@ -2662,14 +2635,13 @@ static LaDiagnosticCode la_parse_field(LaContext *ctx,
         if (ctx->fields[field_index].name == name) {
             return la_fail(ctx, LA_ERR_DUPLICATE_FIELD, line,
                            (la_u16)(name_start - start + 1), name_length,
-                           la_name_slice(ctx, name),
-                           la_name_slice(ctx,
-                               ctx->structs[ctx->current_struct].name), 0, 0);
+                           la_name_slice(ctx, name), la_name_slice(ctx,
+                           ctx->structs[ctx->current_struct].name), 0, 0);
         }
     }
     if (ctx->field_count >= ctx->limits->max_fields) {
         return la_fail(ctx, LA_ERR_FIELD_CAPACITY, line, 1, name_length,
-                       la_name_slice(ctx, name), la_slice("fields", 6),
+                       la_name_slice(ctx, name), la_text("fields"),
                        ctx->field_count + 1, ctx->limits->max_fields);
     }
     ctx->fields[ctx->field_count].name = name;
@@ -2705,7 +2677,7 @@ static LaDiagnosticCode la_parse_enum(LaContext *ctx,
     cursor = la_trim_left(start, end) + 4;
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("enum name", 9), la_slice("", 0), 0, 0);
+                       la_text("enum name"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != ':' ||
@@ -2713,8 +2685,7 @@ static LaDiagnosticCode la_parse_enum(LaContext *ctx,
             &cursor, end, &type_start, &type_length) ||
         la_trim_left(cursor, end) != end) {
         return la_fail(ctx, LA_ERR_ENUM_UNDERLYING, line, 1, 1,
-                       la_slice("u8, i8, u16, or i16", 20),
-                       la_slice("", 0), 0, 0);
+                       la_text("u8, i8, u16, or i16"), la_text(""), 0, 0);
     }
     if (!(la_equal_text(type_start, type_length, "u8") ||
           la_equal_text(type_start, type_length, "i8") ||
@@ -2722,18 +2693,18 @@ static LaDiagnosticCode la_parse_enum(LaContext *ctx,
           la_equal_text(type_start, type_length, "i16"))) {
         return la_fail(ctx, LA_ERR_ENUM_UNDERLYING, line, 1, type_length,
                        la_slice(type_start, type_length),
-                       la_slice("u8, i8, u16, or i16", 20), 0, 0);
+                       la_text("u8, i8, u16, or i16"), 0, 0);
     }
     name = la_intern_qualified(ctx, name_start, name_length, line, 1);
     if (name == LA_INVALID_HANDLE) return ctx->error;
     if (la_find_enum_handle(ctx, name) != LA_INVALID_HANDLE ||
         la_find_struct_handle(ctx, name) != LA_INVALID_HANDLE) {
         return la_fail(ctx, LA_ERR_DUPLICATE_ENUM, line, 1, name_length,
-                       la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+                       la_name_slice(ctx, name), la_text(""), 0, 0);
     }
     if (ctx->enum_count >= ctx->limits->max_enums) {
         return la_fail(ctx, LA_ERR_ENUM_CAPACITY, line, 1, name_length,
-                       la_slice("enums", 5), la_slice("", 0),
+                       la_text("enums"), la_text(""),
                        ctx->enum_count + 1, ctx->limits->max_enums);
     }
     record = &ctx->enums[ctx->enum_count];
@@ -2765,19 +2736,17 @@ static LaDiagnosticCode la_parse_enum_member(LaContext *ctx,
     cursor = la_trim_left(start, end);
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("enum member", 11), la_slice("", 0), 0, 0);
+                       la_text("enum member"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != '=') {
         return la_fail(ctx, LA_ERR_ENUM_VALUE, line, 1, 1,
-                       la_slice("explicit enum value", 19),
-                       la_slice("", 0), 0, 0);
+                       la_text("explicit enum value"), la_text(""), 0, 0);
     }
     value_start = la_trim_left(cursor, end);
     if (value_start == end) {
         return la_fail(ctx, LA_ERR_ENUM_VALUE, line, 1, 1,
-                       la_slice("enum value expression", 21),
-                       la_slice("", 0), 0, 0);
+                       la_text("enum value expression"), la_text(""), 0, 0);
     }
     owner = &ctx->enums[ctx->current_enum];
     name = la_intern(ctx, name_start, name_length, line, 1);
@@ -2792,7 +2761,7 @@ static LaDiagnosticCode la_parse_enum_member(LaContext *ctx,
     }
     if (ctx->enum_member_count >= ctx->limits->max_enum_members) {
         return la_fail(ctx, LA_ERR_ENUM_MEMBER_CAPACITY, line, 1, name_length,
-                       la_slice("enum members", 12), la_slice("", 0),
+                       la_text("enum members"), la_text(""),
                        ctx->enum_member_count + 1,
                        ctx->limits->max_enum_members);
     }
@@ -2830,15 +2799,15 @@ static LaDiagnosticCode la_parse_overlay(LaContext *ctx,
     cursor = la_trim_left(start, end) + 7;
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("overlay name", 12), la_slice("", 0), 0, 0);
+                       la_text("overlay name"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != ':' ||
         !la_read_identifier(&cursor, end, &type_start, &type_length) ||
         !la_take_word(&cursor, end, "at")) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("overlay NAME : TYPE at BASE", 27),
-                       la_slice("", 0), 0, 0);
+                       la_text("overlay NAME : TYPE at BASE"),
+                       la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     base_start = cursor;
@@ -2873,16 +2842,14 @@ static LaDiagnosticCode la_parse_overlay(LaContext *ctx,
         }
         base_end = cursor;
         if (digits == 0 || numeric > 65535) {
-            return la_fail(ctx, LA_ERR_OVERLAY_BASE, line, 1,
-                           (la_u16)(cursor - base_start),
-                           la_slice(base_start,
-                                    (la_u16)(cursor - base_start)),
-                           la_slice("16-bit fixed address", 20),
+            return la_fail(ctx, LA_ERR_OVERLAY_BASE, line, 1, (la_u16)(cursor -
+                           base_start), la_slice(base_start, (la_u16)(cursor -
+                           base_start)), la_text("16-bit fixed address"),
                            (la_i32)numeric, 65535);
         }
     } else if (!la_read_identifier(&cursor, end, &base_start, &base_length)) {
         return la_fail(ctx, LA_ERR_OVERLAY_BASE, line, 1, 1,
-                       la_slice("target symbol", 13), la_slice("", 0), 0, 0);
+                       la_text("target symbol"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     volatile_access = 0;
@@ -2891,10 +2858,9 @@ static LaDiagnosticCode la_parse_overlay(LaContext *ctx,
         cursor = la_trim_left(cursor, end);
     }
     if (cursor != end) {
-        return la_fail(ctx, LA_ERR_OVERLAY_BASE, line, 1,
-                       (la_u16)(end - cursor),
-                       la_slice(cursor, (la_u16)(end - cursor)),
-                       la_slice("single base", 11), 0, 0);
+        return la_fail(ctx, LA_ERR_OVERLAY_BASE, line, 1, (la_u16)(end -
+                       cursor), la_slice(cursor, (la_u16)(end - cursor)),
+                       la_text("single base"), 0, 0);
     }
     if (is_numeric) base_length = (la_u16)(base_end - base_start);
     name = la_intern_qualified(ctx, name_start, name_length, line, 1);
@@ -2903,11 +2869,11 @@ static LaDiagnosticCode la_parse_overlay(LaContext *ctx,
             ctx, ctx->names + name,
             (la_u16)strlen(ctx->names + name)) != LA_INVALID_HANDLE) {
         return la_fail(ctx, LA_ERR_DUPLICATE_OVERLAY, line, 1, name_length,
-                       la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+                       la_name_slice(ctx, name), la_text(""), 0, 0);
     }
     if (ctx->overlay_count >= ctx->limits->max_overlays) {
         return la_fail(ctx, LA_ERR_OVERLAY_CAPACITY, line, 1, name_length,
-                       la_slice("overlays", 8), la_slice("", 0),
+                       la_text("overlays"), la_text(""),
                        ctx->overlay_count + 1, ctx->limits->max_overlays);
     }
     overlay = &ctx->overlays[ctx->overlay_count++];
@@ -2952,7 +2918,7 @@ static LaDiagnosticCode la_parse_location(LaContext *ctx,
     name_start = cursor;
     if (cursor >= end || !la_is_ident_start(*cursor)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("location name", 13), la_slice("", 0), 0, 0);
+                       la_text("location name"), la_text(""), 0, 0);
     }
     while (cursor < end && la_is_ident(*cursor)) {
         ++cursor;
@@ -2960,19 +2926,17 @@ static LaDiagnosticCode la_parse_location(LaContext *ctx,
     name_length = (la_u16)(cursor - name_start);
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor != ':') {
-        return la_fail(ctx, LA_ERR_SYNTAX, line,
-                       (la_u16)(cursor - start + 1), 1,
-                       la_slice(":", 1), la_slice("", 0), 0, 0);
+        return la_fail(ctx, LA_ERR_SYNTAX, line, (la_u16)(cursor - start + 1),
+                       1, la_text(":"), la_text(""), 0, 0);
     }
     ++cursor;
     cursor = la_trim_left(cursor, end);
     is_pointer = la_take_word(&cursor, end, "ptr");
     if (!la_read_qualified_identifier(&cursor, end, &type_start,
                                       &type_length)) {
-        return la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
-                       (la_u16)(cursor - start + 1), 1,
-                       la_slice("scalar, ptr T, or codeptr", 25),
-                       la_slice("", 0), 0, 0);
+        return la_fail(ctx, LA_ERR_LOCATION_TYPE, line, (la_u16)(cursor - start
+                       + 1), 1, la_text("scalar, ptr T, or codeptr"),
+                       la_text(""), 0, 0);
     }
     storage_width = 0;
     if (is_pointer) {
@@ -2989,7 +2953,7 @@ static LaDiagnosticCode la_parse_location(LaContext *ctx,
     if (storage_width == 0) {
         return la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
                        (la_u16)(type_start - start + 1), type_length,
-                       la_slice("scalar, ptr T, or codeptr", 25),
+                       la_text("scalar, ptr T, or codeptr"),
                        la_slice(type_start, type_length), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
@@ -3028,9 +2992,8 @@ static LaDiagnosticCode la_parse_location(LaContext *ctx,
         }
         physical_length = (la_u16)(cursor - physical_start);
         if (digits == 0 || numeric > 65535) {
-            return la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                           physical_length,
-                           la_slice("16-bit fixed address", 20),
+            return la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, physical_length,
+                           la_text("16-bit fixed address"),
                            la_slice(physical_start, physical_length),
                            (la_i32)numeric, 65535);
         }
@@ -3038,10 +3001,8 @@ static LaDiagnosticCode la_parse_location(LaContext *ctx,
     }
     cursor = la_trim_left(cursor, end);
     if (cursor != end) {
-        return la_fail(ctx, LA_ERR_SYNTAX, line,
-                       (la_u16)(cursor - start + 1),
-                       (la_u16)(end - cursor),
-                       la_slice("end of location", 15),
+        return la_fail(ctx, LA_ERR_SYNTAX, line, (la_u16)(cursor - start + 1),
+                       (la_u16)(end - cursor), la_text("end of location"),
                        la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
     }
     name = la_intern_qualified(ctx, name_start, name_length, line, 1);
@@ -3053,13 +3014,12 @@ static LaDiagnosticCode la_parse_location(LaContext *ctx,
             ctx, ctx->names + name,
             (la_u16)strlen(ctx->names + name)) != LA_INVALID_HANDLE) {
         return la_fail(ctx, LA_ERR_DUPLICATE_LOCATION, line, 1, name_length,
-                       la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+                       la_name_slice(ctx, name), la_text(""), 0, 0);
     }
     if (ctx->location_count >= ctx->limits->max_locations) {
         return la_fail(ctx, LA_ERR_LOCATION_CAPACITY, line, 1, name_length,
-                       la_name_slice(ctx, name), la_slice("locations", 9),
-                       ctx->location_count + 1,
-                       ctx->limits->max_locations);
+                       la_name_slice(ctx, name), la_text("locations"),
+                       ctx->location_count + 1, ctx->limits->max_locations);
     }
     ctx->locations[ctx->location_count].name = name;
     ctx->locations[ctx->location_count].namespace_handle =
@@ -3246,23 +3206,22 @@ static LaDiagnosticCode la_parse_pool(LaContext *ctx,
     cursor = la_trim_left(start, end) + 4;
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("pool name", 9), la_slice("", 0), 0, 0);
+                       la_text("pool name"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != ':') {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice(":", 1), la_slice("", 0), 0, 0);
+                       la_text(":"), la_text(""), 0, 0);
     }
     if (!la_read_qualified_identifier(
             &cursor, end, &type_start, &type_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("pool element type", 17),
-                       la_slice("", 0), 0, 0);
+                       la_text("pool element type"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != '[') {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("[count]", 7), la_slice("", 0), 0, 0);
+                       la_text("[count]"), la_text(""), 0, 0);
     }
     count = 0;
     while (cursor < end && *cursor >= '0' && *cursor <= '9') {
@@ -3270,24 +3229,22 @@ static LaDiagnosticCode la_parse_pool(LaContext *ctx,
     }
     if (count == 0 || count > 65535 || cursor >= end || *cursor++ != ']') {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("positive pool count", 19),
-                       la_slice("", 0), (la_i32)count, 65535);
+                       la_text("positive pool count"),
+                       la_text(""), (la_i32)count, 65535);
     }
     if (!la_take_word(&cursor, end, "at") ||
         !la_read_identifier(&cursor, end, &base_start, &base_length) ||
         !la_take_word(&cursor, end, "table") ||
         !la_read_identifier(&cursor, end, &low_start, &low_length)) {
         return la_fail(ctx, LA_ERR_POOL_STRATEGY, line, 1, 1,
-                       la_slice("at BASE table LOW, HIGH", 23),
-                       la_slice("", 0), 0, 0);
+                       la_text("at BASE table LOW, HIGH"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != ',' ||
         !la_read_identifier(&cursor, end, &high_start, &high_length) ||
         la_trim_left(cursor, end) != end) {
         return la_fail(ctx, LA_ERR_POOL_STRATEGY, line, 1, 1,
-                       la_slice("at BASE table LOW, HIGH", 23),
-                       la_slice("", 0), 0, 0);
+                       la_text("at BASE table LOW, HIGH"), la_text(""), 0, 0);
     }
     {
         la_u16 qualified_name;
@@ -3300,12 +3257,12 @@ static LaDiagnosticCode la_parse_pool(LaContext *ctx,
             LA_INVALID_HANDLE) {
             return la_fail(ctx, LA_ERR_DUPLICATE_POOL, line, 1, name_length,
                            la_name_slice(ctx, qualified_name),
-                           la_slice("", 0), 0, 0);
+                           la_text(""), 0, 0);
         }
     }
     if (ctx->pool_count >= ctx->limits->max_pools) {
         return la_fail(ctx, LA_ERR_POOL_CAPACITY, line, 1, name_length,
-                       la_slice("pools", 5), la_slice("", 0),
+                       la_text("pools"), la_text(""),
                        ctx->pool_count + 1, ctx->limits->max_pools);
     }
     pool = &ctx->pools[ctx->pool_count++];
@@ -3344,7 +3301,7 @@ static LaDiagnosticCode la_parse_procedure(LaContext *ctx,
     cursor = la_trim_left(start, end) + 4;
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("procedure name", 14), la_slice("", 0), 0, 0);
+                       la_text("procedure name"), la_text(""), 0, 0);
     }
     while (cursor < end && *cursor == '.') {
         const char *component_start;
@@ -3353,8 +3310,8 @@ static LaDiagnosticCode la_parse_procedure(LaContext *ctx,
         if (!la_read_identifier(&cursor, end, &component_start,
                                 &component_length)) {
             return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                           la_slice("qualified procedure name", 24),
-                           la_slice("", 0), 0, 0);
+                           la_text("qualified procedure name"),
+                           la_text(""), 0, 0);
         }
         name_length = (la_u16)(cursor - name_start);
     }
@@ -3365,14 +3322,13 @@ static LaDiagnosticCode la_parse_procedure(LaContext *ctx,
         existing = la_name_slice(ctx, ctx->procedures[index].name);
         if (ctx->procedures[index].name == name) {
             return la_fail(ctx, LA_ERR_DUPLICATE_PROCEDURE, line, 1,
-                           name_length, existing, la_slice("", 0), 0, 0);
+                           name_length, existing, la_text(""), 0, 0);
         }
     }
     if (ctx->procedure_count >= ctx->limits->max_procedures) {
         return la_fail(ctx, LA_ERR_PROCEDURE_CAPACITY, line, 1, name_length,
-                       la_slice("procedures", 10), la_slice("", 0),
-                       ctx->procedure_count + 1,
-                       ctx->limits->max_procedures);
+                       la_text("procedures"), la_text(""), ctx->procedure_count
+                       + 1, ctx->limits->max_procedures);
     }
     procedure = &ctx->procedures[ctx->procedure_count];
     memset(procedure, 0, sizeof(*procedure));
@@ -3397,7 +3353,7 @@ static LaDiagnosticCode la_parse_procedure(LaContext *ctx,
         if (!la_read_identifier(&cursor, end, &convention_start,
                                 &convention_length)) {
             return la_fail(ctx, LA_ERR_CONVENTION, line, 1, 1,
-                           la_slice("convention", 10), la_slice("", 0), 0, 0);
+                           la_text("convention"), la_text(""), 0, 0);
         }
         convention_index = LA_INVALID_HANDLE;
         for (index = 0; index < ctx->target->convention_count; ++index) {
@@ -3410,12 +3366,10 @@ static LaDiagnosticCode la_parse_procedure(LaContext *ctx,
             }
         }
         if (convention_index == LA_INVALID_HANDLE) {
-            return la_fail(ctx, LA_ERR_CONVENTION, line, 1,
-                           convention_length,
+            return la_fail(ctx, LA_ERR_CONVENTION, line, 1, convention_length,
                            la_slice(convention_start, convention_length),
                            la_slice(ctx->target->name,
-                                    (la_u16)strlen(ctx->target->name)),
-                           0, 0);
+                           (la_u16)strlen(ctx->target->name)), 0, 0);
         }
         procedure->convention = convention_index;
     }
@@ -3434,18 +3388,16 @@ static LaDiagnosticCode la_parse_procedure(LaContext *ctx,
     }
     cursor = la_trim_left(cursor, end);
     if (procedure->is_inline && cursor != end) {
-        return la_fail(ctx, LA_ERR_INLINE_BODY, line, 1,
-                       (la_u16)(end - cursor),
-                       la_slice("inline takes no frame mode", 26),
+        return la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, (la_u16)(end -
+                       cursor), la_text("inline takes no frame mode"),
                        la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
     }
     if (cursor != end) {
         if (la_equal_text(cursor, (la_u16)(end - cursor), "naked")) {
             procedure->naked = 1;
         } else if (!la_equal_text(cursor, (la_u16)(end - cursor), "frame")) {
-            return la_fail(ctx, LA_ERR_SYNTAX, line, 1,
-                           (la_u16)(end - cursor),
-                           la_slice("[using CONVENTION] [frame|naked]", 34),
+            return la_fail(ctx, LA_ERR_SYNTAX, line, 1, (la_u16)(end - cursor),
+                           la_text("[using CONVENTION] [frame|naked]"),
                            la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
         }
     }
@@ -3479,24 +3431,24 @@ static LaDiagnosticCode la_parse_member(LaContext *ctx,
     cursor = la_trim_left(start, end);
     if (la_line_keyword(cursor, end, "local")) {
         return la_fail(ctx, LA_ERR_LOCAL_SYNTAX_MIGRATION, line, 1, 5,
-                       la_slice("local", 5),
-                       la_slice("NAME : TYPE in frame", 20), 0, 0);
+                       la_text("local"),
+                       la_text("NAME : TYPE in frame"), 0, 0);
     }
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("parameter", 9), la_slice("", 0), 0, 0);
+                       la_text("parameter"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     if (cursor >= end || *cursor++ != ':') {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice(":", 1), la_slice("", 0), 0, 0);
+                       la_text(":"), la_text(""), 0, 0);
     }
     cursor = la_trim_left(cursor, end);
     is_pointer = la_take_word(&cursor, end, "ptr");
     if (!la_read_qualified_identifier(
             &cursor, end, &type_start, &type_length)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("member type", 11), la_slice("", 0), 0, 0);
+                       la_text("member type"), la_text(""), 0, 0);
     }
     role = LA_MEMBER_INPUT;
     is_local = 0;
@@ -3513,15 +3465,15 @@ static LaDiagnosticCode la_parse_member(LaContext *ctx,
                                               &physical_length) ||
                 la_trim_left(cursor, end) != end) {
                 return la_fail(ctx, LA_ERR_MEMBER_ROLE, line, 1, 1,
-                               la_slice("return [in PHYSICAL]", 20),
-                               la_slice("", 0), 0, 0);
+                               la_text("return [in PHYSICAL]"),
+                               la_text(""), 0, 0);
             }
             explicit_placement = 1;
             if (la_equal_text(physical_start, physical_length, "frame")) {
                 return la_fail(ctx, LA_ERR_MEMBER_ROLE, line, 1,
                                physical_length,
-                               la_slice("return cannot use frame", 23),
-                               la_slice("NAME : TYPE in frame", 20), 0, 0);
+                               la_text("return cannot use frame"),
+                               la_text("NAME : TYPE in frame"), 0, 0);
             }
         }
     } else if (la_take_word(&cursor, end, "in")) {
@@ -3529,7 +3481,7 @@ static LaDiagnosticCode la_parse_member(LaContext *ctx,
                                           &physical_length) ||
             la_trim_left(cursor, end) != end) {
             return la_fail(ctx, LA_ERR_MEMBER_PLACEMENT, line, 1, 1,
-                           la_slice("in PHYSICAL", 11), la_slice("", 0), 0, 0);
+                           la_text("in PHYSICAL"), la_text(""), 0, 0);
         }
         if (la_equal_text(physical_start, physical_length, "frame")) {
             is_local = 1;
@@ -3537,9 +3489,8 @@ static LaDiagnosticCode la_parse_member(LaContext *ctx,
             explicit_placement = 1;
         }
     } else if (cursor != end) {
-        return la_fail(ctx, LA_ERR_MEMBER_ROLE, line, 1,
-                       (la_u16)(end - cursor),
-                       la_slice("in PLACE or return [in PLACE]", 29),
+        return la_fail(ctx, LA_ERR_MEMBER_ROLE, line, 1, (la_u16)(end -
+                       cursor), la_text("in PLACE or return [in PLACE]"),
                        la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
     }
     if (is_local) {
@@ -3547,18 +3498,18 @@ static LaDiagnosticCode la_parse_member(LaContext *ctx,
         if (procedure->is_inline) {
             return la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, name_length,
                            la_slice(name_start, name_length),
-                           la_slice("inline has no frame", 19), 0, 0);
+                           la_text("inline has no frame"), 0, 0);
         }
         if (procedure->naked) {
             return la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, name_length,
                            la_slice(name_start, name_length),
-                           la_slice("naked", 5), 0, 0);
+                           la_text("naked"), 0, 0);
         }
         if (la_find_local_text(ctx, ctx->current_procedure,
                                name_start, name_length) != LA_INVALID_HANDLE) {
             return la_fail(ctx, LA_ERR_DUPLICATE_LOCAL, line, 1, name_length,
                            la_slice(name_start, name_length),
-                           la_slice("", 0), 0, 0);
+                           la_text(""), 0, 0);
         }
         for (index = 0; index < ctx->location_count; ++index) {
             LaSlice other;
@@ -3568,12 +3519,12 @@ static LaDiagnosticCode la_parse_member(LaContext *ctx,
             if (other.length == name_length &&
                 memcmp(other.data, name_start, name_length) == 0) {
                 return la_fail(ctx, LA_ERR_DUPLICATE_LOCAL, line, 1,
-                               name_length, other, la_slice("", 0), 0, 0);
+                               name_length, other, la_text(""), 0, 0);
             }
         }
         if (ctx->local_count >= ctx->limits->max_locals) {
             return la_fail(ctx, LA_ERR_LOCAL_CAPACITY, line, 1, name_length,
-                           la_slice("locals", 6), la_slice("", 0),
+                           la_text("locals"), la_text(""),
                            ctx->local_count + 1, ctx->limits->max_locals);
         }
         local = &ctx->locals[ctx->local_count++];
@@ -3593,7 +3544,7 @@ static LaDiagnosticCode la_parse_member(LaContext *ctx,
                            name_start, name_length) != LA_INVALID_HANDLE) {
         return la_fail(ctx, LA_ERR_DUPLICATE_PARAMETER, line, 1,
                        name_length, la_slice(name_start, name_length),
-                       la_slice("procedure member", 16), 0, 0);
+                       la_text("procedure member"), 0, 0);
     }
     for (index = 0; index < ctx->location_count; ++index) {
         LaSlice name;
@@ -3602,20 +3553,18 @@ static LaDiagnosticCode la_parse_member(LaContext *ctx,
         if (name.length == name_length &&
             memcmp(name.data, name_start, name_length) == 0) {
             return la_fail(ctx, LA_ERR_DUPLICATE_PARAMETER, line, 1,
-                           name_length, name, la_slice("", 0), 0, 0);
+                           name_length, name, la_text(""), 0, 0);
         }
     }
     if (ctx->parameter_count >= ctx->limits->max_parameters) {
         return la_fail(ctx, LA_ERR_PARAMETER_CAPACITY, line, 1, name_length,
-                       la_slice("parameters", 10), la_slice("", 0),
-                       ctx->parameter_count + 1,
-                       ctx->limits->max_parameters);
+                       la_text("parameters"), la_text(""), ctx->parameter_count
+                       + 1, ctx->limits->max_parameters);
     }
     if (ctx->location_count >= ctx->limits->max_locations) {
         return la_fail(ctx, LA_ERR_LOCATION_CAPACITY, line, 1, name_length,
-                       la_slice("locations", 9), la_slice("", 0),
-                       ctx->location_count + 1,
-                       ctx->limits->max_locations);
+                       la_text("locations"), la_text(""), ctx->location_count +
+                       1, ctx->limits->max_locations);
     }
     parameter = &ctx->locations[ctx->location_count++];
     memset(parameter, 0, sizeof(*parameter));
@@ -3703,23 +3652,20 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
                     return la_fail(ctx, LA_ERR_SYNTAX, line, 1,
                                    (la_u16)(content_end - trimmed),
                                    la_slice("NAME : u8|code, "
-                                            "MEMBER = ... or end", 34),
-                                   la_slice(trimmed,
-                                            (la_u16)(content_end -
-                                                     trimmed)), 0, 0);
+                                   "MEMBER = ... or end", 34),
+                                   la_slice(trimmed, (la_u16)(content_end -
+                                   trimmed)), 0, 0);
                 }
             } else if (in_struct) {
                 if (la_line_keyword(trimmed, content_end, "end")) {
                     if (ctx->structs[ctx->current_struct].kind ==
                             LA_AGGREGATE_UNION &&
                         ctx->structs[ctx->current_struct].field_count == 0) {
-                        return la_fail(
-                            ctx, LA_ERR_AGGREGATE_EMPTY,
-                            ctx->structs[ctx->current_struct].line, 1, 1,
-                            la_name_slice(
-                                ctx,
-                                ctx->structs[ctx->current_struct].name),
-                            la_slice("union", 5), 0, 1);
+                        return la_fail( ctx, LA_ERR_AGGREGATE_EMPTY,
+                                       ctx->structs[ctx->current_struct].line,
+                                       1, 1, la_name_slice( ctx,
+                                       ctx->structs[ctx->current_struct].name),
+                                       la_text("union"), 0, 1);
                     }
                     in_struct = 0;
                     ctx->current_struct = LA_INVALID_HANDLE;
@@ -3730,12 +3676,11 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
             } else if (in_enum) {
                 if (la_line_keyword(trimmed, content_end, "end")) {
                     if (ctx->enums[ctx->current_enum].member_count == 0) {
-                        return la_fail(
-                            ctx, LA_ERR_ENUM_EMPTY,
-                            ctx->enums[ctx->current_enum].line, 1, 1,
-                            la_name_slice(
-                                ctx, ctx->enums[ctx->current_enum].name),
-                            la_slice("", 0), 0, 1);
+                        return la_fail( ctx, LA_ERR_ENUM_EMPTY,
+                                       ctx->enums[ctx->current_enum].line, 1,
+                                       1, la_name_slice( ctx,
+                                       ctx->enums[ctx->current_enum].name),
+                                       la_text(""), 0, 1);
                     }
                     in_enum = 0;
                     ctx->current_enum = LA_INVALID_HANDLE;
@@ -3752,8 +3697,8 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
                                            (la_u16)(content_end - trimmed),
                                            "begin")) {
                             return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                                           la_slice("begin", 5),
-                                           la_slice("", 0), 0, 0);
+                                           la_text("begin"),
+                                           la_text(""), 0, 0);
                         }
                         procedure->begin_line = line;
                         in_body = 1;
@@ -3766,8 +3711,7 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
                                        (la_u16)(content_end - trimmed),
                                        "end")) {
                         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                                       la_slice("end", 3),
-                                       la_slice("", 0), 0, 0);
+                                       la_text("end"), la_text(""), 0, 0);
                     }
                     procedure->end_line = line;
                     in_procedure = 0;
@@ -3796,7 +3740,7 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
                             la_slice(ctx->target->raw_return,
                                      (la_u16)strlen(
                                          ctx->target->raw_return)),
-                            la_slice("use ret", 7), 0, 0);
+                            la_text("use ret"), 0, 0);
                     }
                 }
             } else if (la_line_keyword(trimmed, content_end, "namespace")) {
@@ -3815,10 +3759,8 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
                     ctx->namespace_depth == 0) {
                     return la_fail(ctx, LA_ERR_SYNTAX, line, 1,
                                    (la_u16)(content_end - trimmed),
-                                   la_slice("namespace end", 13),
-                                   la_slice(trimmed,
-                                            (la_u16)(content_end - trimmed)),
-                                   0, 0);
+                                   la_text("namespace end"), la_slice(trimmed,
+                                   (la_u16)(content_end - trimmed)), 0, 0);
                 }
                 ctx->namespaces[ctx->current_namespace].end_line = line;
                 ctx->current_namespace =
@@ -3888,26 +3830,24 @@ static LaDiagnosticCode la_first_pass(LaContext *ctx)
                     return la_fail(ctx, LA_ERR_DEFERRED_FEATURE, line,
                                    (la_u16)(trimmed - cursor + 1),
                                    deferred.length, deferred,
-                                   la_slice("", 0), 0, 0);
+                                   la_text(""), 0, 0);
                 }
             } else if (la_deferred_keyword(trimmed, content_end, &deferred)) {
                 return la_fail(ctx, LA_ERR_DEFERRED_FEATURE, line,
-                               (la_u16)(trimmed - cursor + 1),
-                               deferred.length, deferred, la_slice("", 0),
-                               0, 0);
+                               (la_u16)(trimmed - cursor + 1), deferred.length,
+                               deferred, la_text(""), 0, 0);
             } else if ((la_u16)(content_end - trimmed) >= 5 &&
                        memcmp(trimmed, "__la_", 5) == 0) {
                 return la_fail(ctx, LA_ERR_RESERVED_SYMBOL, line,
                                (la_u16)(trimmed - cursor + 1), 5,
-                               la_slice(trimmed, 5), la_slice("__la_", 5),
-                               0, 0);
+                               la_slice(trimmed, 5), la_text("__la_"), 0, 0);
             }
         }
     }
     if (in_struct || in_enum || in_procedure || in_method_table ||
         ctx->namespace_depth != 0) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("end", 3), la_slice("", 0), 0, 0);
+                       la_text("end"), la_text(""), 0, 0);
     }
     return LA_OK;
 }
@@ -3954,10 +3894,9 @@ static LaDiagnosticCode la_validate_exports(LaContext *ctx)
             if (ctx->labels[index].name == name) found = 1;
         }
         if (!found) {
-            return la_fail(
-                ctx, LA_ERR_UNKNOWN_EXPORT,
-                ctx->exports[export_index].line, 1, 1,
-                la_name_slice(ctx, name), la_slice("", 0), 0, 0);
+            return la_fail( ctx, LA_ERR_UNKNOWN_EXPORT,
+                           ctx->exports[export_index].line, 1, 1,
+                           la_name_slice(ctx, name), la_text(""), 0, 0);
         }
     }
     return LA_OK;
@@ -3974,14 +3913,14 @@ static LaDiagnosticCode la_validate_labels(LaContext *ctx)
             if (ctx->constants[index].name == label->name) {
                 return la_fail(ctx, LA_ERR_DUPLICATE_LABEL, label->line,
                                1, 1, la_name_slice(ctx, label->name),
-                               la_slice("constant", 8), 0, 0);
+                               la_text("constant"), 0, 0);
             }
         }
         for (index = 0; index < ctx->procedure_count; ++index) {
             if (ctx->procedures[index].name == label->name) {
                 return la_fail(ctx, LA_ERR_DUPLICATE_LABEL, label->line,
                                1, 1, la_name_slice(ctx, label->name),
-                               la_slice("procedure", 9), 0, 0);
+                               la_text("procedure"), 0, 0);
             }
         }
     }
@@ -4043,7 +3982,7 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                     ctx, LA_ERR_UNKNOWN_TYPE, ctx->locations[index].line,
                     1, 1,
                     la_name_slice(ctx, ctx->locations[index].type_name),
-                    la_slice("", 0), 0, 0);
+                    la_text(""), 0, 0);
             }
         } else {
             la_u16 size;
@@ -4053,7 +3992,7 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                     ctx, LA_ERR_UNKNOWN_TYPE, ctx->locations[index].line,
                     1, 1,
                     la_name_slice(ctx, ctx->locations[index].type_name),
-                    la_slice("scalar parameter", 16), 0, 0);
+                    la_text("scalar parameter"), 0, 0);
             }
         }
     }
@@ -4138,34 +4077,31 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                     }
                     if (requested < 0 || requested > 65535 ||
                         requested < offset) {
-                        return la_fail(
-                            ctx, LA_ERR_FIELD_OFFSET, field->line, 1, 1,
-                            la_name_slice(ctx, field->name),
-                            la_name_slice(ctx, record->name),
-                            requested, offset);
+                        return la_fail( ctx, LA_ERR_FIELD_OFFSET, field->line,
+                                       1, 1, la_name_slice(ctx, field->name),
+                                       la_name_slice(ctx, record->name),
+                                       requested, offset);
                     }
                     if ((requested % unit_alignment) != 0) {
-                        return la_fail(
-                            ctx, LA_ERR_FIELD_OFFSET, field->line, 1, 1,
-                            la_name_slice(ctx, field->name),
-                            la_slice("effective alignment", 19),
-                            requested, unit_alignment);
+                        return la_fail( ctx, LA_ERR_FIELD_OFFSET, field->line,
+                                       1, 1, la_name_slice(ctx, field->name),
+                                       la_text("effective alignment"),
+                                       requested, unit_alignment);
                     }
                     placement = (la_u16)requested;
                 } else if (record->kind == LA_AGGREGATE_STRUCT &&
                            record->policy == LA_LAYOUT_ALIGNED) {
                     placement = la_round_up(offset, unit_alignment);
                     if (placement == LA_INVALID_HANDLE) {
-                        return la_fail(ctx, LA_ERR_FIELD_OFFSET,
-                                       field->line, 1, 1,
-                                       la_name_slice(ctx, field->name),
-                                       la_slice("layout overflow", 15),
-                                       offset, 65535);
+                        return la_fail(ctx, LA_ERR_FIELD_OFFSET, field->line,
+                                       1, 1, la_name_slice(ctx, field->name),
+                                       la_text("layout overflow"), offset,
+                                       65535);
                     }
                 }
                 if ((la_u32)unit_size * field->count + placement > 65535) {
                     return la_fail(ctx, LA_ERR_SYNTAX, field->line, 1, 1,
-                                   la_slice("layout overflow", 15),
+                                   la_text("layout overflow"),
                                    la_name_slice(ctx, field->name), 0, 65535);
                 }
                 field->offset = placement;
@@ -4184,7 +4120,7 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                         return la_fail(ctx, LA_ERR_LAYOUT_ALIGNMENT,
                                        record->line, 1, 1,
                                        la_name_slice(ctx, record->name),
-                                       la_slice("layout overflow", 15),
+                                       la_text("layout overflow"),
                                        extent, 65535);
                     }
                 } else {
@@ -4202,7 +4138,7 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                 return la_fail(ctx, LA_ERR_LAYOUT_CYCLE,
                                ctx->structs[index].line, 1, 1,
                                la_name_slice(ctx, ctx->structs[index].name),
-                               la_slice("", 0), unresolved, 0);
+                               la_text(""), unresolved, 0);
             }
         }
     }
@@ -4220,10 +4156,9 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
         pool->alignment = ctx->structs[sid].alignment;
         if ((la_u32)pool->stride * pool->count > 65535) {
             return la_fail(ctx, LA_ERR_SYNTAX, pool->line, 1, 1,
-                           la_slice("pool size overflow", 18),
-                           la_name_slice(ctx, pool->name),
-                           (la_i32)((la_u32)pool->stride * pool->count),
-                           65535);
+                           la_text("pool size overflow"), la_name_slice(ctx,
+                           pool->name), (la_i32)((la_u32)pool->stride *
+                           pool->count), 65535);
         }
         pool->size = (la_u16)(pool->stride * pool->count);
     }
@@ -4239,11 +4174,10 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
         }
         if (overlay->has_numeric_base &&
             overlay->numeric_base % ctx->structs[sid].alignment != 0) {
-            return la_fail(ctx, LA_ERR_OVERLAY_ALIGNMENT, overlay->line,
-                           1, 1, la_name_slice(ctx, overlay->name),
+            return la_fail(ctx, LA_ERR_OVERLAY_ALIGNMENT, overlay->line, 1, 1,
+                           la_name_slice(ctx, overlay->name),
                            la_name_slice(ctx, overlay->type_name),
-                           overlay->numeric_base,
-                           ctx->structs[sid].alignment);
+                           overlay->numeric_base, ctx->structs[sid].alignment);
         }
     }
     for (index = 0; index < ctx->procedure_count; ++index) {
@@ -4280,7 +4214,7 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                         return la_fail(
                             ctx, LA_ERR_MEMBER_PLACEMENT, member->line,
                             1, placement.length, placement,
-                            la_slice("compatible typed location", 25),
+                            la_text("compatible typed location"),
                             member->storage_width,
                             ctx->locations[declared].storage_width);
                     }
@@ -4291,21 +4225,20 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                     return la_fail(
                         ctx, LA_ERR_MEMBER_PLACEMENT, member->line,
                         1, placement.length, placement,
-                        la_slice("declared qualified location", 27), 0, 0);
+                        la_text("declared qualified location"), 0, 0);
                 }
                 continue;
             }
             if (procedure->convention == LA_INVALID_HANDLE) {
                 return la_fail(ctx, LA_ERR_MEMBER_PLACEMENT, member->line,
                                1, 1, la_name_slice(ctx, member->name),
-                               la_slice("using convention or in physical", 31),
+                               la_text("using convention or in physical"),
                                0, 0);
             }
             if (member->is_pointer) {
-                return la_fail(ctx, LA_ERR_MEMBER_PLACEMENT, member->line,
-                               1, 1, la_name_slice(ctx, member->name),
-                               la_slice("explicit pointer location", 25),
-                               0, 0);
+                return la_fail(ctx, LA_ERR_MEMBER_PLACEMENT, member->line, 1,
+                               1, la_name_slice(ctx, member->name),
+                               la_text("explicit pointer location"), 0, 0);
             }
             if (member->role == LA_MEMBER_RETURN) {
                 member->physical = la_intern(
@@ -4351,7 +4284,7 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
                 if (!assigned) {
                     return la_fail(ctx, LA_ERR_CONVENTION, member->line,
                                    1, 1, la_name_slice(ctx, member->name),
-                                   la_slice("scalar input locations", 22),
+                                   la_text("scalar input locations"),
                                    convention->scalar_input_count + 1,
                                    convention->scalar_input_count);
                 }
@@ -4368,36 +4301,33 @@ static LaDiagnosticCode la_resolve_layouts(LaContext *ctx)
             if (local->is_pointer) {
                 if (la_find_struct_handle(ctx, local->type_name) ==
                     LA_INVALID_HANDLE) {
-                    return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, local->line,
-                                   1, 1,
+                    return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, local->line, 1, 1,
                                    la_name_slice(ctx, local->type_name),
-                                   la_slice("pointer local", 13), 0, 0);
+                                   la_text("pointer local"), 0, 0);
                 }
                 size = ctx->target->pointer_units;
             } else if (!la_scalar_size(ctx, local->type_name, &size)) {
                 la_u16 sid;
                 sid = la_find_struct_handle(ctx, local->type_name);
                 if (sid == LA_INVALID_HANDLE) {
-                    return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, local->line,
-                                   1, 1,
+                    return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, local->line, 1, 1,
                                    la_name_slice(ctx, local->type_name),
-                                   la_slice("frame local", 11), 0, 0);
+                                   la_text("frame local"), 0, 0);
                 }
                 size = ctx->structs[sid].size;
                 if (ctx->structs[sid].alignment >
                     ctx->target->max_frame_alignment) {
-                    return la_fail(
-                        ctx, LA_ERR_LAYOUT_ALIGNMENT, local->line, 1, 1,
-                        la_name_slice(ctx, local->name),
-                        la_slice("frame alignment", 15),
-                        ctx->structs[sid].alignment,
-                        ctx->target->max_frame_alignment);
+                    return la_fail( ctx, LA_ERR_LAYOUT_ALIGNMENT, local->line,
+                                   1, 1, la_name_slice(ctx, local->name),
+                                   la_text("frame alignment"),
+                                   ctx->structs[sid].alignment,
+                                   ctx->target->max_frame_alignment);
                 }
             }
             if ((la_u32)procedure->frame_size + size > 255) {
                 return la_fail(ctx, LA_ERR_FRAME_LOCAL, local->line, 1, 1,
                                la_name_slice(ctx, local->name),
-                               la_slice("frame bytes", 11),
+                               la_text("frame bytes"),
                                procedure->frame_size + size, 255);
             }
             local->offset = procedure->frame_size;
@@ -4440,7 +4370,7 @@ static LaDiagnosticCode la_resolve_path(LaContext *ctx,
     sid = la_find_struct_text(ctx, root, root_length);
     if (sid == LA_INVALID_HANDLE) {
         return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, line, 1, root_length,
-                       la_slice(root, root_length), la_slice("", 0), 0, 0);
+                       la_slice(root, root_length), la_text(""), 0, 0);
     }
     total = 0;
     cursor = path;
@@ -4456,9 +4386,8 @@ static LaDiagnosticCode la_resolve_path(LaContext *ctx,
                                     (la_u16)(component_end - cursor));
         if (field_index == LA_INVALID_HANDLE) {
             return la_fail(ctx, LA_ERR_UNKNOWN_FIELD, line, 1,
-                           (la_u16)(component_end - cursor),
-                           la_slice(cursor,
-                                    (la_u16)(component_end - cursor)),
+                           (la_u16)(component_end - cursor), la_slice(cursor,
+                           (la_u16)(component_end - cursor)),
                            la_name_slice(ctx, ctx->structs[sid].name), 0, 0);
         }
         total = (la_u16)(total + ctx->fields[field_index].offset);
@@ -4475,15 +4404,14 @@ static LaDiagnosticCode la_resolve_path(LaContext *ctx,
         }
         if (sid == LA_INVALID_HANDLE || ctx->fields[field_index].count != 1) {
             return la_fail(ctx, LA_ERR_UNKNOWN_FIELD, line, 1,
-                           (la_u16)(component_end - cursor),
-                           la_slice(cursor,
-                                    (la_u16)(component_end - cursor)),
-                           la_slice("non-structure", 13), 0, 0);
+                           (la_u16)(component_end - cursor), la_slice(cursor,
+                           (la_u16)(component_end - cursor)),
+                           la_text("non-structure"), 0, 0);
         }
         cursor = component_end + 1;
     }
     return la_fail(ctx, LA_ERR_UNKNOWN_FIELD, line, 1, path_length,
-                   la_slice(path, path_length), la_slice("", 0), 0, 0);
+                   la_slice(path, path_length), la_text(""), 0, 0);
 }
 
 static LaDiagnosticCode la_resolve_indexed_path(
@@ -4500,7 +4428,7 @@ static LaDiagnosticCode la_resolve_indexed_path(
     sid = la_find_struct_text(ctx, root, root_length);
     if (sid == LA_INVALID_HANDLE) {
         return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, line, 1, root_length,
-                       la_slice(root, root_length), la_slice("", 0), 0, 0);
+                       la_slice(root, root_length), la_text(""), 0, 0);
     }
     total = 0;
     cursor = path;
@@ -4531,11 +4459,10 @@ static LaDiagnosticCode la_resolve_indexed_path(
             index_end = index_start;
             while (index_end < end && *index_end != ']') ++index_end;
             if (index_end == end || index_end == index_start) {
-                return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1,
-                               (la_u16)(end - name_end),
-                               la_slice(name_end,
-                                        (la_u16)(end - name_end)),
-                               la_slice("closed physical index", 21), 0, 0);
+                return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1, (la_u16)(end
+                               - name_end), la_slice(name_end, (la_u16)(end -
+                               name_end)), la_text("closed physical index"), 0,
+                               0);
             }
             component_end = index_end + 1;
         }
@@ -4553,32 +4480,29 @@ static LaDiagnosticCode la_resolve_indexed_path(
             LaSlice expected;
             if (saw_index || ctx->fields[field_index].count == 1) {
                 if (saw_index) {
-                    expected = la_slice("one index", 9);
+                    expected = la_text("one index");
                 } else {
-                    expected = la_slice("array field", 11);
+                    expected = la_text("array field");
                 }
                 return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1,
                                (la_u16)(component_end - cursor),
-                               la_slice(cursor,
-                                        (la_u16)(component_end - cursor)),
-                               expected,
+                               la_slice(cursor, (la_u16)(component_end -
+                               cursor)), expected,
                                ctx->fields[field_index].count, 0);
             }
             check = index_start;
             if (!la_is_ident_start(*check)) {
                 return la_fail(ctx, LA_ERR_INDEX_LOCATION, line, 1,
                                (la_u16)(index_end - index_start),
-                               la_slice(index_start,
-                                        (la_u16)(index_end - index_start)),
-                               la_slice("physical index", 14), 0, 0);
+                               la_slice(index_start, (la_u16)(index_end -
+                               index_start)), la_text("physical index"), 0, 0);
             }
             while (check < index_end && la_is_ident(*check)) ++check;
             if (check != index_end) {
                 return la_fail(ctx, LA_ERR_INDEX_LOCATION, line, 1,
                                (la_u16)(index_end - index_start),
-                               la_slice(index_start,
-                                        (la_u16)(index_end - index_start)),
-                               la_slice("physical index", 14), 0, 0);
+                               la_slice(index_start, (la_u16)(index_end -
+                               index_start)), la_text("physical index"), 0, 0);
             }
             index_out->data = index_start;
             index_out->length = (la_u16)(index_end - index_start);
@@ -4590,7 +4514,7 @@ static LaDiagnosticCode la_resolve_indexed_path(
             return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1,
                            (la_u16)(name_end - cursor),
                            la_slice(cursor, (la_u16)(name_end - cursor)),
-                           la_slice("array index", 11), 0, 0);
+                           la_text("array index"), 0, 0);
         }
         if (component_end == end) {
             *field_out = field_index;
@@ -4598,16 +4522,14 @@ static LaDiagnosticCode la_resolve_indexed_path(
             if (!saw_index) {
                 return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1,
                                path_length, la_slice(path, path_length),
-                               la_slice("indexed array", 13), 0, 0);
+                               la_text("indexed array"), 0, 0);
             }
             return LA_OK;
         }
         if (*component_end != '.') {
-            return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1,
-                           (la_u16)(end - component_end),
-                           la_slice(component_end,
-                                    (la_u16)(end - component_end)),
-                           la_slice(".", 1), 0, 0);
+            return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1, (la_u16)(end -
+                           component_end), la_slice(component_end, (la_u16)(end
+                           - component_end)), la_text("."), 0, 0);
         }
         if (ctx->fields[field_index].is_pointer) {
             sid = LA_INVALID_HANDLE;
@@ -4619,12 +4541,12 @@ static LaDiagnosticCode la_resolve_indexed_path(
             return la_fail(ctx, LA_ERR_UNKNOWN_FIELD, line, 1,
                            (la_u16)(name_end - cursor),
                            la_slice(cursor, (la_u16)(name_end - cursor)),
-                           la_slice("non-structure", 13), 0, 0);
+                           la_text("non-structure"), 0, 0);
         }
         cursor = component_end + 1;
     }
     return la_fail(ctx, LA_ERR_INDEXED_FIELD, line, 1, path_length,
-                   la_slice(path, path_length), la_slice("", 0), 0, 0);
+                   la_slice(path, path_length), la_text(""), 0, 0);
 }
 
 enum {
@@ -4777,14 +4699,13 @@ static LaDiagnosticCode la_apply_operator(LaContext *ctx, la_u8 op,
     if (op == LA_OP_NOT || op == LA_OP_NEG || op == LA_OP_BNOT) {
         if (*value_count < 1) {
             return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                           la_slice("expression operand", 18),
-                           la_slice("", 0), 0, 0);
+                           la_text("expression operand"), la_text(""), 0, 0);
         }
         if (la_family_conflict(op_family,
                                ctx->values[*value_count - 1].family)) {
             return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                           la_slice("parenthesized bitwise mix", 25),
-                           la_slice("", 0), 0, 0);
+                           la_text("parenthesized bitwise mix"),
+                           la_text(""), 0, 0);
         }
         right = ctx->values[*value_count - 1].value;
         ctx->values[*value_count - 1].value =
@@ -4795,16 +4716,15 @@ static LaDiagnosticCode la_apply_operator(LaContext *ctx, la_u8 op,
     }
     if (*value_count < 2) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("binary operands", 15),
-                       la_slice("", 0), 0, 0);
+                       la_text("binary operands"), la_text(""), 0, 0);
     }
     if (la_family_conflict(op_family,
                            ctx->values[*value_count - 1].family) ||
         la_family_conflict(op_family,
                            ctx->values[*value_count - 2].family)) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("parenthesized bitwise mix", 25),
-                       la_slice("", 0), 0, 0);
+                       la_text("parenthesized bitwise mix"),
+                       la_text(""), 0, 0);
     }
     right = ctx->values[*value_count - 1].value;
     left = ctx->values[*value_count - 2].value;
@@ -4828,8 +4748,8 @@ static LaDiagnosticCode la_apply_operator(LaContext *ctx, la_u8 op,
     case LA_OP_SHR:
         if (right < 0 || right > 31) {
             return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                           la_slice("shift count 0..31", 17),
-                           la_slice("", 0), right, 31);
+                           la_text("shift count 0..31"),
+                           la_text(""), right, 31);
         }
         left = op == LA_OP_SHL ?
             (la_i32)((la_u32)left << right) :
@@ -4838,22 +4758,20 @@ static LaDiagnosticCode la_apply_operator(LaContext *ctx, la_u8 op,
     case LA_OP_DIV:
         if (right == 0) {
             return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                           la_slice("division by zero", 16),
-                           la_slice("", 0), 0, 0);
+                           la_text("division by zero"), la_text(""), 0, 0);
         }
         left /= right;
         break;
     case LA_OP_MOD:
         if (right == 0) {
             return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                           la_slice("modulo by zero", 14),
-                           la_slice("", 0), 0, 0);
+                           la_text("modulo by zero"), la_text(""), 0, 0);
         }
         left %= right;
         break;
     default:
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("operator", 8), la_slice("", 0), op, 0);
+                       la_text("operator"), la_text(""), op, 0);
     }
     ctx->values[*value_count - 1].value = left;
     ctx->values[*value_count - 1].family = op_family;
@@ -4924,13 +4842,12 @@ static LaDiagnosticCode la_property_value(LaContext *ctx,
             !la_name_is_exported(ctx, constant->name)) {
             return la_fail(ctx, LA_ERR_PRIVATE_NAME, line, 1, length,
                            la_name_slice(ctx, constant->name),
-                           la_slice("export", 6), 0, 0);
+                           la_text("export"), 0, 0);
         }
         if (!constant->resolved) {
             return la_fail(ctx, LA_ERR_UNKNOWN_CONSTANT, line, 1, length,
                            la_name_slice(ctx, constant->name),
-                           la_slice("unresolved or forward constant", 30),
-                           0, 0);
+                           la_text("unresolved or forward constant"), 0, 0);
         }
         *value = constant->value;
         return LA_OK;
@@ -4945,7 +4862,7 @@ static LaDiagnosticCode la_property_value(LaContext *ctx,
     }
     if (first_dot == 0 || last_dot == 0) {
         return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1, length,
-                       la_slice(text, length), la_slice("", 0), 0, 0);
+                       la_slice(text, length), la_text(""), 0, 0);
     }
     enum_index = la_find_enum_text(ctx, text,
                                    (la_u16)(first_dot - text));
@@ -4980,16 +4897,15 @@ static LaDiagnosticCode la_property_value(LaContext *ctx,
                     return la_fail(
                         ctx, LA_ERR_ENUM_VALUE, line, 1, length,
                         la_slice(text, length),
-                        la_slice("unresolved or forward enum member", 33),
+                        la_text("unresolved or forward enum member"),
                         0, 0);
                 }
                 *value = member->value;
                 return LA_OK;
             }
         }
-        return la_fail(ctx, LA_ERR_ENUM_VALUE, line, 1, length,
-                       la_slice(text, length),
-                       la_name_slice(ctx, enumeration->name), 0, 0);
+        return la_fail(ctx, LA_ERR_ENUM_VALUE, line, 1, length, la_slice(text,
+                       length), la_name_slice(ctx, enumeration->name), 0, 0);
     }
     if (first_dot == last_dot) {
         la_u16 table_index;
@@ -5036,15 +4952,13 @@ static LaDiagnosticCode la_property_value(LaContext *ctx,
         }
         return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1, property.length,
                        property, la_name_slice(ctx,
-                                               ctx->pools[pool_index].name),
-                       0, 0);
+                       ctx->pools[pool_index].name), 0, 0);
     }
     sid = la_find_struct_text(ctx, text, (la_u16)(first_dot - text));
     if (sid == LA_INVALID_HANDLE) {
-        return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, line, 1,
-                       (la_u16)(first_dot - text),
-                       la_slice(text, (la_u16)(first_dot - text)),
-                       la_slice("", 0), 0, 0);
+        return la_fail(ctx, LA_ERR_UNKNOWN_TYPE, line, 1, (la_u16)(first_dot -
+                       text), la_slice(text, (la_u16)(first_dot - text)),
+                       la_text(""), 0, 0);
     }
     if (first_dot == last_dot) {
         LaSlice property;
@@ -5089,7 +5003,7 @@ static LaDiagnosticCode la_property_value(LaContext *ctx,
             if (ctx->fields[field_index].count == 1) {
                 return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1,
                                property.length, property,
-                               la_slice("scalar field", 12), 0, 0);
+                               la_text("scalar field"), 0, 0);
             }
             *value = ctx->fields[field_index].count;
             return LA_OK;
@@ -5098,14 +5012,14 @@ static LaDiagnosticCode la_property_value(LaContext *ctx,
             if (ctx->fields[field_index].count == 1) {
                 return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1,
                                property.length, property,
-                               la_slice("scalar field", 12), 0, 0);
+                               la_text("scalar field"), 0, 0);
             }
             *value = ctx->fields[field_index].size /
                      ctx->fields[field_index].count;
             return LA_OK;
         }
         return la_fail(ctx, LA_ERR_BAD_PROPERTY, line, 1, property.length,
-                       property, la_slice("field property", 14), 0, 0);
+                       property, la_text("field property"), 0, 0);
     }
 }
 
@@ -5132,9 +5046,8 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                     op_count >= ctx->limits->max_nesting) {
                     return la_fail(ctx, LA_ERR_NESTING_CAPACITY, line,
                                    (la_u16)(cursor - text + 1), 1,
-                                   la_slice("expression nesting", 18),
-                                   la_slice("", 0), op_count + 1,
-                                   ctx->limits->max_nesting);
+                                   la_text("expression nesting"), la_text(""),
+                                   op_count + 1, ctx->limits->max_nesting);
                 }
                 ctx->operators[op_count++].op = LA_OP_LPAREN;
                 if (op_count > ctx->stats->nesting) {
@@ -5149,9 +5062,8 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                 if (op_count >= ctx->limits->max_expression_nodes) {
                     return la_fail(ctx, LA_ERR_EXPRESSION_CAPACITY, line,
                                    (la_u16)(cursor - text + 1), 1,
-                                   la_slice("operators", 9), la_slice("", 0),
-                                   op_count + 1,
-                                   ctx->limits->max_expression_nodes);
+                                   la_text("operators"), la_text(""), op_count
+                                   + 1, ctx->limits->max_expression_nodes);
                 }
                 ctx->operators[op_count++].op = op;
                 ++cursor;
@@ -5179,8 +5091,8 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                 }
                 if (digits == 0) {
                     return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                                   la_slice("hexadecimal value", 17),
-                                   la_slice("", 0), 0, 0);
+                                   la_text("hexadecimal value"),
+                                   la_text(""), 0, 0);
                 }
             } else if (*cursor >= '0' && *cursor <= '9') {
                 value = 0;
@@ -5218,7 +5130,7 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                             ctx->limits->max_line_bytes) {
                         return la_fail(
                             ctx, LA_ERR_SYNTAX, line, 1, token_length,
-                            la_slice("layout query path", 17),
+                            la_text("layout query path"),
                             la_slice(start, token_length), total + 1,
                             ctx->limits->max_line_bytes);
                     }
@@ -5237,16 +5149,14 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                     return ctx->error;
                 }
             } else {
-                return la_fail(ctx, LA_ERR_SYNTAX, line,
-                               (la_u16)(cursor - text + 1), 1,
-                               la_slice("expression value", 16),
+                return la_fail(ctx, LA_ERR_SYNTAX, line, (la_u16)(cursor - text
+                               + 1), 1, la_text("expression value"),
                                la_slice(cursor, 1), 0, 0);
             }
             if (value_count >= ctx->limits->max_expression_nodes) {
                 return la_fail(ctx, LA_ERR_EXPRESSION_CAPACITY, line,
                                (la_u16)(cursor - text + 1), 1,
-                               la_slice("values", 6), la_slice("", 0),
-                               value_count + 1,
+                               la_text("values"), la_text(""), value_count + 1,
                                ctx->limits->max_expression_nodes);
             }
             ctx->values[value_count].family = LA_EXPR_NEUTRAL;
@@ -5274,81 +5184,63 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
                 }
             }
             if (op_count == 0) {
-                return la_fail(ctx, LA_ERR_SYNTAX, line,
+                return la_fail(ctx, LA_ERR_SYNTAX, line, (la_u16)(cursor - text
+                               + 1), 1, la_text("matching ("), la_text(""), 0,
+                               0); } --op_count; /* A parenthesized result
+                               returns to the neutral family. */ if
+                               (value_count > 0) { ctx->values[value_count -
+                               1].family = LA_EXPR_NEUTRAL; } ++cursor; } else
+                               { la_u8 next_op; next_op = LA_OP_NONE; if
+                               ((la_u16)(end - cursor) >= 2) { if (cursor[0] ==
+                               '|' && cursor[1] == '|') next_op = LA_OP_OR;
+                               else if (cursor[0] == '&' && cursor[1] == '&')
+                               next_op = LA_OP_AND; else if (cursor[0] == '='
+                               && cursor[1] == '=') next_op = LA_OP_EQ; else if
+                               (cursor[0] == '!' && cursor[1] == '=') next_op =
+                               LA_OP_NE; else if (cursor[0] == '<' && cursor[1]
+                               == '=') next_op = LA_OP_LE; else if (cursor[0]
+                               == '>' && cursor[1] == '=') next_op = LA_OP_GE;
+                               else if (cursor[0] == '<' && cursor[1] == '<')
+                               next_op = LA_OP_SHL; else if (cursor[0] == '>'
+                               && cursor[1] == '>') next_op = LA_OP_SHR; if
+                               (next_op != LA_OP_NONE) cursor += 2; } if
+                               (next_op == LA_OP_NONE) { if (*cursor == '<')
+                               next_op = LA_OP_LT; else if (*cursor == '>')
+                               next_op = LA_OP_GT; else if (*cursor == '+')
+                               next_op = LA_OP_ADD; else if (*cursor == '-')
+                               next_op = LA_OP_SUB; else if (*cursor == '*')
+                               next_op = LA_OP_MUL; else if (*cursor == '/')
+                               next_op = LA_OP_DIV; else if (*cursor == '%')
+                               next_op = LA_OP_MOD; else if (*cursor == '&')
+                               next_op = LA_OP_BAND; else if (*cursor == '^')
+                               next_op = LA_OP_BXOR; else if (*cursor == '|')
+                               next_op = LA_OP_BOR; if (next_op != LA_OP_NONE)
+                               ++cursor; } if (next_op == LA_OP_NONE) { return
+                               la_fail(ctx, LA_ERR_SYNTAX, line,
                                (la_u16)(cursor - text + 1), 1,
-                               la_slice("matching (", 10), la_slice("", 0),
-                               0, 0);
-            }
-            --op_count;
-            /* A parenthesized result returns to the neutral family. */
-            if (value_count > 0) {
-                ctx->values[value_count - 1].family = LA_EXPR_NEUTRAL;
-            }
-            ++cursor;
-        } else {
-            la_u8 next_op;
-            next_op = LA_OP_NONE;
-            if ((la_u16)(end - cursor) >= 2) {
-                if (cursor[0] == '|' && cursor[1] == '|') next_op = LA_OP_OR;
-                else if (cursor[0] == '&' && cursor[1] == '&') next_op = LA_OP_AND;
-                else if (cursor[0] == '=' && cursor[1] == '=') next_op = LA_OP_EQ;
-                else if (cursor[0] == '!' && cursor[1] == '=') next_op = LA_OP_NE;
-                else if (cursor[0] == '<' && cursor[1] == '=') next_op = LA_OP_LE;
-                else if (cursor[0] == '>' && cursor[1] == '=') next_op = LA_OP_GE;
-                else if (cursor[0] == '<' && cursor[1] == '<') next_op = LA_OP_SHL;
-                else if (cursor[0] == '>' && cursor[1] == '>') next_op = LA_OP_SHR;
-                if (next_op != LA_OP_NONE) cursor += 2;
-            }
-            if (next_op == LA_OP_NONE) {
-                if (*cursor == '<') next_op = LA_OP_LT;
-                else if (*cursor == '>') next_op = LA_OP_GT;
-                else if (*cursor == '+') next_op = LA_OP_ADD;
-                else if (*cursor == '-') next_op = LA_OP_SUB;
-                else if (*cursor == '*') next_op = LA_OP_MUL;
-                else if (*cursor == '/') next_op = LA_OP_DIV;
-                else if (*cursor == '%') next_op = LA_OP_MOD;
-                else if (*cursor == '&') next_op = LA_OP_BAND;
-                else if (*cursor == '^') next_op = LA_OP_BXOR;
-                else if (*cursor == '|') next_op = LA_OP_BOR;
-                if (next_op != LA_OP_NONE) ++cursor;
-            }
-            if (next_op == LA_OP_NONE) {
-                return la_fail(ctx, LA_ERR_SYNTAX, line,
-                               (la_u16)(cursor - text + 1), 1,
-                               la_slice("expression operator", 19),
-                               la_slice(cursor, 1), 0, 0);
-            }
-            while (op_count > 0 &&
-                   ctx->operators[op_count - 1].op != LA_OP_LPAREN &&
-                   la_precedence(ctx->operators[op_count - 1].op) >=
-                   la_precedence(next_op)) {
-                op = ctx->operators[--op_count].op;
-                if (la_apply_operator(ctx, op, &value_count, line) != LA_OK) {
-                    return ctx->error;
-                }
-            }
-            if (op_count >= ctx->limits->max_expression_nodes) {
-                return la_fail(ctx, LA_ERR_EXPRESSION_CAPACITY, line, 1, 1,
-                               la_slice("operators", 9), la_slice("", 0),
+                               la_text("expression operator"), la_slice(cursor,
+                               1), 0, 0); } while (op_count > 0 &&
+                               ctx->operators[op_count - 1].op != LA_OP_LPAREN
+                               && la_precedence(ctx->operators[op_count -
+                               1].op) >= la_precedence(next_op)) { op =
+                               ctx->operators[--op_count].op; if
+                               (la_apply_operator(ctx, op, &value_count, line)
+                               != LA_OK) { return ctx->error; } } if (op_count
+                               >= ctx->limits->max_expression_nodes) { return
+                               la_fail(ctx, LA_ERR_EXPRESSION_CAPACITY, line,
+                               1, 1, la_text("operators"), la_text(""),
                                op_count + 1,
-                               ctx->limits->max_expression_nodes);
-            }
-            ctx->operators[op_count++].op = next_op;
-            expect_value = 1;
-        }
-    }
-    if (expect_value || value_count == 0) {
-        return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("complete expression", 19),
-                       la_slice("", 0), 0, 0);
-    }
-    while (op_count > 0) {
-        la_u8 op;
-        op = ctx->operators[--op_count].op;
-        if (op == LA_OP_LPAREN) {
-            return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                           la_slice("matching )", 10), la_slice("", 0),
-                           0, 0);
+                               ctx->limits->max_expression_nodes); }
+                               ctx->operators[op_count++].op = next_op;
+                               expect_value = 1; } } if (expect_value ||
+                               value_count == 0) { return la_fail(ctx,
+                               LA_ERR_SYNTAX, line, 1, 1,
+                               la_text("complete expression"), la_text(""), 0,
+                               0); } while (op_count > 0) { la_u8 op; op =
+                               ctx->operators[--op_count].op; if (op ==
+                               LA_OP_LPAREN) { return la_fail(ctx,
+                               LA_ERR_SYNTAX, line, 1, 1,
+                               la_text("matching )"), la_text(""), 0, 0);
         }
         if (la_apply_operator(ctx, op, &value_count, line) != LA_OK) {
             return ctx->error;
@@ -5356,8 +5248,8 @@ static LaDiagnosticCode la_eval_expression(LaContext *ctx,
     }
     if (value_count != 1) {
         return la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                       la_slice("single expression result", 24),
-                       la_slice("", 0), value_count, 1);
+                       la_text("single expression result"),
+                       la_text(""), value_count, 1);
     }
     *result = ctx->values[0].value;
     ctx->expression_family = ctx->values[0].family;
@@ -5387,12 +5279,11 @@ static LaDiagnosticCode la_check_assertions(LaContext *ctx)
                 return ctx->error;
             }
             if (!value) {
-                return la_fail(ctx, LA_ERR_ASSERTION, line,
-                               (la_u16)(expression - cursor + 1),
-                               (la_u16)(content_end - expression),
-                               la_slice(expression,
-                                        (la_u16)(content_end - expression)),
-                               la_slice("", 0), value, 1);
+                return la_fail(ctx, LA_ERR_ASSERTION, line, (la_u16)(expression
+                               - cursor + 1), (la_u16)(content_end -
+                               expression), la_slice(expression,
+                               (la_u16)(content_end - expression)),
+                               la_text(""), value, 1);
             }
         }
     }
@@ -5424,8 +5315,7 @@ static int la_write_event(LaContext *ctx, LaEvent *event)
     if (ctx->events == 0 || ctx->events->write == 0) return 1;
     if (!ctx->events->write(ctx->events->context, event)) {
         la_fail(ctx, LA_ERR_IO, event->span.line, event->span.column,
-                event->span.length, la_slice("event sink", 10),
-                la_slice("", 0), 0, 0);
+                event->span.length, la_text("event sink"), la_text(""), 0, 0);
         return 0;
     }
     return 1;
@@ -5489,9 +5379,8 @@ static int la_append_path(LaContext *ctx, la_u16 *path_length,
     if ((la_u32)*path_length + needed + 1 >
         ctx->limits->max_line_bytes) {
         la_fail(ctx, LA_ERR_NESTING_CAPACITY, 1, 1, 1,
-                la_slice("field path bytes", 16), la_slice("", 0),
-                *path_length + needed + 1,
-                ctx->limits->max_line_bytes);
+                la_text("field path bytes"), la_text(""), *path_length + needed
+                + 1, ctx->limits->max_line_bytes);
         return 0;
     }
     if (*path_length != 0) ctx->path_buffer[(*path_length)++] = '.';
@@ -5508,10 +5397,10 @@ static int la_emit_struct_properties(LaContext *ctx, la_u16 root_sid)
     la_u16 path_length;
     owner = la_name_slice(ctx, ctx->structs[root_sid].name);
     if (!la_emit_property(ctx, ctx->structs[root_sid].line, owner,
-                          la_slice("", 0), LA_PROPERTY_STRUCT_SIZE,
+                          la_text(""), LA_PROPERTY_STRUCT_SIZE,
                           ctx->structs[root_sid].size)) return 0;
     if (!la_emit_property(ctx, ctx->structs[root_sid].line, owner,
-                          la_slice("", 0), LA_PROPERTY_STRUCT_ALIGN,
+                          la_text(""), LA_PROPERTY_STRUCT_ALIGN,
                           ctx->structs[root_sid].alignment)) {
         return 0;
     }
@@ -5572,7 +5461,7 @@ static int la_emit_struct_properties(LaContext *ctx, la_u16 root_sid)
             if (nested_sid != LA_INVALID_HANDLE && field->count == 1) {
                 if (depth + 1 >= ctx->limits->max_nesting) {
                     la_fail(ctx, LA_ERR_NESTING_CAPACITY, field->line, 1, 1,
-                            la_slice("layout nesting", 14), owner,
+                            la_text("layout nesting"), owner,
                             depth + 2, ctx->limits->max_nesting);
                     return 0;
                 }
@@ -5633,49 +5522,10 @@ static int la_parse_typed_operation(LaContext *ctx,
     int is_overlay;
     LaTargetOperationKind operation;
     cursor = la_trim_left(start, end);
-    if ((la_u16)(end - cursor) >= 4 && memcmp(cursor, "lda ", 4) == 0) {
-        operation = LA_TARGET_OP_LOAD8_PTR_DISP;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "sta ", 4) == 0) {
-        operation = LA_TARGET_OP_STORE8_PTR_DISP;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "cmp ", 4) == 0) {
-        operation = LA_TARGET_OP_CMP8_OVERLAY_DISP;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "stx ", 4) == 0) {
-        operation = LA_TARGET_OP_STOREX_OVERLAY_DISP;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "sty ", 4) == 0) {
-        operation = LA_TARGET_OP_STOREY_OVERLAY_DISP;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "and ", 4) == 0) {
-        operation = LA_TARGET_OP_AND8A_OVERLAY_DISP;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "ora ", 4) == 0) {
-        operation = LA_TARGET_OP_ORA8A_OVERLAY_DISP;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "ldx ", 4) == 0) {
-        operation = LA_TARGET_OP_LOADX_OVERLAY_DISP;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "ldy ", 4) == 0) {
-        operation = LA_TARGET_OP_LOADY_OVERLAY_DISP;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "add ", 4) == 0) {
-        operation = LA_TARGET_OP_ADD8A_OVERLAY_DISP;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "sub ", 4) == 0) {
-        operation = LA_TARGET_OP_SUB8A_OVERLAY_DISP;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "adc ", 4) == 0) {
-        operation = LA_TARGET_OP_ADC8_OVERLAY_INDEXED;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "sbc ", 4) == 0) {
-        operation = LA_TARGET_OP_SBC8_OVERLAY_INDEXED;
-    } else {
-        return 0;
-    }
-    bracket = cursor + 3;
-    bracket = la_trim_left(bracket, end);
+    operation = (LaTargetOperationKind)la_claimed_operation(
+        ctx, cursor, end, LA_SPELL_TYPED_OPERATION);
+    if (operation == 0) return 0;
+    bracket = la_trim_left(la_skip_spelling(cursor, end), end);
     if (bracket >= end || *bracket != '[') return 0;
     close = end;
     while (close > bracket && la_is_space(close[-1])) --close;
@@ -5711,11 +5561,10 @@ static int la_parse_typed_operation(LaContext *ctx,
             base_end = scan;
             continue;
         }
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line,
-                (la_u16)(base_start - start + 1),
-                (la_u16)(base_end - base_start),
-                la_slice(base_start, (la_u16)(base_end - base_start)),
-                la_slice("typed location or overlay", 25), 0, 0);
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, (la_u16)(base_start - start +
+                1), (la_u16)(base_end - base_start), la_slice(base_start,
+                (la_u16)(base_end - base_start)),
+                la_text("typed location or overlay"), 0, 0);
         return -1;
     }
     cursor = la_trim_left(base_end, close);
@@ -5773,10 +5622,9 @@ static int la_parse_typed_operation(LaContext *ctx,
         if ((!is_overlay &&
              stride != 1 && stride != 2 && stride != 4 && stride != 8) ||
             (is_overlay && stride != 1)) {
-            la_fail(ctx, LA_ERR_INDEX_STRIDE, line, 1, index.length,
-                    index, la_slice(is_overlay ? "1" : "1, 2, 4, or 8",
-                                    is_overlay ? 1 : 13),
-                    stride, is_overlay ? 1 : 8);
+            la_fail(ctx, LA_ERR_INDEX_STRIDE, line, 1, index.length, index,
+                    la_slice(is_overlay ? "1" : "1, 2, 4, or 8", is_overlay ? 1
+                    : 13), stride, is_overlay ? 1 : 8);
             return -1;
         }
         if (is_overlay) {
@@ -5786,16 +5634,15 @@ static int la_parse_typed_operation(LaContext *ctx,
                first 256 bytes be reached without hidden scratch. */
             if ((la_u32)(count - 1) * stride > 255) {
                 la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1, index.length,
-                        index, la_slice("index register range", 20),
+                        index, la_text("index register range"),
                         (la_i32)((la_u32)(count - 1) * stride), 255);
                 return -1;
             }
         } else if ((la_u32)offset + (la_u32)(count - 1) * stride >
                    ctx->target->max_displacement) {
-            la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1, index.length,
-                    index, la_slice("indexed displacement", 20),
-                    (la_i32)((la_u32)offset +
-                             (la_u32)(count - 1) * stride),
+            la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1, index.length, index,
+                    la_text("indexed displacement"), (la_i32)((la_u32)offset +
+                    (la_u32)(count - 1) * stride),
                     ctx->target->max_displacement);
             return -1;
         }
@@ -5804,41 +5651,28 @@ static int la_parse_typed_operation(LaContext *ctx,
                                &field_index, &offset) != LA_OK) {
         return -1;
     }
-    leaf_size = ctx->fields[field_index].count == 1 ?
-        ctx->fields[field_index].size :
-        (la_u16)(ctx->fields[field_index].size /
-                 ctx->fields[field_index].count);
+    leaf_size = la_field_leaf_size(ctx, field_index);
     if (leaf_size != 1 ||
         (!indexed && ctx->fields[field_index].count != 1)) {
-        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line,
-                (la_u16)(path_start - start + 1),
-                (la_u16)(close - path_start),
-                la_name_slice(ctx, ctx->fields[field_index].name),
-                la_slice("byte", 4), leaf_size, 1);
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, (la_u16)(path_start - start +
+                1), (la_u16)(close - path_start), la_name_slice(ctx,
+                ctx->fields[field_index].name), la_text("byte"), leaf_size, 1);
         return -1;
     }
     /* A fixed overlay field is reached by absolute addressing, so its offset
        is part of the 16-bit address and is not bound by the pointer
        displacement window. */
     if (!is_overlay && offset > ctx->target->max_displacement) {
-        la_fail(ctx, LA_ERR_DISPLACEMENT, line,
-                (la_u16)(path_start - start + 1),
-                (la_u16)(close - path_start),
-                la_slice(path_start, (la_u16)(close - path_start)),
-                la_slice("", 0), offset, ctx->target->max_displacement);
+        la_fail(ctx, LA_ERR_DISPLACEMENT, line, (la_u16)(path_start - start +
+                1), (la_u16)(close - path_start), la_slice(path_start,
+                (la_u16)(close - path_start)), la_text(""), offset,
+                ctx->target->max_displacement);
         return -1;
     }
-    if (ctx->operation_count >= ctx->limits->max_operations) {
-        la_fail(ctx, LA_ERR_OPERATION_CAPACITY, line, 1, 1,
-                la_slice("target operations", 17), la_slice("", 0),
-                ctx->operation_count + 1, ctx->limits->max_operations);
-        return -1;
-    }
-    ++ctx->operation_count;
-    ctx->stats->operations = ctx->operation_count;
+    if (!la_count_operation(ctx, line)) return -1;
     event->kind = LA_EVENT_TARGET_OPERATION;
     la_set_span(ctx, &event->span, line, 1, (la_u16)(end - start));
-    event->text = la_slice("", 0);
+    event->text = la_text("");
     event->owner = la_slice(root_start, root_length);
     event->path = la_slice(path_start, (la_u16)(close - path_start));
     if (is_overlay) {
@@ -5849,32 +5683,29 @@ static int la_parse_typed_operation(LaContext *ctx,
             la_name_slice(ctx, ctx->locations[location_index].physical);
     }
     event->index = index;
-    event->aux = la_slice("", 0);
-    event->aux2 = la_slice("", 0);
+    event->aux = la_text("");
+    event->aux2 = la_text("");
     event->property = (LaPropertyKind)0;
     if (operation == LA_TARGET_OP_ADC8_OVERLAY_INDEXED ||
         operation == LA_TARGET_OP_SBC8_OVERLAY_INDEXED) {
         /* Carry-chain arithmetic through an indexed fixed-overlay array (the
            effects structure-of-arrays); the accumulator and carry are live. */
         if (!is_overlay || !indexed) {
-            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                    (la_u16)(end - start),
-                    la_slice(start, (la_u16)(end - start)),
-                    la_slice("indexed fixed-overlay carry arithmetic", 38),
-                    0, 0);
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, (la_u16)(end -
+                    start), la_slice(start, (la_u16)(end - start)),
+                    la_text("indexed fixed-overlay carry arithmetic"), 0, 0);
             return -1;
         }
         if (!ctx->target->overlay_byte_operations ||
             !ctx->target->indexed_overlay_byte_operations) {
-            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                    (la_u16)(end - start),
-                    la_slice(start, (la_u16)(end - start)),
-                    la_slice("indexed overlay byte access", 27), 0, 0);
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, (la_u16)(end -
+                    start), la_slice(start, (la_u16)(end - start)),
+                    la_text("indexed overlay byte access"), 0, 0);
             return -1;
         }
         event->operation = operation;
         event->access_width = 1;
-        event->clobbers = la_slice("a,flags", 7);
+        event->clobbers = la_text("a,flags");
         event->volatility = ctx->overlays[overlay_index].volatile_access ?
             LA_ACCESS_VOLATILE : LA_ACCESS_NONVOLATILE;
     } else if (operation == LA_TARGET_OP_CMP8_OVERLAY_DISP ||
@@ -5891,18 +5722,15 @@ static int la_parse_typed_operation(LaContext *ctx,
            pointer-indirect and indexed variants stay raw and reviewed. */
         int sets_flags;
         if (!is_overlay || indexed) {
-            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                    (la_u16)(end - start),
-                    la_slice(start, (la_u16)(end - start)),
-                    la_slice("fixed-overlay accumulator or register op", 40),
-                    0, 0);
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, (la_u16)(end -
+                    start), la_slice(start, (la_u16)(end - start)),
+                    la_text("fixed-overlay accumulator or register op"), 0, 0);
             return -1;
         }
         if (!ctx->target->overlay_byte_operations) {
-            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                    (la_u16)(end - start),
-                    la_slice(start, (la_u16)(end - start)),
-                    la_slice("static overlay byte access", 26), 0, 0);
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, (la_u16)(end -
+                    start), la_slice(start, (la_u16)(end - start)),
+                    la_text("static overlay byte access"), 0, 0);
             return -1;
         }
         /* stx/sty leave the flags untouched; the rest update N and Z. */
@@ -5910,27 +5738,25 @@ static int la_parse_typed_operation(LaContext *ctx,
                      operation != LA_TARGET_OP_STOREY_OVERLAY_DISP;
         event->operation = operation;
         event->access_width = 1;
-        event->scratch = la_slice("", 0);
+        event->scratch = la_text("");
         if (sets_flags) {
-            event->clobbers = la_slice("flags", 5);
+            event->clobbers = la_text("flags");
         } else {
-            event->clobbers = la_slice("", 0);
+            event->clobbers = la_text("");
         }
         event->volatility = ctx->overlays[overlay_index].volatile_access ?
             LA_ACCESS_VOLATILE : LA_ACCESS_NONVOLATILE;
     } else if (is_overlay) {
         if (!ctx->target->overlay_byte_operations) {
-            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                    (la_u16)(end - start),
-                    la_slice(start, (la_u16)(end - start)),
-                    la_slice("static overlay byte access", 26), 0, 0);
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, (la_u16)(end -
+                    start), la_slice(start, (la_u16)(end - start)),
+                    la_text("static overlay byte access"), 0, 0);
             return -1;
         }
         if (indexed && !ctx->target->indexed_overlay_byte_operations) {
-            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                    (la_u16)(end - start),
-                    la_slice(start, (la_u16)(end - start)),
-                    la_slice("indexed overlay byte access", 27), 0, 0);
+            la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, (la_u16)(end -
+                    start), la_slice(start, (la_u16)(end - start)),
+                    la_text("indexed overlay byte access"), 0, 0);
             return -1;
         }
         event->operation = indexed ?
@@ -5988,22 +5814,20 @@ static int la_parse_typed_word_operation(LaContext *ctx,
     int immediate_store;
     la_i32 immediate_value;
     cursor = la_trim_left(start, end);
-    if ((la_u16)(end - cursor) >= 4 && memcmp(cursor, "ldw ", 4) == 0) {
-        store = 0;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "stw ", 4) == 0) {
-        store = 1;
-    } else {
-        return 0;
+    {
+        la_u8 claimed;
+        claimed = la_claimed_operation(ctx, cursor, end,
+                                       LA_SPELL_WORD_TRANSFER);
+        if (claimed == 0) return 0;
+        store = claimed == LA_TARGET_OP_STORE16_PTR_DISP;
     }
     if (!ctx->target->pointer_word_operations) {
-        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                (la_u16)(end - start),
-                la_slice(start, (la_u16)(end - start)),
-                la_slice("typed pointer word transfer", 27), 0, 0);
+        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, (la_u16)(end -
+                start), la_slice(start, (la_u16)(end - start)),
+                la_text("typed pointer word transfer"), 0, 0);
         return -1;
     }
-    cursor = la_trim_left(cursor + 3, end);
+    cursor = la_trim_left(la_skip_spelling(cursor, end), end);
     if (store) {
         bracket = cursor;
     } else {
@@ -6013,23 +5837,22 @@ static int la_parse_typed_word_operation(LaContext *ctx,
         cursor = la_trim_left(cursor, end);
         if (word_end == word_start || cursor >= end || *cursor++ != ',') {
             la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                    la_slice("ldw WORD, [pointer + Type.field]", 34),
-                    la_slice("", 0), 0, 0);
+                    la_text("ldw WORD, [pointer + Type.field]"),
+                    la_text(""), 0, 0);
             return -1;
         }
         bracket = la_trim_left(cursor, end);
     }
     if (bracket >= end || *bracket != '[') {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("[pointer + Type.field]", 22),
-                la_slice("", 0), 0, 0);
+                la_text("[pointer + Type.field]"), la_text(""), 0, 0);
         return -1;
     }
     close = bracket + 1;
     while (close < end && *close != ']') ++close;
     if (close == end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("]", 1), la_slice("", 0), 0, 0);
+                la_text("]"), la_text(""), 0, 0);
         return -1;
     }
     base_start = la_trim_left(bracket + 1, close);
@@ -6040,9 +5863,8 @@ static int la_parse_typed_word_operation(LaContext *ctx,
     cursor = la_trim_left(base_end, close);
     if (base_end == base_start || cursor >= close ||
         (*cursor != '.' && *cursor != '+')) {
-        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("[pointer.field]", 15),
-                la_slice("", 0), 0, 0);
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1, la_text("[pointer.field]"),
+                la_text(""), 0, 0);
         return -1;
     }
     procedure = la_procedure_at_line(ctx, line);
@@ -6050,10 +5872,9 @@ static int la_parse_typed_word_operation(LaContext *ctx,
         ctx, base_start, (la_u16)(base_end - base_start), procedure);
     if (pointer_location == LA_INVALID_HANDLE ||
         !ctx->locations[pointer_location].is_pointer) {
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                (la_u16)(base_end - base_start),
-                la_slice(base_start, (la_u16)(base_end - base_start)),
-                la_slice("typed pointer", 13), 0, 0);
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, (la_u16)(base_end -
+                base_start), la_slice(base_start, (la_u16)(base_end -
+                base_start)), la_text("typed pointer"), 0, 0);
         return -1;
     }
     {
@@ -6071,8 +5892,8 @@ static int la_parse_typed_word_operation(LaContext *ctx,
     if (store) {
         if (cursor >= end || *cursor++ != ',') {
             la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                    la_slice("stw [pointer + Type.field], WORD", 34),
-                    la_slice("", 0), 0, 0);
+                    la_text("stw [pointer + Type.field], WORD"),
+                    la_text(""), 0, 0);
             return -1;
         }
         cursor = la_trim_left(cursor, end);
@@ -6086,11 +5907,9 @@ static int la_parse_typed_word_operation(LaContext *ctx,
                     (la_i32)((la_u32)immediate_value & 0xffff);
             }
             if (immediate_value < -32768 || immediate_value > 65535) {
-                la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
-                        (la_u16)(end - cursor),
-                        la_slice(cursor, (la_u16)(end - cursor)),
-                        la_slice("16-bit immediate", 16),
-                        immediate_value, 65535);
+                la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, (la_u16)(end -
+                        cursor), la_slice(cursor, (la_u16)(end - cursor)),
+                        la_text("16-bit immediate"), immediate_value, 65535);
                 return -1;
             }
             immediate_store = 1;
@@ -6104,11 +5923,9 @@ static int la_parse_typed_word_operation(LaContext *ctx,
         }
     }
     if (word_end == word_start || la_trim_left(cursor, end) != end) {
-        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice(store ? "stw [pointer + Type.field], WORD" :
-                                 "ldw WORD, [pointer + Type.field]",
-                         34),
-                la_slice("", 0), 0, 0);
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1, la_slice(store ?
+                "stw [pointer + Type.field], WORD" :
+                "ldw WORD, [pointer + Type.field]", 34), la_text(""), 0, 0);
         return -1;
     }
     word_location = LA_INVALID_HANDLE;
@@ -6120,10 +5937,9 @@ static int la_parse_typed_word_operation(LaContext *ctx,
             !la_scalar_size(ctx, ctx->locations[word_location].type_name,
                             &word_size) ||
             word_size != 2) {
-            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                    (la_u16)(word_end - word_start),
-                    la_slice(word_start, (la_u16)(word_end - word_start)),
-                    la_slice("physical two-unit word", 22), 0, 0);
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, (la_u16)(word_end -
+                    word_start), la_slice(word_start, (la_u16)(word_end -
+                    word_start)), la_text("physical two-unit word"), 0, 0);
             return -1;
         }
     }
@@ -6132,34 +5948,22 @@ static int la_parse_typed_word_operation(LaContext *ctx,
                         &field_index, &field_offset) != LA_OK) {
         return -1;
     }
-    field_size = ctx->fields[field_index].count == 1 ?
-        ctx->fields[field_index].size :
-        (la_u16)(ctx->fields[field_index].size /
-                 ctx->fields[field_index].count);
+    field_size = la_field_leaf_size(ctx, field_index);
     if (ctx->fields[field_index].count != 1 || field_size != 2) {
-        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
-                (la_u16)(close - path_start),
-                la_name_slice(ctx, ctx->fields[field_index].name),
-                la_slice("two-unit word", 13), field_size, 2);
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, (la_u16)(close -
+                path_start), la_name_slice(ctx, ctx->fields[field_index].name),
+                la_text("two-unit word"), field_size, 2);
         return -1;
     }
     if ((la_u32)field_offset + 1 > ctx->target->max_displacement) {
-        la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1,
-                (la_u16)(close - path_start),
-                la_slice(path_start, (la_u16)(close - path_start)),
-                la_slice("word displacement", 17),
+        la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1, (la_u16)(close -
+                path_start), la_slice(path_start, (la_u16)(close -
+                path_start)), la_text("word displacement"),
                 (la_i32)((la_u32)field_offset + 1),
                 ctx->target->max_displacement);
         return -1;
     }
-    if (ctx->operation_count >= ctx->limits->max_operations) {
-        la_fail(ctx, LA_ERR_OPERATION_CAPACITY, line, 1, 1,
-                la_slice("target operations", 17), la_slice("", 0),
-                ctx->operation_count + 1, ctx->limits->max_operations);
-        return -1;
-    }
-    ++ctx->operation_count;
-    ctx->stats->operations = ctx->operation_count;
+    if (!la_count_operation(ctx, line)) return -1;
     la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
                   (la_u16)(end - start));
     event->operation = immediate_store ? LA_TARGET_OP_STORE16_IMM_PTR_DISP :
@@ -6176,7 +5980,7 @@ static int la_parse_typed_word_operation(LaContext *ctx,
             la_name_slice(ctx, ctx->locations[word_location].physical);
     }
     event->scratch = la_accumulator_slice(ctx);
-    event->clobbers = la_slice("a,flags", 7);
+    event->clobbers = la_text("a,flags");
     event->value = field_offset;
     event->access_width = 2;
     event->byte_order = ctx->target->byte_order;
@@ -6199,18 +6003,10 @@ static int la_parse_physical_word_arithmetic(LaContext *ctx,
     la_u16 procedure;
     LaTargetOperationKind operation;
     cursor = la_trim_left(start, end);
-    if ((la_u16)(end - cursor) >= 5 && memcmp(cursor, "addw ", 5) == 0) {
-        operation = LA_TARGET_OP_ADD16_PHYSICAL;
-    } else if ((la_u16)(end - cursor) >= 5 &&
-               memcmp(cursor, "subw ", 5) == 0) {
-        operation = LA_TARGET_OP_SUB16_PHYSICAL;
-    } else if ((la_u16)(end - cursor) >= 5 &&
-               memcmp(cursor, "cmpw ", 5) == 0) {
-        operation = LA_TARGET_OP_CMP16_PHYSICAL;
-    } else {
-        return 0;
-    }
-    cursor = la_trim_left(cursor + 4, end);
+    operation = (LaTargetOperationKind)la_claimed_operation(
+        ctx, cursor, end, LA_SPELL_WORD_ARITHMETIC);
+    if (operation == 0) return 0;
+    cursor = la_trim_left(la_skip_spelling(cursor, end), end);
     left_start = cursor;
     while (cursor < end && la_is_ident(*cursor)) ++cursor;
     left_end = cursor;
@@ -6220,20 +6016,17 @@ static int la_parse_physical_word_arithmetic(LaContext *ctx,
     }
     if (!ctx->target->physical_word_arithmetic ||
         ctx->target->word_accumulator == 0) {
-        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                (la_u16)(end - start),
-                la_slice(start, (la_u16)(end - start)),
-                la_slice("physical word arithmetic", 24), 0, 0);
+        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, (la_u16)(end -
+                start), la_slice(start, (la_u16)(end - start)),
+                la_text("physical word arithmetic"), 0, 0);
         return -1;
     }
     if (!la_equal_text(left_start, (la_u16)(left_end - left_start),
                        ctx->target->word_accumulator)) {
-        la_fail(ctx, LA_ERR_MEMBER_PLACEMENT, line, 1,
-                (la_u16)(left_end - left_start),
-                la_slice(left_start, (la_u16)(left_end - left_start)),
-                la_slice(ctx->target->word_accumulator,
-                         (la_u16)strlen(ctx->target->word_accumulator)),
-                0, 0);
+        la_fail(ctx, LA_ERR_MEMBER_PLACEMENT, line, 1, (la_u16)(left_end -
+                left_start), la_slice(left_start, (la_u16)(left_end -
+                left_start)), la_slice(ctx->target->word_accumulator,
+                (la_u16)strlen(ctx->target->word_accumulator)), 0, 0);
         return -1;
     }
     cursor = la_trim_left(cursor, end);
@@ -6242,7 +6035,7 @@ static int la_parse_physical_word_arithmetic(LaContext *ctx,
     right_end = cursor;
     if (right_end == right_start || la_trim_left(cursor, end) != end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("OP ab, WORD", 11), la_slice("", 0), 0, 0);
+                la_text("OP ab, WORD"), la_text(""), 0, 0);
         return -1;
     }
     procedure = la_procedure_at_line(ctx, line);
@@ -6253,20 +6046,12 @@ static int la_parse_physical_word_arithmetic(LaContext *ctx,
         !la_scalar_size(ctx, ctx->locations[right_location].type_name,
                         &right_size) ||
         right_size != 2) {
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                (la_u16)(right_end - right_start),
-                la_slice(right_start, (la_u16)(right_end - right_start)),
-                la_slice("physical two-unit word", 22), 0, 0);
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, (la_u16)(right_end -
+                right_start), la_slice(right_start, (la_u16)(right_end -
+                right_start)), la_text("physical two-unit word"), 0, 0);
         return -1;
     }
-    if (ctx->operation_count >= ctx->limits->max_operations) {
-        la_fail(ctx, LA_ERR_OPERATION_CAPACITY, line, 1, 1,
-                la_slice("target operations", 17), la_slice("", 0),
-                ctx->operation_count + 1, ctx->limits->max_operations);
-        return -1;
-    }
-    ++ctx->operation_count;
-    ctx->stats->operations = ctx->operation_count;
+    if (!la_count_operation(ctx, line)) return -1;
     la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
                   (la_u16)(end - start));
     event->operation = operation;
@@ -6278,9 +6063,9 @@ static int la_parse_physical_word_arithmetic(LaContext *ctx,
     event->access_width = 2;
     event->byte_order = ctx->target->byte_order;
     if (operation == LA_TARGET_OP_CMP16_PHYSICAL) {
-        event->clobbers = la_slice("n,z,c", 5);
+        event->clobbers = la_text("n,z,c");
     } else {
-        event->clobbers = la_slice("ab,n,v,z,c", 10);
+        event->clobbers = la_text("ab,n,v,z,c");
     }
     return 1;
 }
@@ -6349,41 +6134,26 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
     int needs_immediate;
     int rmw_is_overlay;
     cursor = la_trim_left(start, end);
-    needs_immediate = 0;
-    if ((la_u16)(end - cursor) >= 4 && memcmp(cursor, "inc ", 4) == 0) {
-        operation = LA_TARGET_OP_INC8_PTR_DISP;
-        cursor += 3;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "dec ", 4) == 0) {
-        operation = LA_TARGET_OP_DEC8_PTR_DISP;
-        cursor += 3;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "and ", 4) == 0) {
-        operation = LA_TARGET_OP_AND8_PTR_DISP;
-        cursor += 3;
-        needs_immediate = 1;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "ora ", 4) == 0) {
-        operation = LA_TARGET_OP_OR8_PTR_DISP;
-        cursor += 3;
-        needs_immediate = 1;
-    } else {
-        return 0;
-    }
+    operation = (LaTargetOperationKind)la_claimed_operation(
+        ctx, cursor, end, LA_SPELL_BYTE_RMW);
+    if (operation == 0) return 0;
+    /* The masking updates carry the mask as an immediate operand. */
+    needs_immediate = operation == LA_TARGET_OP_AND8_PTR_DISP ||
+                      operation == LA_TARGET_OP_OR8_PTR_DISP;
+    cursor = la_skip_spelling(cursor, end);
     bracket = la_trim_left(cursor, end);
     if (bracket >= end || *bracket != '[') return 0;
     if (!ctx->target->pointer_byte_rmw_operations) {
-        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                (la_u16)(end - start),
-                la_slice(start, (la_u16)(end - start)),
-                la_slice("typed pointer byte update", 25), 0, 0);
+        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, (la_u16)(end -
+                start), la_slice(start, (la_u16)(end - start)),
+                la_text("typed pointer byte update"), 0, 0);
         return -1;
     }
     close = bracket + 1;
     while (close < end && *close != ']') ++close;
     if (close == end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("]", 1), la_slice("", 0), 0, 0);
+                la_text("]"), la_text(""), 0, 0);
         return -1;
     }
     base_start = la_trim_left(bracket + 1, close);
@@ -6394,9 +6164,8 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
     cursor = la_trim_left(base_end, close);
     if (base_end == base_start || cursor >= close ||
         (*cursor != '.' && *cursor != '+')) {
-        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("[base.field]", 12),
-                la_slice("", 0), 0, 0);
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1, la_text("[base.field]"),
+                la_text(""), 0, 0);
         return -1;
     }
     procedure = la_procedure_at_line(ctx, line);
@@ -6409,10 +6178,9 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
         overlay_base = la_find_overlay_text(
             ctx, base_start, (la_u16)(base_end - base_start));
         if (overlay_base == LA_INVALID_HANDLE) {
-            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                    (la_u16)(base_end - base_start),
-                    la_slice(base_start, (la_u16)(base_end - base_start)),
-                    la_slice("typed pointer or overlay", 24), 0, 0);
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, (la_u16)(base_end -
+                    base_start), la_slice(base_start, (la_u16)(base_end -
+                    base_start)), la_text("typed pointer or overlay"), 0, 0);
             return -1;
         }
         rmw_is_overlay = 1;
@@ -6445,7 +6213,7 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
         cursor = la_trim_left(cursor, end);
         if (cursor >= end || *cursor++ != '#') {
             la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                    la_slice("#VALUE", 6), la_slice("", 0), 0, 0);
+                    la_text("#VALUE"), la_text(""), 0, 0);
             return -1;
         }
         immediate_start = cursor;
@@ -6457,52 +6225,38 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
             immediate = (la_i32)((la_u32)immediate & 0xff);
         }
         if (immediate < 0 || immediate > 255) {
-            la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
-                    (la_u16)(end - immediate_start),
-                    la_slice(immediate_start,
-                             (la_u16)(end - immediate_start)),
-                    la_slice("byte immediate", 14), immediate, 255);
+            la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, (la_u16)(end -
+                    immediate_start), la_slice(immediate_start, (la_u16)(end -
+                    immediate_start)), la_text("byte immediate"), immediate,
+                    255);
             return -1;
         }
     } else if (cursor != end) {
-        la_fail(ctx, LA_ERR_SYNTAX, line, 1,
-                (la_u16)(end - cursor),
-                la_slice("end of byte update", 18),
-                la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, (la_u16)(end - cursor),
+                la_text("end of byte update"), la_slice(cursor, (la_u16)(end -
+                cursor)), 0, 0);
         return -1;
     }
     if (la_resolve_path(ctx, root_start, root_length, path_start,
                         (la_u16)(close - path_start), line,
                         &field_index, &field_offset) != LA_OK) return -1;
-    field_size = ctx->fields[field_index].count == 1 ?
-        ctx->fields[field_index].size :
-        (la_u16)(ctx->fields[field_index].size /
-                 ctx->fields[field_index].count);
+    field_size = la_field_leaf_size(ctx, field_index);
     if (ctx->fields[field_index].count != 1 || field_size != 1) {
-        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
-                (la_u16)(close - path_start),
-                la_name_slice(ctx, ctx->fields[field_index].name),
-                la_slice("byte", 4), field_size, 1);
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, (la_u16)(close -
+                path_start), la_name_slice(ctx, ctx->fields[field_index].name),
+                la_text("byte"), field_size, 1);
         return -1;
     }
     /* A fixed overlay names an absolute address, so the field displacement is
        not bounded by the target's pointer displacement window. */
     if (!rmw_is_overlay && field_offset > ctx->target->max_displacement) {
-        la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1,
-                (la_u16)(close - path_start),
-                la_slice(path_start, (la_u16)(close - path_start)),
-                la_slice("", 0), field_offset,
+        la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1, (la_u16)(close -
+                path_start), la_slice(path_start, (la_u16)(close -
+                path_start)), la_text(""), field_offset,
                 ctx->target->max_displacement);
         return -1;
     }
-    if (ctx->operation_count >= ctx->limits->max_operations) {
-        la_fail(ctx, LA_ERR_OPERATION_CAPACITY, line, 1, 1,
-                la_slice("target operations", 17), la_slice("", 0),
-                ctx->operation_count + 1, ctx->limits->max_operations);
-        return -1;
-    }
-    ++ctx->operation_count;
-    ctx->stats->operations = ctx->operation_count;
+    if (!la_count_operation(ctx, line)) return -1;
     la_init_event(ctx, event, LA_EVENT_TARGET_OPERATION, line,
                   (la_u16)(end - start));
     event->owner = la_slice(root_start, root_length);
@@ -6527,10 +6281,10 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
         event->base = la_name_slice(ctx, ctx->overlays[overlay_base].base);
         if (is_mask) {
             event->scratch = la_accumulator_slice(ctx);
-            event->clobbers = la_slice("a,flags", 7);
+            event->clobbers = la_text("a,flags");
         } else {
-            event->scratch = la_slice("", 0);
-            event->clobbers = la_slice("flags", 5);
+            event->scratch = la_text("");
+            event->clobbers = la_text("flags");
         }
         event->volatility = ctx->overlays[overlay_base].volatile_access ?
             LA_ACCESS_VOLATILE : LA_ACCESS_NONVOLATILE;
@@ -6539,7 +6293,7 @@ static int la_parse_typed_byte_rmw(LaContext *ctx,
         event->base =
             la_name_slice(ctx, ctx->locations[pointer_location].physical);
         event->scratch = la_accumulator_slice(ctx);
-        event->clobbers = la_slice("a,flags", 7);
+        event->clobbers = la_text("a,flags");
         event->volatility = LA_ACCESS_NONVOLATILE;
     }
     return 1;
@@ -6581,21 +6335,18 @@ static int la_parse_observation_operation(LaContext *ctx,
     la_u16 required_size;
     int is_decz;
     cursor = la_trim_left(start, end);
-    if ((la_u16)(end - cursor) >= 5 && memcmp(cursor, "decz ", 5) == 0) {
-        is_decz = 1;
-        cursor += 4;
-    } else if ((la_u16)(end - cursor) >= 5 &&
-               memcmp(cursor, "tstw ", 5) == 0) {
-        is_decz = 0;
-        cursor += 4;
-    } else {
-        return 0;
+    {
+        la_u8 claimed;
+        claimed = la_claimed_operation(ctx, cursor, end,
+                                       LA_SPELL_OBSERVATION);
+        if (claimed == 0) return 0;
+        is_decz = claimed == LA_TARGET_OP_DECZ8_PTR_DISP;
+        cursor = la_skip_spelling(cursor, end);
     }
     if (!ctx->target->pointer_byte_rmw_operations) {
-        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                (la_u16)(end - start),
-                la_slice(start, (la_u16)(end - start)),
-                la_slice("typed observation operation", 27), 0, 0);
+        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, (la_u16)(end -
+                start), la_slice(start, (la_u16)(end - start)),
+                la_text("typed observation operation"), 0, 0);
         return -1;
     }
     procedure = la_procedure_at_line(ctx, line);
@@ -6613,7 +6364,7 @@ static int la_parse_observation_operation(LaContext *ctx,
         if (word_end == word_start ||
             la_trim_left(word_end, end) != end) {
             la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                    la_slice("tstw WORD", 9), la_slice("", 0), 0, 0);
+                    la_text("tstw WORD"), la_text(""), 0, 0);
             return -1;
         }
         word_location = la_find_location_text_at(
@@ -6623,10 +6374,9 @@ static int la_parse_observation_operation(LaContext *ctx,
             !la_scalar_size(ctx, ctx->locations[word_location].type_name,
                             &word_size) ||
             word_size != 2) {
-            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                    (la_u16)(word_end - word_start),
-                    la_slice(word_start, (la_u16)(word_end - word_start)),
-                    la_slice("physical two-unit word", 22), 0, 0);
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, (la_u16)(word_end -
+                    word_start), la_slice(word_start, (la_u16)(word_end -
+                    word_start)), la_text("physical two-unit word"), 0, 0);
             return -1;
         }
         if (!la_count_operation(ctx, line)) return -1;
@@ -6637,22 +6387,21 @@ static int la_parse_observation_operation(LaContext *ctx,
             la_name_slice(ctx, ctx->locations[word_location].physical);
         event->owner = la_name_slice(ctx, ctx->locations[word_location].name);
         event->scratch = la_accumulator_slice(ctx);
-        event->clobbers = la_slice("a,flags", 7);
+        event->clobbers = la_text("a,flags");
         event->access_width = 2;
         event->volatility = LA_ACCESS_NONVOLATILE;
         return 1;
     }
     if (bracket >= end || *bracket != '[') {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("[pointer + Type.field]", 22),
-                la_slice("", 0), 0, 0);
+                la_text("[pointer + Type.field]"), la_text(""), 0, 0);
         return -1;
     }
     close = bracket + 1;
     while (close < end && *close != ']') ++close;
     if (close == end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("]", 1), la_slice("", 0), 0, 0);
+                la_text("]"), la_text(""), 0, 0);
         return -1;
     }
     base_start = la_trim_left(bracket + 1, close);
@@ -6662,19 +6411,17 @@ static int la_parse_observation_operation(LaContext *ctx,
     cursor = la_trim_left(base_end, close);
     if (base_end == base_start || cursor >= close ||
         (*cursor != '.' && *cursor != '+')) {
-        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("[pointer.field]", 15),
-                la_slice("", 0), 0, 0);
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1, la_text("[pointer.field]"),
+                la_text(""), 0, 0);
         return -1;
     }
     pointer_location = la_find_location_text_at(
         ctx, base_start, (la_u16)(base_end - base_start), procedure);
     if (pointer_location == LA_INVALID_HANDLE ||
         !ctx->locations[pointer_location].is_pointer) {
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                (la_u16)(base_end - base_start),
-                la_slice(base_start, (la_u16)(base_end - base_start)),
-                la_slice("typed pointer", 13), 0, 0);
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, (la_u16)(base_end -
+                base_start), la_slice(base_start, (la_u16)(base_end -
+                base_start)), la_text("typed pointer"), 0, 0);
         return -1;
     }
     {
@@ -6691,8 +6438,8 @@ static int la_parse_observation_operation(LaContext *ctx,
     if (is_decz) {
         if (cursor >= end || *cursor++ != ',') {
             la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                    la_slice("decz [pointer + Type.field], label", 34),
-                    la_slice("", 0), 0, 0);
+                    la_text("decz [pointer + Type.field], label"),
+                    la_text(""), 0, 0);
             return -1;
         }
         cursor = la_trim_left(cursor, end);
@@ -6701,46 +6448,39 @@ static int la_parse_observation_operation(LaContext *ctx,
                (la_is_ident(*cursor) || *cursor == '.')) ++cursor;
         if (cursor == label_start || la_trim_left(cursor, end) != end) {
             la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                    la_slice("branch label", 12), la_slice("", 0), 0, 0);
+                    la_text("branch label"), la_text(""), 0, 0);
             return -1;
         }
     } else if (cursor != end) {
-        la_fail(ctx, LA_ERR_SYNTAX, line, 1,
-                (la_u16)(end - cursor),
-                la_slice("end of word test", 16),
-                la_slice(cursor, (la_u16)(end - cursor)), 0, 0);
+        la_fail(ctx, LA_ERR_SYNTAX, line, 1, (la_u16)(end - cursor),
+                la_text("end of word test"), la_slice(cursor, (la_u16)(end -
+                cursor)), 0, 0);
         return -1;
     }
     if (la_resolve_path(ctx, root_start, root_length, path_start,
                         (la_u16)(close - path_start), line,
                         &field_index, &field_offset) != LA_OK) return -1;
-    field_size = ctx->fields[field_index].count == 1 ?
-        ctx->fields[field_index].size :
-        (la_u16)(ctx->fields[field_index].size /
-                 ctx->fields[field_index].count);
+    field_size = la_field_leaf_size(ctx, field_index);
     required_size = is_decz ? 1 : 2;
     if (ctx->fields[field_index].count != 1 ||
         field_size != required_size) {
         LaSlice width_name;
         if (is_decz) {
-            width_name = la_slice("byte", 4);
+            width_name = la_text("byte");
         } else {
-            width_name = la_slice("two-unit word", 13);
+            width_name = la_text("two-unit word");
         }
-        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
-                (la_u16)(close - path_start),
-                la_name_slice(ctx, ctx->fields[field_index].name),
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, (la_u16)(close -
+                path_start), la_name_slice(ctx, ctx->fields[field_index].name),
                 width_name, field_size, required_size);
         return -1;
     }
     if ((la_u32)field_offset + (required_size - 1) >
         ctx->target->max_displacement) {
-        la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1,
-                (la_u16)(close - path_start),
-                la_slice(path_start, (la_u16)(close - path_start)),
-                la_slice("", 0),
-                (la_i32)((la_u32)field_offset + (required_size - 1)),
-                ctx->target->max_displacement);
+        la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1, (la_u16)(close -
+                path_start), la_slice(path_start, (la_u16)(close -
+                path_start)), la_text(""), (la_i32)((la_u32)field_offset +
+                (required_size - 1)), ctx->target->max_displacement);
         return -1;
     }
     if (!la_count_operation(ctx, line)) return -1;
@@ -6756,11 +6496,11 @@ static int la_parse_observation_operation(LaContext *ctx,
         event->aux = la_slice(label_start,
                               (la_u16)(cursor - label_start));
         event->scratch = la_accumulator_slice(ctx);
-        event->clobbers = la_slice("a,flags", 7);
+        event->clobbers = la_text("a,flags");
     } else {
         /* The pointer word test reads the high unit through (base),y. */
-        event->scratch = la_slice("a,y", 3);
-        event->clobbers = la_slice("a,y,flags", 9);
+        event->scratch = la_text("a,y");
+        event->clobbers = la_text("a,y,flags");
     }
     event->value = field_offset;
     event->access_width = (la_u16)required_size;
@@ -6787,10 +6527,10 @@ static int la_parse_word_move(LaContext *ctx,
     la_i32 immediate;
     int is_immediate;
     cursor = la_trim_left(start, end);
-    if ((la_u16)(end - cursor) < 5 || memcmp(cursor, "movw ", 5) != 0) {
+    if (la_claimed_operation(ctx, cursor, end, LA_SPELL_WORD_MOVE) == 0) {
         return 0;
     }
-    cursor = la_trim_left(cursor + 4, end);
+    cursor = la_trim_left(la_skip_spelling(cursor, end), end);
     procedure = la_procedure_at_line(ctx, line);
     dest_start = cursor;
     dest_end = dest_start;
@@ -6799,8 +6539,7 @@ static int la_parse_word_move(LaContext *ctx,
     cursor = la_trim_left(dest_end, end);
     if (dest_end == dest_start || cursor >= end || *cursor++ != ',') {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("movw WORD, #expr16 or WORD", 26),
-                la_slice("", 0), 0, 0);
+                la_text("movw WORD, #expr16 or WORD"), la_text(""), 0, 0);
         return -1;
     }
     dest_location = la_find_location_text_at(
@@ -6810,10 +6549,9 @@ static int la_parse_word_move(LaContext *ctx,
         !la_scalar_size(ctx, ctx->locations[dest_location].type_name,
                         &word_size) ||
         word_size != 2) {
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                (la_u16)(dest_end - dest_start),
-                la_slice(dest_start, (la_u16)(dest_end - dest_start)),
-                la_slice("physical two-unit word", 22), 0, 0);
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, (la_u16)(dest_end -
+                dest_start), la_slice(dest_start, (la_u16)(dest_end -
+                dest_start)), la_text("physical two-unit word"), 0, 0);
         return -1;
     }
     cursor = la_trim_left(cursor, end);
@@ -6828,10 +6566,9 @@ static int la_parse_word_move(LaContext *ctx,
             immediate = (la_i32)((la_u32)immediate & 0xffff);
         }
         if (immediate < -32768 || immediate > 65535) {
-            la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
-                    (la_u16)(end - cursor),
+            la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, (la_u16)(end - cursor),
                     la_slice(cursor, (la_u16)(end - cursor)),
-                    la_slice("16-bit immediate", 16), immediate, 65535);
+                    la_text("16-bit immediate"), immediate, 65535);
             return -1;
         }
         is_immediate = 1;
@@ -6844,8 +6581,7 @@ static int la_parse_word_move(LaContext *ctx,
         if (source_end == source_start ||
             la_trim_left(source_end, end) != end) {
             la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                    la_slice("movw WORD, #expr16 or WORD", 26),
-                    la_slice("", 0), 0, 0);
+                    la_text("movw WORD, #expr16 or WORD"), la_text(""), 0, 0);
             return -1;
         }
         source_location = la_find_location_text_at(
@@ -6857,11 +6593,9 @@ static int la_parse_word_move(LaContext *ctx,
                             ctx->locations[source_location].type_name,
                             &word_size) ||
             word_size != 2) {
-            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                    (la_u16)(source_end - source_start),
-                    la_slice(source_start,
-                             (la_u16)(source_end - source_start)),
-                    la_slice("physical two-unit word", 22), 0, 0);
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, (la_u16)(source_end -
+                    source_start), la_slice(source_start, (la_u16)(source_end -
+                    source_start)), la_text("physical two-unit word"), 0, 0);
             return -1;
         }
     }
@@ -6879,7 +6613,7 @@ static int la_parse_word_move(LaContext *ctx,
             la_name_slice(ctx, ctx->locations[source_location].physical);
     }
     event->scratch = la_accumulator_slice(ctx);
-    event->clobbers = la_slice("a,flags", 7);
+    event->clobbers = la_text("a,flags");
     event->access_width = 2;
     event->byte_order = ctx->target->byte_order;
     event->volatility = LA_ACCESS_NONVOLATILE;
@@ -6902,11 +6636,19 @@ static int la_has_explicit_typed_operand(const char *start, const char *end)
     return plus < close;
 }
 
+/* One element of a field: its declared size, or the size of one member
+   when the field is an array. */
+static la_u16 la_field_leaf_size(const LaContext *ctx, la_u16 field)
+{
+    if (ctx->fields[field].count == 1) return ctx->fields[field].size;
+    return (la_u16)(ctx->fields[field].size / ctx->fields[field].count);
+}
+
 static int la_count_operation(LaContext *ctx, la_u16 line)
 {
     if (ctx->operation_count >= ctx->limits->max_operations) {
         la_fail(ctx, LA_ERR_OPERATION_CAPACITY, line, 1, 1,
-                la_slice("target operations", 17), la_slice("", 0),
+                la_text("target operations"), la_text(""),
                 ctx->operation_count + 1, ctx->limits->max_operations);
         return 0;
     }
@@ -6950,8 +6692,8 @@ static int la_parse_overlay_branch(LaContext *ctx,
        passed through to the lowering verbatim. */
     matched = 0;
     for (i = 0; i < ctx->target->spelling_count; ++i) {
-        if ((ctx->target->spellings[i].families &
-             LA_SPELL_OVERLAY_BRANCH) == 0) continue;
+        if (ctx->target->spellings[i].family !=
+            LA_SPELL_OVERLAY_BRANCH) continue;
         if (la_equal_text(mnem_start, mnem_length,
                           ctx->target->spellings[i].spelling)) {
             matched = 1;
@@ -6977,17 +6719,16 @@ static int la_parse_overlay_branch(LaContext *ctx,
     rest_start = la_trim_left(rest_start + 1, end);
     if (rest_start == end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("MNEM [overlay.field], #VALUE, TARGET", 36),
-                la_slice("", 0), 0, 0);
+                la_text("MNEM [overlay.field], #VALUE, TARGET"),
+                la_text(""), 0, 0);
         return -1;
     }
     overlay_index = la_find_overlay_text(
         ctx, base_start, (la_u16)(base_end - base_start));
     if (overlay_index == LA_INVALID_HANDLE) {
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                (la_u16)(base_end - base_start),
-                la_slice(base_start, (la_u16)(base_end - base_start)),
-                la_slice("overlay", 7), 0, 0);
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, (la_u16)(base_end -
+                base_start), la_slice(base_start, (la_u16)(base_end -
+                base_start)), la_text("overlay"), 0, 0);
         return -1;
     }
     {
@@ -7002,15 +6743,11 @@ static int la_parse_overlay_branch(LaContext *ctx,
     if (la_resolve_path(ctx, root_start, root_length, path_start,
                         (la_u16)(close - path_start), line,
                         &field_index, &field_offset) != LA_OK) return -1;
-    field_size = ctx->fields[field_index].count == 1 ?
-        ctx->fields[field_index].size :
-        (la_u16)(ctx->fields[field_index].size /
-                 ctx->fields[field_index].count);
+    field_size = la_field_leaf_size(ctx, field_index);
     if (ctx->fields[field_index].count != 1 || field_size != 1) {
-        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
-                (la_u16)(close - path_start),
-                la_name_slice(ctx, ctx->fields[field_index].name),
-                la_slice("byte", 4), field_size, 1);
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, (la_u16)(close -
+                path_start), la_name_slice(ctx, ctx->fields[field_index].name),
+                la_text("byte"), field_size, 1);
         return -1;
     }
     if (!la_count_operation(ctx, line)) return -1;
@@ -7051,8 +6788,9 @@ static int la_parse_overlay_store_immediate(LaContext *ctx,
     la_u16 field_size;
     int tail;
     cursor = la_trim_left(start, end);
-    if ((la_u16)(end - cursor) < 4 || memcmp(cursor, "mov ", 4) != 0) return 0;
-    bracket = la_trim_left(cursor + 3, end);
+    if (la_claimed_operation(ctx, cursor, end,
+                             LA_SPELL_OVERLAY_STORE_IMM) == 0) return 0;
+    bracket = la_trim_left(la_skip_spelling(cursor, end), end);
     if (bracket >= end || *bracket != '[') return 0;
     close = bracket + 1;
     while (close < end && *close != ']') ++close;
@@ -7073,25 +6811,22 @@ static int la_parse_overlay_store_immediate(LaContext *ctx,
     if (imm_start < end && *imm_start == '[') {
         /* A second typed memory operand would be a memory-to-memory move the
            target does not define; keep it explicit and rejected. */
-        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                (la_u16)(end - start),
-                la_slice(start, (la_u16)(end - start)),
-                la_slice("fixed-overlay memory-to-memory mov", 34), 0, 0);
+        la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1, (la_u16)(end -
+                start), la_slice(start, (la_u16)(end - start)),
+                la_text("fixed-overlay memory-to-memory mov"), 0, 0);
         return -1;
     }
     if (imm_start == end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("mov [overlay.field], SOURCE", 27),
-                la_slice("", 0), 0, 0);
+                la_text("mov [overlay.field], SOURCE"), la_text(""), 0, 0);
         return -1;
     }
     overlay_index = la_find_overlay_text(
         ctx, base_start, (la_u16)(base_end - base_start));
     if (overlay_index == LA_INVALID_HANDLE) {
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                (la_u16)(base_end - base_start),
-                la_slice(base_start, (la_u16)(base_end - base_start)),
-                la_slice("overlay", 7), 0, 0);
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, (la_u16)(base_end -
+                base_start), la_slice(base_start, (la_u16)(base_end -
+                base_start)), la_text("overlay"), 0, 0);
         return -1;
     }
     tail = la_resolve_field_tail(
@@ -7103,15 +6838,11 @@ static int la_parse_overlay_store_immediate(LaContext *ctx,
     if (la_resolve_path(ctx, root_start, root_length, path_start,
                         (la_u16)(close - path_start), line,
                         &field_index, &field_offset) != LA_OK) return -1;
-    field_size = ctx->fields[field_index].count == 1 ?
-        ctx->fields[field_index].size :
-        (la_u16)(ctx->fields[field_index].size /
-                 ctx->fields[field_index].count);
+    field_size = la_field_leaf_size(ctx, field_index);
     if (ctx->fields[field_index].count != 1 || field_size != 1) {
-        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
-                (la_u16)(close - path_start),
-                la_name_slice(ctx, ctx->fields[field_index].name),
-                la_slice("byte", 4), field_size, 1);
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, (la_u16)(close -
+                path_start), la_name_slice(ctx, ctx->fields[field_index].name),
+                la_text("byte"), field_size, 1);
         return -1;
     }
     if (!la_count_operation(ctx, line)) return -1;
@@ -7150,8 +6881,7 @@ static int la_parse_overlay_address(LaContext *ctx,
            (la_is_ident(*path_end) || *path_end == '.')) ++path_end;
     if (path_end == path_start || la_trim_left(path_end, end) != end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("address DEST, OVERLAY.field", 27),
-                la_slice("", 0), 0, 0);
+                la_text("address DEST, OVERLAY.field"), la_text(""), 0, 0);
         return -1;
     }
     /* The destination must be a pointer-width, non-code location: a whole
@@ -7164,14 +6894,13 @@ static int la_parse_overlay_address(LaContext *ctx,
         la_is_code_pointer_type(ctx, ctx->locations[location].type_name)) {
         la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, dest_length,
                 la_slice(dest_start, dest_length),
-                la_slice("address pointer destination", 27), 0, 0);
+                la_text("address pointer destination"), 0, 0);
         return -1;
     }
     overlay_index = la_find_overlay_text(ctx, name_start, name_length);
     if (overlay_index == LA_INVALID_HANDLE) {
         la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, name_length,
-                la_slice(name_start, name_length),
-                la_slice("overlay", 7), 0, 0);
+                la_slice(name_start, name_length), la_text("overlay"), 0, 0);
         return -1;
     }
     type_text = la_name_slice(ctx, ctx->overlays[overlay_index].type_name);
@@ -7219,8 +6948,7 @@ static int la_parse_pool_address(LaContext *ctx,
     if (cursor >= end || *cursor++ != ',' ||
         !la_read_identifier(&cursor, end, &pool_start, &pool_length)) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("address DEST, POOL[INDEX]", 25),
-                la_slice("", 0), 0, 0);
+                la_text("address DEST, POOL[INDEX]"), la_text(""), 0, 0);
         return -1;
     }
     cursor = la_trim_left(cursor, end);
@@ -7236,8 +6964,7 @@ static int la_parse_pool_address(LaContext *ctx,
         cursor >= end || *cursor++ != ']' ||
         la_trim_left(cursor, end) != end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("address DEST, POOL[INDEX]", 25),
-                la_slice("", 0), 0, 0);
+                la_text("address DEST, POOL[INDEX]"), la_text(""), 0, 0);
         return -1;
     }
     procedure = la_procedure_at_line(ctx, line);
@@ -7247,13 +6974,13 @@ static int la_parse_pool_address(LaContext *ctx,
         !ctx->locations[location].is_pointer) {
         la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, destination_length,
                 la_slice(destination_start, destination_length),
-                la_slice("pointer destination", 19), 0, 0);
+                la_text("pointer destination"), 0, 0);
         return -1;
     }
     pool_index = la_find_pool_text(ctx, pool_start, pool_length);
     if (pool_index == LA_INVALID_HANDLE) {
         la_fail(ctx, LA_ERR_UNKNOWN_POOL, line, 1, pool_length,
-                la_slice(pool_start, pool_length), la_slice("", 0), 0, 0);
+                la_slice(pool_start, pool_length), la_text(""), 0, 0);
         return -1;
     }
     pool = &ctx->pools[pool_index];
@@ -7300,19 +7027,14 @@ static int la_parse_local_operation(LaContext *ctx,
     LaTargetOperationKind operation;
     int qualified;
     cursor = la_trim_left(start, end);
-    if ((la_u16)(end - cursor) >= 4 && memcmp(cursor, "lda ", 4) == 0) {
-        operation = LA_TARGET_OP_LOAD8_FRAME_LOCAL;
-    } else if ((la_u16)(end - cursor) >= 4 &&
-               memcmp(cursor, "sta ", 4) == 0) {
-        operation = LA_TARGET_OP_STORE8_FRAME_LOCAL;
-    } else {
-        return 0;
-    }
-    cursor = la_trim_left(cursor + 3, end);
+    operation = (LaTargetOperationKind)la_claimed_operation(
+        ctx, cursor, end, LA_SPELL_LOCAL_OPERATION);
+    if (operation == 0) return 0;
+    cursor = la_trim_left(la_skip_spelling(cursor, end), end);
     if (cursor >= end || *cursor++ != '[') return 0;
     if (!la_read_identifier(&cursor, end, &name_start, &name_length)) {
         la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, 1,
-                la_slice("local name", 10), la_slice("", 0), 0, 0);
+                la_text("local name"), la_text(""), 0, 0);
         return -1;
     }
     field_offset = 0;
@@ -7328,12 +7050,12 @@ static int la_parse_local_operation(LaContext *ctx,
         qualified = 1;
         if (!la_read_identifier(&cursor, end, &root_start, &root_length)) {
             la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, 1,
-                    la_slice("TYPE.field", 10), la_slice("", 0), 0, 0);
+                    la_text("TYPE.field"), la_text(""), 0, 0);
             return -1;
         }
         if (cursor >= end || *cursor++ != '.') {
             la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, 1,
-                    la_slice("TYPE.field", 10), la_slice("", 0), 0, 0);
+                    la_text("TYPE.field"), la_text(""), 0, 0);
             return -1;
         }
         path_start = cursor;
@@ -7362,7 +7084,7 @@ static int la_parse_local_operation(LaContext *ctx,
             la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
                     (la_u16)(close - path_start),
                     la_slice(path_start, (la_u16)(close - path_start)),
-                    la_slice("byte", 4), ctx->fields[field_index].size, 1);
+                    la_text("byte"), ctx->fields[field_index].size, 1);
             return -1;
         }
         cursor = close;
@@ -7374,29 +7096,27 @@ static int la_parse_local_operation(LaContext *ctx,
     if (cursor >= end || *cursor++ != ']' ||
         la_trim_left(cursor, end) != end) {
         la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, 1,
-                la_slice("[NAME] or [NAME + TYPE.field]", 29),
-                la_slice("", 0), 0, 0);
+                la_text("[NAME] or [NAME + TYPE.field]"), la_text(""), 0, 0);
         return -1;
     }
     procedure = la_procedure_at_line(ctx, line);
     if (procedure == LA_INVALID_HANDLE) {
         la_fail(ctx, LA_ERR_PROCEDURE_SCOPE, line, 1, name_length,
-                la_slice(name_start, name_length),
-                la_slice("procedure", 9), 0, 0);
+                la_slice(name_start, name_length), la_text("procedure"), 0, 0);
         return -1;
     }
     local_index = la_find_local_text(ctx, procedure, name_start, name_length);
     if (local_index == LA_INVALID_HANDLE) {
         la_fail(ctx, LA_ERR_FRAME_LOCAL, line, 1, name_length,
                 la_slice(name_start, name_length),
-                la_slice("declared local", 14), 0, 0);
+                la_text("declared local"), 0, 0);
         return -1;
     }
     local = &ctx->locals[local_index];
     record = &ctx->procedures[procedure];
     if (!qualified && local->size != 1) {
         la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, name_length,
-                la_slice(name_start, name_length), la_slice("byte", 4),
+                la_slice(name_start, name_length), la_text("byte"),
                 local->size, 1);
         return -1;
     }
@@ -7426,11 +7146,9 @@ static int la_parse_frame_pointer_move(LaContext *ctx,
     la_u16 location_index;
     int store;
     cursor = la_trim_left(start, end);
-    if ((la_u16)(end - cursor) < 4 || memcmp(cursor, "mov ", 4) != 0) {
-        return 0;
-    }
-    cursor += 4;
-    cursor = la_trim_left(cursor, end);
+    if (la_claimed_operation(ctx, cursor, end,
+                             LA_SPELL_FRAME_POINTER_MOVE) == 0) return 0;
+    cursor = la_trim_left(la_skip_spelling(cursor, end), end);
     store = cursor < end && *cursor == '[';
     if (store) {
         ++cursor;
@@ -7465,10 +7183,9 @@ static int la_parse_frame_pointer_move(LaContext *ctx,
         !ctx->locations[location_index].is_pointer ||
         ctx->locals[local_index].type_name !=
             ctx->locations[location_index].type_name) {
-        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, 1,
-                la_slice(store ? left_start : right_start,
-                         store ? left_length : right_length),
-                la_slice("matching pointer locations", 26), 0, 0);
+        la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, 1, la_slice(store ?
+                left_start : right_start, store ? left_length : right_length),
+                la_text("matching pointer locations"), 0, 0);
         return -1;
     }
     if (!la_count_operation(ctx, line)) return -1;
@@ -7557,7 +7274,7 @@ static LaSlice la_accumulator_slice(const LaContext *ctx)
                 (la_u16)strlen(ctx->target->registers[index].name));
         }
     }
-    return la_slice("", 0);
+    return la_text("");
 }
 
 /* Does this register declare the use a form requires? */
@@ -7668,10 +7385,8 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
             la_is_code_pointer_type(
                 ctx, ctx->locations[member_index].type_name)) {
             la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                    la_slice("immediate", 9),
-                    la_name_slice(
-                        ctx, ctx->locations[member_index].type_name),
-                    value, 0);
+                    la_text("immediate"), la_name_slice( ctx,
+                    ctx->locations[member_index].type_name), value, 0);
             return 0;
         }
         if (member_width == 2) {
@@ -7680,10 +7395,8 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
             }
             if (value < -32768 || value > 65535) {
                 la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                        la_slice("16-bit immediate", 16),
-                        la_name_slice(
-                            ctx, ctx->locations[member_index].type_name),
-                        value, 65535);
+                        la_text("16-bit immediate"), la_name_slice( ctx,
+                        ctx->locations[member_index].type_name), value, 65535);
                 return 0;
             }
             binding->source_kind = LA_SOURCE_IMMEDIATE;
@@ -7696,10 +7409,8 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
         }
         if (value < -128 || value > 255) {
             la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                    la_slice("byte immediate", 14),
-                    la_name_slice(
-                        ctx, ctx->locations[member_index].type_name),
-                    value, 255);
+                    la_text("byte immediate"), la_name_slice( ctx,
+                    ctx->locations[member_index].type_name), value, 255);
             return 0;
         }
         binding->source_kind = LA_SOURCE_IMMEDIATE;
@@ -7727,7 +7438,7 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
         while (close < end && *close != ']') ++close;
         if (close == end) {
             la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                    la_slice("]", 1), la_slice("", 0), 0, 0);
+                    la_text("]"), la_text(""), 0, 0);
             return 0;
         }
         base_start = la_trim_left(bracket + 1, close);
@@ -7738,17 +7449,16 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
         if (base_end == base_start || field_cursor >= close ||
             (*field_cursor != '.' && *field_cursor != '+')) {
             la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                    la_slice("[pointer.field]", 15), la_slice("", 0), 0, 0);
+                    la_text("[pointer.field]"), la_text(""), 0, 0);
             return 0;
         }
         pointer_location = la_find_location_text_at(
             ctx, base_start, (la_u16)(base_end - base_start), caller);
         if (pointer_location == LA_INVALID_HANDLE ||
             !ctx->locations[pointer_location].is_pointer) {
-            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
-                    (la_u16)(base_end - base_start),
-                    la_slice(base_start, (la_u16)(base_end - base_start)),
-                    la_slice("typed pointer", 13), 0, 0);
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1, (la_u16)(base_end -
+                    base_start), la_slice(base_start, (la_u16)(base_end -
+                    base_start)), la_text("typed pointer"), 0, 0);
             return 0;
         }
         {
@@ -7763,31 +7473,25 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
         if (la_resolve_path(ctx, root_start, root_length, path_start,
                             (la_u16)(close - path_start), line,
                             &field_index, &field_offset) != LA_OK) return 0;
-        field_size = ctx->fields[field_index].count == 1 ?
-            ctx->fields[field_index].size :
-            (la_u16)(ctx->fields[field_index].size /
-                     ctx->fields[field_index].count);
+        field_size = la_field_leaf_size(ctx, field_index);
         if (ctx->fields[field_index].count != 1 ||
             ctx->locations[member_index].is_pointer ||
             la_is_code_pointer_type(
                 ctx, ctx->locations[member_index].type_name) ||
             field_size != member_width) {
-            la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
-                    (la_u16)(close - path_start),
-                    la_name_slice(ctx, ctx->fields[field_index].name),
-                    la_name_slice(
-                        ctx, ctx->locations[member_index].type_name),
-                    field_size, member_width);
+            la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, (la_u16)(close -
+                    path_start), la_name_slice(ctx,
+                    ctx->fields[field_index].name), la_name_slice( ctx,
+                    ctx->locations[member_index].type_name), field_size,
+                    member_width);
             return 0;
         }
         if ((la_u32)field_offset + (field_size - 1) >
             ctx->target->max_displacement) {
-            la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1,
-                    (la_u16)(close - path_start),
-                    la_slice(path_start, (la_u16)(close - path_start)),
-                    la_slice("", 0),
-                    (la_i32)((la_u32)field_offset + (field_size - 1)),
-                    ctx->target->max_displacement);
+            la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1, (la_u16)(close -
+                    path_start), la_slice(path_start, (la_u16)(close -
+                    path_start)), la_text(""), (la_i32)((la_u32)field_offset +
+                    (field_size - 1)), ctx->target->max_displacement);
             return 0;
         }
         *cursor = close + 1;
@@ -7801,8 +7505,7 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
                 int depth;
                 if (field_size != 1) {
                     la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                            la_slice("byte field addend", 17),
-                            la_slice("", 0), 0, 0);
+                            la_text("byte field addend"), la_text(""), 0, 0);
                     return 0;
                 }
                 addend_start = after + 1;
@@ -7818,8 +7521,8 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
                                        &addend) != LA_OK) return 0;
                 if (addend < -128 || addend > 255) {
                     la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                            la_slice("byte field addend", 17),
-                            la_slice("", 0), addend, 255);
+                            la_text("byte field addend"),
+                            la_text(""), addend, 255);
                     return 0;
                 }
                 *cursor = addend_end;
@@ -7836,7 +7539,7 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
     if (!la_read_qualified_identifier(cursor, end, &source_start,
                                       &source_length)) {
         la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                la_slice("value", 5), la_slice("", 0), 0, 0);
+                la_text("value"), la_text(""), 0, 0);
         return 0;
     }
     source_location = la_find_location_text_at(
@@ -7852,10 +7555,8 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
              la_is_code_pointer_type(
                  ctx, ctx->locations[member_index].type_name))) {
             la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, source_length,
-                    la_slice(source_start, source_length),
-                    la_name_slice(
-                        ctx, ctx->locations[member_index].type_name),
-                    0, 0);
+                    la_slice(source_start, source_length), la_name_slice( ctx,
+                    ctx->locations[member_index].type_name), 0, 0);
             return 0;
         }
         binding->source = ctx->locations[source_location].physical;
@@ -7867,7 +7568,7 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
                 ctx, ctx->locations[member_index].type_name) ||
             !la_slice_is_register(ctx, source)) {
             la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, source_length,
-                    source, la_slice("typed source or register", 24), 0, 0);
+                    source, la_text("typed source or register"), 0, 0);
             return 0;
         }
         binding->source =
@@ -7890,26 +7591,25 @@ static int la_parse_invoke_binding(LaContext *ctx, const char **cursor,
     LaInvokeBindingRec *binding;
     if (*(*cursor)++ != ',') {
         la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                la_slice(",", 1), la_slice("", 0), 0, 0);
+                la_text(","), la_text(""), 0, 0);
         return 0;
     }
     if (!la_read_identifier(cursor, end, &name_start, &name_length)) {
         la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                la_slice("binding name", 12), la_slice("", 0), 0, 0);
+                la_text("binding name"), la_text(""), 0, 0);
         return 0;
     }
     *cursor = la_trim_left(*cursor, end);
     if (*cursor >= end || *(*cursor)++ != '=') {
         la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                la_slice("=", 1), la_slice("", 0), 0, 0);
+                la_text("="), la_text(""), 0, 0);
         return 0;
     }
     *cursor = la_trim_left(*cursor, end);
     if (*binding_count >= ctx->limits->max_invoke_bindings) {
         la_fail(ctx, LA_ERR_INVOKE_CAPACITY, line, 1, name_length,
-                la_slice(name_start, name_length),
-                la_slice("invoke bindings", 15), *binding_count + 1,
-                ctx->limits->max_invoke_bindings);
+                la_slice(name_start, name_length), la_text("invoke bindings"),
+                *binding_count + 1, ctx->limits->max_invoke_bindings);
         return 0;
     }
     member_index = la_find_invoke_member(
@@ -7917,13 +7617,13 @@ static int la_parse_invoke_binding(LaContext *ctx, const char **cursor,
     if (member_index == LA_INVALID_HANDLE) {
         la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, name_length,
                 la_slice(name_start, name_length),
-                la_slice("callee input", 12), 0, 0);
+                la_text("callee input"), 0, 0);
         return 0;
     }
     if (la_invoke_has_binding(ctx, *binding_count, member_index)) {
         la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, name_length,
                 la_slice(name_start, name_length),
-                la_slice("unique binding", 14), 0, 0);
+                la_text("unique binding"), 0, 0);
         return 0;
     }
     binding = &ctx->bindings[(*binding_count)++];
@@ -7949,7 +7649,7 @@ static int la_validate_invoke_inputs(LaContext *ctx,
         if (!la_invoke_has_binding(ctx, binding_count, scan)) {
             la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
                     la_name_slice(ctx, ctx->locations[scan].name),
-                    la_slice("required input", 14), 0, 0);
+                    la_text("required input"), 0, 0);
             return 0;
         }
     }
@@ -8093,7 +7793,7 @@ static int la_reserve_invoke_scratch(LaContext *ctx, la_u16 binding_count,
                 la_location_storage_units(ctx, binding->name);
         if (*scratch + width > ctx->target->invoke_scratch_units) {
             la_fail(ctx, LA_ERR_INVOKE_SCRATCH, line, 1, 1,
-                    scratch_name, la_slice("invoke snapshot", 15),
+                    scratch_name, la_text("invoke snapshot"),
                     *scratch + width, ctx->target->invoke_scratch_units);
             return 0;
         }
@@ -8116,7 +7816,7 @@ static int la_emit_invoke_save_item(LaContext *ctx,
         ctx, line, LA_TARGET_OP_INVOKE_SAVE,
         la_name_slice(ctx, procedure->name),
         la_name_slice(ctx, ctx->locations[binding->name].name),
-        la_slice("", 0), la_name_slice(ctx, binding->source), scratch_name,
+        la_text(""), la_name_slice(ctx, binding->source), scratch_name,
         binding->scratch, width, LA_SOURCE_PHYSICAL);
 }
 
@@ -8203,13 +7903,13 @@ static int la_emit_invoke_assign_item(LaContext *ctx,
             ctx, line, LA_TARGET_OP_INVOKE_ASSIGN, owner,
             la_name_slice(ctx, ctx->locations[binding->name].name),
             la_name_slice(ctx, ctx->locations[binding->name].physical),
-            la_slice("", 0), scratch_name,
+            la_text(""), scratch_name,
             binding->scratch, binding->field_width, LA_SOURCE_PHYSICAL);
     }
     if (binding->source_kind == LA_SOURCE_PHYSICAL) {
         source = la_name_slice(ctx, binding->source);
     } else {
-        source = la_slice("", 0);
+        source = la_text("");
     }
     if (binding->source_kind == LA_SOURCE_PHYSICAL &&
         !binding->needs_scratch) {
@@ -8419,8 +8119,7 @@ static int la_emit_invoke_scheduled(LaContext *ctx,
         }
         if (best < 0) {
             la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                    la_slice("no safe marshalling order", 25),
-                    la_slice("", 0), 0, 0);
+                    la_text("no safe marshalling order"), la_text(""), 0, 0);
             return 0;
         }
         items[best].emitted = 1;
@@ -8477,7 +8176,7 @@ static int la_parse_invoke(LaContext *ctx,
     if (!la_read_qualified_identifier(
             &cursor, end, &callee_start, &callee_length)) {
         la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                la_slice("callee", 6), la_slice("", 0), 0, 0);
+                la_text("callee"), la_text(""), 0, 0);
         return -1;
     }
     callee = la_find_procedure_scoped(
@@ -8486,13 +8185,13 @@ static int la_parse_invoke(LaContext *ctx,
         ctx->procedures[caller].source_id, &is_private);
     if (callee == LA_INVALID_HANDLE) {
         la_fail(ctx, LA_ERR_UNKNOWN_PROCEDURE, line, 1, callee_length,
-                la_slice(callee_start, callee_length), la_slice("", 0), 0, 0);
+                la_slice(callee_start, callee_length), la_text(""), 0, 0);
         return -1;
     }
     if (is_private) {
         la_fail(ctx, LA_ERR_PRIVATE_NAME, line, 1, callee_length,
                 la_name_slice(ctx, ctx->procedures[callee].name),
-                la_slice("export", 6), 0, 0);
+                la_text("export"), 0, 0);
         return -1;
     }
     procedure = &ctx->procedures[callee];
@@ -8526,7 +8225,7 @@ static int la_parse_invoke(LaContext *ctx,
     if (procedure->is_inline) {
         if (is_tail) {
             la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, callee_length,
-                    owner, la_slice("inline has no tail form", 23), 0, 0);
+                    owner, la_text("inline has no tail form"), 0, 0);
             return -1;
         }
         if (la_expand_inline_body(ctx, callee, caller, line) < 0) return -1;
@@ -8534,14 +8233,14 @@ static int la_parse_invoke(LaContext *ctx,
     }
     if (is_tail && ctx->procedures[caller].frame_size != 0) {
         la_fail(ctx, LA_ERR_FRAME_STACK_MUTATION, line, 1, callee_length,
-                owner, la_slice("tail with live frame", 20), 0, 0);
+                owner, la_text("tail with live frame"), 0, 0);
         return -1;
     }
     if (!la_emit_invoke_operation(
             ctx, line,
             is_tail ? LA_TARGET_OP_INVOKE_TAIL : LA_TARGET_OP_INVOKE_CALL,
-            owner, la_slice("", 0),
-            la_slice("", 0), la_slice("", 0),
+            owner, la_text(""),
+            la_text(""), la_text(""),
             scratch_name,
             scratch, binding_count, 0)) {
         return -1;
@@ -8574,7 +8273,7 @@ static int la_parse_procedure_data(LaContext *ctx,
     cursor = la_trim_left(cursor, end);
     if (cursor == end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("procedure address", 17), la_slice("", 0), 0, 0);
+                la_text("procedure address"), la_text(""), 0, 0);
         return -1;
     }
     while (cursor < end) {
@@ -8594,7 +8293,7 @@ static int la_parse_procedure_data(LaContext *ctx,
             if (!la_read_qualified_identifier(
                     &cursor, end, &name_start, &name_length)) {
                 la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                        la_slice("procedure", 9), la_slice("", 0), 0, 0);
+                        la_text("procedure"), la_text(""), 0, 0);
                 return -1;
             }
             part_start = type_start;
@@ -8603,10 +8302,8 @@ static int la_parse_procedure_data(LaContext *ctx,
             operation = LA_TARGET_OP_DISPATCH_ENTRY;
             if (!la_read_identifier(
                     &cursor, end, &part_start, &part_length)) {
-                la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                        la_strategy_selectors(
-                            ctx, LA_STRATEGY_DISPATCH_TABLE),
-                        la_slice("", 0), 0, 0);
+                la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1, la_strategy_selectors(
+                        ctx, LA_STRATEGY_DISPATCH_TABLE), la_text(""), 0, 0);
                 return -1;
             }
             /* The part spelling selects a dispatch lane; the description
@@ -8625,20 +8322,16 @@ static int la_parse_procedure_data(LaContext *ctx,
                 !la_read_qualified_identifier(
                     &cursor, end, &name_start, &name_length)) {
                 la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                        la_slice("part(PROCEDURE)", 15),
-                        la_slice("", 0), 0, 0);
+                        la_text("part(PROCEDURE)"), la_text(""), 0, 0);
                 return -1;
             }
             cursor = la_trim_left(cursor, end);
             if (cursor >= end || *cursor++ != ')') {
-                la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                        la_slice(")", 1), la_slice("", 0), 0, 0);
-                return -1;
-            }
-        }
-        /* The declared width must be the lane's row width: `data u8` is
-           a one-unit lane, `data u16` a two-unit one. */
-        if (!is_code_pointer &&
+                la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1, la_text(")"),
+                        la_text(""), 0, 0); return -1; } } /* The declared
+                        width must be the lane's row width: `data u8` is a
+                        one-unit lane, `data u16` a two-unit one. */ if
+                        (!is_code_pointer &&
             ctx->target->strategies[strategy].lanes[lane].units !=
                 (type_length == 2 ? 1 : 2)) {
             la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, part_length,
@@ -8651,21 +8344,20 @@ static int la_parse_procedure_data(LaContext *ctx,
             source_id, &is_private);
         if (procedure == LA_INVALID_HANDLE) {
             la_fail(ctx, LA_ERR_UNKNOWN_PROCEDURE, line, 1, name_length,
-                    la_slice(name_start, name_length),
-                    la_slice("", 0), 0, 0);
+                    la_slice(name_start, name_length), la_text(""), 0, 0);
             return -1;
         }
         if (is_private) {
             la_fail(ctx, LA_ERR_PRIVATE_NAME, line, 1, name_length,
                     la_name_slice(ctx, ctx->procedures[procedure].name),
-                    la_slice("export", 6), 0, 0);
+                    la_text("export"), 0, 0);
             return -1;
         }
         if (ctx->procedures[procedure].is_inline) {
             /* An inline procedure has no emitted body and no address. */
             la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, name_length,
                     la_name_slice(ctx, ctx->procedures[procedure].name),
-                    la_slice("inline has no address", 21), 0, 0);
+                    la_text("inline has no address"), 0, 0);
             return -1;
         }
         if (emit) {
@@ -8691,7 +8383,7 @@ static int la_parse_procedure_data(LaContext *ctx,
         if (cursor == end) break;
         if (*cursor++ != ',') {
             la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                    la_slice(",", 1), la_slice("", 0), 0, 0);
+                    la_text(","), la_text(""), 0, 0);
             return -1;
         }
         cursor = la_trim_left(cursor, end);
@@ -8706,7 +8398,7 @@ static const char *la_family_spelling(LaContext *ctx, la_u16 family)
 {
     la_u16 index;
     for (index = 0; index < ctx->target->spelling_count; ++index) {
-        if ((ctx->target->spellings[index].families & family) != 0) {
+        if (ctx->target->spellings[index].family == family) {
             return ctx->target->spellings[index].spelling;
         }
     }
@@ -8723,6 +8415,33 @@ static const char *la_skip_spelling(const char *start, const char *end)
         ++cursor;
     }
     return cursor;
+}
+
+/* The operation-position token, lexed as the dispatcher lexes it. */
+static LaSlice la_operation_token(const char *start, const char *end)
+{
+    const char *first;
+    first = la_trim_left(start, end);
+    return la_slice(first, (la_u16)(la_skip_spelling(first, end) - first));
+}
+
+/* The operation this line's spelling names inside a family, or 0 when
+   the description claims the spelling for no such family. */
+static la_u8 la_claimed_operation(LaContext *ctx, const char *start,
+                                  const char *end, la_u16 family)
+{
+    LaSlice token;
+    la_u16 index;
+    token = la_operation_token(start, end);
+    for (index = 0; index < ctx->target->spelling_count; ++index) {
+        const LaSpellingDesc *entry;
+        entry = &ctx->target->spellings[index];
+        if (entry->family != family) continue;
+        if (la_equal_text(token.data, token.length, entry->spelling)) {
+            return entry->operation;
+        }
+    }
+    return 0;
 }
 
 static int la_parse_offset_materialization(LaContext *ctx,
@@ -8793,8 +8512,7 @@ static int la_parse_offset_materialization(LaContext *ctx,
         cursor = la_trim_left(cursor, end);
         if (cursor == end || *cursor < '0' || *cursor > '9') {
             la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                    la_slice("constant byte addend", 20),
-                    la_slice("", 0), 0, 0);
+                    la_text("constant byte addend"), la_text(""), 0, 0);
             return -1;
         }
         while (cursor < end && *cursor >= '0' && *cursor <= '9') {
@@ -8805,7 +8523,7 @@ static int la_parse_offset_materialization(LaContext *ctx,
     }
     if (path_end == path_start || cursor != end) {
         la_fail(ctx, LA_ERR_SYNTAX, line, 1, 1,
-                la_slice("TYPE.FIELD", 10), la_slice("", 0), 0, 0);
+                la_text("TYPE.FIELD"), la_text(""), 0, 0);
         return -1;
     }
     first_dot = path_start;
@@ -8817,22 +8535,18 @@ static int la_parse_offset_materialization(LaContext *ctx,
                         (la_u16)(path_end - first_dot - 1), line,
                         &field_index, &offset) != LA_OK) {
         if (ctx->error == LA_OK) {
-            la_fail(ctx, LA_ERR_UNKNOWN_FIELD, line, 1,
-                    (la_u16)(path_end - path_start),
-                    la_slice(path_start,
-                             (la_u16)(path_end - path_start)),
-                    la_slice("", 0), 0, 0);
+            la_fail(ctx, LA_ERR_UNKNOWN_FIELD, line, 1, (la_u16)(path_end -
+                    path_start), la_slice(path_start, (la_u16)(path_end -
+                    path_start)), la_text(""), 0, 0);
         }
         return -1;
     }
     if ((la_i32)offset + addend < 0 ||
         (la_i32)offset + addend > ctx->target->max_displacement) {
-        la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1,
-                (la_u16)(path_end - path_start),
-                la_slice(path_start, (la_u16)(path_end - path_start)),
-                la_slice(physical_start, physical_length),
-                (la_i32)offset + addend,
-                ctx->target->max_displacement);
+        la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1, (la_u16)(path_end -
+                path_start), la_slice(path_start, (la_u16)(path_end -
+                path_start)), la_slice(physical_start, physical_length),
+                (la_i32)offset + addend, ctx->target->max_displacement);
         return -1;
     }
     offset = (la_u16)((la_i32)offset + addend);
@@ -8954,11 +8668,9 @@ static int la_parse_qualified_immediate(LaContext *ctx,
         value = (la_i32)((la_u32)value & 0xff);
     }
     if (value < -128 || value > 255) {
-        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
-                (la_u16)(end - expression_start),
-                la_slice(expression_start,
-                         (la_u16)(end - expression_start)),
-                la_slice("8-bit immediate", 15), value, 255);
+        la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1, (la_u16)(end -
+                expression_start), la_slice(expression_start, (la_u16)(end -
+                expression_start)), la_text("8-bit immediate"), value, 255);
         return -1;
     }
     if (!la_count_operation(ctx, line)) return -1;
@@ -9363,20 +9075,18 @@ static int la_validate_scoped_raw(LaContext *ctx, const char *start,
                 }
             }
             if (namespace_prefix) {
-                la_fail(ctx, LA_ERR_UNKNOWN_SYMBOL, line,
-                        (la_u16)(name_start - start + 1), length,
-                        la_slice(name_start, length),
-                        la_slice("", 0), 0, 0);
+                la_fail(ctx, LA_ERR_UNKNOWN_SYMBOL, line, (la_u16)(name_start -
+                        start + 1), length, la_slice(name_start, length),
+                        la_text(""), 0, 0);
                 return -1;
             }
             continue;
         }
         if (symbol_source != source_id &&
             !la_name_is_exported(ctx, symbol_name)) {
-            la_fail(ctx, LA_ERR_PRIVATE_NAME, line,
-                    (la_u16)(name_start - start + 1), length,
-                    la_slice(name_start, length),
-                    la_slice("export", 6), 0, 0);
+            la_fail(ctx, LA_ERR_PRIVATE_NAME, line, (la_u16)(name_start - start
+                    + 1), length, la_slice(name_start, length),
+                    la_text("export"), 0, 0);
             return -1;
         }
         found_any = 1;
@@ -9426,10 +9136,10 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
         ctx->active_source_id = ctx->enums[sid].source_id;
         owner = la_name_slice(ctx, ctx->enums[sid].name);
         if (!la_emit_property(ctx, ctx->enums[sid].line, owner,
-                              la_slice("", 0), LA_PROPERTY_STRUCT_SIZE,
+                              la_text(""), LA_PROPERTY_STRUCT_SIZE,
                               ctx->enums[sid].size) ||
             !la_emit_property(ctx, ctx->enums[sid].line, owner,
-                              la_slice("", 0), LA_PROPERTY_STRUCT_ALIGN,
+                              la_text(""), LA_PROPERTY_STRUCT_ALIGN,
                               1)) return ctx->error;
     }
     for (sid = 0; sid < ctx->enum_member_count; ++sid) {
@@ -9444,15 +9154,15 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
         event.path = la_name_slice(ctx, member->name);
         if (enumeration->is_signed) {
             if (enumeration->size == 1) {
-                event.aux = la_slice("i8", 2);
+                event.aux = la_text("i8");
             } else {
-                event.aux = la_slice("i16", 3);
+                event.aux = la_text("i16");
             }
         } else {
             if (enumeration->size == 1) {
-                event.aux = la_slice("u8", 2);
+                event.aux = la_text("u8");
             } else {
-                event.aux = la_slice("u16", 3);
+                event.aux = la_text("u16");
             }
         }
         event.signed_value = member->value;
@@ -9487,16 +9197,16 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
         ctx->active_source_id = ctx->pools[sid].source_id;
         owner = la_name_slice(ctx, ctx->pools[sid].name);
         if (!la_emit_property(ctx, ctx->pools[sid].line, owner,
-                              la_slice("", 0), LA_PROPERTY_FIELD_COUNT,
+                              la_text(""), LA_PROPERTY_FIELD_COUNT,
                               ctx->pools[sid].count) ||
             !la_emit_property(ctx, ctx->pools[sid].line, owner,
-                              la_slice("", 0), LA_PROPERTY_FIELD_STRIDE,
+                              la_text(""), LA_PROPERTY_FIELD_STRIDE,
                               ctx->pools[sid].stride) ||
             !la_emit_property(ctx, ctx->pools[sid].line, owner,
-                              la_slice("", 0), LA_PROPERTY_FIELD_SIZE,
+                              la_text(""), LA_PROPERTY_FIELD_SIZE,
                               ctx->pools[sid].size) ||
             !la_emit_property(ctx, ctx->pools[sid].line, owner,
-                              la_slice("", 0), LA_PROPERTY_STRUCT_ALIGN,
+                              la_text(""), LA_PROPERTY_STRUCT_ALIGN,
                               ctx->pools[sid].alignment)) return ctx->error;
     }
     la_reset_lines(ctx);
@@ -9630,11 +9340,9 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
             if (!la_equal_text(trimmed, (la_u16)(content_end - trimmed),
                                "ret")) {
                 return la_fail(ctx, LA_ERR_SYNTAX, line, 1,
-                               (la_u16)(content_end - trimmed),
-                               la_slice("ret", 3),
-                               la_slice(trimmed,
-                                        (la_u16)(content_end - trimmed)),
-                               0, 0);
+                               (la_u16)(content_end - trimmed), la_text("ret"),
+                               la_slice(trimmed, (la_u16)(content_end -
+                               trimmed)), 0, 0);
             }
             if (!la_emit_procedure_event(ctx, active_procedure, line,
                                          LA_TARGET_OP_PROC_RETURN)) {
@@ -9649,8 +9357,7 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
             invoke_source_id = ctx->active_source_id;
             if (length > ctx->limits->max_line_bytes) {
                 return la_fail(ctx, LA_ERR_INVOKE_CAPACITY, line, 1, length,
-                               la_slice("invoke line", 11),
-                               la_slice("", 0), length,
+                               la_text("invoke line"), la_text(""), length,
                                ctx->limits->max_line_bytes);
             }
             memcpy(ctx->line_buffer, trimmed, length);
@@ -9664,8 +9371,8 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
                 if (la_next_line(ctx, &next_start, &next_end,
                                  &continuation_line) <= 0) {
                     return la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
-                                   la_slice("continued binding", 17),
-                                   la_slice("", 0), 0, 0);
+                                   la_text("continued binding"),
+                                   la_text(""), 0, 0);
                 }
                 next_code_end = la_code_end(next_start, next_end);
                 next_trimmed = la_trim_left(next_start, next_code_end);
@@ -9673,10 +9380,9 @@ static LaDiagnosticCode la_emit_all(LaContext *ctx)
                     (la_u16)(next_code_end - next_trimmed) >
                     ctx->limits->max_line_bytes) {
                     return la_fail(ctx, LA_ERR_INVOKE_CAPACITY, line, 1, 1,
-                                   la_slice("logical invoke", 14),
-                                   la_slice("", 0), length + 1 +
-                                   (la_u16)(next_code_end - next_trimmed),
-                                   ctx->limits->max_line_bytes);
+                                   la_text("logical invoke"), la_text(""),
+                                   length + 1 + (la_u16)(next_code_end -
+                                   next_trimmed), ctx->limits->max_line_bytes);
                 }
                 ctx->line_buffer[length++] = ' ';
                 memcpy(ctx->line_buffer + length, next_trimmed,
@@ -9745,12 +9451,12 @@ static int la_process_operation_line(LaContext *ctx, const char *cursor,
                      ++index) {
                     const char *spelling;
                     spelling = ctx->target->spellings[index].spelling;
-                    if ((la_u16)(token_end - token_start) ==
-                            (la_u16)strlen(spelling) &&
-                        memcmp(token_start, spelling,
-                               (size_t)(token_end - token_start)) == 0) {
-                        families = ctx->target->spellings[index].families;
-                        break;
+                    if (la_equal_text(token_start,
+                                      (la_u16)(token_end - token_start),
+                                      spelling)) {
+                        families = (la_u16)(
+                            families |
+                            ctx->target->spellings[index].family);
                     }
                 }
             }
@@ -9765,12 +9471,9 @@ static int la_process_operation_line(LaContext *ctx, const char *cursor,
     resolved = la_qualify_scoped_line(
         ctx, cursor, content_end, line, &resolved_length);
     if (resolved < 0) {
-        la_fail(ctx, LA_ERR_NAME_CAPACITY, line, 1,
-                (la_u16)(content_end - cursor),
-                la_slice("resolved line", 13),
-                la_slice("", 0),
-                (la_i32)(content_end - cursor),
-                ctx->limits->max_line_bytes);
+        la_fail(ctx, LA_ERR_NAME_CAPACITY, line, 1, (la_u16)(content_end -
+                cursor), la_text("resolved line"), la_text(""),
+                (la_i32)(content_end - cursor), ctx->limits->max_line_bytes);
         return -1;
     }
     if (resolved > 0) {
@@ -9846,11 +9549,9 @@ static int la_process_operation_line(LaContext *ctx, const char *cursor,
             !la_write_event(ctx, &event)) return -1;
     } else if (la_has_explicit_typed_operand(cursor, content_end)) {
         la_fail(ctx, LA_ERR_UNSUPPORTED_OPERATION, line, 1,
-                (la_u16)(content_end - cursor),
-                la_slice(cursor,
-                         (la_u16)(content_end - cursor)),
-                la_slice("raw assembly escape hatch", 24),
-                0, 0);
+                (la_u16)(content_end - cursor), la_slice(cursor,
+                (la_u16)(content_end - cursor)),
+                la_text("raw assembly escape hatch"), 0, 0);
         return -1;
     } else {
         int scoped_raw;
@@ -9863,12 +9564,9 @@ static int la_process_operation_line(LaContext *ctx, const char *cursor,
         qualified = la_qualify_scoped_line(
             ctx, cursor, line_end, line, &qualified_length);
         if (qualified < 0) {
-            la_fail(ctx, LA_ERR_NAME_CAPACITY, line, 1,
-                    (la_u16)(line_end - cursor),
-                    la_slice("resolved line", 13),
-                    la_slice("", 0),
-                    (la_i32)(line_end - cursor),
-                    ctx->limits->max_line_bytes);
+            la_fail(ctx, LA_ERR_NAME_CAPACITY, line, 1, (la_u16)(line_end -
+                    cursor), la_text("resolved line"), la_text(""),
+                    (la_i32)(line_end - cursor), ctx->limits->max_line_bytes);
             return -1;
         }
         if (qualified > 0) {
@@ -9913,26 +9611,23 @@ static int la_capture_inline_line(LaContext *ctx, la_u16 procedure,
         la_line_keyword(start, end, "union") ||
         la_line_keyword(start, end, "enum") ||
         la_line_keyword(start, end, "include")) {
-        la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, length,
-                la_slice(start, length),
-                la_slice("no ret or declarations in inline body", 37),
-                0, 0);
+        la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, length, la_slice(start,
+                length), la_text("no ret or declarations in inline body"), 0,
+                0);
         return -1;
     }
     if (la_line_keyword(start, end, "invoke") && end[-1] == ',') {
-        la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, length,
-                la_slice(start, length),
-                la_slice("single-line invoke only", 23), 0, 0);
+        la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, length, la_slice(start,
+                length), la_text("single-line invoke only"), 0, 0);
         return -1;
     }
     if (la_is_ident_start(*start)) {
         scan = start;
         while (scan < end && la_is_ident(*scan)) ++scan;
         if (scan < end && *scan == ':') {
-            la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, length,
-                    la_slice(start, length),
-                    la_slice("only .local labels in inline body", 33),
-                    0, 0);
+            la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, length, la_slice(start,
+                    length), la_text("only .local labels in inline body"), 0,
+                    0);
             return -1;
         }
     }
@@ -9948,7 +9643,7 @@ static int la_capture_inline_line(LaContext *ctx, la_u16 procedure,
     }
     if (ctx->inline_line_count >= ctx->limits->max_inline_body_lines) {
         la_fail(ctx, LA_ERR_INLINE_CAPACITY, line, 1, 1,
-                la_slice("inline body lines", 17), la_slice("", 0),
+                la_text("inline body lines"), la_text(""),
                 ctx->inline_line_count + 1,
                 ctx->limits->max_inline_body_lines);
         return -1;
@@ -9956,7 +9651,7 @@ static int la_capture_inline_line(LaContext *ctx, la_u16 procedure,
     if ((la_u32)ctx->inline_body_used + length + 1 >
         (la_u32)ctx->limits->max_inline_body_bytes) {
         la_fail(ctx, LA_ERR_INLINE_CAPACITY, line, 1, 1,
-                la_slice("inline body bytes", 17), la_slice("", 0),
+                la_text("inline body bytes"), la_text(""),
                 (la_i32)ctx->inline_body_used + length + 1,
                 ctx->limits->max_inline_body_bytes);
         return -1;
@@ -9987,23 +9682,21 @@ static int la_expand_inline_body(LaContext *ctx, la_u16 callee,
     la_u16 saved_source_id;
     record = &ctx->procedures[callee];
     if (ctx->inline_depth >= 8) {
-        la_fail(ctx, LA_ERR_INLINE_DEPTH, line, 1, 1,
-                la_name_slice(ctx, record->name), la_slice("", 0),
-                ctx->inline_depth + 1, 8);
+        la_fail(ctx, LA_ERR_INLINE_DEPTH, line, 1, 1, la_name_slice(ctx,
+                record->name), la_text(""), ctx->inline_depth + 1, 8);
         return -1;
     }
     if (record->has_nonlocal_jmp &&
         ctx->procedures[caller].frame_size != 0) {
         la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, 1,
                 la_name_slice(ctx, record->name),
-                la_slice("tail jmp with live caller frame", 31), 0, 0);
+                la_text("tail jmp with live caller frame"), 0, 0);
         return -1;
     }
     if (ctx->inline_serial >= ctx->limits->max_inline_expansions) {
         la_fail(ctx, LA_ERR_INLINE_CAPACITY, line, 1, 1,
-                la_slice("inline expansions", 17), la_slice("", 0),
-                ctx->inline_serial + 1,
-                ctx->limits->max_inline_expansions);
+                la_text("inline expansions"), la_text(""), ctx->inline_serial +
+                1, ctx->limits->max_inline_expansions);
         return -1;
     }
     serial = ++ctx->inline_serial;
@@ -10052,8 +9745,7 @@ static int la_expand_inline_body(LaContext *ctx, la_u16 callee,
                 if (out + written >= out_end) {
                     --ctx->inline_depth;
                     la_fail(ctx, LA_ERR_INLINE_CAPACITY, entry->line, 1, 1,
-                            la_slice("freshened line", 14),
-                            la_slice("", 0), 0,
+                            la_text("freshened line"), la_text(""), 0,
                             ctx->limits->max_line_bytes);
                     return -1;
                 }
@@ -10064,8 +9756,8 @@ static int la_expand_inline_body(LaContext *ctx, la_u16 callee,
             if (out >= out_end) {
                 --ctx->inline_depth;
                 la_fail(ctx, LA_ERR_INLINE_CAPACITY, entry->line, 1, 1,
-                        la_slice("freshened line", 14),
-                        la_slice("", 0), 0, ctx->limits->max_line_bytes);
+                        la_text("freshened line"),
+                        la_text(""), 0, ctx->limits->max_line_bytes);
                 return -1;
             }
             *out++ = *scan;
@@ -10101,7 +9793,7 @@ static LaDiagnosticCode la_load_source(LaContext *ctx)
             amount = ctx->input->read(ctx->input->context, &extra, 1);
             if (amount > 0) {
                 return la_fail(ctx, LA_ERR_SOURCE_CAPACITY, 1, 1, 1,
-                               la_slice("source", 6), la_slice("", 0),
+                               la_text("source"), la_text(""),
                                ctx->source_length + 1,
                                ctx->limits->max_source_bytes);
             }
@@ -10111,13 +9803,12 @@ static LaDiagnosticCode la_load_source(LaContext *ctx)
                                   ctx->source + ctx->source_length, remaining);
         if (amount < 0) {
             return la_fail(ctx, LA_ERR_IO, 1, 1, 1,
-                           la_slice("input", 5), la_slice("", 0), amount, 0);
+                           la_text("input"), la_text(""), amount, 0);
         }
         if (amount == 0) break;
         if ((la_u16)amount > remaining) {
-            return la_fail(ctx, LA_ERR_IO, 1, 1, 1,
-                           la_slice("input overflow", 14),
-                           la_slice("", 0), amount, remaining);
+            return la_fail(ctx, LA_ERR_IO, 1, 1, 1, la_text("input overflow"),
+                           la_text(""), amount, remaining);
         }
         ctx->source_length = (la_u16)(ctx->source_length + amount);
         remaining = (la_u16)(remaining - amount);

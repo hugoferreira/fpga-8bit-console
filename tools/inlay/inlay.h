@@ -466,9 +466,14 @@ enum {
     LA_SPELL_OFFSET_KEYWORD      = 0x2000
 };
 
+/* One claim: this spelling participates in this family, naming this
+   semantic operation there. A spelling may be claimed by several
+   families; a family whose parser selects the operation from the
+   operand shape claims it with the shape's primary operation. */
 typedef struct {
     const char *spelling;
-    la_u16 families;
+    la_u16 family;
+    la_u8 operation;
 } LaSpellingDesc;
 
 /* A declarable lowering: template lines emitted for one semantic
