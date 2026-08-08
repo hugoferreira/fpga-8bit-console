@@ -142,12 +142,8 @@ pointer_callee:
 
 invoke_pointer:
     lda pOther
-    sta t0
-    lda pOther+1
-    sta t1
-    lda t0
     sta pObj
-    lda t1
+    lda pOther+1
     sta pObj+1
     jsr pointer_callee
     rts
@@ -156,16 +152,12 @@ mixed_callee:
     rts
 
 invoke_mixed:
-    sta t2
-    lda pOther
     sta t0
-    lda pOther+1
-    sta t1
-    lda t0
+    lda pOther
     sta pObj
-    lda t1
+    lda pOther+1
     sta pObj+1
-    ldx t2
+    ldx t0
     jsr mixed_callee
     rts
 
@@ -203,33 +195,50 @@ word_moves:
     rts
 
 inline_caller:
-    lda pWord
-    sta t0
-    lda pWord+1
-    sta t1
-    lda t0
-    sta pWord
-    lda t1
-    sta pWord+1
     lda (pWord), #2
     beq .ic1
     sub #1
     sta (pWord), #2
 .ic1:
-    lda pWord
-    sta t0
-    lda pWord+1
-    sta t1
-    lda t0
-    sta pWord
-    lda t1
-    sta pWord+1
     lda (pWord), #2
     beq .ic2
     sub #1
     sta (pWord), #2
 .ic2:
     rts
+
+field_callee:
+    rts
+
+invoke_field_sources:
+    lda (pWord), #2
+    add #1
+    sta t2
+    lda #$34
+    sta w0
+    lda #$12
+    sta w0+1
+    jsr field_callee
+    rts
+
+register_callee:
+    rts
+
+invoke_register_fields:
+    lda (pWord), #2
+    add #4
+    tax
+    lda (pWord), #2
+    jsr register_callee
+    rts
+
+invoke_tail_caller:
+    lda #0
+    sta w0
+    lda #0
+    sta w0+1
+    mov t2, #3
+    jmp field_callee
 
 obj_lo:
     #d8 $00, $18, $30, $48

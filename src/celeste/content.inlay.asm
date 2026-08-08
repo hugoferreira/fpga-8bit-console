@@ -224,12 +224,7 @@ begin
     sta [Machine.object.core.sprite]
     lda #10
     sta [Machine.object.payload.extra.value]
-    lda [Machine.object.core.x]
-    pha
-    lda [Machine.object.core.y]
-    tax
-    pla
-    jsr Objects.spawn_smoke
+    invoke Objects.spawn_smoke, self=Machine.object, x_position=[Machine.object.core.x], y_position=[Machine.object.core.y]
 
     ; breakable below us: bouncing breaks a fall floor under the spring
     mov Collision.type, #ObjectKind.fall_floor
@@ -321,12 +316,7 @@ begin
     sta (Machine.other), y
     lda #6
     jsr Audio.guarded_sfx
-    lda [Machine.object.core.x]
-    pha
-    lda [Machine.object.core.y]
-    tax
-    pla
-    jsr Objects.spawn_smoke
+    invoke Objects.spawn_smoke, self=Machine.object, x_position=[Machine.object.core.x], y_position=[Machine.object.core.y]
     lda #0
     sta [Machine.object.core.sprite]
     lda #60
@@ -340,12 +330,7 @@ begin
 .restore:
     lda #7
     jsr Audio.guarded_sfx
-    lda [Machine.object.core.x]
-    pha
-    lda [Machine.object.core.y]
-    tax
-    pla
-    jsr Objects.spawn_smoke
+    invoke Objects.spawn_smoke, self=Machine.object, x_position=[Machine.object.core.x], y_position=[Machine.object.core.y]
     lda #22
     sta [Machine.object.core.sprite]
 .done:
@@ -403,12 +388,7 @@ begin
     sta [Machine.object.payload.extra.timer]
     lda #15
     jsr Audio.guarded_sfx
-    lda [Machine.object.core.x]
-    pha
-    lda [Machine.object.core.y]
-    tax
-    pla
-    jsr Objects.spawn_smoke
+    invoke Objects.spawn_smoke, self=Machine.object, x_position=[Machine.object.core.x], y_position=[Machine.object.core.y]
     ; a spring sitting on this floor starts hiding: the cart's break_spring
     mov Collision.type, #ObjectKind.spring
     mov Collision.offset_x, #0

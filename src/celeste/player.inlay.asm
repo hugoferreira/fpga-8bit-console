@@ -119,13 +119,7 @@ begin
     lda [Machine.object.payload.player.player_bits]
     and #bit_ground
     bne .nosmoke
-    lda [Machine.object.core.x]
-    pha
-    lda [Machine.object.core.y]
-    add #4
-    tax
-    pla
-    jsr Objects.spawn_smoke
+    invoke Objects.spawn_smoke, self=Machine.object, x_position=[Machine.object.core.x], y_position=[Machine.object.core.y] + 4
 .nosmoke:
     tbz [game.buttons], #Platform.Input.jump, .nojumpheld  ; jump = btn(jump) and not Player.jump_edge
     lda [Machine.object.payload.player.player_bits]
@@ -198,12 +192,8 @@ begin
 .dashing:
     sub #1
     sta (Machine.object), y
-    lda [Machine.object.core.x]                    ; a smoke puff per dash frame
-    pha
-    lda [Machine.object.core.y]
-    tax
-    pla
-    jsr Objects.spawn_smoke
+    ; a smoke puff per dash frame
+    invoke Objects.spawn_smoke, self=Machine.object, x_position=[Machine.object.core.x], y_position=[Machine.object.core.y]
     mov y, offset CelesteObject.core.speed_x                 ; spd.x = Fixed.approach(spd.x, dash_target.x, dash_accel.x)
     jsr Fixed.load_object
     mov y, offset CelesteObject.payload.player.dash_target_x
@@ -385,14 +375,7 @@ begin
     sta [Machine.object.payload.player.jump_buffer]
     sta [Machine.object.payload.player.grace]
     stw [Machine.object.core.speed_y], #jump_speed
-    lda [Machine.object.core.x]
-    pha
-    mov y, offset CelesteObject.core.y
-    lda (Machine.object), y
-    add #4
-    tax
-    pla
-    jsr Objects.spawn_smoke
+    invoke Objects.spawn_smoke, self=Machine.object, x_position=[Machine.object.core.x], y_position=[Machine.object.core.y] + 4
     jmp .dash
 .walljump:                      ; wall_dir = is_solid(-3,0) and -1 or is_solid(3,0) and 1 or 0
     mov Collision.offset_x, #$FD
@@ -451,23 +434,11 @@ begin
     bne .dodash
     lda #9                      ; out of dashes: a puff and a raspberry
     jsr Audio.guarded_sfx
-    lda [Machine.object.core.x]
-    pha
-    mov y, offset CelesteObject.core.y
-    lda (Machine.object), y
-    tax
-    pla
-    jsr Objects.spawn_smoke
+    invoke Objects.spawn_smoke, self=Machine.object, x_position=[Machine.object.core.x], y_position=[Machine.object.core.y]
 .nodash:
     jmp animation
 .dodash:
-    lda [Machine.object.core.x]
-    pha
-    mov y, offset CelesteObject.core.y
-    lda (Machine.object), y
-    tax
-    pla
-    jsr Objects.spawn_smoke
+    invoke Objects.spawn_smoke, self=Machine.object, x_position=[Machine.object.core.x], y_position=[Machine.object.core.y]
     dec [Machine.object.payload.player.dash_jumps]
     lda #4
     sta [Machine.object.payload.player.dash_time]
@@ -825,14 +796,7 @@ begin
     lda #5
     sta [Machine.object.payload.spawn.delay]
     mov [game.shake], #5
-    lda [Machine.object.core.x]
-    pha
-    mov y, offset CelesteObject.core.y
-    lda (Machine.object), y
-    add #4
-    tax
-    pla
-    jsr Objects.spawn_smoke
+    invoke Objects.spawn_smoke, self=Machine.object, x_position=[Machine.object.core.x], y_position=[Machine.object.core.y] + 4
     lda #5
     jmp Audio.sfx
 .landing:

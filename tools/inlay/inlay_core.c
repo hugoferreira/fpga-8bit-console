@@ -161,6 +161,16 @@ typedef struct {
     la_i32 immediate;
     la_u8 source_kind;
     la_u8 scratch;
+    la_u8 needs_scratch;
+    la_u8 elided;
+    la_u8 is_word_immediate;
+    la_u8 is_field;
+    la_u8 field_width;
+    la_u8 field_to_scratch;
+    la_u8 field_direct_register;
+    la_u16 field_base;
+    la_u16 field_disp;
+    la_i32 field_add;
 } LaInvokeBindingRec;
 
 typedef struct {
@@ -6270,16 +6280,62 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
     const char *source_start;
     la_u16 source_length;
     la_u16 source_location;
-    if (*cursor < end && **cursor == '#') ++*cursor;
-    if (*cursor < end && **cursor >= '0' && **cursor <= '9') {
+    la_u16 member_width;
+    member_width = la_location_storage_units(ctx, member_index);
+    if (*cursor < end && (**cursor == '#' ||
+                          (**cursor >= '0' && **cursor <= '9'))) {
+        /* Immediate: a compile-time expression running to the next
+           top-level comma. Byte members keep the byte range; two-unit
+           scalar members accept the 16-bit range and lower through the
+           word-immediate move. */
+        const char *expr_start;
+        const char *expr_end;
+        int depth;
         la_i32 value;
-        value = 0;
-        while (*cursor < end && **cursor >= '0' && **cursor <= '9') {
-            value = value * 10 + (*(*cursor)++ - '0');
+        if (**cursor == '#') ++*cursor;
+        expr_start = *cursor;
+        expr_end = expr_start;
+        depth = 0;
+        while (expr_end < end) {
+            if (*expr_end == '(') ++depth;
+            else if (*expr_end == ')') --depth;
+            else if (*expr_end == ',' && depth == 0) break;
+            ++expr_end;
         }
-        if (value > 255 || ctx->locations[member_index].is_pointer ||
+        if (la_eval_expression(ctx, expr_start, expr_end, line,
+                               &value) != LA_OK) return 0;
+        *cursor = expr_end;
+        if (ctx->locations[member_index].is_pointer ||
             la_is_code_pointer_type(
                 ctx, ctx->locations[member_index].type_name)) {
+            la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                    la_slice("immediate", 9),
+                    la_name_slice(
+                        ctx, ctx->locations[member_index].type_name),
+                    value, 0);
+            return 0;
+        }
+        if (member_width == 2) {
+            if (ctx->expression_family == LA_EXPR_BITWISE) {
+                value = (la_i32)((la_u32)value & 0xffff);
+            }
+            if (value < -32768 || value > 65535) {
+                la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                        la_slice("16-bit immediate", 16),
+                        la_name_slice(
+                            ctx, ctx->locations[member_index].type_name),
+                        value, 65535);
+                return 0;
+            }
+            binding->source_kind = LA_SOURCE_IMMEDIATE;
+            binding->is_word_immediate = 1;
+            binding->immediate = value;
+            return 1;
+        }
+        if (ctx->expression_family == LA_EXPR_BITWISE) {
+            value = (la_i32)((la_u32)value & 0xff);
+        }
+        if (value < -128 || value > 255) {
             la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
                     la_slice("byte immediate", 14),
                     la_name_slice(
@@ -6288,10 +6344,138 @@ static int la_parse_invoke_source(LaContext *ctx, const char **cursor,
             return 0;
         }
         binding->source_kind = LA_SOURCE_IMMEDIATE;
-        binding->immediate = value;
+        binding->immediate = (la_i32)((la_u32)value & 0xff);
         return 1;
     }
-    if (!la_read_identifier(cursor, end, &source_start, &source_length)) {
+    if (*cursor < end && **cursor == '[') {
+        /* Typed-field source: [pointer + Type.field] with an optional
+           constant value addend for byte leaves. */
+        const char *bracket;
+        const char *close;
+        const char *base_start;
+        const char *base_end;
+        const char *root_start;
+        const char *path_start;
+        const char *field_cursor;
+        la_u16 pointer_location;
+        la_u16 root_length;
+        la_u16 field_index;
+        la_u16 field_offset;
+        la_u16 field_size;
+        la_i32 addend;
+        bracket = *cursor;
+        close = bracket + 1;
+        while (close < end && *close != ']') ++close;
+        if (close == end) {
+            la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                    la_slice("]", 1), la_slice("", 0), 0, 0);
+            return 0;
+        }
+        base_start = la_trim_left(bracket + 1, close);
+        base_end = base_start;
+        while (base_end < close && la_is_ident(*base_end)) ++base_end;
+        la_extend_qualified_base(ctx, base_start, &base_end, close, caller);
+        field_cursor = la_trim_left(base_end, close);
+        if (base_end == base_start || field_cursor >= close ||
+            (*field_cursor != '.' && *field_cursor != '+')) {
+            la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                    la_slice("[pointer.field]", 15), la_slice("", 0), 0, 0);
+            return 0;
+        }
+        pointer_location = la_find_location_text_at(
+            ctx, base_start, (la_u16)(base_end - base_start), caller);
+        if (pointer_location == LA_INVALID_HANDLE ||
+            !ctx->locations[pointer_location].is_pointer) {
+            la_fail(ctx, LA_ERR_LOCATION_TYPE, line, 1,
+                    (la_u16)(base_end - base_start),
+                    la_slice(base_start, (la_u16)(base_end - base_start)),
+                    la_slice("typed pointer", 13), 0, 0);
+            return 0;
+        }
+        {
+            int tail;
+            tail = la_resolve_field_tail(
+                ctx, bracket, field_cursor, close, line,
+                la_name_slice(ctx,
+                              ctx->locations[pointer_location].type_name),
+                &root_start, &root_length, &path_start);
+            if (tail <= 0) return 0;
+        }
+        if (la_resolve_path(ctx, root_start, root_length, path_start,
+                            (la_u16)(close - path_start), line,
+                            &field_index, &field_offset) != LA_OK) return 0;
+        field_size = ctx->fields[field_index].count == 1 ?
+            ctx->fields[field_index].size :
+            (la_u16)(ctx->fields[field_index].size /
+                     ctx->fields[field_index].count);
+        if (ctx->fields[field_index].count != 1 ||
+            ctx->locations[member_index].is_pointer ||
+            la_is_code_pointer_type(
+                ctx, ctx->locations[member_index].type_name) ||
+            field_size != member_width) {
+            la_fail(ctx, LA_ERR_ACCESS_WIDTH, line, 1,
+                    (la_u16)(close - path_start),
+                    la_name_slice(ctx, ctx->fields[field_index].name),
+                    la_name_slice(
+                        ctx, ctx->locations[member_index].type_name),
+                    field_size, member_width);
+            return 0;
+        }
+        if ((la_u32)field_offset + (field_size - 1) >
+            ctx->target->max_displacement) {
+            la_fail(ctx, LA_ERR_DISPLACEMENT, line, 1,
+                    (la_u16)(close - path_start),
+                    la_slice(path_start, (la_u16)(close - path_start)),
+                    la_slice("", 0),
+                    (la_i32)((la_u32)field_offset + (field_size - 1)),
+                    ctx->target->max_displacement);
+            return 0;
+        }
+        *cursor = close + 1;
+        addend = 0;
+        {
+            const char *after;
+            after = la_trim_left(*cursor, end);
+            if (after < end && *after == '+') {
+                const char *addend_start;
+                const char *addend_end;
+                int depth;
+                if (field_size != 1) {
+                    la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                            la_slice("byte field addend", 17),
+                            la_slice("", 0), 0, 0);
+                    return 0;
+                }
+                addend_start = after + 1;
+                addend_end = addend_start;
+                depth = 0;
+                while (addend_end < end) {
+                    if (*addend_end == '(') ++depth;
+                    else if (*addend_end == ')') --depth;
+                    else if (*addend_end == ',' && depth == 0) break;
+                    ++addend_end;
+                }
+                if (la_eval_expression(ctx, addend_start, addend_end, line,
+                                       &addend) != LA_OK) return 0;
+                if (addend < -128 || addend > 255) {
+                    la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
+                            la_slice("byte field addend", 17),
+                            la_slice("", 0), addend, 255);
+                    return 0;
+                }
+                *cursor = addend_end;
+            }
+        }
+        binding->source_kind = LA_SOURCE_PHYSICAL;
+        binding->is_field = 1;
+        binding->field_width = (la_u8)field_size;
+        binding->field_base = pointer_location;
+        binding->field_disp = field_offset;
+        binding->field_add = addend;
+        return 1;
+    }
+    if (!la_read_qualified_identifier(cursor, end, &source_start,
+                                      &source_length)) {
         la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
                 la_slice("value", 5), la_slice("", 0), 0, 0);
         return 0;
@@ -6413,18 +6597,141 @@ static int la_validate_invoke_inputs(LaContext *ctx,
     return 1;
 }
 
+static int la_slices_equal(LaSlice left, LaSlice right)
+{
+    return left.length == right.length &&
+           memcmp(left.data, right.data, left.length) == 0;
+}
+
+/* Plan the marshalling order: identity bindings elide entirely; register
+   sources snapshot (field reads pass through A); location sources snapshot
+   only when another binding's destination overlaps them; field sources read
+   directly into memory destinations unless an early write would disturb a
+   later field base or an unsnapshotted location source. */
 static int la_reserve_invoke_scratch(LaContext *ctx, la_u16 binding_count,
                                      la_u16 line, LaSlice scratch_name,
                                      la_u16 *scratch)
 {
     la_u16 bind;
+    la_u16 other;
     *scratch = 0;
+    /* Identity elision. */
+    for (bind = 0; bind < binding_count; ++bind) {
+        LaInvokeBindingRec *binding;
+        binding = &ctx->bindings[bind];
+        if (binding->source_kind == LA_SOURCE_PHYSICAL &&
+            !binding->is_field &&
+            la_slices_equal(
+                la_name_slice(ctx, binding->source),
+                la_name_slice(ctx,
+                              ctx->locations[binding->name].physical))) {
+            binding->elided = 1;
+        }
+    }
+    for (bind = 0; bind < binding_count; ++bind) {
+        LaInvokeBindingRec *binding;
+        LaSlice source;
+        int conflicted;
+        binding = &ctx->bindings[bind];
+        binding->needs_scratch = 0;
+        if (binding->elided ||
+            binding->source_kind != LA_SOURCE_PHYSICAL) continue;
+        if (binding->is_field) continue;
+        source = la_name_slice(ctx, binding->source);
+        if (la_slice_is_register(source)) {
+            binding->needs_scratch = 1;
+            continue;
+        }
+        conflicted = 0;
+        for (other = 0; other < binding_count; ++other) {
+            if (other == bind || ctx->bindings[other].elided) continue;
+            if (la_slices_equal(
+                    source,
+                    la_name_slice(
+                        ctx,
+                        ctx->locations[ctx->bindings[other].name]
+                            .physical))) {
+                conflicted = 1;
+                break;
+            }
+        }
+        binding->needs_scratch = (la_u8)conflicted;
+    }
+    /* Field placement: direct into a memory destination only when the
+       early write cannot disturb a later field base or an unsnapshotted
+       location source, and the destination is not a register. */
+    for (bind = 0; bind < binding_count; ++bind) {
+        LaInvokeBindingRec *binding;
+        LaSlice dest;
+        int to_scratch;
+        binding = &ctx->bindings[bind];
+        if (!binding->is_field || binding->elided) continue;
+        binding->field_direct_register = 0;
+        dest = la_name_slice(ctx, ctx->locations[binding->name].physical);
+        to_scratch = la_slice_is_register(dest);
+        if (to_scratch) {
+            /* Register destinations read after all assignments (Y, X,
+               then A), through A - direct unless another binding assigns
+               A in the assignment phase. */
+            int a_assigned;
+            a_assigned = 0;
+            for (other = 0; other < binding_count; ++other) {
+                LaInvokeBindingRec *peer;
+                LaSlice peer_dest;
+                peer = &ctx->bindings[other];
+                if (peer->elided || peer->is_field) continue;
+                peer_dest = la_name_slice(
+                    ctx, ctx->locations[peer->name].physical);
+                if (peer_dest.length == 1 && peer_dest.data[0] == 'a') {
+                    a_assigned = 1;
+                    break;
+                }
+            }
+            if (!a_assigned) {
+                binding->field_direct_register = 1;
+                binding->field_to_scratch = 0;
+                binding->needs_scratch = 0;
+                continue;
+            }
+        }
+        for (other = 0; other < binding_count && !to_scratch; ++other) {
+            LaInvokeBindingRec *peer;
+            peer = &ctx->bindings[other];
+            if (peer->elided) continue;
+            if (peer->is_field && other != bind &&
+                la_slices_equal(
+                    dest,
+                    la_name_slice(
+                        ctx,
+                        ctx->locations[peer->field_base].physical))) {
+                to_scratch = 1;
+            }
+            if (peer->is_field &&
+                la_slices_equal(
+                    dest,
+                    la_name_slice(
+                        ctx,
+                        ctx->locations[binding->field_base].physical))) {
+                /* Destination overlaps this read's own base. */
+                if (other == bind) to_scratch = 1;
+            }
+            if (!peer->is_field && peer->source_kind == LA_SOURCE_PHYSICAL &&
+                !peer->needs_scratch && other != bind &&
+                la_slices_equal(dest,
+                                la_name_slice(ctx, peer->source))) {
+                to_scratch = 1;
+            }
+        }
+        binding->field_to_scratch = (la_u8)to_scratch;
+        binding->needs_scratch = (la_u8)to_scratch;
+    }
     for (bind = 0; bind < binding_count; ++bind) {
         LaInvokeBindingRec *binding;
         la_u16 width;
         binding = &ctx->bindings[bind];
-        if (binding->source_kind != LA_SOURCE_PHYSICAL) continue;
-        width = la_location_storage_units(ctx, binding->name);
+        if (!binding->needs_scratch) continue;
+        width = binding->is_field ? binding->field_width :
+                la_location_storage_units(ctx, binding->name);
         if (*scratch + width > ctx->target->invoke_scratch_units) {
             la_fail(ctx, LA_ERR_INVOKE_SCRATCH, line, 1, 1,
                     scratch_name, la_slice("invoke snapshot", 15),
@@ -6450,7 +6757,9 @@ static int la_emit_invoke_saves(LaContext *ctx,
         LaSlice source;
         la_u16 width;
         binding = &ctx->bindings[bind];
-        if (binding->source_kind != LA_SOURCE_PHYSICAL) continue;
+        if (binding->source_kind != LA_SOURCE_PHYSICAL ||
+            binding->elided || binding->is_field ||
+            !binding->needs_scratch) continue;
         source = la_name_slice(ctx, binding->source);
         if (la_slice_is_register(source) != registers) continue;
         width = la_location_storage_units(ctx, binding->name);
@@ -6460,6 +6769,88 @@ static int la_emit_invoke_saves(LaContext *ctx,
                 la_slice("", 0), source, scratch_name,
                 binding->scratch, width, LA_SOURCE_PHYSICAL)) {
             return 0;
+        }
+    }
+    return 1;
+}
+
+/* Field reads happen after register saves and before destination writes,
+   so every base pointer is still intact when it is dereferenced. */
+static int la_emit_invoke_field_reads(LaContext *ctx,
+                                      const LaProcedureRec *procedure,
+                                      la_u16 binding_count, la_u16 line,
+                                      LaSlice scratch_name)
+{
+    la_u16 bind;
+    LaSlice owner;
+    owner = la_name_slice(ctx, procedure->name);
+    for (bind = 0; bind < binding_count; ++bind) {
+        LaInvokeBindingRec *binding;
+        LaEvent event;
+        binding = &ctx->bindings[bind];
+        if (!binding->is_field || binding->elided ||
+            binding->field_direct_register) continue;
+        if (!la_count_operation(ctx, line)) return 0;
+        la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
+        event.operation = LA_TARGET_OP_INVOKE_FIELD;
+        event.owner = owner;
+        event.path = la_name_slice(ctx, ctx->locations[binding->name].name);
+        event.base = la_name_slice(
+            ctx, ctx->locations[binding->field_base].physical);
+        event.value = binding->field_disp;
+        event.signed_value = binding->field_add;
+        event.stride = binding->field_width;
+        if (binding->field_to_scratch) {
+            event.aux2 = scratch_name;
+            event.offset = binding->scratch;
+            event.count = 1;
+        } else {
+            event.aux = la_name_slice(
+                ctx, ctx->locations[binding->name].physical);
+            event.count = 0;
+        }
+        if (!la_write_event(ctx, &event)) return 0;
+    }
+    return 1;
+}
+
+/* Register-destination field reads run after every assignment: each read
+   passes through A, so A-destination reads go last and nothing may write
+   A afterwards. */
+static int la_emit_invoke_register_fields(LaContext *ctx,
+                                          const LaProcedureRec *procedure,
+                                          la_u16 binding_count, la_u16 line)
+{
+    static const char order[3] = { 'y', 'x', 'a' };
+    la_u16 pass;
+    la_u16 bind;
+    LaSlice owner;
+    owner = la_name_slice(ctx, procedure->name);
+    for (pass = 0; pass < 3; ++pass) {
+        for (bind = 0; bind < binding_count; ++bind) {
+            LaInvokeBindingRec *binding;
+            LaSlice dest;
+            LaEvent event;
+            binding = &ctx->bindings[bind];
+            if (!binding->is_field || binding->elided ||
+                !binding->field_direct_register) continue;
+            dest = la_name_slice(ctx,
+                                 ctx->locations[binding->name].physical);
+            if (dest.data[0] != order[pass]) continue;
+            if (!la_count_operation(ctx, line)) return 0;
+            la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
+            event.operation = LA_TARGET_OP_INVOKE_FIELD;
+            event.owner = owner;
+            event.path = la_name_slice(ctx,
+                                       ctx->locations[binding->name].name);
+            event.base = la_name_slice(
+                ctx, ctx->locations[binding->field_base].physical);
+            event.value = binding->field_disp;
+            event.signed_value = binding->field_add;
+            event.stride = binding->field_width;
+            event.aux = dest;
+            event.count = 2;
+            if (!la_write_event(ctx, &event)) return 0;
         }
     }
     return 1;
@@ -6478,11 +6869,54 @@ static int la_emit_invoke_assignments(LaContext *ctx,
         la_u16 width;
         LaSlice source;
         binding = &ctx->bindings[bind];
+        if (binding->elided) continue;
+        if (binding->is_field && !binding->field_to_scratch) continue;
         width = la_location_storage_units(ctx, binding->name);
+        if (binding->is_word_immediate) {
+            LaEvent event;
+            if (!la_count_operation(ctx, line)) return 0;
+            la_init_event(ctx, &event, LA_EVENT_TARGET_OPERATION, line, 1);
+            event.operation = LA_TARGET_OP_MOVW_IMM;
+            event.owner = la_name_slice(ctx,
+                                        ctx->locations[binding->name].name);
+            event.base = la_name_slice(
+                ctx, ctx->locations[binding->name].physical);
+            event.signed_value = binding->immediate;
+            event.access_width = 2;
+            if (!la_write_event(ctx, &event)) return 0;
+            continue;
+        }
+        if (binding->is_field) {
+            /* Copy the snapshotted field value out of scratch. */
+            if (!la_emit_invoke_operation(
+                    ctx, line, LA_TARGET_OP_INVOKE_ASSIGN, owner,
+                    la_name_slice(ctx, ctx->locations[binding->name].name),
+                    la_name_slice(ctx,
+                                  ctx->locations[binding->name].physical),
+                    la_slice("", 0), scratch_name,
+                    binding->scratch, binding->field_width,
+                    LA_SOURCE_PHYSICAL)) {
+                return 0;
+            }
+            continue;
+        }
         if (binding->source_kind == LA_SOURCE_PHYSICAL) {
             source = la_name_slice(ctx, binding->source);
         } else {
             source = la_slice("", 0);
+        }
+        if (binding->source_kind == LA_SOURCE_PHYSICAL &&
+            !binding->needs_scratch) {
+            /* Unconflicted location source: read it directly. */
+            if (!la_emit_invoke_operation(
+                    ctx, line, LA_TARGET_OP_INVOKE_ASSIGN, owner,
+                    la_name_slice(ctx, ctx->locations[binding->name].name),
+                    la_name_slice(ctx,
+                                  ctx->locations[binding->name].physical),
+                    source, scratch_name, 0, width, 3)) {
+                return 0;
+            }
+            continue;
         }
         if (!la_emit_invoke_operation(
                 ctx, line, LA_TARGET_OP_INVOKE_ASSIGN, owner,
@@ -6509,12 +6943,20 @@ static int la_parse_invoke(LaContext *ctx,
     la_u16 binding_count;
     la_u16 scratch;
     int is_private;
+    int is_tail;
     LaProcedureRec *procedure;
     LaSlice owner;
     LaSlice scratch_name;
     cursor = la_trim_left(start, end);
     if (!la_line_keyword(cursor, end, "invoke")) return 0;
     cursor += 6;
+    cursor = la_trim_left(cursor, end);
+    is_tail = 0;
+    if (la_line_keyword(cursor, end, "tail")) {
+        is_tail = 1;
+        cursor += 4;
+        cursor = la_trim_left(cursor, end);
+    }
     if (!la_read_qualified_identifier(
             &cursor, end, &callee_start, &callee_length)) {
         la_fail(ctx, LA_ERR_INVOKE_BINDING, line, 1, 1,
@@ -6563,17 +7005,33 @@ static int la_parse_invoke(LaContext *ctx,
             ctx, procedure, binding_count, line, scratch_name, 1) ||
         !la_emit_invoke_saves(
             ctx, procedure, binding_count, line, scratch_name, 0) ||
+        !la_emit_invoke_field_reads(
+            ctx, procedure, binding_count, line, scratch_name) ||
         !la_emit_invoke_assignments(
-            ctx, procedure, binding_count, line, scratch_name)) {
+            ctx, procedure, binding_count, line, scratch_name) ||
+        !la_emit_invoke_register_fields(
+            ctx, procedure, binding_count, line)) {
         return -1;
     }
     owner = la_name_slice(ctx, procedure->name);
     if (procedure->is_inline) {
+        if (is_tail) {
+            la_fail(ctx, LA_ERR_INLINE_BODY, line, 1, callee_length,
+                    owner, la_slice("inline has no tail form", 23), 0, 0);
+            return -1;
+        }
         if (la_expand_inline_body(ctx, callee, caller, line) < 0) return -1;
         return 1;
     }
+    if (is_tail && ctx->procedures[caller].frame_size != 0) {
+        la_fail(ctx, LA_ERR_FRAME_STACK_MUTATION, line, 1, callee_length,
+                owner, la_slice("tail with live frame", 20), 0, 0);
+        return -1;
+    }
     if (!la_emit_invoke_operation(
-            ctx, line, LA_TARGET_OP_INVOKE_CALL, owner, la_slice("", 0),
+            ctx, line,
+            is_tail ? LA_TARGET_OP_INVOKE_TAIL : LA_TARGET_OP_INVOKE_CALL,
+            owner, la_slice("", 0),
             la_slice("", 0), la_slice("", 0),
             scratch_name,
             scratch, binding_count, 0)) {

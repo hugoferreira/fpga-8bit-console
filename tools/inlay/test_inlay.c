@@ -1199,6 +1199,84 @@ static void test_inline_procedures(void)
         "inline tail jmp into live frame rejected");
 }
 
+static void test_invoke_extensions(void)
+{
+    LaLimits limits;
+    limits = la_default_limits();
+    expect_error(
+        "location w : u16\n"
+        "proc callee naked\n"
+        "    amount : u16 in w\n"
+        "begin\n"
+        "    ret\n"
+        "end\n"
+        "proc caller naked\n"
+        "begin\n"
+        "    invoke callee, amount=#65536\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_INVOKE_BINDING,
+        "word immediate above range rejected");
+    expect_error(
+        "struct O packed\nvalue : u16\nend\n"
+        "location p : ptr O\n"
+        "proc callee using console6502 naked\n"
+        "    tweak : u8\n"
+        "begin\n"
+        "    ret\n"
+        "end\n"
+        "proc caller naked\n"
+        "    self : ptr O in p\n"
+        "begin\n"
+        "    invoke callee, tweak=[self + O.value]\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_ACCESS_WIDTH,
+        "field width mismatch rejected");
+    expect_error(
+        "struct O packed\nvalue : u16\nend\n"
+        "location p : ptr O\n"
+        "location w : u16\n"
+        "proc callee naked\n"
+        "    amount : u16 in w\n"
+        "begin\n"
+        "    ret\n"
+        "end\n"
+        "proc caller naked\n"
+        "    self : ptr O in p\n"
+        "begin\n"
+        "    invoke callee, amount=[self + O.value] + 1\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_INVOKE_BINDING,
+        "addend on word field rejected");
+    expect_error(
+        "proc callee naked\n"
+        "begin\n"
+        "    ret\n"
+        "end\n"
+        "proc caller using console6502\n"
+        "    saved : u8 in frame\n"
+        "begin\n"
+        "    invoke tail callee\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_FRAME_STACK_MUTATION,
+        "tail invoke with live frame rejected");
+    expect_error(
+        "proc helper inline\n"
+        "begin\n"
+        "    nop\n"
+        "end\n"
+        "proc caller naked\n"
+        "begin\n"
+        "    invoke tail helper\n"
+        "    ret\n"
+        "end\n",
+        limits, LA_ERR_INLINE_BODY,
+        "tail invoke of inline rejected");
+}
+
 static void test_semantic_errors(void)
 {
     LaLimits limits;
@@ -1591,13 +1669,13 @@ static void test_unified_members_and_invoke(void)
         "v6 : u8 in d6\nv7 : u8 in d7\nv8 : u8 in d8\n"
         "begin\nret\nend\n"
         "proc caller naked\n"
-        "s0 : u8 in s0\ns1 : u8 in s1\ns2 : u8 in s2\n"
-        "s3 : u8 in s3\ns4 : u8 in s4\ns5 : u8 in s5\n"
-        "s6 : u8 in s6\ns7 : u8 in s7\ns8 : u8 in s8\n"
+        "s0 : u8 in d1\ns1 : u8 in d2\ns2 : u8 in d3\n"
+        "s3 : u8 in d4\ns4 : u8 in d5\ns5 : u8 in d6\n"
+        "s6 : u8 in d7\ns7 : u8 in d8\ns8 : u8 in d0\n"
         "begin\ninvoke many, v0=s0, v1=s1, v2=s2, v3=s3, "
         "v4=s4, v5=s5, v6=s6, v7=s7, v8=s8\nret\nend\n",
         limits, LA_ERR_INVOKE_SCRATCH,
-        "naked invoke without sufficient target scratch rejected");
+        "naked invoke without sufficient overlap scratch rejected");
 
     limits.max_invoke_bindings = 1;
     result = compile_source(
@@ -2380,6 +2458,7 @@ int main(void)
     test_observation_operations();
     test_word_moves();
     test_inline_procedures();
+    test_invoke_extensions();
     test_semantic_errors();
     test_comments_and_pointer_fields();
     test_indexed_pools_and_procedures();

@@ -710,6 +710,25 @@ static int emit_invoke_assign(HostOutput *output, const LaEvent *event)
     }
     for (step = 0; step < event->stride; ++step) {
         if (!begin_line(output, event->span, "invoke-assign")) return 0;
+        if (event->count == 3) {
+            /* Unconflicted location source, read directly. */
+            if (event->stride == 1 && slice_is_register(event->base)) {
+                fprintf(output->assembly, "    ld%c %.*s\n",
+                        event->base.data[0],
+                        (int)event->aux.length, event->aux.data);
+            } else {
+                fprintf(output->assembly, "    lda %.*s%s\n",
+                        (int)event->aux.length, event->aux.data,
+                        step == 0 ? "" : "+1");
+                if (!begin_line(output, event->span, "invoke-assign")) {
+                    return 0;
+                }
+                fprintf(output->assembly, "    sta %.*s%s\n",
+                        (int)event->base.length, event->base.data,
+                        step == 0 ? "" : "+1");
+            }
+            continue;
+        }
         if (event->stride == 1 && slice_is_register(event->base)) {
             fprintf(output->assembly, "    ld%c %.*s%u\n",
                     event->base.data[0],
@@ -896,11 +915,61 @@ static int emit_target_operation(HostOutput *output, const LaEvent *event)
     case LA_TARGET_OP_INVOKE_ASSIGN:
         return emit_invoke_assign(output, event);
     case LA_TARGET_OP_INVOKE_CALL:
+    case LA_TARGET_OP_INVOKE_TAIL:
         if (!begin_line(output, event->span, "invoke-call")) return 0;
-        fputs("    jsr ", output->assembly);
+        fputs(event->operation == LA_TARGET_OP_INVOKE_TAIL ?
+                  "    jmp " : "    jsr ", output->assembly);
         emit_target_symbol(output->assembly, event->owner);
         fputc('\n', output->assembly);
         return 1;
+    case LA_TARGET_OP_INVOKE_FIELD: {
+        unsigned step;
+        if (event->count == 2) {
+            /* Register destination: read through A, transfer if needed. */
+            if (!begin_line(output, event->span, "invoke-field")) return 0;
+            fprintf(output->assembly, "    lda (%.*s), #%u\n",
+                    (int)event->base.length, event->base.data,
+                    (unsigned)event->value);
+            if (event->signed_value != 0) {
+                if (!begin_line(output, event->span, "invoke-field")) {
+                    return 0;
+                }
+                fprintf(output->assembly, "    add #%u\n",
+                        (unsigned)((la_u32)event->signed_value & 0xff));
+            }
+            if (event->aux.length == 1 && event->aux.data[0] != 'a') {
+                if (!begin_line(output, event->span, "invoke-field")) {
+                    return 0;
+                }
+                fprintf(output->assembly, "    ta%c\n", event->aux.data[0]);
+            }
+            return 1;
+        }
+        for (step = 0; step < event->stride; ++step) {
+            if (!begin_line(output, event->span, "invoke-field")) return 0;
+            fprintf(output->assembly, "    lda (%.*s), #%u\n",
+                    (int)event->base.length, event->base.data,
+                    (unsigned)event->value + step);
+            if (step == 0 && event->signed_value != 0) {
+                if (!begin_line(output, event->span, "invoke-field")) {
+                    return 0;
+                }
+                fprintf(output->assembly, "    add #%u\n",
+                        (unsigned)((la_u32)event->signed_value & 0xff));
+            }
+            if (!begin_line(output, event->span, "invoke-field")) return 0;
+            if (event->count != 0) {
+                fprintf(output->assembly, "    sta %.*s%u\n",
+                        (int)event->aux2.length, event->aux2.data,
+                        (unsigned)event->offset + step);
+            } else {
+                fprintf(output->assembly, "    sta %.*s%s\n",
+                        (int)event->aux.length, event->aux.data,
+                        step == 0 ? "" : "+1");
+            }
+        }
+        return 1;
+    }
     case LA_TARGET_OP_LOAD8_OVERLAY_DISP:
     case LA_TARGET_OP_STORE8_OVERLAY_DISP:
         return emit_overlay_displacement(output, event);

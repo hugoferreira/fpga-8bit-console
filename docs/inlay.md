@@ -571,12 +571,37 @@ types are errors. Supported sources are integer immediates and typed or raw
 physical locations.
 
 Bindings have parallel-assignment semantics: every physical source is read
-from the pre-invocation state. The console6502 backend snapshots overlapping
-sources into the bounded `t0` through `t7` scratch area, assigns `A`, `X`, `Y`
-or an explicit pointer pair, then emits `JSR`. These scratch bytes and affected
-argument locations are clobbered. Assembly fails when the required scratch
-does not fit; naked procedures receive no implicit frame temporary. Raw `jsr`
-lines remain ordinary target assembly and perform no marshalling.
+from the pre-invocation state. Marshalling follows an explicit order:
+identity bindings (source equals the member's placement) elide entirely;
+register sources snapshot into the bounded `t0`-`t7` scratch area; named
+locations snapshot only when another binding's destination overlaps them
+and are otherwise read directly at assignment; typed-field reads happen
+after the register saves and before any destination write, so every base
+pointer is dereferenced before it can be overwritten. Register-destination
+field reads run after all other assignments (`Y`, then `X`, then `A`,
+each through `A`) and take no scratch unless another binding also assigns
+`A`. Only the scratch bytes actually reserved and the affected argument
+locations are clobbered; assembly fails when the required scratch does not
+fit. Raw `jsr` lines remain ordinary target assembly and perform no
+marshalling.
+
+Source kinds cover the corpus's argument shapes:
+
+```asm
+invoke Objects.spawn_smoke, self=Machine.object,
+    x_position=[Machine.object.core.x],
+    y_position=[Machine.object.core.y] + 4
+invoke Fixed.approach, amount=#$0026
+invoke tail Draw.object
+```
+
+An immediate is a compile-time expression: byte members keep the byte
+range, two-unit scalar members accept the `#d16` range and lower through
+the word-immediate move. A typed-field source names a one- or two-unit
+leaf through a pointer location; a byte leaf accepts a constant value
+addend written `+ K`. `invoke tail` performs identical marshalling and
+transfers with `jmp`; it is rejected when the enclosing procedure's frame
+size is nonzero, and an inline procedure has no tail form.
 
 Unsupported typed mnemonics, a base/root type mismatch, non-byte leaves,
 multiple indexes, unsupported strides and displacements outside 0--255 are

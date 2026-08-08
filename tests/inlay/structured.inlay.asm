@@ -213,6 +213,42 @@ begin
     ret
 end
 
+proc field_callee naked
+    self : ptr WordObject in pWord
+    amount : u16 in w0
+    tweak : u8 in t2
+begin
+    ret
+end
+
+proc invoke_field_sources naked
+    self : ptr WordObject in pWord
+begin
+    invoke field_callee, self=self, amount=#$1234, tweak=[self + WordObject.timer] + 1
+    ret
+end
+
+proc register_callee naked
+    self : ptr WordObject in pWord
+    x_pos : u8 in a
+    y_pos : u8 in x
+begin
+    ret
+end
+
+proc invoke_register_fields naked
+    self : ptr WordObject in pWord
+begin
+    invoke register_callee, self=self, x_pos=[self + WordObject.timer], y_pos=[self + WordObject.timer] + 4
+    ret
+end
+
+proc invoke_tail_caller naked
+    self : ptr WordObject in pWord
+begin
+    invoke tail field_callee, self=self, amount=#0, tweak=#3
+end
+
 obj_lo:
     #d8 $00, $18, $30, $48
 obj_hi:
