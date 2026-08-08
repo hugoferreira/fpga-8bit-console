@@ -21,17 +21,9 @@
 ; (the table is smaller AND faster than the arithmetic it replaces).
 ; ------------------------------------------------------------------------------
 
-; The current pool declaration accepts target identifiers for its address
-; tables, not qualified semantic labels. Keep these two target-boundary names
-; global until qualified pool strategies are implemented.
-obj_lo:
-    #d8 $00, $40, $80, $C0, $00, $40, $80, $C0
-    #d8 $00, $40, $80, $C0, $00, $40, $80, $C0
-obj_hi:
-    #d8 (OBJPOOL)[15:8], (OBJPOOL)[15:8], (OBJPOOL)[15:8], (OBJPOOL)[15:8]
-    #d8 ((OBJPOOL+$100))[15:8], ((OBJPOOL+$100))[15:8], ((OBJPOOL+$100))[15:8], ((OBJPOOL+$100))[15:8]
-    #d8 ((OBJPOOL+$200))[15:8], ((OBJPOOL+$200))[15:8], ((OBJPOOL+$200))[15:8], ((OBJPOOL+$200))[15:8]
-    #d8 ((OBJPOOL+$300))[15:8], ((OBJPOOL+$300))[15:8], ((OBJPOOL+$300))[15:8], ((OBJPOOL+$300))[15:8]
+; The slot address tables generate from the pool's own base, stride and
+; count; the raw OBJPOOL high-byte slices are gone with them.
+pool tables objects
 
 namespace Objects using console6502
     export pointer
@@ -76,36 +68,32 @@ end
 ; Per-type method tables, indexed by type id - 1. A zero entry means the type
 ; does not define that method, which is the cart's `if type.update ~= nil`.
 ; ------------------------------------------------------------------------------
-type_tile:
-    #d8 0, Room.tile_spawn, 0, 0, 18, 22, 23, 26, 28, 0, 64, 8, 20, 0
-type_init_lo:
-    data u8 low(Player.init), low(Spawn.init), low(Smoke.init), low(Title.init)
-    data u8 low(Spring.init), low(Ball.init), low(Floor.init), low(Fruit.init)
-    data u8 low(Fly.init), low(Life.init), low(noop), low(noop), low(Chest.init), low(Mover.init)
-type_init_hi:
-    data u8 high(Player.init), high(Spawn.init), high(Smoke.init), high(Title.init)
-    data u8 high(Spring.init), high(Ball.init), high(Floor.init), high(Fruit.init)
-    data u8 high(Fly.init), high(Life.init), high(noop), high(noop), high(Chest.init), high(Mover.init)
-type_update_lo:
-    data u8 low(Player.update), low(Spawn.update), low(Smoke.update), low(Title.update)
-    data u8 low(Spring.update), low(Ball.update), low(Floor.update), low(Fruit.update)
-    data u8 low(Fly.update), low(Life.update), low(Wall.update), low(Key.update)
-    data u8 low(Chest.update), low(Mover.update)
-type_update_hi:
-    data u8 high(Player.update), high(Spawn.update), high(Smoke.update), high(Title.update)
-    data u8 high(Spring.update), high(Ball.update), high(Floor.update), high(Fruit.update)
-    data u8 high(Fly.update), high(Life.update), high(Wall.update), high(Key.update)
-    data u8 high(Chest.update), high(Mover.update)
-type_draw_lo:
-    data u8 low(Player.draw), low(Spawn.draw), low(Smoke.draw), low(Title.draw)
-    data u8 low(Spring.draw), low(Ball.draw), low(Floor.draw), low(Fruit.draw)
-    data u8 low(Fly.draw), low(Life.draw), low(Wall.draw), low(Key.draw)
-    data u8 low(Chest.draw), low(Mover.draw)
-type_draw_hi:
-    data u8 high(Player.draw), high(Spawn.draw), high(Smoke.draw), high(Title.draw)
-    data u8 high(Spring.draw), high(Ball.draw), high(Floor.draw), high(Fruit.draw)
-    data u8 high(Fly.draw), high(Life.draw), high(Wall.draw), high(Key.draw)
-    data u8 high(Chest.draw), high(Mover.draw)
+; One declaration owns the per-kind columns: rows are keyed by ObjectKind
+; value over [player .. platform], coverage is total, and the split lo/hi
+; code tables generate from qualified procedure identities. type_hide moves
+; adjacent to its siblings; the -1,x consumers derive from lifecycle.bias.
+method_table lifecycle : ObjectKind[player .. platform]
+    column type_tile : u8
+    column type_init : code
+    column type_update : code
+    column type_draw : code
+    column type_hide : u8
+    row player = 0, Player.init, Player.update, Player.draw, 0
+    row spawn = Room.tile_spawn, Spawn.init, Spawn.update, Spawn.draw, 0
+    row smoke = 0, Smoke.init, Smoke.update, Smoke.draw, 0
+    row title = 0, Title.init, Title.update, Title.draw, 0
+    row spring = 18, Spring.init, Spring.update, Spring.draw, 0
+    row balloon = 22, Ball.init, Ball.update, Ball.draw, 0
+    row fall_floor = 23, Floor.init, Floor.update, Floor.draw, 0
+    row fruit = 26, Fruit.init, Fruit.update, Fruit.draw, 1
+    row fly_fruit = 28, Fly.init, Fly.update, Fly.draw, 1
+    row lifeup = 0, Life.init, Life.update, Life.draw, 0
+    row fake_wall = 64, Objects.noop, Wall.update, Wall.draw, 1
+    row key = 8, Objects.noop, Key.update, Key.draw, 1
+    row chest = 20, Chest.init, Chest.update, Chest.draw, 1
+    row platform = 0, Mover.init, Mover.update, Mover.draw, 0
+end
+static_assert lifecycle.bias == ObjectKind.player
 
 ; Marker tiles present in playable rooms 0-9. Animation-only sprite ids do not
 ; appear here; the generator's content manifest owns those art dependencies.
@@ -115,8 +103,6 @@ marker_kind:
     #d8 2, 12, 14, 14            ; spawn, key, platform left/right
     #d8 5, 13, 6, 7              ; spring, chest, balloon, fall floor
     #d8 8, 9, 11                 ; fruit, flying fruit, fake wall
-type_hide:
-    #d8 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0
 
 proc noop naked
 begin

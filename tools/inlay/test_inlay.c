@@ -1334,6 +1334,89 @@ static void test_invoke_extensions(void)
         "tail invoke of inline rejected");
 }
 
+static void test_method_tables(void)
+{
+    LaLimits limits;
+    static const char prologue[] =
+        "enum Kind : u8\n"
+        "    free = 0\n"
+        "    player = 1\n"
+        "    spawn = 2\n"
+        "end\n"
+        "proc a_init naked\nbegin\nret\nend\n"
+        "proc b_init naked\nbegin\nret\nend\n";
+    limits = la_default_limits();
+    expect_ok(
+        "enum Kind : u8\n"
+        "    free = 0\n"
+        "    player = 1\n"
+        "    spawn = 2\n"
+        "end\n"
+        "proc a_init naked\nbegin\nret\nend\n"
+        "proc b_init naked\nbegin\nret\nend\n"
+        "method_table kinds : Kind[player .. spawn]\n"
+        "    column k_tile : u8\n"
+        "    column k_init : code\n"
+        "    row spawn = 2, absent\n"
+        "    row player = 1, a_init\n"
+        "end\n"
+        "static_assert kinds.bias == Kind.player\n",
+        limits, "method table with domain, absence and bias");
+    {
+        char source[1024];
+        strcpy(source, prologue);
+        strcat(source,
+               "method_table kinds : Kind[player .. spawn]\n"
+               "    column k_init : code\n"
+               "    row player = a_init\n"
+               "end\n");
+        expect_error(source, limits, LA_ERR_ENUM_VALUE,
+                     "uncovered domain value rejected");
+    }
+    {
+        char source[1024];
+        strcpy(source, prologue);
+        strcat(source,
+               "method_table kinds : Kind[player .. spawn]\n"
+               "    column k_tile : u8\n"
+               "    row player = absent\n"
+               "    row spawn = 0\n"
+               "end\n");
+        expect_error(source, limits, LA_ERR_SYNTAX,
+                     "absent in value column rejected");
+    }
+    {
+        char source[1024];
+        strcpy(source, prologue);
+        strcat(source,
+               "method_table kinds : Kind[player .. spawn]\n"
+               "    column k_init : code\n"
+               "    row player = a_init\n"
+               "    row player = b_init\n"
+               "    row spawn = b_init\n"
+               "end\n");
+        expect_error(source, limits, LA_ERR_DUPLICATE_FIELD,
+                     "duplicate row member rejected");
+    }
+    expect_error(
+        "enum Alias : u8\n"
+        "    one = 1\n"
+        "    also_one = Alias.one\n"
+        "end\n"
+        "proc a_init naked\nbegin\nret\nend\n"
+        "method_table t : Alias[one .. also_one]\n"
+        "    column k : code\n"
+        "    row one = a_init\n"
+        "end\n",
+        limits, LA_ERR_DUPLICATE_ENUM_MEMBER,
+        "aliased member inside domain rejected");
+    /* Pool table emission is validated byte-for-byte by the structured
+       conformance fixture; here only the statement's parse surface. */
+    expect_error(
+        "pool tables missing\n",
+        limits, LA_ERR_UNKNOWN_POOL, "unknown pool tables rejected");
+}
+
 static void test_semantic_errors(void)
 {
     LaLimits limits;
@@ -2517,6 +2600,7 @@ int main(void)
     test_inline_procedures();
     test_invoke_extensions();
     test_namespace_defaults();
+    test_method_tables();
     test_semantic_errors();
     test_comments_and_pointer_fields();
     test_indexed_pools_and_procedures();

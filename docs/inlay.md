@@ -608,9 +608,43 @@ multiple indexes, unsupported strides and displacements outside 0--255 are
 errors. Raw target assembly remains the escape hatch when semantic typed
 syntax is not wanted.
 
-The keywords `callconv`, `object`, `interface` and `method_table` remain
-recognised deferred features. `invoke` is implemented only for direct,
-previously declared procedures; indirect and method-table invocation remains
+Enum-value-keyed dispatch data generates from one declaration:
+
+```asm
+method_table lifecycle : ObjectKind[player .. platform]
+    column type_tile : u8
+    column type_init : code
+    row player = 0, Player.init
+    row spawn = Room.tile_spawn, Spawn.init
+    ...
+end
+static_assert lifecycle.bias == ObjectKind.player
+```
+
+Rows are keyed by enum member value over the declared inclusive domain,
+never by declaration order; the domain's low value publishes as the
+queryable `NAME.bias`. Coverage is total — a domain value with no row is a
+diagnostic, so adding an enum member inside the domain without updating
+the table fails to assemble. Members with duplicate values inside the
+domain are rejected. A `code` column emits split `NAME_lo`/`NAME_hi`
+tables through the same procedure-address events as `data u8 low(...)`
+(inline procedures are rejected); a `u8` column emits one byte table, and
+`absent` (a zero entry for a dispatch guard) is legal only in `code`
+columns. Tables emit at the declaration's source position.
+
+A pool's low/high address tables generate from its own geometry:
+
+```asm
+pool tables objects
+```
+
+emits the declared `table` labels with `(BASE+offset)` rows computed from
+the pool's base, stride and count — the raw high-byte base slices those
+tables used to hand-maintain are gone.
+
+The keywords `callconv`, `object` and `interface` remain recognised
+deferred features. `invoke` is implemented only for direct, previously
+declared procedures; indirect and method-table invocation remains
 deferred.
 
 ## Workspace contract and defaults

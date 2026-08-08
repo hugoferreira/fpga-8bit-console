@@ -382,6 +382,10 @@ typedef struct {
     la_u16 max_inline_body_bytes;
     la_u16 max_inline_body_lines;
     la_u16 max_inline_expansions;
+    la_u16 max_method_tables;
+    la_u16 max_method_columns;
+    la_u16 max_method_rows;
+    la_u16 max_method_values;
 } LaLimits;
 
 typedef struct {

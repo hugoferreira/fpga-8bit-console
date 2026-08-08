@@ -37,7 +37,7 @@ EXPECTED_CELESTE_SEMANTIC_OFFSETS = 95
 EXPECTED_CELESTE_RAW_OBJECT_INDIRECTS = 111
 EXPECTED_CELESTE_COUNTED_SHIFTS = 20
 EXPECTED_CELESTE_ROM_SHA256 = (
-    "58a8ea853ebb4330510a19d6e09aa0b288c6c10263d7296b9b3275339d268278"
+    "fd31d0a670ebb0909cafdf3c34a13f4cc7a685cd4c6fab3599ff1053dd2671fd"
 )
 READABLE_CELESTE_MODULES = {
     "audio.inlay.asm",
@@ -943,7 +943,8 @@ def check_objects_design() -> None:
         "saved_self : ptr CelesteObject in frame",
         "mov [saved_self], self",
         "mov self, [saved_self]",
-        "data u8 low(Player.init), low(Spawn.init), low(Smoke.init), low(Title.init)",
+        "method_table lifecycle : ObjectKind[player .. platform]",
+        "row player = 0, Player.init, Player.update, Player.draw, 0",
         "jsr Berries.collected",
         "ldw value, [self.core.remainder_x]",
         "ldw operand, [self.core.speed_x]",
@@ -1212,10 +1213,10 @@ def check_remaining_subsystem_design() -> None:
         for text in [path.read_text(encoding="ascii")]
         if re.search(r"\([^)]*\)\[(?:7:0|15:8)\]", text)
     }
-    if raw_slices != {"obj.inlay.asm": 4, "rooms.inlay.asm": 22}:
+    if raw_slices != {"rooms.inlay.asm": 22}:
         raise AssertionError(
             "raw target address-slice audit changed: "
-            f"expected obj=4 and rooms=22, got {raw_slices}"
+            f"expected rooms=22 only, got {raw_slices}"
         )
 
 
