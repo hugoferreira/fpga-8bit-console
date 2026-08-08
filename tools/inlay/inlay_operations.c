@@ -3,6 +3,58 @@
 
 #include "inlay_internal.h"
 
+/* The lexical shape of a bracketed operand: `[base` up to `]`, with the
+   base identifier extended through any namespace qualification and the
+   cursor left on the `.` or `+` that opens the field path. */
+static int la_split_bracket(LaContext *ctx, const char *bracket,
+                            const char *end, la_u16 line, LaSlice shape,
+                            const char **close, const char **base_start,
+                            const char **base_end, const char **cursor)
+{
+    const char *scan;
+    scan = bracket + 1;
+    while (scan < end && *scan != ']') ++scan;
+    if (scan == end) {
+        la_reject(ctx, LA_ERR_SYNTAX, line, la_text("]"));
+        return 0;
+    }
+    *close = scan;
+    *base_start = la_trim_left(bracket + 1, scan);
+    *base_end = *base_start;
+    while (*base_end < scan && la_is_ident(**base_end)) ++*base_end;
+    la_extend_qualified_base(ctx, *base_start, base_end, scan,
+                             la_procedure_at_line(ctx, line));
+    *cursor = la_trim_left(*base_end, scan);
+    if (*base_end == *base_start || *cursor >= scan ||
+        (**cursor != '.' && **cursor != '+')) {
+        la_reject(ctx, LA_ERR_SYNTAX, line, shape);
+        return 0;
+    }
+    return 1;
+}
+
+/* Resolve a bracketed operand's field path and require a single scalar
+   of `units` storage; `name` is what the width diagnostic calls it. */
+static int la_resolve_scalar_field(LaContext *ctx, const char *root_start,
+                                   la_u16 root_length,
+                                   const char *path_start, const char *close,
+                                   la_u16 line, la_u16 units, LaSlice name,
+                                   la_u16 *field_index, la_u16 *offset,
+                                   la_u16 *size)
+{
+    if (la_resolve_path(ctx, root_start, root_length, path_start,
+                        (la_u16)(close - path_start), line,
+                        field_index, offset) != LA_OK) return 0;
+    *size = la_field_leaf_size(ctx, *field_index);
+    if (ctx->fields[*field_index].count != 1 || *size != units) {
+        la_bound(ctx, LA_ERR_ACCESS_WIDTH, line, (la_u16)(close - path_start),
+                 la_name_slice(ctx, ctx->fields[*field_index].name), name,
+                 *size, units);
+        return 0;
+    }
+    return 1;
+}
+
 static int la_parse_overlay_address(LaContext *ctx,
                                     const char *start, const char *end,
                                     la_u16 line, LaEvent *event,
@@ -330,21 +382,9 @@ int la_parse_typed_word_operation(LaContext *ctx,
         la_reject(ctx, LA_ERR_SYNTAX, line, la_text("[pointer + Type.field]"));
         return -1;
     }
-    close = bracket + 1;
-    while (close < end && *close != ']') ++close;
-    if (close == end) {
-        la_reject(ctx, LA_ERR_SYNTAX, line, la_text("]"));
-        return -1;
-    }
-    base_start = la_trim_left(bracket + 1, close);
-    base_end = base_start;
-    while (base_end < close && la_is_ident(*base_end)) ++base_end;
-    la_extend_qualified_base(ctx, base_start, &base_end, close,
-                             la_procedure_at_line(ctx, line));
-    cursor = la_trim_left(base_end, close);
-    if (base_end == base_start || cursor >= close ||
-        (*cursor != '.' && *cursor != '+')) {
-        la_reject(ctx, LA_ERR_SYNTAX, line, la_text("[pointer.field]"));
+    if (!la_split_bracket(ctx, bracket, end, line,
+                          la_text("[pointer.field]"),
+                          &close, &base_start, &base_end, &cursor)) {
         return -1;
     }
     procedure = la_procedure_at_line(ctx, line);
@@ -422,16 +462,9 @@ int la_parse_typed_word_operation(LaContext *ctx,
             return -1;
         }
     }
-    if (la_resolve_path(ctx, root_start, root_length, path_start,
-                        (la_u16)(close - path_start), line,
-                        &field_index, &field_offset) != LA_OK) {
-        return -1;
-    }
-    field_size = la_field_leaf_size(ctx, field_index);
-    if (ctx->fields[field_index].count != 1 || field_size != 2) {
-        la_bound(ctx, LA_ERR_ACCESS_WIDTH, line, (la_u16)(close - path_start),
-                 la_name_slice(ctx, ctx->fields[field_index].name),
-                 la_text("two-unit word"), field_size, 2);
+    if (!la_resolve_scalar_field(ctx, root_start, root_length,
+                                path_start, close, line, 2, la_text("two-unit word"),
+                                &field_index, &field_offset, &field_size)) {
         return -1;
     }
     if ((la_u32)field_offset + 1 > ctx->target->max_displacement) {
@@ -615,21 +648,10 @@ int la_parse_typed_byte_rmw(LaContext *ctx,
         return la_unsupported(ctx, start, end, line,
                               la_text("typed pointer byte update"));
     }
-    close = bracket + 1;
-    while (close < end && *close != ']') ++close;
-    if (close == end) {
-        la_reject(ctx, LA_ERR_SYNTAX, line, la_text("]"));
-        return -1;
-    }
-    base_start = la_trim_left(bracket + 1, close);
-    base_end = base_start;
-    while (base_end < close && la_is_ident(*base_end)) ++base_end;
-    la_extend_qualified_base(ctx, base_start, &base_end, close,
-                             la_procedure_at_line(ctx, line));
-    cursor = la_trim_left(base_end, close);
-    if (base_end == base_start || cursor >= close ||
-        (*cursor != '.' && *cursor != '+')) {
-        la_reject(ctx, LA_ERR_SYNTAX, line, la_text("[base.field]"));
+    if (!la_split_bracket(ctx, bracket, end, line,
+                          la_text("[base.field]"),
+                          &close, &base_start, &base_end,
+                          &cursor)) {
         return -1;
     }
     procedure = la_procedure_at_line(ctx, line);
@@ -701,14 +723,9 @@ int la_parse_typed_byte_rmw(LaContext *ctx,
                      (la_u16)(end - cursor)));
         return -1;
     }
-    if (la_resolve_path(ctx, root_start, root_length, path_start,
-                        (la_u16)(close - path_start), line,
-                        &field_index, &field_offset) != LA_OK) return -1;
-    field_size = la_field_leaf_size(ctx, field_index);
-    if (ctx->fields[field_index].count != 1 || field_size != 1) {
-        la_bound(ctx, LA_ERR_ACCESS_WIDTH, line, (la_u16)(close - path_start),
-                 la_name_slice(ctx, ctx->fields[field_index].name),
-                 la_text("byte"), field_size, 1);
+    if (!la_resolve_scalar_field(ctx, root_start, root_length,
+                                path_start, close, line, 1, la_text("byte"),
+                                &field_index, &field_offset, &field_size)) {
         return -1;
     }
     /* A fixed overlay names an absolute address, so the field displacement is
@@ -833,20 +850,10 @@ int la_parse_observation_operation(LaContext *ctx,
         la_reject(ctx, LA_ERR_SYNTAX, line, la_text("[pointer + Type.field]"));
         return -1;
     }
-    close = bracket + 1;
-    while (close < end && *close != ']') ++close;
-    if (close == end) {
-        la_reject(ctx, LA_ERR_SYNTAX, line, la_text("]"));
-        return -1;
-    }
-    base_start = la_trim_left(bracket + 1, close);
-    base_end = base_start;
-    while (base_end < close && la_is_ident(*base_end)) ++base_end;
-    la_extend_qualified_base(ctx, base_start, &base_end, close, procedure);
-    cursor = la_trim_left(base_end, close);
-    if (base_end == base_start || cursor >= close ||
-        (*cursor != '.' && *cursor != '+')) {
-        la_reject(ctx, LA_ERR_SYNTAX, line, la_text("[pointer.field]"));
+    if (!la_split_bracket(ctx, bracket, end, line,
+                          la_text("[pointer.field]"),
+                          &close, &base_start, &base_end,
+                          &cursor)) {
         return -1;
     }
     pointer_location = la_find_location_text_at(
@@ -1143,14 +1150,9 @@ int la_parse_overlay_branch(LaContext *ctx,
         if (tail == 0) return 0;
         if (tail < 0) return -1;
     }
-    if (la_resolve_path(ctx, root_start, root_length, path_start,
-                        (la_u16)(close - path_start), line,
-                        &field_index, &field_offset) != LA_OK) return -1;
-    field_size = la_field_leaf_size(ctx, field_index);
-    if (ctx->fields[field_index].count != 1 || field_size != 1) {
-        la_bound(ctx, LA_ERR_ACCESS_WIDTH, line, (la_u16)(close - path_start),
-                 la_name_slice(ctx, ctx->fields[field_index].name),
-                 la_text("byte"), field_size, 1);
+    if (!la_resolve_scalar_field(ctx, root_start, root_length,
+                                path_start, close, line, 1, la_text("byte"),
+                                &field_index, &field_offset, &field_size)) {
         return -1;
     }
     if (!la_count_operation(ctx, line)) return -1;
@@ -1238,14 +1240,9 @@ int la_parse_overlay_store_immediate(LaContext *ctx,
         &root_start, &root_length, &path_start);
     if (tail == 0) return 0;
     if (tail < 0) return -1;
-    if (la_resolve_path(ctx, root_start, root_length, path_start,
-                        (la_u16)(close - path_start), line,
-                        &field_index, &field_offset) != LA_OK) return -1;
-    field_size = la_field_leaf_size(ctx, field_index);
-    if (ctx->fields[field_index].count != 1 || field_size != 1) {
-        la_bound(ctx, LA_ERR_ACCESS_WIDTH, line, (la_u16)(close - path_start),
-                 la_name_slice(ctx, ctx->fields[field_index].name),
-                 la_text("byte"), field_size, 1);
+    if (!la_resolve_scalar_field(ctx, root_start, root_length,
+                                path_start, close, line, 1, la_text("byte"),
+                                &field_index, &field_offset, &field_size)) {
         return -1;
     }
     if (!la_count_operation(ctx, line)) return -1;
